@@ -2,7 +2,7 @@ import { translate as t } from './i18n';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUpRight, Check, ChevronRight, CircleAlert, FilePlus, LoaderCircle, ShieldQuestion, Square, Wrench, X } from 'lucide-react';
+import { ArrowUpRight, Check, ChevronRight, CircleAlert, FilePlus, LoaderCircle, Paperclip, ShieldQuestion, Square, Wrench, X } from 'lucide-react';
 import type { ChatMessage, ChatPart, ChatPermission, ChatQuestion, ChatSession, ChatToolStatus } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { useChatState } from './chat-store';
@@ -11,11 +11,12 @@ import { isNearConversationEnd } from './conversation-scroll';
 
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked = [], onAdoptFile, beforeComposer }: { session: ChatSession; onStop: () => void; onError: (error: string) => void; onSaveAsDocument?: (text: string) => void; untracked?: string[]; onAdoptFile?: (fileName: string) => void; beforeComposer?: ReactNode }) {
+export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked = [], onAdoptFile, onAttachFiles, beforeComposer }: { session: ChatSession; onStop: () => void; onError: (error: string) => void; onSaveAsDocument?: (text: string) => void; untracked?: string[]; onAdoptFile?: (fileName: string) => void; onAttachFiles?: () => Promise<string[]>; beforeComposer?: ReactNode }) {
   const state = useChatState(chatStore, session.id);
   const draft = state.draft;
   const setDraft = (text: string) => chatStore.setDraft(session.id, text);
   const [sending, setSending] = useState(false);
+  const [attaching, setAttaching] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const [unread, setUnread] = useState(false);
@@ -60,6 +61,22 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
 
   const abort = () => api.abortChat(session.id).catch(e => onError(displayError(e)));
 
+  // Attachments are copied into the work folder first. The follow-up message is
+  // intentional: file-system access alone does not tell an agent which material
+  // the person just added or that it should use it for the current request.
+  const attach = async () => {
+    if (!onAttachFiles || attaching || busy || state.closed) return;
+    setAttaching(true);
+    try {
+      const files = await onAttachFiles();
+      if (files.length > 0) await api.sendChat(session.id, `Adjunté ${files.map(file => `\`${file}\``).join(', ')} al trabajo. Están disponibles en la carpeta de este trabajo: usalos como material de referencia para lo que te pida a continuación.`);
+    } catch (e) {
+      onError(displayError(e));
+    } finally {
+      setAttaching(false);
+    }
+  };
+
   return <div className="chat-pane">
     <div className="session-heading">
       <span title={`${session.roleName} · ${session.label}`}><i className={'role-dot ' + (state.closed ? 'ended' : busy ? 'busy' : '')} data-role={session.roleId} /><strong>{session.roleName}</strong><span className="chat-heading-runtime">{session.label}</span>{session.resumed ? ' · reanudado' : ''}</span>
@@ -84,7 +101,7 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
     {beforeComposer}
     <form className="prompt-form" onSubmit={e => { e.preventDefault(); void send(); }}>
       <textarea aria-label={t('ui.auto.019')} placeholder={state.closed ? t('ui.auto.093') : t('ui.auto.020')} value={draft} disabled={state.closed} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
-      <div><small>{state.closed ? t('ui.auto.093') : busy ? t('ui.auto.094') : t('ui.auto.095')}</small><button className="primary icon-button" disabled={!draft.trim() || sending || busy || state.closed} aria-label={t('ui.auto.023')}><ArrowUpRight size={18} /></button></div>
+      <div><small>{state.closed ? t('ui.auto.093') : busy ? t('ui.auto.094') : t('ui.auto.095')}</small><span><button type="button" className="icon-button" disabled={!onAttachFiles || attaching || busy || state.closed} aria-label="Adjuntar archivos al trabajo" title="Adjuntar archivos al trabajo" onClick={() => void attach()}><Paperclip size={16} /></button><button className="primary icon-button" disabled={!draft.trim() || sending || busy || state.closed} aria-label={t('ui.auto.023')}><ArrowUpRight size={18} /></button></span></div>
     </form>
   </div>;
 }

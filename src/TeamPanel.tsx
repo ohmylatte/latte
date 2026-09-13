@@ -55,6 +55,8 @@ export interface TeamPanelProps {
   onError: (message: string) => void;
   /** Turns an answer into a document of the work. */
   onSaveAsDocument?: (text: string) => void;
+  /** Copies client material into this work so the active agent can read it. */
+  onAttachFiles: () => Promise<string[]>;
   /** Files the agent left in the folder that are not documents yet. */
   untracked: string[];
   onAdoptFile: (fileName: string) => void;
@@ -126,7 +128,7 @@ export function TeamPanel(props: TeamPanelProps) {
       </section></div>}
     {continuingMember && <ContinueDialog source={continuingMember} roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryReady={props.primaryReady} primaryRuntime={props.primaryRuntime} primaryAccountId={props.primaryAccountId} primaryModel={props.primaryModel} checking={props.checking} busy={busy} isDesktop={isDesktop} onClose={() => setContinuing(null)} onProviders={props.onProviders} onRecheck={props.onRecheck} onContinue={async (roleId, options, text) => { await props.onContinue(continuingMember.id, roleId, options, text); setContinuing(null); }} />}
     {!work && <div className="agent-idle"><div className="agent-symbol"><MessageSquare size={27} /></div><h3>{t('ui.auto.276')}<br />{t('ui.auto.277')}</h3><p className="footnote">{t('ui.auto.278')}</p></div>}
-    {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}
+    {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} onAttachFiles={props.onAttachFiles} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}
     {!showPicker && !selected && team.length > 0 && <p className="chat-empty">{t('ui.auto.279')}</p>}
   </div>;
 }
@@ -227,7 +229,7 @@ export function WorkPermissions({ mode, busy, hasClaude, isDesktop, onChange }: 
     if (next === 'auto' && !window.confirm(warning)) return;
     onChange(next);
   };
-  return <details className={'folder-trust mode-' + mode} open={mode === 'auto'}>
+  return <details className={'folder-trust mode-' + mode}>
     <summary>
       {mode === 'ask' ? <FolderLock size={13} /> : mode === 'folder' ? <FolderCheck size={13} /> : <Zap size={13} />}
       <span><strong>{permissionLabel(mode)}</strong>{mode === 'auto' && <small>{t('permission.auto.once')}</small>}</span>

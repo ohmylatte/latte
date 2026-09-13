@@ -21,4 +21,17 @@ describe('work permission UX', () => {
     expect(app).toContain('permissionBusy={permissionBusy}');
     expect(app).not.toContain('mode={props.permissions} busy={busy}');
   });
+
+  it('keeps work permissions collapsed until the person explicitly opens them', () => {
+    const panel = fs.readFileSync('src/TeamPanel.tsx', 'utf8');
+    expect(panel).toContain("<details className={'folder-trust mode-' + mode}>");
+    expect(panel).not.toContain("open={mode === 'auto'}");
+  });
+
+  it('offers chat attachments and tells the agent which imported files to use', () => {
+    const pane = fs.readFileSync('src/ChatPane.tsx', 'utf8');
+    expect(pane).toContain('onAttachFiles?: () => Promise<string[]>');
+    expect(pane).toContain('Adjuntar archivos al trabajo');
+    expect(pane).toContain('Están disponibles en la carpeta de este trabajo');
+  });
 });
