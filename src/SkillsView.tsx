@@ -1,8 +1,23 @@
 import { translate as t } from './i18n';
 import { useEffect, useState } from 'react';
 import { Sparkles } from 'lucide-react';
-import type { AgentSkill, SkillCandidate } from '../shared/contracts';
+import type { AgentSkill, FeatureFlags, LatteAPI, SkillCandidate } from '../shared/contracts';
 import { api, isDesktop } from './browser-api';
+
+const FLAGS_OFF: FeatureFlags = { generation: false, brandKits: false, learning: false };
+
+export async function loadSkillsViewState(client: Pick<LatteAPI, 'featureFlags' | 'listSkills' | 'listSkillCandidates'>): Promise<{
+  learningOn: boolean;
+  skills: AgentSkill[];
+  candidates: SkillCandidate[];
+}> {
+  const [flags, skills] = await Promise.all([
+    client.featureFlags().catch(() => FLAGS_OFF),
+    client.listSkills(),
+  ]);
+  const candidates = flags.learning ? await client.listSkillCandidates() : [];
+  return { learningOn: flags.learning, skills, candidates };
+}
 
 /**
  * Skills Latte ships: how every agent writes, in every work.
@@ -24,20 +39,12 @@ export function SkillsView({ onError, onNotice }: { onError: (text: string) => v
 
   useEffect(() => {
     let live = true;
-    api.featureFlags()
-      .then((flags) => {
-        if (!live) return null;
-        setLearningOn(flags.learning);
-        return Promise.all([
-          api.listSkills(),
-          flags.learning ? api.listSkillCandidates() : Promise.resolve([] as SkillCandidate[]),
-        ]);
-      })
-      .then((loaded) => {
-        if (!live || !loaded) return;
-        const [list, inbox] = loaded;
-        setSkills(list);
-        setCandidates(inbox);
+    loadSkillsViewState(api)
+      .then((state) => {
+        if (!live) return;
+        setLearningOn(state.learningOn);
+        setSkills(state.skills);
+        setCandidates(state.candidates);
       })
       .catch(e => { if (live) onError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (live) setLoading(false); });

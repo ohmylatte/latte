@@ -9,7 +9,7 @@ vi.mock('./browser-api', () => ({ isDesktop: true, api: {} }));
 
 const { createElement } = await import('react');
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { SkillsViewContent } = await import('./SkillsView');
+const { loadSkillsViewState, SkillsViewContent } = await import('./SkillsView');
 const { formatMessage } = await import('./i18n');
 
 const skill = { id: 'writing', name: 'Escritura', summary: 's', enabled: true };
@@ -22,6 +22,25 @@ describe('SkillsView learning inbox', () => {
       learningOn: false, skills: [skill], candidates: [], loading: false, busy: '',
       onToggle: noop, onDecide: noop, onPromote: noop,
     }));
+    expect(html).not.toContain(formatMessage('es-AR', 'learning.inbox'));
+    expect(html).not.toContain(formatMessage('es-AR', 'learning.empty'));
+  });
+
+  it('still lists shipped skills when featureFlags rejects', async () => {
+    ui.locale = 'es-AR';
+    const state = await loadSkillsViewState({
+      featureFlags: async () => { throw new Error('flags down'); },
+      listSkills: async () => [skill],
+      listSkillCandidates: async () => { throw new Error('inbox should not load'); },
+    });
+    expect(state.skills).toEqual([skill]);
+    expect(state.learningOn).toBe(false);
+    expect(state.candidates).toEqual([]);
+    const html = renderToStaticMarkup(createElement(SkillsViewContent, {
+      ...state, loading: false, busy: '',
+      onToggle: noop, onDecide: noop, onPromote: noop,
+    }));
+    expect(html).toContain(skill.name);
     expect(html).not.toContain(formatMessage('es-AR', 'learning.inbox'));
     expect(html).not.toContain(formatMessage('es-AR', 'learning.empty'));
   });
