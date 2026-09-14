@@ -1,3 +1,5 @@
+import { LEARNING_SCHEMA_SQL } from './learningSchema';
+
 /**
  * Schema is applied idempotently on every start. Revisions are immutable by
  * contract AND by database triggers: no code path can update or delete them.
@@ -123,7 +125,7 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-`;
+` + LEARNING_SCHEMA_SQL;
 
 /**
  * Not bumped for works.expected_output / works.result_path (nor for
@@ -136,4 +138,4 @@ CREATE TABLE IF NOT EXISTS meta (
  * and an existing one, so the works table above stays exactly what schema 7
  * defines.
  */
-export const SCHEMA_VERSION = '7';
+export const SCHEMA_VERSION = '8';

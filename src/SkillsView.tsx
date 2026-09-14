@@ -1,7 +1,7 @@
 import { translate as t } from './i18n';
 import { useEffect, useState } from 'react';
 import { Sparkles } from 'lucide-react';
-import type { AgentSkill } from '../shared/contracts';
+import type { AgentSkill, SkillCandidate } from '../shared/contracts';
 import { api, isDesktop } from './browser-api';
 
 /**
@@ -17,17 +17,20 @@ import { api, isDesktop } from './browser-api';
  */
 export function SkillsView({ onError, onNotice }: { onError: (text: string) => void; onNotice: (text: string) => void }) {
   const [skills, setSkills] = useState<AgentSkill[]>([]);
+  const [candidates, setCandidates] = useState<SkillCandidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
 
   useEffect(() => {
     let live = true;
-    api.listSkills()
-      .then(list => { if (live) setSkills(list); })
+    Promise.all([api.listSkills(), api.listSkillCandidates()])
+      .then(([list, inbox]) => { if (live) { setSkills(list); setCandidates(inbox); } })
       .catch(e => { if (live) onError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, []);
+
+  const refreshInbox = async () => setCandidates(await api.listSkillCandidates());
 
   const toggle = async (skill: AgentSkill) => {
     setBusy(skill.id);
@@ -36,6 +39,40 @@ export function SkillsView({ onError, onNotice }: { onError: (text: string) => v
       onNotice(skill.enabled
         ? t('ui.auto.392', { p0: skill.name })
         : t('ui.auto.393', { p0: skill.name }));
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const decide = async (candidate: SkillCandidate, decision: 'approve' | 'reject') => {
+    setBusy(candidate.id);
+    try {
+      const input = { candidateId: candidate.id, expectedRevision: candidate.revision, expectedHash: candidate.contentHash, requestId: crypto.randomUUID() };
+      if (decision === 'approve') {
+        const approved = await api.approveSkillCandidate(input);
+        onNotice(t('learning.approved', { name: approved.name }));
+      } else {
+        await api.rejectSkillCandidate(input);
+        onNotice(t('learning.rejected'));
+      }
+      await refreshInbox();
+    } catch (e) {
+      const code = e && typeof e === 'object' && 'code' in e ? String((e as { code: string }).code) : '';
+      onError(code === 'CONFLICT' ? t('learning.conflict') : e instanceof Error ? e.message : String(e));
+      try { await refreshInbox(); } catch { /* keep the last list */ }
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const promote = async (candidate: SkillCandidate) => {
+    setBusy(candidate.id);
+    try {
+      await api.promoteSkillCandidate({ candidateId: candidate.id, requestId: crypto.randomUUID() });
+      onNotice(t('learning.promoted'));
+      await refreshInbox();
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -62,5 +99,21 @@ export function SkillsView({ onError, onNotice }: { onError: (text: string) => v
       </div>)}
     </div>
     {skills.length > 0 && <p className="footnote">{t('ui.auto.265')}</p>}
+    <h2>{t('learning.inbox')}</h2>
+    <p className="settings-lead">{t('learning.lead')}</p>
+    {candidates.some(c => c.duplicateSpend) && <p className="footnote">{t('learning.spend')}</p>}
+    {!loading && candidates.length === 0 && <p className="footnote">{t('learning.empty')}</p>}
+    <div className="skill-list">
+      {candidates.map(candidate => <div key={candidate.id} className="skill-card">
+        <Sparkles size={17} />
+        <div>
+          <strong>{candidate.name}<small>{candidate.scopeKey}</small></strong>
+          <p>{candidate.description}</p>
+        </div>
+        <button disabled={busy === candidate.id} onClick={() => void decide(candidate, 'approve')}>{t('learning.approve')}</button>
+        <button disabled={busy === candidate.id} onClick={() => void decide(candidate, 'reject')}>{t('learning.reject')}</button>
+        <button disabled={busy === candidate.id} onClick={() => void promote(candidate)}>{t('learning.promote')}</button>
+      </div>)}
+    </div>
   </section>;
 }

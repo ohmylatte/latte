@@ -109,7 +109,7 @@ export const browserAPI: LatteAPI = {
   // files on the machine that runs the agent, so the preview lists none and
   // refuses the actions instead of pretending it can reach a disk.
   listDeliverables:async()=>({files:[],truncated:false}),openDeliverable:unavailable,revealDeliverable:unavailable,copyDeliverable:unavailable,
-listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSkillEnabled:unavailable,applyFunnelProposal:unavailable,dismissFunnelProposal:unavailable,trackFile:unavailable,
+listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSkillEnabled:unavailable,listSkillCandidates:async()=>[],approveSkillCandidate:unavailable,rejectSkillCandidate:unavailable,promoteSkillCandidate:unavailable,applyFunnelProposal:unavailable,dismissFunnelProposal:unavailable,trackFile:unavailable,
   saveAsDocument:async(workId,kind,title,content)=>{const c=await browserAPI.createDocument(workId,kind,title);await browserAPI.saveDocument(c.document.id,content,c.fingerprint);return c.document;},
   getWorkPermissions:async()=>'ask' as const,setWorkPermissions:unavailable,
   acknowledgeBase:async documentId=>mutate(s=>{const d=contentFrom(s,documentId).document;if(d.baseDocumentId)d.baseFingerprint=contentFrom(s,d.baseDocumentId).fingerprint;return d;}),
