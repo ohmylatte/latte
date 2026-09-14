@@ -9,6 +9,7 @@ import { CodexChatAdapter } from '../../electron/agents/codex/codexAdapter';
 import { RoleCatalog } from '../../electron/agents/roles';
 import { openDriver } from '../../electron/storage/openDriver';
 import { LatteRepository } from '../../electron/storage/repository';
+import { SCHEMA_VERSION } from '../../electron/storage/schema';
 import { loadInstructionPack, parseRole } from '../../electron/workspace/packs';
 import { fakeRunner, makeBackend, makeTempDir, removeDir, type TestBackend } from './helpers';
 import { startFakeOpenCode, type FakeOpenCode } from './fakeOpenCode';
@@ -78,7 +79,7 @@ describe('Team members persistence', () => {
     expect(members.map((m) => [m.roleId, m.runtime, m.sessionId])).toEqual([['assistant', 'claude', 'sess-old'], ['assistant', 'opencode', 'ses_oc']]);
     expect(members[0].id).toMatch(/^mem_[a-f0-9]{20}$/);
     expect(driver.all("SELECT name FROM sqlite_master WHERE name = 'chat_sessions'")).toEqual([]);
-    expect(repo.getMeta('schema_version')).toBe('8');
+    expect(repo.getMeta('schema_version')).toBe(SCHEMA_VERSION);
     repo.close();
   });
 

@@ -44,6 +44,9 @@ import type {
   RevisionSource,
   RuntimeStatus,
   SaveOutcome,
+  SkillCandidate,
+  SkillPromoteInput,
+  SkillReviewInput,
   TeamMember,
   TeamMemberOptions,
   UntrackedFile,
@@ -81,6 +84,10 @@ import type { ChatManager } from '../opencode/chatManager';
 import { RuntimeDetector } from '../runtime/detect';
 import { assertProvider } from '../runtime/providers';
 import { TerminalManager } from '../runtime/terminalManager';
+import { LearningService } from '../learning/service';
+import type { SkillCandidateRecord } from '../learning/types';
+import type { CandidateGenerator } from '../learning/worker';
+import type { LearningRepository } from '../storage/learningRepository';
 import { briefDocumentId, type DocumentRecord, type LatteRepository } from '../storage/repository';
 import { INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
 import { checkFolder, contains, importFileName, kindFromFileName, readFunnelProposal, readHandoff, scanFolder, titleFromFileName } from '../workspace/linkFolder';
@@ -117,6 +124,9 @@ export type BackendApi = Omit<
 
 export interface LatteServiceDeps {
   repo: LatteRepository;
+  learning: LearningRepository;
+  learningGenerator?: CandidateGenerator;
+  learningNow?: () => Date;
   files: WorkspaceFiles;
   detector: RuntimeDetector;
   terminal: TerminalManager;
@@ -219,6 +229,7 @@ function validateMemberOptions(options: unknown): { runtime: ChatRuntime | null;
 export class LatteService implements BackendApi {
   private readonly clock: () => string;
   readonly branding: BrandingService;
+  readonly learningService: LearningService;
 
   constructor(private readonly deps: LatteServiceDeps) {
     this.clock = deps.clock ?? nowIso;
@@ -227,6 +238,13 @@ export class LatteService implements BackendApi {
       files: deps.files,
       chooseFolder: deps.chooseFolder,
       clock: this.clock,
+    });
+    this.learningService = new LearningService({
+      learning: deps.learning,
+      works: { getWork: (id) => deps.repo.getWork(id) },
+      meta: deps.repo,
+      generator: deps.learningGenerator,
+      now: deps.learningNow,
     });
   }
 
@@ -745,6 +763,23 @@ export class LatteService implements BackendApi {
     if (!(this.deps.pack?.skills ?? []).some((s) => s.id === id)) throw new ValidationError('Esa skill no viene con Latte');
     this.deps.repo.setMeta(SKILL_OFF_KEY + id, enabled ? '0' : '1');
     return this.listSkills();
+  }
+
+  async listSkillCandidates(): Promise<SkillCandidate[]> {
+    const spend = this.learningService.duplicateSpendVisible().length > 0;
+    return this.learningService.listInbox().map((row) => toSkillCandidate(row, spend));
+  }
+
+  async approveSkillCandidate(input: SkillReviewInput): Promise<SkillCandidate> {
+    return toSkillCandidate(this.learningService.approve(input), false);
+  }
+
+  async rejectSkillCandidate(input: SkillReviewInput): Promise<SkillCandidate> {
+    return toSkillCandidate(this.learningService.reject(input), false);
+  }
+
+  async promoteSkillCandidate(input: SkillPromoteInput): Promise<SkillCandidate> {
+    return toSkillCandidate(this.learningService.promote(input), false);
   }
 
   private skillEnabled(skillId: string): boolean {
@@ -1603,4 +1638,21 @@ export class LatteService implements BackendApi {
       skillRefs: latest.context.skillRefs,
     };
   }
+}
+
+function toSkillCandidate(row: SkillCandidateRecord, duplicateSpend: boolean): SkillCandidate {
+  return {
+    id: row.id,
+    skillId: row.skillId,
+    scopeKey: row.scopeKey,
+    state: row.state,
+    revision: row.revision,
+    contentHash: row.contentHash,
+    name: row.name,
+    description: row.description,
+    markdown: row.markdown,
+    patternKey: row.patternKey,
+    createdAt: row.createdAt,
+    duplicateSpend,
+  };
 }

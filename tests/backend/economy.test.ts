@@ -12,6 +12,7 @@ import { addUsage, parseUsage } from '../../electron/core/usage';
 import { API_ARITY, API_METHODS } from '../../electron/ipc/channels';
 import { openDriver } from '../../electron/storage/openDriver';
 import { LatteRepository } from '../../electron/storage/repository';
+import { SCHEMA_VERSION } from '../../electron/storage/schema';
 import { loadInstructionPack, parseRole } from '../../electron/workspace/packs';
 import { fakeRunner, makeBackend, makeTempDir, removeDir, type TestBackend } from './helpers';
 import { startFakeOpenCode, type FakeOpenCode } from './fakeOpenCode';
@@ -143,7 +144,7 @@ describe('Team member storage: tier and lifetime usage', () => {
     expect(old).toMatchObject({ tier: 'balanced', sessionId: 'sess-old' });
     expect(old.usage).toEqual(EMPTY_USAGE);
     // No bump: an older build must keep opening this database.
-    expect(repo.getMeta('schema_version')).toBe('8');
+    expect(repo.getMeta('schema_version')).toBe(SCHEMA_VERSION);
     repo.close();
   });
 

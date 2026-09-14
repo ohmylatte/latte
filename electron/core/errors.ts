@@ -29,6 +29,13 @@ export class UnavailableError extends LatteError {
   }
 }
 
+export class ConflictError extends LatteError {
+  constructor(message: string) {
+    super('CONFLICT', message);
+    this.name = 'ConflictError';
+  }
+}
+
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);

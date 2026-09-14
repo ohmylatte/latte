@@ -191,6 +191,40 @@ export interface HandoffRequest { fileName: string; roleId: string; roleName: st
 
 export interface AgentSkill { id: string; name: string; summary: string; enabled: boolean }
 
+/** Learned-skill candidate waiting on a human. Never mixed with shipped `skill-off:` ids. */
+export type SkillCandidateState =
+  | 'draft'
+  | 'validating'
+  | 'needs_review'
+  | 'blocked'
+  | 'approved'
+  | 'rejected'
+  | 'superseded';
+export interface SkillCandidate {
+  id: string;
+  skillId: string;
+  scopeKey: string;
+  state: SkillCandidateState;
+  revision: number;
+  contentHash: string;
+  name: string;
+  description: string;
+  markdown: string;
+  patternKey: string;
+  createdAt: string;
+  duplicateSpend: boolean;
+}
+export interface SkillReviewInput {
+  candidateId: string;
+  expectedRevision: number;
+  expectedHash: string;
+  requestId: string;
+}
+export interface SkillPromoteInput {
+  candidateId: string;
+  requestId: string;
+}
+
 export interface FolderEntries { subfolders: string[]; otherFiles: string[]; truncated: boolean }
 export interface DeliverableFile { fileName: string; extension: string; bytes: number; modifiedAt: string }
 export interface DeliverableListing { files: DeliverableFile[]; truncated: boolean }
@@ -497,6 +531,11 @@ export interface LatteAPI {
   /** Skills shipped with Latte and whether each one is on. */
   listSkills(): Promise<AgentSkill[]>;
   setSkillEnabled(skillId: string, enabled: boolean): Promise<AgentSkill[]>;
+  /** Learned-skill inbox. Empty while the installation flag is off. */
+  listSkillCandidates(): Promise<SkillCandidate[]>;
+  approveSkillCandidate(input: SkillReviewInput): Promise<SkillCandidate>;
+  rejectSkillCandidate(input: SkillReviewInput): Promise<SkillCandidate>;
+  promoteSkillCandidate(input: SkillPromoteInput): Promise<SkillCandidate>;
   /** Takes the agent's funnel proposal as the document's stages. */
   applyFunnelProposal(documentId: string): Promise<WorkDocument>;
   /** Drops the proposal and leaves the stages as they were. */

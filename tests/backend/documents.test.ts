@@ -3,6 +3,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDriver } from '../../electron/storage/openDriver';
 import { briefDocumentId, LatteRepository } from '../../electron/storage/repository';
+import { SCHEMA_VERSION } from '../../electron/storage/schema';
 import { documentFileName, fingerprintOf } from '../../electron/workspace/workspace';
 import { makeBackend, makeTempDir, removeDir, type TestBackend } from './helpers';
 
@@ -239,7 +240,7 @@ describe('Migration v3 -> v4', () => {
     const revisions = repo.listDocumentRevisions('wrk_1', briefDocumentId('wrk_1'));
     expect(revisions.map((r) => [r.id, r.documentId, r.source])).toEqual([['rev_old', briefDocumentId('wrk_1'), 'human']]);
     expect(driver.get<{ document_id: string | null }>('SELECT document_id FROM revisions WHERE id = ?', ['rev_old'])?.document_id).toBeNull();
-    expect(repo.getMeta('schema_version')).toBe('8');
+    expect(repo.getMeta('schema_version')).toBe(SCHEMA_VERSION);
     repo.close();
   });
 });

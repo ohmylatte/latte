@@ -4,7 +4,7 @@ import { expect, it } from 'vitest';
 import { makeBackend, makeTempDir, removeDir, fakeRunner } from './helpers';
 import { openDriver } from '../../electron/storage/openDriver';
 import { LatteRepository } from '../../electron/storage/repository';
-import { SCHEMA_SQL } from '../../electron/storage/schema';
+import { SCHEMA_SQL, SCHEMA_VERSION } from '../../electron/storage/schema';
 import { startFakeOpenCode } from './fakeOpenCode';
 
 it('persists explicit stages without changing document identity, file, content or revisions', async () => {
@@ -39,7 +39,7 @@ it.each(['node:sqlite', 'sql.js'] as const)('migrates legacy v5 and reopens twic
       const { driver } = await openDriver(file, engine);
       const repo = new LatteRepository(driver);
       repo.migrate(); repo.migrate();
-      expect(repo.getMeta('schema_version')).toBe('8');
+      expect(repo.getMeta('schema_version')).toBe(SCHEMA_VERSION);
       expect(repo.getWork('w').brief).toBe('content');
       const document = repo.briefDocument('w');
       expect(document.funnelStages).toEqual(pass === 0 ? [] : ['retention']);
