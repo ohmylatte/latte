@@ -57,8 +57,6 @@ import type {
 } from '../../shared/contracts';
 import {
   GENERATION_ENABLED_META,
-  NOOP_BRAND_CONTEXT,
-  NOOP_SKILL_RESOLVER,
   isGenerationEnabled,
   type BrandContextPort,
   type SkillRef,
@@ -67,6 +65,8 @@ import {
 import { GenerationContractError } from '../generation/errors';
 import { prepareGeneration as runPrepareGeneration } from '../generation/prepare';
 import { pinGeneration } from '../generation/pin';
+import { brandContextAdapter } from '../generation/adapters/brandContext';
+import { skillResolverAdapter } from '../generation/adapters/skillResolver';
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 import { createHash } from 'node:crypto';
@@ -230,6 +230,8 @@ export class LatteService implements BackendApi {
   private readonly clock: () => string;
   readonly branding: BrandingService;
   readonly learningService: LearningService;
+  private readonly brandContextPort: BrandContextPort;
+  private readonly skillResolverPort: SkillResolverPort;
 
   constructor(private readonly deps: LatteServiceDeps) {
     this.clock = deps.clock ?? nowIso;
@@ -246,6 +248,8 @@ export class LatteService implements BackendApi {
       generator: deps.learningGenerator,
       now: deps.learningNow,
     });
+    this.brandContextPort = deps.brandContext ?? brandContextAdapter(this.branding);
+    this.skillResolverPort = deps.skillResolver ?? skillResolverAdapter(this.learningService);
   }
 
   // App ---------------------------------------------------------------------
@@ -424,8 +428,8 @@ export class LatteService implements BackendApi {
           return { id: found.id, brandId: found.brandId };
         },
       },
-      brand: this.deps.brandContext ?? NOOP_BRAND_CONTEXT,
-      skills: this.deps.skillResolver ?? NOOP_SKILL_RESOLVER,
+      brand: this.brandContextPort,
+      skills: this.skillResolverPort,
       insert: (receipt) => this.deps.repo.insertGeneration(receipt),
       pin: ({ generationId, work: pinned, context, snapshot, contextHash }) => {
         pinGeneration({
