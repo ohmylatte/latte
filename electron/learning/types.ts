@@ -125,7 +125,6 @@ export interface SkillResolver {
 }
 
 export const AGENCY_SCOPE_KEY = 'agency:local';
-export const LEARNING_FEATURE_KEY = 'feature:learning';
 export const LEARNING_CAPTURE_KEY = 'learning_capture';
 export const LEARNING_DAILY_CAP_KEY = 'learning_daily_cost_cap_micros';
 export const MAX_MARKDOWN_BYTES = 12_288;

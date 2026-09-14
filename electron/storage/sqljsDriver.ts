@@ -40,10 +40,9 @@ export class SqlJsDriver implements SqlDriver {
 
   run(sql: string, params: SqlParam[] = []): number {
     this.db.run(sql, params);
-    // Read changes() on this connection BEFORE flush(). export() reopens the
-    // handle and sqlite3_changes() resets to 0, which would turn a successful
-    // INSERT ON CONFLICT DO NOTHING into a false VERSION_CONFLICT.
-    const n = Number(this.get<{ n: number }>('SELECT changes() AS n')?.n ?? 0);
+    // sql.js 1.14.2: getRowsModified() is sqlite3_changes() on this handle.
+    // Read it BEFORE flush(); export() reopens the connection and resets it.
+    const n = (this.db as Database & { getRowsModified: () => number }).getRowsModified();
     this.markDirty();
     return n;
   }

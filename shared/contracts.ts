@@ -76,7 +76,8 @@ export interface WorkBrandPolicyView {
 /** Resolved composition. Generation worktree adapts this to its port after merge. */
 export interface BrandContextSnapshot {
   schemaVersion: 1;
-  generationId: string;
+  /** Present only on a sealed generation. Preview IPC omits it; prepareGeneration mints the id. */
+  generationId?: string;
   workId: string;
   brandId: string;
   choice: BrandChoice;
@@ -102,7 +103,6 @@ export interface WorkBrandContextView {
     skillRefs: ReadonlyArray<{ skillId: string; version: number; hash: string }>;
   };
   snapshot: BrandContextSnapshot;
-  pinnedDir: string | null;
 }
 /** Where a stored version came from. `external` = the file changed outside Latte; we never guess who wrote it. */
 export type RevisionSource = 'human' | 'external' | 'latte';

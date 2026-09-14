@@ -1,6 +1,6 @@
 import { ValidationError } from '../core/errors';
 import { ID_PATTERN } from '../core/ids';
-import { isHexSha256 } from './hash';
+import { isHexSha256 } from '../core/canonical';
 import { isLearningId } from './ids';
 import { MAX_MARKDOWN_BYTES, type CandidatePayload, type EvidenceRef } from './types';
 

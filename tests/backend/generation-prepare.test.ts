@@ -33,7 +33,7 @@ function harness(over: {
   const receipts: GenerationReceipt[] = [];
   const pins: string[] = [];
   let refreshed = 0;
-  const brand: BrandContextPort = over.brand ?? { resolveForWork: () => snapshotA };
+  const brand: BrandContextPort = over.brand ?? { resolveForWork: () => snapshotA, pinAssets: () => [] };
   const skills: SkillResolverPort = over.skills ?? {
     resolveApproved: ({ brandId }) => {
       if (brandId !== 'brd_a') return { refs: [], excluded: [] };
@@ -91,7 +91,7 @@ describe('prepareGeneration', () => {
 
   it('fails closed on a snapshot that belongs to another brand instead of inheriting agency', () => {
     const h = harness({
-      brand: { resolveForWork: () => ({ ...snapshotA, brandId: 'brd_other' }) },
+      brand: { resolveForWork: () => ({ ...snapshotA, brandId: 'brd_other' }), pinAssets: () => [] },
     });
     expect(() => h.run()).toThrow(GenerationContractError);
     try { h.run(); } catch (error) { expect((error as GenerationContractError).code).toBe('BRAND_SCOPE_MISMATCH'); }
@@ -103,7 +103,7 @@ describe('prepareGeneration', () => {
     expect(() =>
       prepareGeneration({
         works: { requireWork: () => { throw new GenerationContractError('WORK_NOT_FOUND'); } },
-        brand: { resolveForWork: () => snapshotA },
+        brand: { resolveForWork: () => snapshotA, pinAssets: () => [] },
         skills: { resolveApproved: () => ({ refs: [], excluded: [] }) },
         insert: (r) => r,
         pin: () => undefined,

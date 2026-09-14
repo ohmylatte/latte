@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FEATURE_KEYS, featureEnabled, isFeatureOn, requireFeature } from '../../electron/core/features';
-import { FEATURE_BRAND_KITS } from '../../electron/branding/types';
-import { LEARNING_FEATURE_KEY } from '../../electron/learning/types';
-import { GENERATION_ENABLED_META } from '../../shared/generationContracts';
+import { FEATURE_KEYS, FEATURE_ON, featureEnabled, isFeatureOn, requireFeature } from '../../electron/core/features';
 import { makeBackend, type TestBackend } from './helpers';
 
 const payload = {
@@ -31,9 +28,9 @@ describe('feature flags helper', () => {
     expect(isFeatureOn('1')).toBe(false);
     expect(isFeatureOn(null)).toBe(false);
     expect(FEATURE_KEYS.generation).toBe('feature:generation');
-    expect(FEATURE_KEYS.brandKits).toBe(FEATURE_BRAND_KITS);
-    expect(FEATURE_KEYS.learning).toBe(LEARNING_FEATURE_KEY);
-    expect(GENERATION_ENABLED_META).toBe(FEATURE_KEYS.generation);
+    expect(FEATURE_KEYS.brandKits).toBe('feature:brand-kits');
+    expect(FEATURE_KEYS.learning).toBe('feature:learning');
+    expect(FEATURE_ON).toBe('on');
     const meta: Record<string, string> = {};
     expect(featureEnabled((k) => meta[k] ?? null, 'generation')).toBe(false);
     expect(() => requireFeature((k) => meta[k] ?? null, 'learning')).toThrow(/FEATURE_DISABLED|disabled/i);

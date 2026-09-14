@@ -1,8 +1,5 @@
-import { HEX_SHA256 } from '../../shared/generationContracts';
 import { canonicalJson, sha256Utf8 } from '../core/canonical';
 import { PATTERN_ALGO, type HexSha256 } from './types';
-
-export { sha256Utf8 };
 
 /** Canonical bytes of a validated package. Key order is part of the contract. */
 export function canonicalSkillJson(input: { name: string; description: string; markdown: string }): string {
@@ -37,6 +34,4 @@ export function commandHash(command: {
   }));
 }
 
-export function isHexSha256(value: unknown): value is HexSha256 {
-  return typeof value === 'string' && HEX_SHA256.test(value);
-}
+

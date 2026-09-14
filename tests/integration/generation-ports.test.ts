@@ -1,9 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FEATURE_BRAND_KITS } from '../../electron/branding/types';
-import { LEARNING_CAPTURE_KEY, LEARNING_FEATURE_KEY } from '../../electron/learning/types';
-import { GENERATION_ENABLED_META } from '../../shared/generationContracts';
+import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
+import { LEARNING_CAPTURE_KEY } from '../../electron/learning/types';
 import type { CandidatePayload } from '../../electron/learning/types';
 import { makeBackend, makeTempDir, MINIMAL_PNG, removeDir, type TestBackend } from '../backend/helpers';
 
@@ -57,10 +56,10 @@ describe('wired generation ports', () => {
     const brandFolder = writeKit(kitDir);
     const b = await makeBackend({ chooseFolder: async () => brandFolder });
     backends.push(b);
-    b.repo.setMeta(FEATURE_BRAND_KITS, 'on');
-    b.repo.setMeta(LEARNING_FEATURE_KEY, 'on');
+    b.repo.setMeta(FEATURE_KEYS.brandKits, FEATURE_ON);
+    b.repo.setMeta(FEATURE_KEYS.learning, FEATURE_ON);
     b.repo.setMeta(LEARNING_CAPTURE_KEY, 'manual');
-    b.repo.setMeta(GENERATION_ENABLED_META, 'on');
+    b.repo.setMeta(FEATURE_KEYS.generation, FEATURE_ON);
 
     const alpha = await b.service.createBrand('Alpha');
     const beta = await b.service.createBrand('Beta');

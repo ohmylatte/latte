@@ -1,4 +1,4 @@
-import { canonicalJson, isHexSha256, sha256Utf8 } from '../core/canonical';
+import { canonicalJson, sha256Utf8 } from '../core/canonical';
 import {
   BrandKitError,
   NEUTRAL_RULES,
@@ -14,8 +14,6 @@ import {
   type SkillRef,
   type WorkBrandPolicy,
 } from './types';
-
-export { canonicalJson, sha256Bytes, sha256Utf8 } from '../core/canonical';
 
 export function selectKit(choice: Choice, brandKit: Kit | null, agencyKit: Kit | null): Kit | null {
   if (choice.identity === 'brand') return brandKit;
@@ -123,50 +121,50 @@ export function resolveBrandContext(input: {
   };
 }
 
-export function isSha256(value: string): boolean {
-  return isHexSha256(value);
-}
-
 /**
- * Receipt kitId is the generationId of this composition, not the source kit.
- * brandContext is null only for neutral identity with no signature.
+ * Preview omits `generationId`: prepareGeneration mints the real id.
+ * Receipt kitId is that generationId, not the source kit. brandContext is null
+ * when there is no identity/signature, or when this is a preview (no generationId).
  */
-export function composeBrandContext(
-  generationId: string,
-  workId: string,
-  brandId: string,
-  choice: Choice,
-  resolution: Resolution,
-  skillRefs: readonly SkillRef[],
-  hashUtf8: (s: string) => Sha256 = sha256Utf8,
-): ComposedBrandContext {
+export function composeBrandContext(input: {
+  workId: string;
+  brandId: string;
+  choice: Choice;
+  resolution: Resolution;
+  skillRefs?: readonly SkillRef[];
+  generationId?: string;
+  hashUtf8?: (s: string) => Sha256;
+}): ComposedBrandContext {
+  const hashUtf8 = input.hashUtf8 ?? sha256Utf8;
+  const skillRefs = input.skillRefs ?? [];
   const snapshot: BrandContextSnapshot = {
     schemaVersion: 1,
-    generationId,
-    workId,
-    brandId,
-    choice,
-    identity: resolution.identity,
-    sourceKit: resolution.sourceKit,
-    rules: resolution.rules,
-    assets: resolution.assets
+    ...(input.generationId ? { generationId: input.generationId } : {}),
+    workId: input.workId,
+    brandId: input.brandId,
+    choice: input.choice,
+    identity: input.resolution.identity,
+    sourceKit: input.resolution.sourceKit,
+    rules: input.resolution.rules,
+    assets: input.resolution.assets
       .map((a) => ({ id: a.id, hash: a.hash }))
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
-    signature: resolution.signature && {
-      agencyRevision: resolution.signature.agencyRevision,
-      hash: resolution.signature.hash,
-      publicName: resolution.signature.publicName,
-      website: resolution.signature.website ?? null,
-      logo: resolution.signature.logo && {
-        id: resolution.signature.logo.id,
-        hash: resolution.signature.logo.hash,
+    signature: input.resolution.signature && {
+      agencyRevision: input.resolution.signature.agencyRevision,
+      hash: input.resolution.signature.hash,
+      publicName: input.resolution.signature.publicName,
+      website: input.resolution.signature.website ?? null,
+      logo: input.resolution.signature.logo && {
+        id: input.resolution.signature.logo.id,
+        hash: input.resolution.signature.logo.hash,
       },
     },
-    warnings: resolution.warnings,
+    warnings: input.resolution.warnings,
   };
   const hash = hashUtf8(canonicalJson(snapshot));
-  const hasInputs = resolution.sourceKit !== null || resolution.signature !== null;
-  const brandContext: KitRef | null = hasInputs ? { kitId: generationId, version: 1, hash } : null;
-  const receipt: GenerationContext = { schemaVersion: 1, workId, brandId, brandContext, skillRefs };
+  const hasInputs = input.resolution.sourceKit !== null || input.resolution.signature !== null;
+  const brandContext: KitRef | null =
+    hasInputs && input.generationId ? { kitId: input.generationId, version: 1, hash } : null;
+  const receipt: GenerationContext = { schemaVersion: 1, workId: input.workId, brandId: input.brandId, brandContext, skillRefs };
   return { receipt, snapshot };
 }

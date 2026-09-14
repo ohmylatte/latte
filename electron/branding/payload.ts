@@ -1,6 +1,6 @@
 import { ValidationError } from '../core/errors';
 import { requireId, requireInt, requireLabel, requireText } from '../services/validation';
-import { isSha256 } from './resolver';
+import { isHexSha256 } from '../core/canonical';
 import type { Choice } from './types';
 
 const CHOICE_IDENTITIES = new Set(['brand', 'agency', 'neutral']);
@@ -45,8 +45,8 @@ export function requireChoice(value: unknown): WorkBrandChoiceInput {
   return {
     identity: identity as Choice['identity'],
     signature: signature as Choice['signature'],
-    ...(allowNeutral !== undefined ? { allowNeutral } : {}),
-    ...(allowAgencySignature !== undefined ? { allowAgencySignature } : {}),
+    allowNeutral: allowNeutral as boolean | undefined,
+    allowAgencySignature: allowAgencySignature as boolean | undefined,
   };
 }
 
@@ -143,7 +143,7 @@ export function parseManifest(raw: string): BrandManifest {
 }
 
 export function assertSha256(value: string, name: string): void {
-  if (!isSha256(value)) throw new ValidationError(`Invalid ${name}`);
+  if (!isHexSha256(value)) throw new ValidationError(`Invalid ${name}`);
 }
 
 export function rulesLookUntrusted(rules: string): string[] {

@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { canonicalJson, sha256Utf8 } from '../../electron/core/canonical';
 import {
   authorizeWork,
-  canonicalJson,
   composeBrandContext,
   kitsForAuthorizedWork,
   resolveBrandContext,
-  sha256Utf8,
 } from '../../electron/branding/resolver';
 import { BrandKitError, implicitWorkBrandPolicy, type BrandAccess, type Kit, type Signature } from '../../electron/branding/types';
 
@@ -133,14 +132,20 @@ describe('resolveBrandContext', () => {
 describe('composeBrandContext', () => {
   it('neutro autorizado sin kit ni firma → brandContext === null', () => {
     const resolution = resolveA({ choice: { identity: 'neutral', signature: 'none' }, brandKit: null });
-    const { receipt, snapshot } = composeBrandContext('gen_one', 'wrk_one', 'brd_alpha', { identity: 'neutral', signature: 'none' }, resolution, []);
+    const { receipt, snapshot } = composeBrandContext({
+      workId: 'wrk_one', brandId: 'brd_alpha', choice: { identity: 'neutral', signature: 'none' }, resolution,
+    });
     expect(receipt.brandContext).toBeNull();
     expect(snapshot.sourceKit).toBeNull();
+    expect(snapshot.generationId).toBeUndefined();
   });
 
   it('neutro autorizado con firma → brandContext !== null && sourceKit === null', () => {
     const resolution = resolveA({ choice: { identity: 'neutral', signature: 'agency' }, brandKit: null });
-    const { receipt, snapshot } = composeBrandContext('gen_two', 'wrk_one', 'brd_alpha', { identity: 'neutral', signature: 'agency' }, resolution, []);
+    const { receipt, snapshot } = composeBrandContext({
+      workId: 'wrk_one', brandId: 'brd_alpha', choice: { identity: 'neutral', signature: 'agency' }, resolution,
+      generationId: 'gen_two',
+    });
     expect(receipt.brandContext).not.toBeNull();
     expect(receipt.brandContext?.kitId).toBe('gen_two');
     expect(snapshot.sourceKit).toBeNull();
@@ -149,10 +154,22 @@ describe('composeBrandContext', () => {
 
   it('el kitId del recibo es el generationId, no el kit fuente', () => {
     const resolution = resolveA({});
-    const { receipt } = composeBrandContext('gen_comp', 'wrk_one', 'brd_alpha', { identity: 'brand', signature: 'none' }, resolution, []);
+    const { receipt } = composeBrandContext({
+      workId: 'wrk_one', brandId: 'brd_alpha', choice: { identity: 'brand', signature: 'none' }, resolution,
+      generationId: 'gen_comp',
+    });
     expect(receipt.brandContext?.kitId).toBe('gen_comp');
     expect(receipt.brandContext?.kitId).not.toBe(brandA.ref.kitId);
     expect(receipt.brandContext?.version).toBe(1);
+  });
+
+  it('preview without generationId does not seal a receipt kitId', () => {
+    const resolution = resolveA({});
+    const { receipt, snapshot } = composeBrandContext({
+      workId: 'wrk_one', brandId: 'brd_alpha', choice: { identity: 'brand', signature: 'none' }, resolution,
+    });
+    expect(snapshot.generationId).toBeUndefined();
+    expect(receipt.brandContext).toBeNull();
   });
 
   it('canonicalJson es estable ante el orden de claves', () => {

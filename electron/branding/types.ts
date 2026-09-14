@@ -115,7 +115,8 @@ export interface BrandAccess {
 /** Snapshot of a resolved composition. Generation adapts this to its port after merge. */
 export type BrandContextSnapshot = Readonly<{
   schemaVersion: 1;
-  generationId: string;
+  /** Omit on preview; prepareGeneration mints the real id. */
+  generationId?: string;
   workId: string;
   brandId: string;
   choice: Choice;
@@ -138,5 +139,4 @@ export type ComposedBrandContext = Readonly<{
   snapshot: BrandContextSnapshot;
 }>;
 
-export { FEATURE_KEYS } from '../core/features';
-export const FEATURE_BRAND_KITS = 'feature:brand-kits';
+
