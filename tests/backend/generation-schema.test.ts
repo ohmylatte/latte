@@ -65,6 +65,17 @@ describe.each(ENGINES)('generation schema on %s', (engine) => {
     expect(repo.listGenerationsForWork('wrk_a')).toHaveLength(1);
   });
 
+  it('lists the last inserted receipt first when created_at ties', () => {
+    const first = receipt({ id: 'gen_zzzzzzzzzzzzzzzzzzzz' });
+    const second = receipt({ id: 'gen_aaaaaaaaaaaaaaaaaaaa' });
+    repo.insertGeneration(first);
+    repo.insertGeneration(second);
+    expect(repo.listGenerationsForWork('wrk_a').map((r) => r.id)).toEqual([
+      'gen_aaaaaaaaaaaaaaaaaaaa',
+      'gen_zzzzzzzzzzzzzzzzzzzz',
+    ]);
+  });
+
   it('refuses UPDATE and DELETE on the immutable receipt', () => {
     repo.insertGeneration(receipt());
     expect(() => driver.run('UPDATE generations SET context_json = ? WHERE id = ?', ['hacked', 'gen_aaaaaaaaaaaaaaaaaaaa'])).toThrow(/immutable/);

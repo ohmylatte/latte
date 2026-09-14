@@ -5,7 +5,7 @@ import { FEATURE_BRAND_KITS } from '../../electron/branding/types';
 import { LEARNING_CAPTURE_KEY, LEARNING_FEATURE_KEY } from '../../electron/learning/types';
 import { GENERATION_ENABLED_META } from '../../shared/generationContracts';
 import type { CandidatePayload } from '../../electron/learning/types';
-import { makeBackend, makeTempDir, removeDir, type TestBackend } from '../backend/helpers';
+import { makeBackend, makeTempDir, MINIMAL_PNG, removeDir, type TestBackend } from '../backend/helpers';
 
 function samplePayload(overrides: Partial<CandidatePayload> = {}): CandidatePayload {
   return {
@@ -33,7 +33,7 @@ function samplePayload(overrides: Partial<CandidatePayload> = {}): CandidatePayl
 function writeKit(root: string, rules = 'Usar el logo sin deformar.'): string {
   const dir = path.join(root, 'brand');
   fs.mkdirSync(path.join(dir, 'assets'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'assets', 'logo.png'), Buffer.from('fake-png-bytes'));
+  fs.writeFileSync(path.join(dir, 'assets', 'logo.png'), MINIMAL_PNG);
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
     schemaVersion: 1,
     permitsAgencySignature: false,
@@ -58,9 +58,9 @@ describe('wired generation ports', () => {
     const b = await makeBackend({ chooseFolder: async () => brandFolder });
     backends.push(b);
     b.repo.setMeta(FEATURE_BRAND_KITS, 'on');
-    b.repo.setMeta(LEARNING_FEATURE_KEY, '1');
+    b.repo.setMeta(LEARNING_FEATURE_KEY, 'on');
     b.repo.setMeta(LEARNING_CAPTURE_KEY, 'manual');
-    b.repo.setMeta(GENERATION_ENABLED_META, '1');
+    b.repo.setMeta(GENERATION_ENABLED_META, 'on');
 
     const alpha = await b.service.createBrand('Alpha');
     const beta = await b.service.createBrand('Beta');
@@ -137,7 +137,7 @@ describe('wired generation ports', () => {
     const brand = await b.service.createBrand('Casa');
     const work = await b.service.createWork(brand.id, 'Uno');
     const before = b.files.readDocument(brand.id, work.id, 'AGENTS.md').content;
-    await expect(b.service.prepareGeneration(work.id)).rejects.toMatchObject({ code: 'DISABLED' });
+    await expect(b.service.prepareGeneration(work.id)).rejects.toMatchObject({ code: 'FEATURE_DISABLED' });
     expect(b.repo.listGenerationsForWork(work.id)).toEqual([]);
     expect(b.files.readDocument(brand.id, work.id, 'AGENTS.md').content).toBe(before);
     expect(before).not.toContain('Pinned generation context');

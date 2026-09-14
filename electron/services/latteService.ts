@@ -54,14 +54,14 @@ import type {
   WorkDocument,
   WorkPatch,
   PrepareGenerationOutcome,
+  WorkBrandChoiceInput,
 } from '../../shared/contracts';
 import {
-  GENERATION_ENABLED_META,
-  isGenerationEnabled,
   type BrandContextPort,
   type SkillRef,
   type SkillResolverPort,
 } from '../../shared/generationContracts';
+import { featureEnabled, readFeatureFlags, requireFeature, type FeatureFlags } from '../core/features';
 import { GenerationContractError } from '../generation/errors';
 import { prepareGeneration as runPrepareGeneration } from '../generation/prepare';
 import { pinGeneration } from '../generation/pin';
@@ -336,7 +336,7 @@ export class LatteService implements BackendApi {
     return this.branding.publishAgencyKit(expectedVersion);
   }
 
-  async setWorkBrandChoice(workId: string, choice: { identity: 'brand' | 'agency' | 'neutral'; signature: 'none' | 'agency' }, expectedRevision: number) {
+  async setWorkBrandChoice(workId: string, choice: WorkBrandChoiceInput, expectedRevision: number) {
     return this.branding.setWorkBrandChoice(workId, choice, expectedRevision);
   }
 
@@ -409,9 +409,7 @@ export class LatteService implements BackendApi {
   }
 
   async prepareGeneration(workId: string): Promise<PrepareGenerationOutcome> {
-    if (!this.generationEnabled()) {
-      throw new GenerationContractError('DISABLED', 'Generation context is disabled');
-    }
+    requireFeature((key) => this.deps.repo.getMeta(key), 'generation');
     const id = requireId(workId, 'workId');
     let work;
     try {
@@ -438,6 +436,7 @@ export class LatteService implements BackendApi {
           context,
           snapshot,
           contextHash,
+          assets: snapshot ? this.branding.collectPinAssets(snapshot) : [],
         });
       },
       liveMemberCount: (wid) => this.deps.hub.liveMemberCount(wid),
@@ -457,7 +456,11 @@ export class LatteService implements BackendApi {
   }
 
   private generationEnabled(): boolean {
-    return isGenerationEnabled(this.deps.repo.getMeta(GENERATION_ENABLED_META));
+    return featureEnabled((key) => this.deps.repo.getMeta(key), 'generation');
+  }
+
+  async featureFlags(): Promise<FeatureFlags> {
+    return readFeatureFlags((key) => this.deps.repo.getMeta(key));
   }
 
   /** A Deliverables file that is there right now, or a message that says why it cannot be linked. */

@@ -20,7 +20,7 @@ describe('LatteService.prepareGeneration', () => {
   it('refuses the call when the installation flag is off and does not write a receipt', async () => {
     const brand = await b.service.createBrand('Casa');
     const work = await b.service.createWork(brand.id, 'Pieza');
-    await expect(b.service.prepareGeneration(work.id)).rejects.toMatchObject({ code: 'DISABLED' });
+    await expect(b.service.prepareGeneration(work.id)).rejects.toMatchObject({ code: 'FEATURE_DISABLED' });
     expect(b.repo.listGenerationsForWork(work.id)).toEqual([]);
     const agents = fs.readFileSync(path.join(workDirOf(b, brand.id, work.id), 'AGENTS.md'), 'utf8');
     expect(agents).not.toContain('Pinned generation context');
@@ -29,7 +29,7 @@ describe('LatteService.prepareGeneration', () => {
   it('with the flag on, pins a receipt, copies context.json, and refreshes instructions', async () => {
     const brand = await b.service.createBrand('Casa');
     const work = await b.service.createWork(brand.id, 'Pieza');
-    b.repo.setMeta(GENERATION_ENABLED_META, '1');
+    b.repo.setMeta(GENERATION_ENABLED_META, 'on');
     const out = await b.service.prepareGeneration(work.id);
     expect(out.pending).toBe(false);
     expect(out.instructionsRefreshed).toBe(true);
@@ -45,7 +45,7 @@ describe('LatteService.prepareGeneration', () => {
   it('keeps the receipt when members are live and does not rewrite CLAUDE.md/AGENTS.md', async () => {
     const brand = await b.service.createBrand('Casa');
     const work = await b.service.createWork(brand.id, 'Pieza');
-    b.repo.setMeta(GENERATION_ENABLED_META, '1');
+    b.repo.setMeta(GENERATION_ENABLED_META, 'on');
     const before = fs.readFileSync(path.join(workDirOf(b, brand.id, work.id), 'AGENTS.md'), 'utf8');
     vi.spyOn(b.hub, 'liveMemberCount').mockReturnValue(3);
     const out = await b.service.prepareGeneration(work.id);
@@ -58,7 +58,7 @@ describe('LatteService.prepareGeneration', () => {
   });
 
   it('refuses a malformed workId after the flag is on, and always stores Work.brandId from the repository', async () => {
-    b.repo.setMeta(GENERATION_ENABLED_META, '1');
+    b.repo.setMeta(GENERATION_ENABLED_META, 'on');
     await expect(b.service.prepareGeneration('not an id')).rejects.toThrow(/Invalid/);
     const brand = await b.service.createBrand('Casa');
     const work = await b.service.createWork(brand.id, 'Pieza');

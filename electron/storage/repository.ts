@@ -589,7 +589,7 @@ export class LatteRepository {
 
   listGenerationsForWork(workId: string): GenerationReceipt[] {
     return this.db
-      .all<GenerationRow>('SELECT * FROM generations WHERE work_id = ? ORDER BY created_at DESC, id DESC', [workId])
+      .all<GenerationRow>('SELECT * FROM generations WHERE work_id = ? ORDER BY created_at DESC, rowid DESC', [workId])
       .map(toGeneration);
   }
 
