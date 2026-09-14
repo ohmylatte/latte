@@ -35,10 +35,10 @@ describe('generation pin', () => {
       context: sealed.context,
       snapshot: null,
       contextHash: sealed.hash,
-      assets: [{ id: 'logo-main', bytes: Buffer.from('PNG-BYTES') }],
+      assets: [{ id: 'logo-main', origin: 'identity', bytes: Buffer.from('PNG-BYTES') }],
     });
     const contextFile = path.join(result.directory, 'context.json');
-    const assetFile = path.join(result.directory, 'assets', 'logo-main');
+    const assetFile = path.join(result.directory, 'assets', 'identity', 'logo-main');
     expect(fs.existsSync(contextFile)).toBe(true);
     expect(fs.readFileSync(assetFile, 'utf8')).toBe('PNG-BYTES');
     expect(fs.lstatSync(assetFile).isSymbolicLink()).toBe(false);

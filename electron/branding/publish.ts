@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { ValidationError } from '../core/errors';
 import { contains } from '../workspace/linkFolder';
-import { sha256Bytes } from './resolver';
+import { sha256Bytes } from '../core/canonical';
 import type { ManifestAsset } from './payload';
 
 const MAX_ASSET_BYTES = 8 * 1024 * 1024;
@@ -151,20 +151,4 @@ function markTreeReadOnly(dir: string): void {
   }
 }
 
-export function readAndVerify(filePath: string, expectedHash: string): Buffer {
-  const bytes = fs.readFileSync(filePath);
-  const actual = sha256Bytes(bytes);
-  if (actual !== expectedHash) {
-    throw new ValidationError('Stored asset hash does not match bytes on disk');
-  }
-  return bytes;
-}
 
-export function copyVerified(source: string, dest: string, expectedHash: string): void {
-  const bytes = readAndVerify(source, expectedHash);
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  if (fs.existsSync(dest)) throw new ValidationError('Pinned asset already exists');
-  fs.writeFileSync(dest, bytes);
-  const copied = sha256Bytes(fs.readFileSync(dest));
-  if (copied !== expectedHash) throw new ValidationError('Copied asset hash mismatch');
-}

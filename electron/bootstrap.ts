@@ -24,6 +24,7 @@ import { LearningRepository } from './storage/learningRepository';
 import { LatteRepository } from './storage/repository';
 import { SCHEMA_VERSION } from './storage/schema';
 import { loadInstructionPack } from './workspace/packs';
+import type { BrandContextPort } from '../shared/generationContracts';
 import { WorkspaceFiles } from './workspace/workspace';
 
 export interface BackendOptions {
@@ -55,6 +56,8 @@ export interface BackendOptions {
   log?: (line: string) => void;
   /** The running app's version, from `app.getVersion()`; tests pass a fixed string. */
   version: string;
+  /** Tests inject a fake brand port so prepareGeneration never touches BrandingService. */
+  brandContext?: BrandContextPort;
 }
 
 export interface Backend {
@@ -208,6 +211,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     revealFile: options.revealFile,
     confirmHtml: options.confirmHtml,
     openExternal: options.openExternal,
+    brandContext: options.brandContext,
   });
 
   const seeded = options.seedDemo === false ? false : seedDemoIfEmpty(repo, files, pack);

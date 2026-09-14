@@ -1,16 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FEATURE_BRAND_KITS } from '../../electron/branding/types';
 import { requireChoice } from '../../electron/branding/payload';
-import { FEATURE_ON } from '../../electron/core/features';
-import { GENERATION_ENABLED_META } from '../../shared/generationContracts';
-import { makeBackend, makeTempDir, MINIMAL_PNG, removeDir, type TestBackend } from './helpers';
+import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
+import { sha256Bytes } from '../../electron/core/canonical';
+import { makeBackend, makeTempDir, MINIMAL_PNG, MINIMAL_PNG_B, removeDir, type TestBackend } from './helpers';
 
-function writeKit(root: string, options: { permits?: boolean; rules?: string; traversal?: boolean } = {}): string {
+function writeKit(root: string, options: { permits?: boolean; rules?: string; traversal?: boolean; bytes?: Buffer } = {}): string {
   const dir = path.join(root, 'brand');
   fs.mkdirSync(path.join(dir, 'assets'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'assets', 'logo.png'), MINIMAL_PNG);
+  fs.writeFileSync(path.join(dir, 'assets', 'logo.png'), options.bytes ?? MINIMAL_PNG);
   if (options.traversal) {
     fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
       schemaVersion: 1,
@@ -30,7 +29,7 @@ function writeKit(root: string, options: { permits?: boolean; rules?: string; tr
 
 async function enabledBackend(chooseFolder: () => Promise<string | null>): Promise<TestBackend> {
   const b = await makeBackend({ chooseFolder });
-  b.repo.setMeta(FEATURE_BRAND_KITS, 'on');
+  b.repo.setMeta(FEATURE_KEYS.brandKits, FEATURE_ON);
   return b;
 }
 
@@ -49,6 +48,7 @@ describe('BrandingService', () => {
     const work = await b.service.createWork(brand.id, 'Uno');
     expect(work.brandId).toBe(brand.id);
     await expect(b.service.readWorkBrandContext(work.id)).rejects.toThrow(/desactivados/);
+    expect(() => b.service.branding.collectPinAssets({ sourceKit: null, assets: [], signature: null })).toThrow(/desactivados/);
     await expect(b.service.readAgencyProfile()).rejects.toThrow(/desactivados/);
     expect(b.repo.branding.approvedKitForBrand(brand.id)).toBeNull();
   });
@@ -73,9 +73,9 @@ describe('BrandingService', () => {
     const ctx = await b.service.readWorkBrandContext(workA.id);
     expect(ctx.snapshot.identity).toBe('brand');
     expect(ctx.snapshot.sourceKit?.kitId).toBe(published.kitId);
-    expect(ctx.receipt.brandContext?.kitId).toBe(ctx.snapshot.generationId);
+    expect(ctx.snapshot.generationId).toBeUndefined();
+    expect(ctx.receipt.brandContext).toBeNull();
     expect(ctx.snapshot.signature).toBeNull();
-    expect(ctx.pinnedDir).toBeNull();
     const workDir = b.files.workDir(alpha.id, workA.id);
     expect(fs.existsSync(path.join(workDir, '.latte', 'brand-pin'))).toBe(false);
 
@@ -193,9 +193,9 @@ describe('BrandingService', () => {
     await b.service.importBrandKit(work.id);
     await b.service.publishBrandKit(work.id, 0);
     await b.service.setWorkBrandChoice(work.id, { identity: 'brand', signature: 'none' }, 0);
-    b.repo.setMeta(GENERATION_ENABLED_META, FEATURE_ON);
+    b.repo.setMeta(FEATURE_KEYS.generation, FEATURE_ON);
     const prepared = await b.service.prepareGeneration(work.id);
-    const pin = path.join(linked, '.latte', 'generations', prepared.generationId, 'assets', 'logo-primary');
+    const pin = path.join(linked, '.latte', 'generations', prepared.generationId, 'assets', 'identity', 'logo-primary');
     expect(fs.existsSync(pin)).toBe(true);
     expect(pin.startsWith(linked)).toBe(true);
     expect(pin.includes(path.join(b.dir, 'brand-kits'))).toBe(false);
@@ -215,7 +215,7 @@ describe('BrandingService', () => {
     try { fs.chmodSync(publishedFile, 0o666); } catch { /* windows */ }
     fs.writeFileSync(publishedFile, Buffer.from('tampered'));
     await b.service.setWorkBrandChoice(work.id, { identity: 'brand', signature: 'none' }, 0);
-    b.repo.setMeta(GENERATION_ENABLED_META, FEATURE_ON);
+    b.repo.setMeta(FEATURE_KEYS.generation, FEATURE_ON);
     await expect(b.service.prepareGeneration(work.id)).rejects.toThrow(/hash/);
   });
 
@@ -245,13 +245,72 @@ describe('BrandingService', () => {
     expect(latteAfterRead.includes('brand-pin')).toBe(false);
     expect(latteAfterRead.includes('generations')).toBe(false);
 
-    b.repo.setMeta(GENERATION_ENABLED_META, FEATURE_ON);
+    b.repo.setMeta(FEATURE_KEYS.generation, FEATURE_ON);
     const prepared = await b.service.prepareGeneration(work.id);
     const genRoot = path.join(workDir, '.latte', 'generations');
     expect(fs.readdirSync(genRoot)).toEqual([prepared.generationId]);
-    const logo = path.join(genRoot, prepared.generationId, 'assets', 'logo-primary');
+    const logo = path.join(genRoot, prepared.generationId, 'assets', 'signature', 'logo-primary');
     expect(fs.existsSync(logo)).toBe(true);
     expect(fs.readFileSync(logo).equals(MINIMAL_PNG)).toBe(true);
+  });
+
+  it('pins identity and signature logos separately when both use logo-primary', async () => {
+    const brandKitDir = makeTempDir('kit-brand-');
+    const agencyKitDir = makeTempDir('kit-agency-');
+    extras.push(brandKitDir, agencyKitDir);
+    const brandFolder = writeKit(brandKitDir, { permits: true, bytes: MINIMAL_PNG });
+    const agencyFolder = writeKit(agencyKitDir, { permits: true, bytes: MINIMAL_PNG_B });
+    const folders = [brandFolder, agencyFolder];
+    const b = await enabledBackend(async () => folders.shift() ?? null);
+    backends.push(b);
+    const brand = await b.service.createBrand('Casa');
+    const work = await b.service.createWork(brand.id, 'Uno');
+    await b.service.importBrandKit(work.id);
+    await b.service.publishBrandKit(work.id, 0);
+    await b.service.importAgencyKit();
+    await b.service.publishAgencyKit(0);
+    await b.service.saveAgencyProfile(0, { publicName: 'Estudio Norte', website: 'https://norte.example' });
+    await b.service.setWorkBrandChoice(work.id, {
+      identity: 'brand',
+      signature: 'agency',
+      allowAgencySignature: true,
+    }, 0);
+    b.repo.setMeta(FEATURE_KEYS.generation, FEATURE_ON);
+    const prepared = await b.service.prepareGeneration(work.id);
+    const assets = path.join(b.files.workDir(brand.id, work.id), '.latte', 'generations', prepared.generationId, 'assets');
+    const identity = path.join(assets, 'identity', 'logo-primary');
+    const signature = path.join(assets, 'signature', 'logo-primary');
+    expect(fs.readFileSync(identity).equals(MINIMAL_PNG)).toBe(true);
+    expect(fs.readFileSync(signature).equals(MINIMAL_PNG_B)).toBe(true);
+    expect(sha256Bytes(fs.readFileSync(identity))).not.toBe(sha256Bytes(fs.readFileSync(signature)));
+  });
+
+  it('refuses a kit-relative path that escapes the published kit directory', async () => {
+    const b = await enabledBackend(async () => null);
+    backends.push(b);
+    const kitId = 'kit_aaaaaaaaaaaaaaaaaaaa';
+    const versionDir = path.join(b.dir, 'brand-kits', kitId, '1');
+    fs.mkdirSync(versionDir, { recursive: true });
+    fs.writeFileSync(path.join(b.dir, 'brand-kits', kitId, 'escape.png'), MINIMAL_PNG);
+    const hash = sha256Bytes(MINIMAL_PNG);
+    b.repo.branding.insertKitVersion({
+      kitId,
+      version: 1,
+      ownerKind: 'agency',
+      ownerBrandId: null,
+      hash,
+      approved: true,
+      permitsAgencySignature: true,
+      manifestJson: '{}',
+      rulesText: 'x',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      assets: [{ assetId: 'logo-primary', hash, kind: 'logo', required: true, usable: true, relativePath: '../escape.png' }],
+    });
+    expect(() => b.service.branding.collectPinAssets({
+      sourceKit: { kitId, version: 1 },
+      assets: [{ id: 'logo-primary', hash }],
+      signature: null,
+    })).toThrow(/Unsafe path|escapes|refusing/);
   });
 
   it('persists allowNeutral=false through setWorkBrandChoice so NEUTRAL_NOT_APPROVED is reachable', async () => {

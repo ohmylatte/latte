@@ -3,15 +3,13 @@ import path from 'node:path';
 import { ensureDir, writeFileAtomic, writeImmutableFile } from '../core/atomicFile';
 import { isValidId } from '../core/ids';
 import { safeJoin, WORK_FILES } from '../core/paths';
-import type { BrandContextSnapshot, GenerationContext } from '../../shared/generationContracts';
+import type { BrandContextSnapshot, BrandPinAsset, GenerationContext } from '../../shared/generationContracts';
 import { GenerationContractError } from './errors';
 import { canonicalJson } from './canon';
 
-export interface PinAsset {
-  /** Single path segment; never a relative path with separators. */
-  id: string;
-  bytes: Uint8Array;
-}
+export type PinAsset = BrandPinAsset;
+
+const PIN_ORIGINS = new Set(['identity', 'signature']);
 
 export interface PinResult {
   directory: string;
@@ -58,14 +56,17 @@ export function pinGeneration(input: {
 
   const assetsDir = safeJoin(dest, 'assets');
   for (const asset of input.assets ?? []) {
+    if (!PIN_ORIGINS.has(asset.origin)) {
+      throw new GenerationContractError('SCHEMA_INVALID', `unsafe asset origin ${asset.origin}`);
+    }
     if (!isValidId(asset.id) && !/^[a-zA-Z0-9._-]{1,64}$/.test(asset.id)) {
       throw new GenerationContractError('SCHEMA_INVALID', `unsafe asset id ${asset.id}`);
     }
-    const file = safeJoin(assetsDir, asset.id);
+    const file = safeJoin(assetsDir, asset.origin, asset.id);
     writeFileAtomic(file, asset.bytes);
     try { fs.chmodSync(file, 0o444); } catch { /* best-effort immutability */ }
     assertNotSymlink(file);
-    filesWritten.push(`${WORK_FILES.metaDir}/${WORK_FILES.generationsDir}/${input.generationId}/assets/${asset.id}`);
+    filesWritten.push(`${WORK_FILES.metaDir}/${WORK_FILES.generationsDir}/${input.generationId}/assets/${asset.origin}/${asset.id}`);
   }
   assertNotSymlink(contextFile);
   assertNotSymlink(dest);

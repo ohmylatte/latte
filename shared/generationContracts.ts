@@ -10,8 +10,6 @@ export type ContentHash = HexSha256;
 
 export const GENERATION_SCHEMA_VERSION: SchemaVersion = 1;
 export const HEX_SHA256 = /^[0-9a-f]{64}$/;
-/** Installation meta key. Absent or any value other than `1` means OFF. */
-export const GENERATION_ENABLED_META = 'feature:generation';
 
 export interface KitRef {
   kitId: string;
@@ -95,9 +93,19 @@ export type GenerationErrorCode =
   | 'CANONICALIZE_FAILED'
   | 'DISABLED';
 
+export type BrandPinOrigin = 'identity' | 'signature';
+
+export interface BrandPinAsset {
+  id: string;
+  origin: BrandPinOrigin;
+  bytes: Uint8Array;
+}
+
 export interface BrandContextPort {
   /** Reads the persisted identity/signature choice for the work. Never takes brandId from the caller. */
   resolveForWork(workId: string): BrandContextSnapshot | null;
+  /** Bytes to copy under `.latte/generations/<id>/assets/<origin>/`. Never hits BrandingService from prepareGeneration. */
+  pinAssets(snapshot: BrandContextSnapshot): BrandPinAsset[];
 }
 
 export interface SkillResolverPort {
@@ -140,13 +148,12 @@ export interface PrepareGenerationResult {
   excludedSkillRefs: SkillRef[];
 }
 
-export function isGenerationEnabled(metaValue: string | null | undefined): boolean {
-  return metaValue === 'on';
-}
-
 export const NOOP_BRAND_CONTEXT: BrandContextPort = {
   resolveForWork() {
     return null;
+  },
+  pinAssets() {
+    return [];
   },
 };
 

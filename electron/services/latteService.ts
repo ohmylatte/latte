@@ -436,7 +436,7 @@ export class LatteService implements BackendApi {
           context,
           snapshot,
           contextHash,
-          assets: snapshot ? this.branding.collectPinAssets(snapshot) : [],
+          assets: snapshot ? this.brandContextPort.pinAssets(snapshot) : [],
         });
       },
       liveMemberCount: (wid) => this.deps.hub.liveMemberCount(wid),

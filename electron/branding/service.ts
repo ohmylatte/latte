@@ -1,12 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { canonicalJson, sha256Bytes, sha256Utf8 } from '../core/canonical';
 import { requireFeature } from '../core/features';
 import { LatteError, UnavailableError, ValidationError } from '../core/errors';
 import type { PinAsset } from '../generation/pin';
+import { readPinSourceBytes } from '../generation/pin';
 import { isValidId } from '../core/ids';
 import { LattePaths } from '../core/paths';
 import { requireText } from '../services/validation';
+import type { PublishedKitRecord } from '../storage/brandingRepository';
 import type { LatteRepository } from '../storage/repository';
 import type { WorkspaceFiles } from '../workspace/workspace';
 import {
@@ -19,8 +22,8 @@ import {
   rulesLookUntrusted,
   type BrandManifest,
 } from './payload';
-import { publishImmutableDir, readAndVerify, stageAssets, type StagedAsset } from './publish';
-import { canonicalJson, composeBrandContext, kitsForAuthorizedWork, resolveBrandContext, sha256Utf8 } from './resolver';
+import { publishImmutableDir, stageAssets, type StagedAsset } from './publish';
+import { composeBrandContext, kitsForAuthorizedWork, resolveBrandContext } from './resolver';
 import {
   implicitWorkBrandPolicy,
   type BrandAccess,
@@ -63,7 +66,6 @@ export type WorkBrandPolicyView = WorkBrandPolicy;
 export type WorkBrandContextView = {
   receipt: ReturnType<typeof composeBrandContext>['receipt'];
   snapshot: BrandContextSnapshot;
-  pinnedDir: string | null;
 };
 
 export interface BrandingServiceDeps {
@@ -351,47 +353,58 @@ export class BrandingService {
       agencySignature: loaded.agencySignature,
       policy: loaded.policy,
     });
-    const composed = composeBrandContext(
-      loaded.work.id,
-      loaded.work.id,
-      loaded.work.brandId,
+    const composed = composeBrandContext({
+      workId: loaded.work.id,
+      brandId: loaded.work.brandId,
       choice,
       resolution,
-      [],
-    );
-    return { receipt: composed.receipt, snapshot: composed.snapshot, pinnedDir: null };
+    });
+    return { receipt: composed.receipt, snapshot: composed.snapshot };
   }
 
   /**
-   * Bytes for `.latte/generations/<id>/assets`, copied from the immutable kit store.
-   * Identity assets and the agency signature logo are both included.
+   * Bytes for `.latte/generations/<id>/assets/{identity,signature}/`.
+   * Dedupes by kit+version+asset so a shared id (logo-primary) cannot drop the signature logo.
    */
   collectPinAssets(snapshot: {
     sourceKit: { kitId: string; version: number } | null;
     assets: ReadonlyArray<{ id: string; hash: string }>;
     signature: { logo: { id: string; hash: string } | null } | null;
   }): PinAsset[] {
+    this.requireEnabled();
     const out: PinAsset[] = [];
     const seen = new Set<string>();
-    const push = (id: string, hash: string, kitId: string, version: number) => {
-      if (seen.has(id)) return;
-      const record = this.branding().loadPublishedKit(kitId, version);
+    const kits = new Map<string, PublishedKitRecord | null>();
+    const load = (kitId: string, version: number) => {
+      const key = `${kitId}:${version}`;
+      if (!kits.has(key)) kits.set(key, this.branding().loadPublishedKit(kitId, version));
+      return kits.get(key) ?? null;
+    };
+    const push = (origin: PinAsset['origin'], id: string, hash: string, kitId: string, version: number) => {
+      const key = `${kitId}:${version}:${id}`;
+      if (seen.has(key)) return;
+      const record = load(kitId, version);
       const relative = record?.assets.find((a) => a.assetId === id)?.relativePath;
       if (!relative) throw new ValidationError(`Pinned asset missing from kit: ${id}`);
-      const source = path.join(this.paths.brandKitVersionDir(kitId, version), ...relative.split('/'));
-      const bytes = readAndVerify(source, hash);
-      seen.add(id);
-      out.push({ id, bytes });
+      const root = this.paths.brandKitVersionDir(kitId, version);
+      const bytes = Buffer.from(readPinSourceBytes(root, relative));
+      if (sha256Bytes(bytes) !== hash) {
+        throw new ValidationError('Stored asset hash does not match bytes on disk');
+      }
+      seen.add(key);
+      out.push({ id, origin, bytes });
     };
     if (snapshot.sourceKit) {
+      load(snapshot.sourceKit.kitId, snapshot.sourceKit.version);
       for (const asset of snapshot.assets) {
-        push(asset.id, asset.hash, snapshot.sourceKit.kitId, snapshot.sourceKit.version);
+        push('identity', asset.id, asset.hash, snapshot.sourceKit.kitId, snapshot.sourceKit.version);
       }
     }
     if (snapshot.signature?.logo) {
       const agency = this.branding().approvedAgencyKit();
       if (!agency) throw new ValidationError('Signature logo has no agency kit');
-      push(snapshot.signature.logo.id, snapshot.signature.logo.hash, agency.ref.kitId, agency.ref.version);
+      load(agency.ref.kitId, agency.ref.version);
+      push('signature', snapshot.signature.logo.id, snapshot.signature.logo.hash, agency.ref.kitId, agency.ref.version);
     }
     return out;
   }

@@ -19,6 +19,9 @@ export function brandContextAdapter(branding: BrandingService): BrandContextPort
       }
       return snapshotFromView(view);
     },
+    pinAssets(snapshot: BrandContextSnapshot) {
+      return branding.collectPinAssets(snapshot);
+    },
   };
 }
 
