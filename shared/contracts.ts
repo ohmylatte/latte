@@ -29,6 +29,72 @@ export interface Work {
 }
 /** The outcome of a work, the only part edited through `updateWork`. Omitted = unchanged; null or '' = cleared. */
 export interface WorkPatch { expectedOutput?: string | null; resultPath?: string | null }
+
+/** Identity and agency-signature choice for a work. Not part of WorkPatch. */
+export type BrandIdentityMode = 'brand' | 'agency' | 'neutral';
+export type BrandSignatureMode = 'none' | 'agency';
+export interface BrandChoice { identity: BrandIdentityMode; signature: BrandSignatureMode }
+export interface AgencyProfilePatch { publicName: string; website?: string | null; contact?: string | null }
+export interface AgencyProfileView {
+  revision: number;
+  hash: string;
+  publicName: string;
+  website: string | null;
+  contact: string | null;
+}
+export interface BrandKitDraftView {
+  kitId: string;
+  ownerKind: 'brand' | 'agency';
+  ownerBrandId: string | null;
+  permitsAgencySignature: boolean;
+  assetCount: number;
+  warnings: string[];
+}
+export interface BrandKitView {
+  kitId: string;
+  version: number;
+  hash: string;
+  ownerKind: 'brand' | 'agency';
+}
+export interface WorkBrandPolicyView {
+  workId: string;
+  brandId: string;
+  revision: number;
+  defaultChoice: BrandChoice;
+  allowNeutral: boolean;
+  allowAgencySignature: boolean;
+}
+/** Resolved composition. Generation worktree adapts this to its port after merge. */
+export interface BrandContextSnapshot {
+  schemaVersion: 1;
+  generationId: string;
+  workId: string;
+  brandId: string;
+  choice: BrandChoice;
+  identity: BrandIdentityMode;
+  sourceKit: { kitId: string; version: number; hash: string } | null;
+  rules: string;
+  assets: ReadonlyArray<{ id: string; hash: string }>;
+  signature: {
+    agencyRevision: number;
+    hash: string;
+    publicName: string;
+    website: string | null;
+    logo: { id: string; hash: string } | null;
+  } | null;
+  warnings: readonly string[];
+}
+export interface WorkBrandContextView {
+  receipt: {
+    schemaVersion: 1;
+    workId: string;
+    brandId: string;
+    brandContext: { kitId: string; version: number; hash: string } | null;
+    skillRefs: ReadonlyArray<{ skillId: string; version: number; hash: string }>;
+  };
+  snapshot: BrandContextSnapshot;
+  pinnedDir: string | null;
+}
 /** Where a stored version came from. `external` = the file changed outside Latte; we never guess who wrote it. */
 export type RevisionSource = 'human' | 'external' | 'latte';
 export interface Revision { id: string; workId: string; documentId: string; source: RevisionSource; content: string; createdAt: string }
@@ -362,6 +428,15 @@ export interface LatteAPI {
   listBrands(): Promise<Brand[]>;
   createBrand(name: string): Promise<Brand>;
   updateBrand(id: string, context: string): Promise<Brand>;
+  readAgencyProfile(): Promise<AgencyProfileView | null>;
+  saveAgencyProfile(expectedRevision: number, patch: AgencyProfilePatch): Promise<AgencyProfileView>;
+  importBrandKit(workId: string): Promise<BrandKitDraftView | null>;
+  publishBrandKit(workId: string, expectedVersion: number): Promise<BrandKitView>;
+  revokeBrandKit(workId: string, version: number, reason: string): Promise<void>;
+  importAgencyKit(): Promise<BrandKitDraftView | null>;
+  publishAgencyKit(expectedVersion: number): Promise<BrandKitView>;
+  setWorkBrandChoice(workId: string, choice: BrandChoice, expectedRevision: number): Promise<WorkBrandPolicyView>;
+  readWorkBrandContext(workId: string): Promise<WorkBrandContextView>;
   listWorks(brandId: string): Promise<Work[]>;
   createWork(brandId: string, title: string): Promise<Work>;
   /**

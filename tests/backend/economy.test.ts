@@ -143,7 +143,7 @@ describe('Team member storage: tier and lifetime usage', () => {
     expect(old).toMatchObject({ tier: 'balanced', sessionId: 'sess-old' });
     expect(old.usage).toEqual(EMPTY_USAGE);
     // No bump: an older build must keep opening this database.
-    expect(repo.getMeta('schema_version')).toBe('7');
+    expect(repo.getMeta('schema_version')).toBe('8');
     repo.close();
   });
 

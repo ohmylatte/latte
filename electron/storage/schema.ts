@@ -134,6 +134,6 @@ CREATE TABLE IF NOT EXISTS meta (
  * backward compatible.
  * The outcome columns are added by migrate(), the same path for a new database
  * and an existing one, so the works table above stays exactly what schema 7
- * defines.
+ * defined. Schema 8 adds brand-kit / agency tables (see brandingSchema.ts).
  */
-export const SCHEMA_VERSION = '7';
+export const SCHEMA_VERSION = '8';

@@ -76,6 +76,7 @@ import { openItems, renderContinuation } from '../workspace/continuation';
 import { DELIVERABLES_DIR, DeliverableFiles, deliverableName } from '../workspace/deliverables';
 import { documentFileName, fingerprintOf, type DocumentOnDisk, type WorkspaceFiles } from '../workspace/workspace';
 import { LIMITS, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
+import { BrandingService } from '../branding/service';
 
 /** Stable content identity; request identity handles retries, this flags similar proposals without merging them. */
 export function decisionFingerprint(statement:string):string {
@@ -200,9 +201,16 @@ function validateMemberOptions(options: unknown): { runtime: ChatRuntime | null;
  */
 export class LatteService implements BackendApi {
   private readonly clock: () => string;
+  readonly branding: BrandingService;
 
   constructor(private readonly deps: LatteServiceDeps) {
     this.clock = deps.clock ?? nowIso;
+    this.branding = new BrandingService({
+      repo: deps.repo,
+      files: deps.files,
+      chooseFolder: deps.chooseFolder,
+      clock: this.clock,
+    });
   }
 
   // App ---------------------------------------------------------------------
@@ -259,6 +267,42 @@ export class LatteService implements BackendApi {
     const brandId = requireId(id, 'brandId');
     const cleanContext = requireText(context, 'Brand context', LIMITS.context, { allowEmpty: true });
     return this.deps.repo.updateBrandContext(brandId, cleanContext);
+  }
+
+  async readAgencyProfile() {
+    return this.branding.readAgencyProfile();
+  }
+
+  async saveAgencyProfile(expectedRevision: number, patch: { publicName: string; website?: string | null; contact?: string | null }) {
+    return this.branding.saveAgencyProfile(expectedRevision, patch);
+  }
+
+  async importBrandKit(workId: string) {
+    return this.branding.importBrandKit(workId);
+  }
+
+  async publishBrandKit(workId: string, expectedVersion: number) {
+    return this.branding.publishBrandKit(workId, expectedVersion);
+  }
+
+  async revokeBrandKit(workId: string, version: number, reason: string) {
+    return this.branding.revokeBrandKit(workId, version, reason);
+  }
+
+  async importAgencyKit() {
+    return this.branding.importAgencyKit();
+  }
+
+  async publishAgencyKit(expectedVersion: number) {
+    return this.branding.publishAgencyKit(expectedVersion);
+  }
+
+  async setWorkBrandChoice(workId: string, choice: { identity: 'brand' | 'agency' | 'neutral'; signature: 'none' | 'agency' }, expectedRevision: number) {
+    return this.branding.setWorkBrandChoice(workId, choice, expectedRevision);
+  }
+
+  async readWorkBrandContext(workId: string) {
+    return this.branding.readWorkBrandContext(workId);
   }
 
   // Works -------------------------------------------------------------------
