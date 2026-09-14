@@ -42,19 +42,53 @@ export function assertContainedFile(root: string, candidate: string): string {
   return real;
 }
 
-function looksLikeSvg(bytes: Buffer): boolean {
-  const head = bytes.subarray(0, 256).toString('utf8');
-  return /<svg[\s>]/i.test(head) || head.includes('<?xml');
+export function looksLikeSvg(bytes: Buffer): boolean {
+  const head = bytes.subarray(0, 512).toString('utf8').replace(/^\uFEFF/, '');
+  if (/<svg[\s>/]/i.test(head)) return true;
+  if (/^\s*<\?xml/i.test(head) && /<svg[\s>/]/i.test(bytes.subarray(0, 4096).toString('utf8'))) return true;
+  return false;
+}
+
+function looksLikeXmlText(bytes: Buffer): boolean {
+  const head = bytes.subarray(0, 256).toString('utf8').replace(/^\uFEFF/, '').trimStart();
+  return head.startsWith('<') || head.startsWith('<?xml');
+}
+
+function isPng(bytes: Buffer): boolean {
+  return bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+    && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a;
+}
+
+function isJpeg(bytes: Buffer): boolean {
+  return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+}
+
+function isGif(bytes: Buffer): boolean {
+  return bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38
+    && (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61;
+}
+
+function isWebp(bytes: Buffer): boolean {
+  return bytes.length >= 12
+    && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50;
 }
 
 export function validateAssetBytes(bytes: Buffer, relativePath: string): boolean {
   if (bytes.length === 0 || bytes.length > MAX_ASSET_BYTES) return false;
-  if (bytes.includes(0) && !/\.(png|jpg|jpeg|gif|webp|woff2?|ttf|otf|pdf)$/i.test(relativePath)) {
-    // text-like assets must not contain NUL
-    if (/\.(md|txt|json|svg)$/i.test(relativePath)) return false;
-  }
-  if (/\.svg$/i.test(relativePath) || looksLikeSvg(bytes) && /\.svg$/i.test(relativePath)) {
+  const raster = /\.(png|jpg|jpeg|gif|webp)$/i.test(relativePath);
+  const namedSvg = /\.svg$/i.test(relativePath);
+  const svgBytes = looksLikeSvg(bytes);
+  if (namedSvg || svgBytes) {
     if (BLOCKED_SVG.test(bytes.toString('utf8'))) return false;
+  }
+  if (raster && (svgBytes || looksLikeXmlText(bytes))) return false;
+  if (/\.png$/i.test(relativePath) && !isPng(bytes)) return false;
+  if (/\.(jpg|jpeg)$/i.test(relativePath) && !isJpeg(bytes)) return false;
+  if (/\.gif$/i.test(relativePath) && !isGif(bytes)) return false;
+  if (/\.webp$/i.test(relativePath) && !isWebp(bytes)) return false;
+  if (bytes.includes(0) && !/\.(png|jpg|jpeg|gif|webp|woff2?|ttf|otf|pdf)$/i.test(relativePath)) {
+    if (/\.(md|txt|json|svg)$/i.test(relativePath)) return false;
   }
   return true;
 }

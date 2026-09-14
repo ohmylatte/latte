@@ -83,6 +83,11 @@ export interface AgencyProfileRecord {
 export class BrandingRepository {
   constructor(private readonly db: SqlDriver) {}
 
+  private insertOrConflict(sql: string, params: Array<string | number | null>, message: string): void {
+    const n = this.db.run(sql, params);
+    if (n !== 1) throw new LatteError('VERSION_CONFLICT', message);
+  }
+
   insertKitVersion(input: {
     kitId: string;
     version: number;
@@ -134,9 +139,10 @@ export class BrandingRepository {
 
   casHead(kitId: string, ownerKind: 'brand' | 'agency', ownerBrandId: string | null, expectedVersion: number, newVersion: number): void {
     if (expectedVersion === 0) {
-      this.db.run(
-        'INSERT INTO brand_kit_heads(kit_id, owner_kind, owner_brand_id, current_version) VALUES (?, ?, ?, ?)',
+      this.insertOrConflict(
+        'INSERT INTO brand_kit_heads(kit_id, owner_kind, owner_brand_id, current_version) VALUES (?, ?, ?, ?) ON CONFLICT(kit_id) DO NOTHING',
         [kitId, ownerKind, ownerBrandId, newVersion],
+        'El head del kit cambió; reintentá con la versión actual',
       );
       return;
     }
@@ -280,10 +286,10 @@ export class BrandingRepository {
     updatedAt: string;
   }): WorkBrandPolicy {
     if (input.expectedRevision === 0) {
-      this.db.run(
+      this.insertOrConflict(
         `INSERT INTO work_brand_policies
           (work_id, brand_id, revision, identity, signature, allow_neutral, allow_agency_signature, updated_at)
-         VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, 1, ?, ?, ?, ?, ?) ON CONFLICT(work_id) DO NOTHING`,
         [
           input.workId,
           input.brandId,
@@ -293,6 +299,7 @@ export class BrandingRepository {
           input.allowAgencySignature ? 1 : 0,
           input.updatedAt,
         ],
+        'La política del trabajo cambió; reintentá con la revisión actual',
       );
       return this.policyForWork(input.workId, input.brandId);
     }
@@ -329,7 +336,11 @@ export class BrandingRepository {
 
   casAgencyHead(expectedRevision: number, newRevision: number): void {
     if (expectedRevision === 0) {
-      this.db.run('INSERT INTO agency_profile_head(id, current_revision) VALUES (1, ?)', [newRevision]);
+      this.insertOrConflict(
+        'INSERT INTO agency_profile_head(id, current_revision) VALUES (1, ?) ON CONFLICT(id) DO NOTHING',
+        [newRevision],
+        'El perfil de agencia cambió; reintentá con la revisión actual',
+      );
       return;
     }
     this.db.run(

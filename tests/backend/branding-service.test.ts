@@ -3,12 +3,14 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FEATURE_BRAND_KITS } from '../../electron/branding/types';
 import { requireChoice } from '../../electron/branding/payload';
-import { makeBackend, makeTempDir, removeDir, type TestBackend } from './helpers';
+import { FEATURE_ON } from '../../electron/core/features';
+import { GENERATION_ENABLED_META } from '../../shared/generationContracts';
+import { makeBackend, makeTempDir, MINIMAL_PNG, removeDir, type TestBackend } from './helpers';
 
 function writeKit(root: string, options: { permits?: boolean; rules?: string; traversal?: boolean } = {}): string {
   const dir = path.join(root, 'brand');
   fs.mkdirSync(path.join(dir, 'assets'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'assets', 'logo.png'), Buffer.from('fake-png-bytes'));
+  fs.writeFileSync(path.join(dir, 'assets', 'logo.png'), MINIMAL_PNG);
   if (options.traversal) {
     fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
       schemaVersion: 1,
@@ -73,7 +75,9 @@ describe('BrandingService', () => {
     expect(ctx.snapshot.sourceKit?.kitId).toBe(published.kitId);
     expect(ctx.receipt.brandContext?.kitId).toBe(ctx.snapshot.generationId);
     expect(ctx.snapshot.signature).toBeNull();
-    expect(ctx.pinnedDir && fs.existsSync(path.join(ctx.pinnedDir, 'assets', 'logo-primary'))).toBe(true);
+    expect(ctx.pinnedDir).toBeNull();
+    const workDir = b.files.workDir(alpha.id, workA.id);
+    expect(fs.existsSync(path.join(workDir, '.latte', 'brand-pin'))).toBe(false);
 
     const visibleB = b.service.branding.kitsVisibleForWork(workB.id);
     expect(visibleB.brandKit).toBeNull();
@@ -189,10 +193,12 @@ describe('BrandingService', () => {
     await b.service.importBrandKit(work.id);
     await b.service.publishBrandKit(work.id, 0);
     await b.service.setWorkBrandChoice(work.id, { identity: 'brand', signature: 'none' }, 0);
-    const ctx = await b.service.readWorkBrandContext(work.id);
-    expect(ctx.pinnedDir?.startsWith(linked)).toBe(true);
-    expect(ctx.pinnedDir && fs.existsSync(path.join(ctx.pinnedDir, 'assets', 'logo-primary'))).toBe(true);
-    expect(ctx.pinnedDir && !ctx.pinnedDir.includes(path.join(b.dir, 'brand-kits'))).toBe(true);
+    b.repo.setMeta(GENERATION_ENABLED_META, FEATURE_ON);
+    const prepared = await b.service.prepareGeneration(work.id);
+    const pin = path.join(linked, '.latte', 'generations', prepared.generationId, 'assets', 'logo-primary');
+    expect(fs.existsSync(pin)).toBe(true);
+    expect(pin.startsWith(linked)).toBe(true);
+    expect(pin.includes(path.join(b.dir, 'brand-kits'))).toBe(false);
   });
 
   it('tampering with a published asset is detected on pin', async () => {
@@ -209,6 +215,63 @@ describe('BrandingService', () => {
     try { fs.chmodSync(publishedFile, 0o666); } catch { /* windows */ }
     fs.writeFileSync(publishedFile, Buffer.from('tampered'));
     await b.service.setWorkBrandChoice(work.id, { identity: 'brand', signature: 'none' }, 0);
-    await expect(b.service.readWorkBrandContext(work.id)).rejects.toThrow(/hash/);
+    b.repo.setMeta(GENERATION_ENABLED_META, FEATURE_ON);
+    await expect(b.service.prepareGeneration(work.id)).rejects.toThrow(/hash/);
+  });
+
+  it('readWorkBrandContext does not write under .latte; prepareGeneration pins identity and signature logo once', async () => {
+    const kitDir = makeTempDir('kit-pin-');
+    extras.push(kitDir);
+    const brandFolder = writeKit(kitDir, { permits: true });
+    const b = await enabledBackend(async () => brandFolder);
+    backends.push(b);
+    const brand = await b.service.createBrand('Casa');
+    const work = await b.service.createWork(brand.id, 'Uno');
+    await b.service.importAgencyKit();
+    await b.service.publishAgencyKit(0);
+    await b.service.saveAgencyProfile(0, { publicName: 'Estudio Norte', website: 'https://norte.example' });
+    await b.service.setWorkBrandChoice(work.id, {
+      identity: 'neutral',
+      signature: 'agency',
+      allowAgencySignature: true,
+    }, 0);
+    const workDir = b.files.workDir(brand.id, work.id);
+    const latteBefore = fs.existsSync(path.join(workDir, '.latte'))
+      ? fs.readdirSync(path.join(workDir, '.latte')).sort()
+      : [];
+    for (let i = 0; i < 10; i += 1) await b.service.readWorkBrandContext(work.id);
+    const latteAfterRead = fs.readdirSync(path.join(workDir, '.latte')).sort();
+    expect(latteAfterRead).toEqual(latteBefore);
+    expect(latteAfterRead.includes('brand-pin')).toBe(false);
+    expect(latteAfterRead.includes('generations')).toBe(false);
+
+    b.repo.setMeta(GENERATION_ENABLED_META, FEATURE_ON);
+    const prepared = await b.service.prepareGeneration(work.id);
+    const genRoot = path.join(workDir, '.latte', 'generations');
+    expect(fs.readdirSync(genRoot)).toEqual([prepared.generationId]);
+    const logo = path.join(genRoot, prepared.generationId, 'assets', 'logo-primary');
+    expect(fs.existsSync(logo)).toBe(true);
+    expect(fs.readFileSync(logo).equals(MINIMAL_PNG)).toBe(true);
+  });
+
+  it('persists allowNeutral=false through setWorkBrandChoice so NEUTRAL_NOT_APPROVED is reachable', async () => {
+    const b = await enabledBackend(async () => null);
+    backends.push(b);
+    const brand = await b.service.createBrand('Casa');
+    const work = await b.service.createWork(brand.id, 'Uno');
+    await b.service.setWorkBrandChoice(work.id, {
+      identity: 'neutral',
+      signature: 'none',
+      allowNeutral: false,
+    }, 0);
+    expect(() => b.service.branding.resolveForWork(work.id)).toThrow(/no autoriza estilo neutro/);
+    const policy = await b.service.setWorkBrandChoice(work.id, {
+      identity: 'neutral',
+      signature: 'none',
+      allowNeutral: true,
+    }, 1);
+    expect(policy.allowNeutral).toBe(true);
+    const ctx = await b.service.readWorkBrandContext(work.id);
+    expect(ctx.snapshot.identity).toBe('neutral');
   });
 });

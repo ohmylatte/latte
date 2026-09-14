@@ -1,9 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { requireFeature } from '../core/features';
 import { LatteError, UnavailableError, ValidationError } from '../core/errors';
+import type { PinAsset } from '../generation/pin';
 import { isValidId } from '../core/ids';
-import { LattePaths, safeJoin } from '../core/paths';
+import { LattePaths } from '../core/paths';
 import { requireText } from '../services/validation';
 import type { LatteRepository } from '../storage/repository';
 import type { WorkspaceFiles } from '../workspace/workspace';
@@ -17,10 +19,9 @@ import {
   rulesLookUntrusted,
   type BrandManifest,
 } from './payload';
-import { copyVerified, publishImmutableDir, stageAssets, type StagedAsset } from './publish';
+import { publishImmutableDir, readAndVerify, stageAssets, type StagedAsset } from './publish';
 import { canonicalJson, composeBrandContext, kitsForAuthorizedWork, resolveBrandContext, sha256Utf8 } from './resolver';
 import {
-  FEATURE_BRAND_KITS,
   implicitWorkBrandPolicy,
   type BrandAccess,
   type BrandContextSnapshot,
@@ -84,9 +85,7 @@ export class BrandingService {
   }
 
   private requireEnabled(): void {
-    if (this.deps.repo.getMeta(FEATURE_BRAND_KITS) !== 'on') {
-      throw new LatteError('FEATURE_DISABLED', 'Los kits de marca están desactivados en esta instalación');
-    }
+    requireFeature((key) => this.deps.repo.getMeta(key), 'brandKits');
   }
 
   private access(): BrandAccess {
@@ -324,8 +323,8 @@ export class BrandingService {
     if (current.brandId !== work.brandId) {
       throw new ValidationError('La política no es de esta marca');
     }
-    const allowNeutral = parsed.identity === 'neutral' ? true : current.revision === 0 ? true : current.allowNeutral;
-    const allowAgencySignature = parsed.signature === 'agency' ? true : current.allowAgencySignature;
+    const allowNeutral = parsed.allowNeutral ?? current.allowNeutral;
+    const allowAgencySignature = parsed.allowAgencySignature ?? current.allowAgencySignature;
     return this.deps.repo.transaction(() =>
       this.branding().casWorkPolicy({
         workId: work.id,
@@ -352,17 +351,49 @@ export class BrandingService {
       agencySignature: loaded.agencySignature,
       policy: loaded.policy,
     });
-    const generationId = `gen_${randomBytes(10).toString('hex')}`;
     const composed = composeBrandContext(
-      generationId,
+      loaded.work.id,
       loaded.work.id,
       loaded.work.brandId,
       choice,
       resolution,
       [],
     );
-    const pinnedDir = this.pinSnapshot(loaded.work.brandId, loaded.work.id, composed.snapshot);
-    return { receipt: composed.receipt, snapshot: composed.snapshot, pinnedDir };
+    return { receipt: composed.receipt, snapshot: composed.snapshot, pinnedDir: null };
+  }
+
+  /**
+   * Bytes for `.latte/generations/<id>/assets`, copied from the immutable kit store.
+   * Identity assets and the agency signature logo are both included.
+   */
+  collectPinAssets(snapshot: {
+    sourceKit: { kitId: string; version: number } | null;
+    assets: ReadonlyArray<{ id: string; hash: string }>;
+    signature: { logo: { id: string; hash: string } | null } | null;
+  }): PinAsset[] {
+    const out: PinAsset[] = [];
+    const seen = new Set<string>();
+    const push = (id: string, hash: string, kitId: string, version: number) => {
+      if (seen.has(id)) return;
+      const record = this.branding().loadPublishedKit(kitId, version);
+      const relative = record?.assets.find((a) => a.assetId === id)?.relativePath;
+      if (!relative) throw new ValidationError(`Pinned asset missing from kit: ${id}`);
+      const source = path.join(this.paths.brandKitVersionDir(kitId, version), ...relative.split('/'));
+      const bytes = readAndVerify(source, hash);
+      seen.add(id);
+      out.push({ id, bytes });
+    };
+    if (snapshot.sourceKit) {
+      for (const asset of snapshot.assets) {
+        push(asset.id, asset.hash, snapshot.sourceKit.kitId, snapshot.sourceKit.version);
+      }
+    }
+    if (snapshot.signature?.logo) {
+      const agency = this.branding().approvedAgencyKit();
+      if (!agency) throw new ValidationError('Signature logo has no agency kit');
+      push(snapshot.signature.logo.id, snapshot.signature.logo.hash, agency.ref.kitId, agency.ref.version);
+    }
+    return out;
   }
 
   async readWorkBrandContext(workId: unknown): Promise<WorkBrandContextView> {
@@ -380,27 +411,6 @@ export class BrandingService {
     return implicitWorkBrandPolicy(workId, brandId);
   }
 
-  private pinSnapshot(
-    brandId: string,
-    workId: string,
-    snapshot: BrandContextSnapshot,
-  ): string | null {
-    if (snapshot.assets.length === 0 && !snapshot.signature?.logo) return null;
-    const workDir = this.deps.files.workDir(brandId, workId);
-    const pinRoot = path.join(workDir, '.latte', 'brand-pin', snapshot.generationId);
-    fs.mkdirSync(pinRoot, { recursive: true });
-    const record = snapshot.sourceKit
-      ? this.branding().loadPublishedKit(snapshot.sourceKit.kitId, snapshot.sourceKit.version)
-      : null;
-    for (const asset of snapshot.assets) {
-      const relative = record?.assets.find((a) => a.assetId === asset.id)?.relativePath;
-      if (!relative || !snapshot.sourceKit) continue;
-      const source = path.join(this.paths.brandKitVersionDir(snapshot.sourceKit.kitId, snapshot.sourceKit.version), ...relative.split('/'));
-      const dest = safeJoin(pinRoot, 'assets', asset.id);
-      copyVerified(source, dest, asset.hash);
-    }
-    return pinRoot;
-  }
 }
 
 function newKitId(): string {

@@ -6,6 +6,12 @@ import { createBackend, type Backend, type BackendOptions } from '../../electron
 import type { CommandResult, CommandRunner } from '../../electron/runtime/commandRunner';
 import type { PtyLoadResult, PtyProcessLike, PtySpawnOptions } from '../../electron/runtime/ptyLoader';
 
+/** 1×1 PNG. Raster assets must match magic bytes after the review fix. */
+export const MINIMAL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
 export function makeTempDir(prefix = 'latte-test-'): string {
   // The real path, because the backend reports real paths back: macOS hands out /var/folders/...
   // and /var is a symlink to /private/var, and TEMP may point at a junction on Windows. Without

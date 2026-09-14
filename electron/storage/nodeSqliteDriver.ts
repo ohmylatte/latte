@@ -33,8 +33,9 @@ export class NodeSqliteDriver implements SqlDriver {
     this.db.exec(sql);
   }
 
-  run(sql: string, params: SqlParam[] = []): void {
-    this.db.prepare(sql).run(...params);
+  run(sql: string, params: SqlParam[] = []): number {
+    const info = this.db.prepare(sql).run(...params);
+    return Number(info.changes);
   }
 
   all<T extends SqlRow = SqlRow>(sql: string, params: SqlParam[] = []): T[] {

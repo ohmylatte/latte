@@ -21,17 +21,33 @@ export function requirePlainObject(value: unknown, name: string): Record<string,
   return value as Record<string, unknown>;
 }
 
-export function requireChoice(value: unknown): Choice {
+export type WorkBrandChoiceInput = Choice & {
+  allowNeutral?: boolean;
+  allowAgencySignature?: boolean;
+};
+
+export function requireChoice(value: unknown): WorkBrandChoiceInput {
   const obj = requirePlainObject(value, 'choice');
-  rejectUnknownKeys(obj, ['identity', 'signature'], 'choice');
-  const { identity, signature } = obj;
+  rejectUnknownKeys(obj, ['identity', 'signature', 'allowNeutral', 'allowAgencySignature'], 'choice');
+  const { identity, signature, allowNeutral, allowAgencySignature } = obj;
   if (typeof identity !== 'string' || !CHOICE_IDENTITIES.has(identity)) {
     throw new ValidationError('choice.identity is invalid');
   }
   if (typeof signature !== 'string' || !CHOICE_SIGNATURES.has(signature)) {
     throw new ValidationError('choice.signature is invalid');
   }
-  return { identity: identity as Choice['identity'], signature: signature as Choice['signature'] };
+  if (allowNeutral !== undefined && typeof allowNeutral !== 'boolean') {
+    throw new ValidationError('choice.allowNeutral must be a boolean');
+  }
+  if (allowAgencySignature !== undefined && typeof allowAgencySignature !== 'boolean') {
+    throw new ValidationError('choice.allowAgencySignature must be a boolean');
+  }
+  return {
+    identity: identity as Choice['identity'],
+    signature: signature as Choice['signature'],
+    ...(allowNeutral !== undefined ? { allowNeutral } : {}),
+    ...(allowAgencySignature !== undefined ? { allowAgencySignature } : {}),
+  };
 }
 
 export function requireWorkId(value: unknown): string {

@@ -81,6 +81,33 @@ describe.each(ENGINES)('branding schema on %s', (engine) => {
     expect(repo.branding.approvedKitForBrand('brd_one')).toBeNull();
   });
 
+  it('translates a second first-insert CAS into VERSION_CONFLICT', () => {
+    seedBrandAndWork(repo);
+    insertApprovedKit(repo, 'kit_one', 'brd_one');
+    expect(() => repo.branding.casHead('kit_one', 'brand', 'brd_one', 0, 1)).toThrow(/VERSION_CONFLICT|head/);
+    repo.branding.insertAgencyVersion(1, HASH, '{}', '2026-01-01T00:00:00.000Z');
+    repo.branding.casAgencyHead(0, 1);
+    expect(() => repo.branding.casAgencyHead(0, 1)).toThrow(/VERSION_CONFLICT|agencia/);
+    repo.branding.casWorkPolicy({
+      workId: 'wrk_a',
+      brandId: 'brd_one',
+      expectedRevision: 0,
+      choice: { identity: 'neutral', signature: 'none' },
+      allowNeutral: true,
+      allowAgencySignature: false,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    expect(() => repo.branding.casWorkPolicy({
+      workId: 'wrk_a',
+      brandId: 'brd_one',
+      expectedRevision: 0,
+      choice: { identity: 'brand', signature: 'none' },
+      allowNeutral: true,
+      allowAgencySignature: false,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })).toThrow(/VERSION_CONFLICT|política/);
+  });
+
   it('enforces foreign keys for policies', () => {
     expect(() =>
       driver.run(
