@@ -38,9 +38,13 @@ export class SqlJsDriver implements SqlDriver {
     this.markDirty();
   }
 
-  run(sql: string, params: SqlParam[] = []): void {
+  run(sql: string, params: SqlParam[] = []): number {
     this.db.run(sql, params);
+    // sql.js 1.14.2: getRowsModified() is sqlite3_changes() on this handle.
+    // Read it BEFORE flush(); export() reopens the connection and resets it.
+    const n = (this.db as Database & { getRowsModified: () => number }).getRowsModified();
     this.markDirty();
+    return n;
   }
 
   all<T extends SqlRow = SqlRow>(sql: string, params: SqlParam[] = []): T[] {

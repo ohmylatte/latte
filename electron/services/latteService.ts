@@ -44,18 +44,34 @@ import type {
   RevisionSource,
   RuntimeStatus,
   SaveOutcome,
+  SkillCandidate,
+  SkillPromoteInput,
+  SkillReviewInput,
   TeamMember,
   TeamMemberOptions,
   UntrackedFile,
   Work,
   WorkDocument,
   WorkPatch,
+  PrepareGenerationOutcome,
+  WorkBrandChoiceInput,
 } from '../../shared/contracts';
+import {
+  type BrandContextPort,
+  type SkillRef,
+  type SkillResolverPort,
+} from '../../shared/generationContracts';
+import { featureEnabled, readFeatureFlags, requireFeature, type FeatureFlags } from '../core/features';
+import { GenerationContractError } from '../generation/errors';
+import { prepareGeneration as runPrepareGeneration } from '../generation/prepare';
+import { pinGeneration } from '../generation/pin';
+import { brandContextAdapter } from '../generation/adapters/brandContext';
+import { skillResolverAdapter } from '../generation/adapters/skillResolver';
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 import { createHash } from 'node:crypto';
 import { writeFileAtomic } from '../core/atomicFile';
-import { UnavailableError, ValidationError } from '../core/errors';
+import { NotFoundError, UnavailableError, ValidationError } from '../core/errors';
 import { isValidId, newId, nowIso, slugify } from '../core/ids';
 import { WORK_FILES } from '../core/paths';
 import { EngramClient, memoryProjectFor } from '../memory/engram';
@@ -68,14 +84,19 @@ import type { ChatManager } from '../opencode/chatManager';
 import { RuntimeDetector } from '../runtime/detect';
 import { assertProvider } from '../runtime/providers';
 import { TerminalManager } from '../runtime/terminalManager';
+import { LearningService } from '../learning/service';
+import type { SkillCandidateRecord } from '../learning/types';
+import type { CandidateGenerator } from '../learning/worker';
+import type { LearningRepository } from '../storage/learningRepository';
 import { briefDocumentId, type DocumentRecord, type LatteRepository } from '../storage/repository';
-import { isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
+import { INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
 import { checkFolder, contains, importFileName, kindFromFileName, readFunnelProposal, readHandoff, scanFolder, titleFromFileName } from '../workspace/linkFolder';
 import { renderDocumentTemplate } from '../workspace/templates';
 import { openItems, renderContinuation } from '../workspace/continuation';
 import { DELIVERABLES_DIR, DeliverableFiles, deliverableName } from '../workspace/deliverables';
 import { documentFileName, fingerprintOf, type DocumentOnDisk, type WorkspaceFiles } from '../workspace/workspace';
 import { LIMITS, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
+import { BrandingService } from '../branding/service';
 
 /** Stable content identity; request identity handles retries, this flags similar proposals without merging them. */
 export function decisionFingerprint(statement:string):string {
@@ -103,6 +124,9 @@ export type BackendApi = Omit<
 
 export interface LatteServiceDeps {
   repo: LatteRepository;
+  learning: LearningRepository;
+  learningGenerator?: CandidateGenerator;
+  learningNow?: () => Date;
   files: WorkspaceFiles;
   detector: RuntimeDetector;
   terminal: TerminalManager;
@@ -132,6 +156,10 @@ export interface LatteServiceDeps {
   /** The running app's version, sourced from `app.getVersion()`; tests pass a fixed string. */
   version: string;
   clock?: () => string;
+  /** Brand-kit worktree owns the real adapter; default is a no-op (neutral, no kit). */
+  brandContext?: BrandContextPort;
+  /** Learned-skills worktree owns the real adapter; default returns no learned refs. */
+  skillResolver?: SkillResolverPort;
 }
 
 const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -200,9 +228,28 @@ function validateMemberOptions(options: unknown): { runtime: ChatRuntime | null;
  */
 export class LatteService implements BackendApi {
   private readonly clock: () => string;
+  readonly branding: BrandingService;
+  readonly learningService: LearningService;
+  private readonly brandContextPort: BrandContextPort;
+  private readonly skillResolverPort: SkillResolverPort;
 
   constructor(private readonly deps: LatteServiceDeps) {
     this.clock = deps.clock ?? nowIso;
+    this.branding = new BrandingService({
+      repo: deps.repo,
+      files: deps.files,
+      chooseFolder: deps.chooseFolder,
+      clock: this.clock,
+    });
+    this.learningService = new LearningService({
+      learning: deps.learning,
+      works: { getWork: (id) => deps.repo.getWork(id) },
+      meta: deps.repo,
+      generator: deps.learningGenerator,
+      now: deps.learningNow,
+    });
+    this.brandContextPort = deps.brandContext ?? brandContextAdapter(this.branding);
+    this.skillResolverPort = deps.skillResolver ?? skillResolverAdapter(this.learningService);
   }
 
   // App ---------------------------------------------------------------------
@@ -259,6 +306,42 @@ export class LatteService implements BackendApi {
     const brandId = requireId(id, 'brandId');
     const cleanContext = requireText(context, 'Brand context', LIMITS.context, { allowEmpty: true });
     return this.deps.repo.updateBrandContext(brandId, cleanContext);
+  }
+
+  async readAgencyProfile() {
+    return this.branding.readAgencyProfile();
+  }
+
+  async saveAgencyProfile(expectedRevision: number, patch: { publicName: string; website?: string | null; contact?: string | null }) {
+    return this.branding.saveAgencyProfile(expectedRevision, patch);
+  }
+
+  async importBrandKit(workId: string) {
+    return this.branding.importBrandKit(workId);
+  }
+
+  async publishBrandKit(workId: string, expectedVersion: number) {
+    return this.branding.publishBrandKit(workId, expectedVersion);
+  }
+
+  async revokeBrandKit(workId: string, version: number, reason: string) {
+    return this.branding.revokeBrandKit(workId, version, reason);
+  }
+
+  async importAgencyKit() {
+    return this.branding.importAgencyKit();
+  }
+
+  async publishAgencyKit(expectedVersion: number) {
+    return this.branding.publishAgencyKit(expectedVersion);
+  }
+
+  async setWorkBrandChoice(workId: string, choice: WorkBrandChoiceInput, expectedRevision: number) {
+    return this.branding.setWorkBrandChoice(workId, choice, expectedRevision);
+  }
+
+  async readWorkBrandContext(workId: string) {
+    return this.branding.readWorkBrandContext(workId);
   }
 
   // Works -------------------------------------------------------------------
@@ -323,6 +406,61 @@ export class LatteService implements BackendApi {
       resultPath = patch.resultPath === null || patch.resultPath === '' ? null : this.existingDeliverable(id, patch.resultPath);
     }
     return this.deps.repo.setWorkOutcome(id, expectedOutput, resultPath, this.clock());
+  }
+
+  async prepareGeneration(workId: string): Promise<PrepareGenerationOutcome> {
+    requireFeature((key) => this.deps.repo.getMeta(key), 'generation');
+    const id = requireId(workId, 'workId');
+    let work;
+    try {
+      work = this.deps.repo.getWork(id);
+    } catch (error) {
+      if (error instanceof NotFoundError) throw new GenerationContractError('WORK_NOT_FOUND', error.message);
+      throw error;
+    }
+    this.deps.files.ensureWork(work.brandId, work.id, work.brief);
+    const result = runPrepareGeneration({
+      works: {
+        requireWork: (wid) => {
+          const found = this.deps.repo.getWork(wid);
+          return { id: found.id, brandId: found.brandId };
+        },
+      },
+      brand: this.brandContextPort,
+      skills: this.skillResolverPort,
+      insert: (receipt) => this.deps.repo.insertGeneration(receipt),
+      pin: ({ generationId, work: pinned, context, snapshot, contextHash }) => {
+        pinGeneration({
+          workDir: this.deps.files.workDir(pinned.brandId, pinned.id),
+          generationId,
+          context,
+          snapshot,
+          contextHash,
+          assets: snapshot ? this.brandContextPort.pinAssets(snapshot) : [],
+        });
+      },
+      liveMemberCount: (wid) => this.deps.hub.liveMemberCount(wid),
+      refreshInstructions: (target) => {
+        this.refreshInstructions(this.deps.repo.getBrand(target.brandId), this.deps.repo.getWork(target.id));
+      },
+      newId: () => newId('gen'),
+      now: () => this.clock(),
+      budgetChars: INSTRUCTIONS_MAX_CHARS,
+    }, id);
+    return {
+      generationId: result.generationId,
+      contextHash: result.contextHash,
+      pending: result.pending,
+      instructionsRefreshed: result.instructionsRefreshed,
+    };
+  }
+
+  private generationEnabled(): boolean {
+    return featureEnabled((key) => this.deps.repo.getMeta(key), 'generation');
+  }
+
+  async featureFlags(): Promise<FeatureFlags> {
+    return readFeatureFlags((key) => this.deps.repo.getMeta(key));
   }
 
   /** A Deliverables file that is there right now, or a message that says why it cannot be linked. */
@@ -632,6 +770,23 @@ export class LatteService implements BackendApi {
     if (!(this.deps.pack?.skills ?? []).some((s) => s.id === id)) throw new ValidationError('Esa skill no viene con Latte');
     this.deps.repo.setMeta(SKILL_OFF_KEY + id, enabled ? '0' : '1');
     return this.listSkills();
+  }
+
+  async listSkillCandidates(): Promise<SkillCandidate[]> {
+    const spend = this.learningService.duplicateSpendVisible().length > 0;
+    return this.learningService.listInbox().map((row) => toSkillCandidate(row, spend));
+  }
+
+  async approveSkillCandidate(input: SkillReviewInput): Promise<SkillCandidate> {
+    return toSkillCandidate(this.learningService.approve(input), false);
+  }
+
+  async rejectSkillCandidate(input: SkillReviewInput): Promise<SkillCandidate> {
+    return toSkillCandidate(this.learningService.reject(input), false);
+  }
+
+  async promoteSkillCandidate(input: SkillPromoteInput): Promise<SkillCandidate> {
+    return toSkillCandidate(this.learningService.promote(input), false);
   }
 
   private skillEnabled(skillId: string): boolean {
@@ -1474,7 +1629,37 @@ export class LatteService implements BackendApi {
     const storedLocale = this.deps.repo.getMeta(`work_content_locale:${work.id}`);
     const outputLanguage = storedLocale === 'en-US' ? 'en-US' : 'es-AR';
     const decisionAuthority=(this.deps.repo.getMeta('decision_authority:'+work.id) as DecisionAuthorityMode|null)??'suggest';
-    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })) });
+    const generation = this.generationEnabled() ? this.pinnedGenerationPointer(work.id) : null;
+    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation });
     this.deps.files.writeInstructions(brand.id, work.id, bundle.text, bundle.files);
   }
+
+  /** Latest receipt for this work. Not called when the feature flag is off. */
+  private pinnedGenerationPointer(workId: string): { generationId: string; contextHash: string; kitHash: string | null; skillRefs: SkillRef[] } | null {
+    const latest = this.deps.repo.listGenerationsForWork(workId)[0];
+    if (!latest) return null;
+    return {
+      generationId: latest.id,
+      contextHash: latest.contextHash,
+      kitHash: latest.context.brandContext?.hash ?? null,
+      skillRefs: latest.context.skillRefs,
+    };
+  }
+}
+
+function toSkillCandidate(row: SkillCandidateRecord, duplicateSpend: boolean): SkillCandidate {
+  return {
+    id: row.id,
+    skillId: row.skillId,
+    scopeKey: row.scopeKey,
+    state: row.state,
+    revision: row.revision,
+    contentHash: row.contentHash,
+    name: row.name,
+    description: row.description,
+    markdown: row.markdown,
+    patternKey: row.patternKey,
+    createdAt: row.createdAt,
+    duplicateSpend,
+  };
 }

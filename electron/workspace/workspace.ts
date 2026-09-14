@@ -6,7 +6,12 @@ import { compactTimestamp } from '../core/ids';
 import { LattePaths, WORK_FILES, safeJoin } from '../core/paths';
 import { isManagedFile, type RenderedInstructionFile } from './instructions';
 
-/** The only two directories side files (truncated sections, skill bodies) ever live under. */
+/**
+ * The only two directories side files (truncated sections, skill bodies) ever live under.
+ * `.latte/generations` is a pinned receipt store: it MUST NOT appear here, because
+ * every writeInstructions call deletes side-file entries that the compositor did not
+ * re-request.
+ */
 const SIDE_FILE_DIRS = [WORK_FILES.contextDir, WORK_FILES.skillsDir];
 
 const WORK_README = `# Latte work directory

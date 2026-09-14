@@ -6,6 +6,17 @@ import { createBackend, type Backend, type BackendOptions } from '../../electron
 import type { CommandResult, CommandRunner } from '../../electron/runtime/commandRunner';
 import type { PtyLoadResult, PtyProcessLike, PtySpawnOptions } from '../../electron/runtime/ptyLoader';
 
+/** 1×1 PNG. Raster assets must match magic bytes after the review fix. */
+export const MINIMAL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+/** Distinct 1×1 PNG so identity vs signature logos can share an asset id. */
+export const MINIMAL_PNG_B = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64',
+);
+
 export function makeTempDir(prefix = 'latte-test-'): string {
   // The real path, because the backend reports real paths back: macOS hands out /var/folders/...
   // and /var is a symlink to /private/var, and TEMP may point at a junction on Windows. Without

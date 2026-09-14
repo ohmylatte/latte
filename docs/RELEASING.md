@@ -60,6 +60,22 @@ publicada: si no la subís, nadie recibe nada.
 Subí la versión, commiteá, y recién después construí. El instalador, la release
 y `latest.yml` tienen que hablar de la misma versión.
 
+### Schema 8 (marca, generación, learning)
+
+La próxima versión que publique este código migra la base de **7 a 8** al
+arrancar. `prepareForMigration` copia el archivo a
+`<dataDir>/backups/latte-v7-<timestamp>.db` (y el WAL si existe) **antes** de
+aplicar las tablas nuevas. El esquema es aditivo: no se reescriben filas de
+`brands`/`works`.
+
+Un instalador **0.3.x** que todavía habla schema 7 **no abre** una base ya
+migrada a 8 (`isNewerSchema`). Quien actualice y después intente volver atrás
+tiene que restaurar el backup `latte-v7-*`, no el `latte.db` nuevo.
+
+Las features (`feature:generation`, `feature:brand-kits`, `feature:learning`)
+encienden con el valor `'on'` y siguen apagadas por defecto. La migración corre
+igual, con o sin flags: no queremos instalaciones con esquemas distintos.
+
 ---
 
 ## 4. Construir

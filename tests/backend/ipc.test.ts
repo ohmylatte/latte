@@ -20,7 +20,11 @@ describe('IPC surface', () => {
     expect(Object.keys(API_ARITY).sort()).toEqual([...API_METHODS].sort());
     expect(API_METHODS).toContain('listProfiles');
     expect(API_METHODS).toContain('saveProfile');
+    expect(API_METHODS).toContain('prepareGeneration');
+    expect(API_METHODS).toContain('featureFlags');
+    expect(API_ARITY.featureFlags).toBe(0);
     expect(API_ARITY.saveProfile).toBe(2);
+    expect(API_ARITY.prepareGeneration).toBe(1);
   });
 
   it('preload never exposes a generic invoke or Node globals', () => {

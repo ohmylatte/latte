@@ -20,9 +20,11 @@ import { LatteService } from './services/latteService';
 import { seedDemoIfEmpty } from './services/seed';
 import { prepareForMigration } from './storage/backup';
 import { openDriver, type DriverPreference } from './storage/openDriver';
+import { LearningRepository } from './storage/learningRepository';
 import { LatteRepository } from './storage/repository';
 import { SCHEMA_VERSION } from './storage/schema';
 import { loadInstructionPack } from './workspace/packs';
+import type { BrandContextPort } from '../shared/generationContracts';
 import { WorkspaceFiles } from './workspace/workspace';
 
 export interface BackendOptions {
@@ -54,11 +56,14 @@ export interface BackendOptions {
   log?: (line: string) => void;
   /** The running app's version, from `app.getVersion()`; tests pass a fixed string. */
   version: string;
+  /** Tests inject a fake brand port so prepareGeneration never touches BrandingService. */
+  brandContext?: BrandContextPort;
 }
 
 export interface Backend {
   service: LatteService;
   repo: LatteRepository;
+  learning: LearningRepository;
   files: WorkspaceFiles;
   terminal: TerminalManager;
   detector: RuntimeDetector;
@@ -73,6 +78,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
   const paths = new LattePaths(options.dataDir);
   const { driver, reason } = await openDriver(paths.dbFile, options.driver ?? 'auto');
   const repo = new LatteRepository(driver);
+  const learning = new LearningRepository(driver);
   // Updating the app can mean updating the schema. A copy is taken before the
   // first ALTER TABLE, and a database written by a newer Latte stops the start
   // here instead of being migrated backwards. A refused start closes its own
@@ -187,6 +193,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
 
   const service = new LatteService({
     repo,
+    learning,
     files,
     detector,
     terminal,
@@ -204,6 +211,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     revealFile: options.revealFile,
     confirmHtml: options.confirmHtml,
     openExternal: options.openExternal,
+    brandContext: options.brandContext,
   });
 
   const seeded = options.seedDemo === false ? false : seedDemoIfEmpty(repo, files, pack);
@@ -211,6 +219,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
   return {
     service,
     repo,
+    learning,
     files,
     terminal,
     detector,

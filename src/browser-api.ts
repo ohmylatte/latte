@@ -60,6 +60,7 @@ export const browserAPI: LatteAPI = {
   getContentLocale: async () => localStorage.getItem('latte-content-locale') === 'en-US' ? 'en-US' : 'es-AR',
   setContentLocale: async locale => { localStorage.setItem('latte-content-locale', locale); return locale; },
   appInfo: async () => ({ dataDir: '', engine: 'localStorage (vista previa)', engineReason: 'La vista web no usa SQLite', pack: null, packRoles: 0, version: 'web' }),
+  featureFlags: async () => ({ generation: false, brandKits: false, learning: false }),
   listBrands: async () => read().brands,
   createBrand: async name => change(s => { const b = { id: id(), name, context: '', createdAt: now() }; s.brands.push(b); return b; }),
   updateBrand: async (brandId, context) => change(s => { const b = s.brands.find(b => b.id === brandId)!; b.context = context; return b; }),
@@ -109,9 +110,10 @@ export const browserAPI: LatteAPI = {
   // files on the machine that runs the agent, so the preview lists none and
   // refuses the actions instead of pretending it can reach a disk.
   listDeliverables:async()=>({files:[],truncated:false}),openDeliverable:unavailable,revealDeliverable:unavailable,copyDeliverable:unavailable,
-listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSkillEnabled:unavailable,applyFunnelProposal:unavailable,dismissFunnelProposal:unavailable,trackFile:unavailable,
+listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSkillEnabled:unavailable,listSkillCandidates:async()=>[],approveSkillCandidate:unavailable,rejectSkillCandidate:unavailable,promoteSkillCandidate:unavailable,applyFunnelProposal:unavailable,dismissFunnelProposal:unavailable,trackFile:unavailable,
   saveAsDocument:async(workId,kind,title,content)=>{const c=await browserAPI.createDocument(workId,kind,title);await browserAPI.saveDocument(c.document.id,content,c.fingerprint);return c.document;},
   getWorkPermissions:async()=>'ask' as const,setWorkPermissions:unavailable,
+  readAgencyProfile:unavailable,saveAgencyProfile:unavailable,importBrandKit:unavailable,publishBrandKit:unavailable,revokeBrandKit:unavailable,importAgencyKit:unavailable,publishAgencyKit:unavailable,setWorkBrandChoice:unavailable,readWorkBrandContext:unavailable,prepareGeneration:unavailable,
   acknowledgeBase:async documentId=>mutate(s=>{const d=contentFrom(s,documentId).document;if(d.baseDocumentId)d.baseFingerprint=contentFrom(s,d.baseDocumentId).fingerprint;return d;}),
   useFolder: unavailable,
   snapshot: async workId => change(s => { const r: Revision = { id: id(), workId, documentId: previewDocId(workId), source: 'human', content: s.works.find(w => w.id === workId)!.brief, createdAt: now() }; s.revisions.push(r); return r; }),

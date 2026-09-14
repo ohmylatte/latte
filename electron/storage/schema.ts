@@ -1,3 +1,7 @@
+import { BRANDING_SCHEMA_SQL } from './brandingSchema';
+import { GENERATION_SCHEMA_SQL } from './generationSchema';
+import { LEARNING_SCHEMA_SQL } from './learningSchema';
+
 /**
  * Schema is applied idempotently on every start. Revisions are immutable by
  * contract AND by database triggers: no code path can update or delete them.
@@ -123,7 +127,7 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-`;
+` + GENERATION_SCHEMA_SQL + BRANDING_SCHEMA_SQL + LEARNING_SCHEMA_SQL;
 
 /**
  * Not bumped for works.expected_output / works.result_path (nor for
@@ -134,6 +138,6 @@ CREATE TABLE IF NOT EXISTS meta (
  * backward compatible.
  * The outcome columns are added by migrate(), the same path for a new database
  * and an existing one, so the works table above stays exactly what schema 7
- * defines.
+ * defined. Schema 8 adds generation receipts, brand-kit tables and learned-skill tables.
  */
-export const SCHEMA_VERSION = '7';
+export const SCHEMA_VERSION = '8';

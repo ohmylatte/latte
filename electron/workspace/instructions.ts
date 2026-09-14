@@ -1,4 +1,5 @@
 import type { Brand, Decision, DecisionAuthorityMode, EffortTier, FunnelStage, Work } from '../../shared/contracts';
+import type { SkillRef } from '../../shared/generationContracts';
 import { WORK_FILES } from '../core/paths';
 import { DELIVERABLES_DIR } from './deliverables';
 
@@ -178,6 +179,20 @@ export interface InstructionsInput {
   /** Language for human-facing output. Operational instructions remain canonical English. */
   outputLanguage?: 'es-AR' | 'en-US';
   decisionAuthority?: DecisionAuthorityMode;
+  /**
+   * Compact pointer to a pinned generation receipt. Kit hash + skill refs only;
+   * never binaries or full SKILL.md bodies. Learned refs are dropped (and reported)
+   * when they would not fit after base, brief, rules, shipped skills and this pointer.
+   */
+  generation?: GenerationPointerInput | null;
+}
+
+/** Compact receipt pointer that rides CLAUDE.md / AGENTS.md. */
+export interface GenerationPointerInput {
+  generationId: string;
+  contextHash: string;
+  kitHash: string | null;
+  skillRefs: SkillRef[];
 }
 
 function section(title: string, body: string, empty: string): string {
@@ -235,7 +250,8 @@ function renderCore(
   input: InstructionsInput,
   decisionsInlineMax: number,
   brandContextChars: number,
-): { text: string; files: RenderedInstructionFile[]; brandTruncated: boolean; decisionsTruncated: boolean } {
+  includeLearnedRefs: boolean,
+): { text: string; files: RenderedInstructionFile[]; brandTruncated: boolean; decisionsTruncated: boolean; learnedOmitted: boolean } {
   const { brand, work, decisions, memory, pack, memoryProject } = input;
   const files: RenderedInstructionFile[] = [];
   const documentLines = (input.documents ?? [])
@@ -341,6 +357,9 @@ function renderCore(
     files.push({ path: skillPath, content: `# ${skill.name}\n\n${body}\n` });
   }
 
+  const generationPointer = generationPointerSection(input.generation ?? null, includeLearnedRefs);
+  if (generationPointer) parts.push(generationPointer.text);
+
   parts.push(
     '## Working rules',
     `- Write all human-facing answers and new deliverable content in ${input.outputLanguage === 'en-US' ? 'English (United States)' : 'Spanish (Argentina)'}. Keep file names, stage IDs, commands, code, and persisted contracts unchanged.`,
@@ -376,7 +395,43 @@ function renderCore(
   }
   parts.push('');
 
-  return { text: parts.join('\n'), files, brandTruncated, decisionsTruncated };
+  return {
+    text: parts.join('\n'),
+    files,
+    brandTruncated,
+    decisionsTruncated,
+    learnedOmitted: generationPointer?.learnedOmitted ?? false,
+  };
+}
+
+function generationPointerSection(
+  generation: GenerationPointerInput | null,
+  includeLearnedRefs: boolean,
+): { text: string; learnedOmitted: boolean } | null {
+  if (!generation) return null;
+  const pinPath = `${WORK_FILES.metaDir}/${WORK_FILES.generationsDir}/${generation.generationId}/context.json`;
+  const identity = generation.kitHash
+    ? `- Identity snapshot hash: \`${generation.kitHash}\`.`
+    : '- No identity kit and no agency signature: explicit-neutral. Do not invent official colours, type or a logo.';
+  const learnedOmitted = !includeLearnedRefs && generation.skillRefs.length > 0;
+  const learnedLines = includeLearnedRefs && generation.skillRefs.length > 0
+    ? generation.skillRefs.map((s) => `- \`${s.skillId}@${s.version}\` sha256 \`${s.hash}\``)
+    : learnedOmitted
+      ? ['- Learned skills were omitted from this file because they did not fit the remaining instruction budget. Shipped skills were not turned off to make room.']
+      : ['- No approved learned skills in this receipt.'];
+  return {
+    learnedOmitted,
+    text: section(
+      'Pinned generation context',
+      [
+        `This work is pinned to generation \`${generation.generationId}\` (context sha256 \`${generation.contextHash}\`).`,
+        identity,
+        ...learnedLines,
+        `- Full snapshot: \`./${pinPath}\`. A valid receipt is not proof that a deliverable applied the kit.`,
+      ].join('\n'),
+      '',
+    ),
+  };
 }
 
 /**
@@ -397,14 +452,28 @@ export function renderInstructionBundle(input: InstructionsInput): InstructionBu
   // pushing the final text back over INSTRUCTIONS_MAX_CHARS.
   const footerReserve = compactedFooter(['decisions', 'brand']).length;
   const fits = (text: string) => text.length + footerReserve <= INSTRUCTIONS_MAX_CHARS;
+  const hasLearned = (input.generation?.skillRefs.length ?? 0) > 0;
 
-  let rendered = renderCore(input, DECISIONS_INLINE_MAX, BRAND_CONTEXT_CHARS);
-  const overCap = !fits(rendered.text);
-  if (overCap) {
-    rendered = renderCore(input, DECISIONS_INLINE_FLOOR, BRAND_CONTEXT_CHARS);
-  }
-  if (overCap && !fits(rendered.text)) {
-    rendered = renderCore(input, DECISIONS_INLINE_FLOOR, BRAND_CONTEXT_CHARS_FLOOR);
+  const run = (includeLearned: boolean) => {
+    let rendered = renderCore(input, DECISIONS_INLINE_MAX, BRAND_CONTEXT_CHARS, includeLearned);
+    // overCap is the first render: even if a later squeeze fits, the footer
+    // still records that the file had to be compacted.
+    const overCap = !fits(rendered.text);
+    if (overCap) {
+      rendered = renderCore(input, DECISIONS_INLINE_FLOOR, BRAND_CONTEXT_CHARS, includeLearned);
+    }
+    if (overCap && !fits(rendered.text)) {
+      rendered = renderCore(input, DECISIONS_INLINE_FLOOR, BRAND_CONTEXT_CHARS_FLOOR, includeLearned);
+    }
+    return { rendered, overCap };
+  };
+
+  // Base, brief, rules and shipped skills are never dropped to make room for learned refs.
+  let { rendered, overCap } = run(true);
+  if (overCap && hasLearned && !fits(rendered.text)) {
+    const dropped = run(false);
+    rendered = dropped.rendered;
+    overCap = dropped.overCap;
   }
   if (!overCap) return { text: rendered.text, files: rendered.files };
 

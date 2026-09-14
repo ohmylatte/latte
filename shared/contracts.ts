@@ -29,6 +29,81 @@ export interface Work {
 }
 /** The outcome of a work, the only part edited through `updateWork`. Omitted = unchanged; null or '' = cleared. */
 export interface WorkPatch { expectedOutput?: string | null; resultPath?: string | null }
+
+/** Identity and agency-signature choice for a work. Not part of WorkPatch. */
+export type BrandIdentityMode = 'brand' | 'agency' | 'neutral';
+export type BrandSignatureMode = 'none' | 'agency';
+export interface BrandChoice { identity: BrandIdentityMode; signature: BrandSignatureMode }
+export interface WorkBrandChoiceInput extends BrandChoice {
+  allowNeutral?: boolean;
+  allowAgencySignature?: boolean;
+}
+export interface FeatureFlags {
+  generation: boolean;
+  brandKits: boolean;
+  learning: boolean;
+}
+export interface AgencyProfilePatch { publicName: string; website?: string | null; contact?: string | null }
+export interface AgencyProfileView {
+  revision: number;
+  hash: string;
+  publicName: string;
+  website: string | null;
+  contact: string | null;
+}
+export interface BrandKitDraftView {
+  kitId: string;
+  ownerKind: 'brand' | 'agency';
+  ownerBrandId: string | null;
+  permitsAgencySignature: boolean;
+  assetCount: number;
+  warnings: string[];
+}
+export interface BrandKitView {
+  kitId: string;
+  version: number;
+  hash: string;
+  ownerKind: 'brand' | 'agency';
+}
+export interface WorkBrandPolicyView {
+  workId: string;
+  brandId: string;
+  revision: number;
+  defaultChoice: BrandChoice;
+  allowNeutral: boolean;
+  allowAgencySignature: boolean;
+}
+/** Resolved composition. Generation worktree adapts this to its port after merge. */
+export interface BrandContextSnapshot {
+  schemaVersion: 1;
+  /** Present only on a sealed generation. Preview IPC omits it; prepareGeneration mints the id. */
+  generationId?: string;
+  workId: string;
+  brandId: string;
+  choice: BrandChoice;
+  identity: BrandIdentityMode;
+  sourceKit: { kitId: string; version: number; hash: string } | null;
+  rules: string;
+  assets: ReadonlyArray<{ id: string; hash: string }>;
+  signature: {
+    agencyRevision: number;
+    hash: string;
+    publicName: string;
+    website: string | null;
+    logo: { id: string; hash: string } | null;
+  } | null;
+  warnings: readonly string[];
+}
+export interface WorkBrandContextView {
+  receipt: {
+    schemaVersion: 1;
+    workId: string;
+    brandId: string;
+    brandContext: { kitId: string; version: number; hash: string } | null;
+    skillRefs: ReadonlyArray<{ skillId: string; version: number; hash: string }>;
+  };
+  snapshot: BrandContextSnapshot;
+}
 /** Where a stored version came from. `external` = the file changed outside Latte; we never guess who wrote it. */
 export type RevisionSource = 'human' | 'external' | 'latte';
 export interface Revision { id: string; workId: string; documentId: string; source: RevisionSource; content: string; createdAt: string }
@@ -124,6 +199,40 @@ export interface McpServerInput {
 export interface HandoffRequest { fileName: string; roleId: string; roleName: string; known: boolean; request: string }
 
 export interface AgentSkill { id: string; name: string; summary: string; enabled: boolean }
+
+/** Learned-skill candidate waiting on a human. Never mixed with shipped `skill-off:` ids. */
+export type SkillCandidateState =
+  | 'draft'
+  | 'validating'
+  | 'needs_review'
+  | 'blocked'
+  | 'approved'
+  | 'rejected'
+  | 'superseded';
+export interface SkillCandidate {
+  id: string;
+  skillId: string;
+  scopeKey: string;
+  state: SkillCandidateState;
+  revision: number;
+  contentHash: string;
+  name: string;
+  description: string;
+  markdown: string;
+  patternKey: string;
+  createdAt: string;
+  duplicateSpend: boolean;
+}
+export interface SkillReviewInput {
+  candidateId: string;
+  expectedRevision: number;
+  expectedHash: string;
+  requestId: string;
+}
+export interface SkillPromoteInput {
+  candidateId: string;
+  requestId: string;
+}
 
 export interface FolderEntries { subfolders: string[]; otherFiles: string[]; truncated: boolean }
 export interface DeliverableFile { fileName: string; extension: string; bytes: number; modifiedAt: string }
@@ -353,6 +462,14 @@ export interface ProviderAuthMethod { index: number; type: 'oauth' | 'api'; labe
 export interface ProviderInfo { id: string; name: string; connected: boolean; models: string[]; methods: ProviderAuthMethod[] }
 export interface ProviderOAuthStart { url: string; method: 'auto' | 'code'; instructions: string }
 
+/** Result of pinning a generation receipt. `pending` means live members blocked rewriting CLAUDE.md/AGENTS.md. */
+export interface PrepareGenerationOutcome {
+  generationId: string;
+  contextHash: string;
+  pending: boolean;
+  instructionsRefreshed: boolean;
+}
+
 export interface LatteAPI {
   getUiLocale(): Promise<UiLocale>;
   setUiLocale(locale: UiLocale): Promise<UiLocale>;
@@ -362,6 +479,17 @@ export interface LatteAPI {
   listBrands(): Promise<Brand[]>;
   createBrand(name: string): Promise<Brand>;
   updateBrand(id: string, context: string): Promise<Brand>;
+  readAgencyProfile(): Promise<AgencyProfileView | null>;
+  saveAgencyProfile(expectedRevision: number, patch: AgencyProfilePatch): Promise<AgencyProfileView>;
+  importBrandKit(workId: string): Promise<BrandKitDraftView | null>;
+  publishBrandKit(workId: string, expectedVersion: number): Promise<BrandKitView>;
+  revokeBrandKit(workId: string, version: number, reason: string): Promise<void>;
+  importAgencyKit(): Promise<BrandKitDraftView | null>;
+  publishAgencyKit(expectedVersion: number): Promise<BrandKitView>;
+  setWorkBrandChoice(workId: string, choice: WorkBrandChoiceInput, expectedRevision: number): Promise<WorkBrandPolicyView>;
+  readWorkBrandContext(workId: string): Promise<WorkBrandContextView>;
+  /** Installation feature switches. Default off; no secrets. */
+  featureFlags(): Promise<FeatureFlags>;
   listWorks(brandId: string): Promise<Work[]>;
   createWork(brandId: string, title: string): Promise<Work>;
   /**
@@ -369,6 +497,12 @@ export interface LatteAPI {
    * of Deliverables as its result. A link is refused unless the file is there.
    */
   updateWork(workId: string, patch: WorkPatch): Promise<Work>;
+  /**
+   * Pins an immutable generation receipt for this work. `brandId` is derived
+   * from the work in the repository; a brand id in the payload is ignored.
+   * No-op of product behaviour when the installation flag is off: the call is refused.
+   */
+  prepareGeneration(workId: string): Promise<PrepareGenerationOutcome>;
   /** Saves the work's brief document. `baseFingerprint` is the one handed out by the last read; omitting it falls back to the database copy. */
   saveBrief(workId: string, brief: string, baseFingerprint?: string | null): Promise<SaveOutcome>;
   listRevisions(workId: string): Promise<Revision[]>;
@@ -408,6 +542,11 @@ export interface LatteAPI {
   /** Skills shipped with Latte and whether each one is on. */
   listSkills(): Promise<AgentSkill[]>;
   setSkillEnabled(skillId: string, enabled: boolean): Promise<AgentSkill[]>;
+  /** Learned-skill inbox. Empty while the installation flag is off. */
+  listSkillCandidates(): Promise<SkillCandidate[]>;
+  approveSkillCandidate(input: SkillReviewInput): Promise<SkillCandidate>;
+  rejectSkillCandidate(input: SkillReviewInput): Promise<SkillCandidate>;
+  promoteSkillCandidate(input: SkillPromoteInput): Promise<SkillCandidate>;
   /** Takes the agent's funnel proposal as the document's stages. */
   applyFunnelProposal(documentId: string): Promise<WorkDocument>;
   /** Drops the proposal and leaves the stages as they were. */

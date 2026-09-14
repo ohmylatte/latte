@@ -212,3 +212,43 @@ describe('WorkspaceFiles.writeInstructions: side files', () => {
     expect(fs.readFileSync(path.join(workDir, '.latte', 'context', 'brand.md'), 'utf8')).toContain('F'.repeat(BRAND_CONTEXT_CHARS + 100));
   });
 });
+
+describe('renderInstructionBundle: pinned generation pointer', () => {
+  const hash = 'ab'.repeat(32);
+  const pointer = {
+    generationId: 'gen_eeeeeeeeeeeeeeeeeeee',
+    contextHash: hash,
+    kitHash: hash,
+    skillRefs: [{ skillId: 'learned-report', version: 1, hash }],
+  };
+
+  it('adds a compact kit-hash + skill-ref pointer and never inlines a learned body', () => {
+    const bundle = renderInstructionBundle({ brand, work, decisions: [], generation: pointer });
+    expect(bundle.text).toContain('Pinned generation context');
+    expect(bundle.text).toContain(pointer.generationId);
+    expect(bundle.text).toContain('learned-report@1');
+    expect(bundle.text).toContain(`.latte/generations/${pointer.generationId}/context.json`);
+    expect(bundle.files.some((f) => f.path.includes('learned-report'))).toBe(false);
+  });
+
+  it('drops learned refs when they would blow the budget, and never silences a shipped skill to make room', () => {
+    expect(writingSkill).not.toBeNull();
+    const learned = Array.from({ length: 400 }, (_, i) => ({
+      skillId: `learned-${String(i).padStart(3, '0')}`,
+      version: 1,
+      hash,
+    }));
+    const bundle = renderInstructionBundle({
+      brand: { ...brand, context: 'B'.repeat(BRAND_CONTEXT_CHARS) },
+      work: { ...work, brief: 'C'.repeat(6_000) },
+      decisions: [],
+      skills: writingSkill ? [writingSkill] : [],
+      generation: { ...pointer, skillRefs: learned },
+    });
+    expect(bundle.text).toContain('<!-- latte:skill writing -->');
+    expect(bundle.files.some((f) => f.path.endsWith('writing.md'))).toBe(true);
+    expect(bundle.text).toMatch(/Learned skills were omitted/);
+    expect(bundle.text).not.toContain('learned-000@1');
+    expect(bundle.text.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX_CHARS + 400);
+  });
+});
