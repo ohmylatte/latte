@@ -95,11 +95,6 @@ export class LearningRepository {
     return this.db.transaction(fn);
   }
 
-  private affected(): number {
-    const row = this.db.get<{ c: number | string | null }>('SELECT changes() AS c');
-    return Number(row?.c ?? 0);
-  }
-
   insertLearnedSkill(row: { id: string; scopeKey: string; createdAt: string }): void {
     this.db.run(
       "INSERT INTO learned_skills(id, scope_key, active_version, lifecycle) VALUES (?, ?, NULL, 'active')",
@@ -186,8 +181,9 @@ export class LearningRepository {
    * stale worker cannot commit later.
    */
   claimJob(input: { jobId?: string; nowIso: string; leaseUntil: string; token: string; maxAttempts: number }): LearningJobRecord | null {
+    let n = 0;
     if (input.jobId) {
-      this.db.run(
+      n = this.db.run(
         `UPDATE learning_jobs
          SET state = 'running', lease_until = ?, lease_token = ?, attempts = attempts + 1
          WHERE id = ? AND attempts < ? AND (
@@ -205,7 +201,7 @@ export class LearningRepository {
         [input.maxAttempts, input.nowIso],
       );
       if (!next) return null;
-      this.db.run(
+      n = this.db.run(
         `UPDATE learning_jobs
          SET state = 'running', lease_until = ?, lease_token = ?, attempts = attempts + 1
          WHERE id = ? AND attempts < ? AND (
@@ -214,7 +210,7 @@ export class LearningRepository {
         [input.leaseUntil, input.token, next.id, input.maxAttempts, input.nowIso],
       );
     }
-    if (this.affected() !== 1) return null;
+    if (n !== 1) return null;
     const row = this.db.get<JobRow>('SELECT * FROM learning_jobs WHERE lease_token = ?', [input.token]);
     return row ? toJob(row) : null;
   }
@@ -226,24 +222,24 @@ export class LearningRepository {
     state: Exclude<LearningJobState, 'queued' | 'running'>;
     candidateId: string | null;
   }): boolean {
-    this.db.run(
+    const n = this.db.run(
       `UPDATE learning_jobs
        SET state = ?, candidate_id = ?, lease_token = NULL, lease_until = NULL
        WHERE id = ? AND state = 'running' AND lease_token = ? AND lease_until > ?`,
       [input.state, input.candidateId, input.jobId, input.token, input.nowIso],
     );
-    return this.affected() === 1;
+    return n === 1;
   }
 
   /** Manual capture never leases: close a queued job in the same write as the candidate. */
   finishQueuedJob(jobId: string, state: Exclude<LearningJobState, 'queued' | 'running'>, candidateId: string | null): boolean {
-    this.db.run(
+    const n = this.db.run(
       `UPDATE learning_jobs
        SET state = ?, candidate_id = ?, lease_token = NULL, lease_until = NULL
        WHERE id = ? AND state = 'queued'`,
       [state, candidateId, jobId],
     );
-    return this.affected() === 1;
+    return n === 1;
   }
 
   failJobAttemptsExceeded(nowIso: string, maxAttempts: number): void {
@@ -369,12 +365,12 @@ export class LearningRepository {
   }
 
   rejectCandidate(candidateId: string, expectedRevision: number, expectedHash: string): SkillCandidateRecord {
-    this.db.run(
+    const n = this.db.run(
       `UPDATE skill_candidates SET state = 'rejected', revision = revision + 1
        WHERE id = ? AND state = 'needs_review' AND revision = ? AND content_hash = ?`,
       [candidateId, expectedRevision, expectedHash],
     );
-    if (this.affected() !== 1) throw new ConflictError('Candidate review conflict');
+    if (n !== 1) throw new ConflictError('Candidate review conflict');
     return this.getCandidate(candidateId);
   }
 
@@ -401,13 +397,13 @@ export class LearningRepository {
       return this.getCandidate(input.candidateId);
     }
 
-    this.db.run(
+    const approved = this.db.run(
       `UPDATE skill_candidates
        SET state = 'approved', revision = revision + 1
        WHERE id = ? AND state = 'needs_review' AND revision = ? AND content_hash = ? AND validated_hash = ?`,
       [input.candidateId, input.expectedRevision, input.expectedHash, input.expectedHash],
     );
-    if (this.affected() !== 1) throw new ConflictError('Candidate review conflict');
+    if (approved !== 1) throw new ConflictError('Candidate review conflict');
 
     const candidate = this.getCandidate(input.candidateId);
     const nextVersion = this.nextVersion(candidate.skillId);
@@ -418,20 +414,18 @@ export class LearningRepository {
       [candidate.skillId, nextVersion, candidate.contentHash, candidate.name, candidate.description, candidate.markdown, candidate.id, input.nowIso],
     );
 
-    if (candidate.baseVersion === null) {
-      this.db.run(
+    const pointer = candidate.baseVersion === null
+      ? this.db.run(
         `UPDATE learned_skills SET active_version = ?
          WHERE id = ? AND scope_key = ? AND lifecycle = 'active' AND active_version IS NULL`,
         [nextVersion, candidate.skillId, candidate.scopeKey],
-      );
-    } else {
-      this.db.run(
+      )
+      : this.db.run(
         `UPDATE learned_skills SET active_version = ?
          WHERE id = ? AND scope_key = ? AND lifecycle = 'active' AND active_version = ?`,
         [nextVersion, candidate.skillId, candidate.scopeKey, candidate.baseVersion],
       );
-    }
-    if (this.affected() !== 1) throw new PointerConflictError();
+    if (pointer !== 1) throw new PointerConflictError();
 
     this.insertAudit(candidate.id, 'approved', { version: nextVersion, requestId: input.requestId }, input.nowIso);
     this.insertReceipt(input.requestId, hash, JSON.stringify({ status: 'approved', candidateId: candidate.id, version: nextVersion }), input.nowIso);

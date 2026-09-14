@@ -7,7 +7,8 @@ import { brandScopeKey, newLearningId } from '../../electron/learning/ids';
 import { LearningService } from '../../electron/learning/service';
 import { validateCandidatePayload, assertSafePackagePath } from '../../electron/learning/validator';
 import type { CandidatePayload } from '../../electron/learning/types';
-import { LEARNING_CAPTURE_KEY, LEARNING_DAILY_CAP_KEY, LEARNING_FEATURE_KEY } from '../../electron/learning/types';
+import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
+import { LEARNING_CAPTURE_KEY, LEARNING_DAILY_CAP_KEY } from '../../electron/learning/types';
 import { AGENCY_SCOPE_KEY } from '../../electron/learning/types';
 import type { SqlDriver } from '../../electron/storage/driver';
 import { LearningRepository } from '../../electron/storage/learningRepository';
@@ -100,7 +101,7 @@ describe.each(ENGINES)('Learning persistence on %s', (engine) => {
   it('migrates additively to schema 8 and keeps shipped tables', () => {
     expect(SCHEMA_VERSION).toBe('8');
     expect(repo.getMeta('schema_version')).toBe('8');
-    expect(repo.getMeta(LEARNING_FEATURE_KEY)).toBeNull();
+    expect(repo.getMeta(FEATURE_KEYS.learning)).toBeNull();
     repo.insertBrand({ id: 'brd_one', name: 'One', context: '', createdAt: '2026-01-01T00:00:00.000Z' });
     expect(repo.getBrand('brd_one').name).toBe('One');
   });
@@ -168,6 +169,25 @@ describe.each(ENGINES)('Learning persistence on %s', (engine) => {
     learning.insertLearnedSkill({ id: 'lsk_branded', scopeKey: brandScopeKey('brd_one'), createdAt: '2026-01-01T00:00:00.000Z' });
     expect(learning.getLearnedSkill('lsk_branded').scopeKey).toBe('brand:brd_one');
   });
+
+  it('claimJob outside a transaction still returns the lease', () => {
+    const inserted = learning.insertJob({
+      id: newLearningId('ljb'),
+      scopeKey: 'brand:brd_one',
+      sourceKey: 'human:claim',
+      evidenceJson: '[]',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    const claimed = learning.claimJob({
+      jobId: inserted.job.id,
+      nowIso: '2026-01-01T00:00:01.000Z',
+      leaseUntil: '2026-01-01T00:00:31.000Z',
+      token: 'ljb_outsidelease',
+      maxAttempts: 3,
+    });
+    expect(claimed?.leaseToken).toBe('ljb_outsidelease');
+    expect(claimed?.state).toBe('running');
+  });
 });
 
 describe('Learning service', () => {
@@ -176,7 +196,7 @@ describe('Learning service', () => {
   afterEach(() => b.cleanup());
 
   function enable(mode: 'manual' | 'auto' = 'manual', cap?: string) {
-    b.repo.setMeta(LEARNING_FEATURE_KEY, 'on');
+    b.repo.setMeta(FEATURE_KEYS.learning, FEATURE_ON);
     b.repo.setMeta(LEARNING_CAPTURE_KEY, mode);
     if (cap !== undefined) b.repo.setMeta(LEARNING_DAILY_CAP_KEY, cap);
   }

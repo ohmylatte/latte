@@ -8,8 +8,8 @@ export function isDecisionProtocolText(text: string): boolean {
   return /latte-decision/i.test(text);
 }
 
-export function captureEnabled(featureOn: boolean, mode: CaptureMode, kind: SignalKind): boolean {
-  if (!featureOn || mode === 'off') return false;
+export function captureEnabled(mode: CaptureMode, kind: SignalKind): boolean {
+  if (mode === 'off') return false;
   if (mode === 'manual') return kind === 'explicit_capture';
   return true;
 }
@@ -25,10 +25,9 @@ export function interpretCompletedAssistantMessage(_input: {
 }
 
 export type CapturePolicy = {
-  featureOn: boolean;
   mode: CaptureMode;
 };
 
 export function allowObserve(policy: CapturePolicy, kind: SignalKind): boolean {
-  return captureEnabled(policy.featureOn, policy.mode, kind);
+  return captureEnabled(policy.mode, kind);
 }

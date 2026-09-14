@@ -156,7 +156,7 @@ export class LearningService {
    */
   observe(signal: LearningSignal, payload?: CandidatePayload): { jobId: string; created: boolean; candidateId: string | null } {
     this.requireEnabled();
-    if (!allowObserve({ featureOn: true, mode: this.captureMode() }, signal.kind)) {
+    if (!allowObserve({ mode: this.captureMode() }, signal.kind)) {
       throw new ValidationError('Learning capture is off');
     }
     const work = this.deps.works.getWork(requireId(signal.workId, 'workId'));
