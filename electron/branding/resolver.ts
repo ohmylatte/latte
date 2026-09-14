@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { canonicalJson, isHexSha256, sha256Utf8 } from '../core/canonical';
 import {
   BrandKitError,
   NEUTRAL_RULES,
@@ -14,6 +14,8 @@ import {
   type SkillRef,
   type WorkBrandPolicy,
 } from './types';
+
+export { canonicalJson, sha256Bytes, sha256Utf8 } from '../core/canonical';
 
 export function selectKit(choice: Choice, brandKit: Kit | null, agencyKit: Kit | null): Kit | null {
   if (choice.identity === 'brand') return brandKit;
@@ -121,26 +123,8 @@ export function resolveBrandContext(input: {
   };
 }
 
-/** Canonical JSON: sorted object keys, schemaVersion inside hashed payloads, hash itself stays outside. */
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, v]) => v !== undefined)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`;
-}
-
-export function sha256Utf8(s: string): Sha256 {
-  return createHash('sha256').update(s, 'utf8').digest('hex');
-}
-
-export function sha256Bytes(bytes: Uint8Array): Sha256 {
-  return createHash('sha256').update(bytes).digest('hex');
-}
-
 export function isSha256(value: string): boolean {
-  return /^[0-9a-f]{64}$/.test(value);
+  return isHexSha256(value);
 }
 
 /**

@@ -11,7 +11,7 @@ export type ContentHash = HexSha256;
 export const GENERATION_SCHEMA_VERSION: SchemaVersion = 1;
 export const HEX_SHA256 = /^[0-9a-f]{64}$/;
 /** Installation meta key. Absent or any value other than `1` means OFF. */
-export const GENERATION_ENABLED_META = 'generation.enabled';
+export const GENERATION_ENABLED_META = 'feature:generation';
 
 export interface KitRef {
   kitId: string;
@@ -141,7 +141,7 @@ export interface PrepareGenerationResult {
 }
 
 export function isGenerationEnabled(metaValue: string | null | undefined): boolean {
-  return metaValue === '1';
+  return metaValue === 'on';
 }
 
 export const NOOP_BRAND_CONTEXT: BrandContextPort = {

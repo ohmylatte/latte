@@ -138,4 +138,5 @@ export type ComposedBrandContext = Readonly<{
   snapshot: BrandContextSnapshot;
 }>;
 
+export { FEATURE_KEYS } from '../core/features';
 export const FEATURE_BRAND_KITS = 'feature:brand-kits';

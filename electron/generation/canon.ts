@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   GENERATION_SCHEMA_VERSION,
   HEX_SHA256,
@@ -10,6 +9,7 @@ import {
   type KitRef,
   type SkillRef,
 } from '../../shared/generationContracts';
+import { canonicalJson as coreCanonicalJson, sha256Utf8 as coreSha256Utf8 } from '../core/canonical';
 import { GenerationContractError } from './errors';
 
 const IDENTITY_MODES = new Set(['brand', 'agency', 'neutral']);
@@ -18,39 +18,15 @@ const SIGNATURE_MODES = new Set(['none', 'agency']);
 /** Deterministic JSON: sorted object keys, no `undefined`, NFC strings. Not incidental JSON.stringify. */
 export function canonicalJson(value: unknown): string {
   try {
-    return writeCanonical(value);
+    return coreCanonicalJson(value);
   } catch (error) {
     if (error instanceof GenerationContractError) throw error;
     throw new GenerationContractError('CANONICALIZE_FAILED', error instanceof Error ? error.message : String(error));
   }
 }
 
-function writeCanonical(value: unknown): string {
-  if (value === undefined) {
-    throw new GenerationContractError('CANONICALIZE_FAILED', 'undefined is not canonical');
-  }
-  if (value === null) return 'null';
-  const kind = typeof value;
-  if (kind === 'boolean') return value ? 'true' : 'false';
-  if (kind === 'number') {
-    if (!Number.isFinite(value as number)) {
-      throw new GenerationContractError('CANONICALIZE_FAILED', 'non-finite number');
-    }
-    return JSON.stringify(value);
-  }
-  if (kind === 'string') return JSON.stringify((value as string).normalize('NFC'));
-  if (Array.isArray(value)) return `[${value.map(writeCanonical).join(',')}]`;
-  if (kind === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries.map(([k, v]) => `${JSON.stringify(k.normalize('NFC'))}:${writeCanonical(v)}`).join(',')}}`;
-  }
-  throw new GenerationContractError('CANONICALIZE_FAILED', `unsupported type ${kind}`);
-}
-
 export function sha256Utf8(text: string): ContentHash {
-  return createHash('sha256').update(text, 'utf8').digest('hex');
+  return coreSha256Utf8(text);
 }
 
 export function assertHexSha256(value: string): ContentHash {
