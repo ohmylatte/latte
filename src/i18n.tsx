@@ -191,6 +191,13 @@ const es = {
   'learning.promoted': 'Quedó una candidata de agencia para revisar, sin los datos de la marca original.',
   'learning.conflict': 'Otra revisión ganó. Recargá la bandeja.',
   'learning.spend': 'Hay gasto duplicado registrado: no se oculta.',
+  'brand.archive': 'Archivar marca',
+  'brand.archiveConfirm': 'Esto no borra nada: la marca sale de la lista y se puede restaurar. Los archivos quedan en disco. ¿Archivar «{name}»?',
+  'brand.archived': 'Marca archivada. Nada se borró del disco.',
+  'brand.archivedToggle': 'Marcas archivadas',
+  'brand.restore': 'Restaurar',
+  'brand.restored': 'Marca restaurada.',
+  'brand.noneArchived': 'No hay marcas archivadas.',
   ...generatedEs,
 } as const;
 
@@ -365,6 +372,13 @@ const en: Record<MessageKey, string> = {
   'learning.promoted': 'An agency candidate is waiting for review, without the original brand data.',
   'learning.conflict': 'Another review won. Reload the inbox.',
   'learning.spend': 'Duplicate spend was recorded and is shown, not hidden.',
+  'brand.archive': 'Archive brand',
+  'brand.archiveConfirm': 'This does not delete anything: the brand leaves the list and can be restored. Files stay on disk. Archive “{name}”?',
+  'brand.archived': 'Brand archived. Nothing was deleted from disk.',
+  'brand.archivedToggle': 'Archived brands',
+  'brand.restore': 'Restore',
+  'brand.restored': 'Brand restored.',
+  'brand.noneArchived': 'No archived brands.',
   ...generatedEn,
 };
 export const catalogs: Record<UiLocale, Record<MessageKey, string>> = { 'es-AR': es, 'en-US': en };

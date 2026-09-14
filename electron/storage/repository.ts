@@ -10,7 +10,7 @@ import { BrandingRepository } from './brandingRepository';
 import { BRANDING_SCHEMA_SQL } from './brandingSchema';
 import { SCHEMA_SQL, SCHEMA_VERSION } from './schema';
 
-interface BrandRow extends SqlRow { id: string; name: string; context: string; created_at: string }
+interface BrandRow extends SqlRow { id: string; name: string; context: string; created_at: string; archived_at: string | null }
 interface WorkRow extends SqlRow { id: string; brand_id: string; title: string; brief: string; dir: string | null; expected_output: string | null; result_path: string | null; updated_at: string }
 interface RevisionRow extends SqlRow { id: string; work_id: string; document_id: string | null; source: string; content: string; created_at: string }
 interface DecisionRow extends SqlRow { id: string; work_id: string; text: string; created_at: string }
@@ -64,7 +64,8 @@ export interface TeamMemberRecord {
   updatedAt: string;
 }
 
-const toBrand = (r: BrandRow): Brand => ({ id: r.id, name: r.name, context: r.context, createdAt: r.created_at });
+const BRAND_SELECT = 'SELECT b.id, b.name, b.context, b.created_at, a.archived_at FROM brands b LEFT JOIN brand_archives a ON a.brand_id = b.id';
+const toBrand = (r: BrandRow): Brand => ({ id: r.id, name: r.name, context: r.context, createdAt: r.created_at, archivedAt: r.archived_at ?? null });
 const toWork = (r: WorkRow): Work => ({ id: r.id, brandId: r.brand_id, title: r.title, brief: r.brief, folder: r.dir ?? null, expectedOutput: r.expected_output ?? null, resultPath: r.result_path ?? null, updatedAt: r.updated_at });
 const toRevision = (r: RevisionRow): Revision => ({
   id: r.id,
@@ -277,13 +278,29 @@ export class LatteRepository {
   // Brands ------------------------------------------------------------------
 
   listBrands(): Brand[] {
-    return this.db.all<BrandRow>('SELECT * FROM brands ORDER BY created_at ASC, name ASC').map(toBrand);
+    return this.db.all<BrandRow>(`${BRAND_SELECT} WHERE a.brand_id IS NULL ORDER BY b.created_at ASC, b.name ASC`).map(toBrand);
+  }
+
+  listArchivedBrands(): Brand[] {
+    return this.db.all<BrandRow>(`${BRAND_SELECT} WHERE a.brand_id IS NOT NULL ORDER BY a.archived_at DESC, b.name ASC`).map(toBrand);
   }
 
   getBrand(id: string): Brand {
-    const row = this.db.get<BrandRow>('SELECT * FROM brands WHERE id = ?', [id]);
+    const row = this.db.get<BrandRow>(`${BRAND_SELECT} WHERE b.id = ?`, [id]);
     if (!row) throw new NotFoundError('Brand', id);
     return toBrand(row);
+  }
+
+  archiveBrand(id: string, archivedAt: string): Brand {
+    this.getBrand(id);
+    this.db.run('INSERT OR IGNORE INTO brand_archives(brand_id, archived_at) VALUES (?, ?)', [id, archivedAt]);
+    return this.getBrand(id);
+  }
+
+  restoreBrand(id: string): Brand {
+    this.getBrand(id);
+    this.db.run('DELETE FROM brand_archives WHERE brand_id = ?', [id]);
+    return this.getBrand(id);
   }
 
   countBrands(): number {
@@ -291,11 +308,11 @@ export class LatteRepository {
     return Number(row?.n ?? 0);
   }
 
-  insertBrand(brand: Brand): Brand {
+  insertBrand(brand: Omit<Brand, 'archivedAt'>): Brand {
     this.db.run('INSERT INTO brands(id, name, context, created_at) VALUES (?, ?, ?, ?)', [
       brand.id, brand.name, brand.context, brand.createdAt,
     ]);
-    return brand;
+    return this.getBrand(brand.id);
   }
 
   updateBrandContext(id: string, context: string): Brand {

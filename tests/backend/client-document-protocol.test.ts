@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Brand, Work } from '../../shared/contracts';
 import { renderInstructions, renderOutcomeContext, showsCurrentOutcome } from '../../electron/workspace/instructions';
 
-const brand: Brand = { id: 'brd_client', name: 'Café', context: 'CONTEXTO_RELEVANTE', createdAt: '2026-01-01T00:00:00.000Z' };
+const brand: Brand = { id: 'brd_client', name: 'Café', context: 'CONTEXTO_RELEVANTE', createdAt: '2026-01-01T00:00:00.000Z', archivedAt: null };
 const work: Work = { id: 'wrk_client', brandId: brand.id, title: 'Propuesta', brief: 'BRIEF_UNICO', folder: null, expectedOutput: 'RESULTADO_UNICO PDF y Word', updatedAt: brand.createdAt };
 
 describe('client document working rules', () => {

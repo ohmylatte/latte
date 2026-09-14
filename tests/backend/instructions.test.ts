@@ -19,7 +19,7 @@ const PACKS_DIR = path.resolve(__dirname, '..', '..', 'packs');
 const pack = loadInstructionPack(PACKS_DIR, 'marketing-core');
 const writingSkill = pack?.skills.find((s) => s.id === 'writing') ?? null;
 
-const brand: Brand = { id: 'brd_1', name: 'Bruma Café', context: 'Tono directo, sin muletillas.', createdAt: '2026-01-01T00:00:00.000Z' };
+const brand: Brand = { id: 'brd_1', name: 'Bruma Café', context: 'Tono directo, sin muletillas.', createdAt: '2026-01-01T00:00:00.000Z', archivedAt: null };
 const work: Work = { id: 'wrk_1', brandId: 'brd_1', title: 'Lanzamiento Q1', brief: '# Brief', folder: null, updatedAt: '2026-01-01T00:00:00.000Z' } as Work;
 
 function decision(i: number, day: number, status: Decision['status'] = 'approved'): Decision {

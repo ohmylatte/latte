@@ -139,7 +139,7 @@ export function seedDemoIfEmpty(repo: LatteRepository, files: WorkspaceFiles, pa
   if (repo.countBrands() > 0) return false;
 
   const createdAt = now();
-  const brand: Brand = { id: DEMO_BRAND_ID, name: 'Casa Oliva (demo)', context: DEMO_BRAND_CONTEXT, createdAt };
+  const brand: Brand = { id: DEMO_BRAND_ID, name: 'Casa Oliva (demo)', context: DEMO_BRAND_CONTEXT, createdAt, archivedAt: null };
   const work: Work = {
     id: DEMO_WORK_ID,
     brandId: brand.id,

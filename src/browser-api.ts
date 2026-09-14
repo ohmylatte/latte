@@ -10,7 +10,7 @@ const id = () => crypto.randomUUID();
 function read(): Store {
   const raw = localStorage.getItem(KEY);
   if (raw) return JSON.parse(raw);
-  return { brands: [{ id: 'demo', name: 'Casa Oliva · Ejemplo', context: 'Marca ficticia de objetos de diseño. Tono cálido, preciso y cercano. Este espacio contiene material de demostración, no investigación real.', createdAt: now() }], works: [{ id: 'demo-work', brandId: 'demo', title: 'Lanzamiento primavera', brief: initialBrief, folder: null, updatedAt: now() }], revisions: [], decisions: [] };
+  return { brands: [{ id: 'demo', name: 'Casa Oliva · Ejemplo', context: 'Marca ficticia de objetos de diseño. Tono cálido, preciso y cercano. Este espacio contiene material de demostración, no investigación real.', createdAt: now(), archivedAt: null }], works: [{ id: 'demo-work', brandId: 'demo', title: 'Lanzamiento primavera', brief: initialBrief, folder: null, updatedAt: now() }], revisions: [], decisions: [] };
 }
 function change<T>(fn: (store: Store) => T): T { const s = read(); const result = fn(s); localStorage.setItem(KEY, JSON.stringify(s)); return result; }
 /** The web preview tracks a single brief document per work; the real model lives on the desktop. */
@@ -61,11 +61,26 @@ export const browserAPI: LatteAPI = {
   setContentLocale: async locale => { localStorage.setItem('latte-content-locale', locale); return locale; },
   appInfo: async () => ({ dataDir: '', engine: 'localStorage (vista previa)', engineReason: 'La vista web no usa SQLite', pack: null, packRoles: 0, version: 'web' }),
   featureFlags: async () => ({ generation: false, brandKits: false, learning: false }),
-  listBrands: async () => read().brands,
-  createBrand: async name => change(s => { const b = { id: id(), name, context: '', createdAt: now() }; s.brands.push(b); return b; }),
+  listBrands: async () => read().brands.filter(b => !b.archivedAt),
+  createBrand: async name => change(s => { const b: Brand = { id: id(), name, context: '', createdAt: now(), archivedAt: null }; s.brands.push(b); return b; }),
   updateBrand: async (brandId, context) => change(s => { const b = s.brands.find(b => b.id === brandId)!; b.context = context; return b; }),
+  archiveBrand: async brandId => change(s => {
+    const b = s.brands.find(b => b.id === brandId); if (!b) throw new Error('Brand not found: ' + brandId);
+    if (!b.archivedAt) b.archivedAt = now();
+    return b;
+  }),
+  restoreBrand: async brandId => change(s => {
+    const b = s.brands.find(b => b.id === brandId); if (!b) throw new Error('Brand not found: ' + brandId);
+    b.archivedAt = null;
+    return b;
+  }),
+  listArchivedBrands: async () => read().brands.filter(b => Boolean(b.archivedAt)),
   listWorks: async brandId => read().works.filter(w => w.brandId === brandId),
-  createWork: async (brandId, title) => change(s => { const english = localStorage.getItem('latte-content-locale') === 'en-US'; const headings = english ? '\n\n## Goal\n\n## Context\n\n## Next steps\n' : '\n\n## Objetivo\n\n## Contexto\n\n## Próximos pasos\n'; const w: Work = { id: id(), brandId, title, brief: '# ' + title + headings, folder: null, updatedAt: now() }; s.works.push(w); return w; }),
+  createWork: async (brandId, title) => change(s => {
+    const brand = s.brands.find(b => b.id === brandId); if (!brand) throw new Error('Brand not found: ' + brandId);
+    if (brand.archivedAt) throw new Error('Brand is archived: ' + brandId);
+    const english = localStorage.getItem('latte-content-locale') === 'en-US'; const headings = english ? '\n\n## Goal\n\n## Context\n\n## Next steps\n' : '\n\n## Objetivo\n\n## Contexto\n\n## Próximos pasos\n'; const w: Work = { id: id(), brandId, title, brief: '# ' + title + headings, folder: null, updatedAt: now() }; s.works.push(w); return w;
+  }),
   // The expected output is real here; a linked result is not: the preview has
   // no Deliverables folder, so it refuses the link instead of faking a file.
   updateWork: async (workId, patch) => {

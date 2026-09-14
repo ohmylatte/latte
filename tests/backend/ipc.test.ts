@@ -22,9 +22,17 @@ describe('IPC surface', () => {
     expect(API_METHODS).toContain('saveProfile');
     expect(API_METHODS).toContain('prepareGeneration');
     expect(API_METHODS).toContain('featureFlags');
+    expect(API_METHODS).toContain('archiveBrand');
+    expect(API_METHODS).toContain('restoreBrand');
+    expect(API_METHODS).toContain('listArchivedBrands');
     expect(API_ARITY.featureFlags).toBe(0);
     expect(API_ARITY.saveProfile).toBe(2);
     expect(API_ARITY.prepareGeneration).toBe(1);
+    expect(API_ARITY.setWorkBrandChoice).toBe(3);
+    expect(API_ARITY.archiveBrand).toBe(1);
+    expect(API_ARITY.restoreBrand).toBe(1);
+    expect(API_ARITY.listArchivedBrands).toBe(0);
+    expect(API_ARITY.listBrands).toBe(0);
   });
 
   it('preload never exposes a generic invoke or Node globals', () => {
