@@ -55,10 +55,27 @@ export class LattePaths {
    */
   private readonly linked = new Map<string, string>();
 
+  readonly brandKitsDir: string;
+
   constructor(root: string) {
     this.root = path.resolve(root);
     this.dbFile = path.join(this.root, 'latte.db');
     this.brandsDir = path.join(this.root, 'brands');
+    this.brandKitsDir = path.join(this.root, 'brand-kits');
+  }
+
+  brandKitVersionDir(kitId: string, version: number): string {
+    assertId(kitId, 'kitId');
+    if (!Number.isInteger(version) || version < 1) throw new ValidationError('Invalid kit version');
+    return safeJoin(this.brandKitsDir, kitId, String(version));
+  }
+
+  agencyDraftDir(): string {
+    return path.join(this.root, 'agency', 'brand');
+  }
+
+  brandDraftDir(brandId: string): string {
+    return safeJoin(this.brandDir(brandId), 'brand');
   }
 
   /** Registers an external folder for a work. The path is validated by the caller. */

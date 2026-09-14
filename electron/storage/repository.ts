@@ -6,6 +6,8 @@ import { hashGenerationContext } from '../generation/canon';
 import { NotFoundError, ValidationError } from '../core/errors';
 import { addUsage, parseUsage, serializeUsage } from '../core/usage';
 import type { SqlDriver, SqlRow } from './driver';
+import { BrandingRepository } from './brandingRepository';
+import { BRANDING_SCHEMA_SQL } from './brandingSchema';
 import { SCHEMA_SQL, SCHEMA_VERSION } from './schema';
 
 interface BrandRow extends SqlRow { id: string; name: string; context: string; created_at: string }
@@ -172,7 +174,11 @@ export function briefDocumentId(workId: string): string {
  * know about the filesystem, ids generation or validation (service layer).
  */
 export class LatteRepository {
-  constructor(private readonly db: SqlDriver) {}
+  readonly branding: BrandingRepository;
+
+  constructor(private readonly db: SqlDriver) {
+    this.branding = new BrandingRepository(db);
+  }
 
   /**
    * Schema version recorded on disk, readable before migrate() writes
@@ -190,6 +196,7 @@ export class LatteRepository {
 
   migrate(): void {
     this.db.exec(SCHEMA_SQL);
+    this.db.exec(BRANDING_SCHEMA_SQL);
     const documentColumns = this.db.all<{ name: string }>("SELECT name FROM pragma_table_info('documents')").map(c => c.name);
     if (!documentColumns.includes('funnel_stages')) this.db.run("ALTER TABLE documents ADD COLUMN funnel_stages TEXT NOT NULL DEFAULT '[]'");
     if (documentColumns.length > 0 && !documentColumns.includes('proposed_stages')) this.db.run("ALTER TABLE documents ADD COLUMN proposed_stages TEXT NOT NULL DEFAULT '[]'");
