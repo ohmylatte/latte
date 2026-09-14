@@ -7,6 +7,22 @@ const { browserAPI: api } = await import('./browser-api');
 
 beforeEach(() => data.clear());
 describe('explicit browser preview', () => {
+  it('archives a brand out of the list and restores it without dropping works', async () => {
+    const a = await api.createBrand('Activa');
+    const archived = await api.createBrand('Guardada');
+    await api.createWork(archived.id, 'Campaña');
+    const stored = await api.archiveBrand(archived.id);
+    expect(stored.archivedAt).toBeTruthy();
+    expect((await api.listBrands()).map(x => x.id)).toContain(a.id);
+    expect((await api.listBrands()).map(x => x.id)).not.toContain(archived.id);
+    expect((await api.listArchivedBrands()).map(x => x.id)).toEqual([archived.id]);
+    await expect(api.createWork(archived.id, 'Otro')).rejects.toThrow(/archived/);
+    expect((await api.listWorks(archived.id))[0].title).toBe('Campaña');
+    const restored = await api.restoreBrand(archived.id);
+    expect(restored.archivedAt).toBeNull();
+    expect((await api.listBrands()).map(x => x.id)).toContain(archived.id);
+    expect(await api.listArchivedBrands()).toEqual([]);
+  });
   it('keeps brand workspaces isolated', async () => {
     const a = await api.createBrand('Uno');
     const b = await api.createBrand('Dos');

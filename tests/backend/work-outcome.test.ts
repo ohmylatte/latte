@@ -262,7 +262,7 @@ describe('Expected output in the agent context', () => {
 });
 
 describe('renderInstructions: the outcome section', () => {
-  const brand: Brand = { id: 'brd_1', name: 'Casa', context: '', createdAt: '2026-01-01T00:00:00.000Z' };
+  const brand: Brand = { id: 'brd_1', name: 'Casa', context: '', createdAt: '2026-01-01T00:00:00.000Z', archivedAt: null };
   const work: Work = { id: 'wrk_1', brandId: 'brd_1', title: 'Uno', brief: '# Uno', folder: null, updatedAt: '2026-01-01T00:00:00.000Z' };
 
   it('renders a work without an outcome exactly like a work from before the fields existed', () => {
@@ -343,8 +343,8 @@ describe.each<DriverPreference>(['node:sqlite', 'sql.js'])('Outcome columns on a
       repo.migrate();
       expect(repo.getWork('wrk_1')).toEqual({ id: 'wrk_1', brandId: 'brd_1', title: 'Uno', brief: '# Viejo', folder: null, expectedOutput: null, resultPath: null, updatedAt: '2026-01-02T00:00:00.000Z' });
       expect(repo.getMeta('schema_version')).toBe(SCHEMA_VERSION);
-      // 8 adds generation receipts, brand-kit tables and learned-skill tables; outcome columns still add none of their own.
-      expect(SCHEMA_VERSION).toBe('8');
+      // 9 adds brand_archives; outcome columns still add none of their own.
+      expect(SCHEMA_VERSION).toBe('9');
       // What an older build still does after this one ran: insert naming only the columns it knows.
       driver.run('INSERT INTO works(id, brand_id, title, brief, dir, updated_at) VALUES (?, ?, ?, ?, ?, ?)', ['wrk_2', 'brd_1', 'Dos', '', null, '2026-01-03T00:00:00.000Z']);
       expect(repo.getWork('wrk_2')).toMatchObject({ expectedOutput: null, resultPath: null });

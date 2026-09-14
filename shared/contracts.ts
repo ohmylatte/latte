@@ -1,7 +1,7 @@
 export type Provider = 'claude' | 'codex' | 'opencode';
 export type UiLocale = 'es-AR' | 'en-US';
 export type ContentLocale = UiLocale;
-export interface Brand { id: string; name: string; context: string; createdAt: string }
+export interface Brand { id: string; name: string; context: string; createdAt: string; archivedAt: string | null }
 export interface Work {
   id: string;
   brandId: string;
@@ -479,6 +479,9 @@ export interface LatteAPI {
   listBrands(): Promise<Brand[]>;
   createBrand(name: string): Promise<Brand>;
   updateBrand(id: string, context: string): Promise<Brand>;
+  archiveBrand(id: string): Promise<Brand>;
+  restoreBrand(id: string): Promise<Brand>;
+  listArchivedBrands(): Promise<Brand[]>;
   readAgencyProfile(): Promise<AgencyProfileView | null>;
   saveAgencyProfile(expectedRevision: number, patch: AgencyProfilePatch): Promise<AgencyProfileView>;
   importBrandKit(workId: string): Promise<BrandKitDraftView | null>;

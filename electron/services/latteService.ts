@@ -71,7 +71,7 @@ import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 import { createHash } from 'node:crypto';
 import { writeFileAtomic } from '../core/atomicFile';
-import { NotFoundError, UnavailableError, ValidationError } from '../core/errors';
+import { LatteError, NotFoundError, UnavailableError, ValidationError } from '../core/errors';
 import { isValidId, newId, nowIso, slugify } from '../core/ids';
 import { WORK_FILES } from '../core/paths';
 import { EngramClient, memoryProjectFor } from '../memory/engram';
@@ -296,7 +296,7 @@ export class LatteService implements BackendApi {
 
   async createBrand(name: string): Promise<Brand> {
     const cleanName = requireLabel(name, 'Brand name', LIMITS.name);
-    const brand: Brand = { id: newId('brd'), name: cleanName, context: '', createdAt: this.clock() };
+    const brand: Brand = { id: newId('brd'), name: cleanName, context: '', createdAt: this.clock(), archivedAt: null };
     this.deps.repo.insertBrand(brand);
     this.deps.files.ensureBrand(brand.id);
     return brand;
@@ -308,6 +308,28 @@ export class LatteService implements BackendApi {
     return this.deps.repo.updateBrandContext(brandId, cleanContext);
   }
 
+  async archiveBrand(id: string): Promise<Brand> {
+    const brandId = requireId(id, 'brandId');
+    this.deps.repo.getBrand(brandId);
+    return this.deps.repo.archiveBrand(brandId, this.clock());
+  }
+
+  async restoreBrand(id: string): Promise<Brand> {
+    const brandId = requireId(id, 'brandId');
+    this.deps.repo.getBrand(brandId);
+    return this.deps.repo.restoreBrand(brandId);
+  }
+
+  async listArchivedBrands(): Promise<Brand[]> {
+    return this.deps.repo.listArchivedBrands();
+  }
+
+  private requireActiveBrand(brandId: string): Brand {
+    const brand = this.deps.repo.getBrand(brandId);
+    if (brand.archivedAt) throw new LatteError('BRAND_ARCHIVED', `Brand is archived: ${brandId}`);
+    return brand;
+  }
+
   async readAgencyProfile() {
     return this.branding.readAgencyProfile();
   }
@@ -317,10 +339,12 @@ export class LatteService implements BackendApi {
   }
 
   async importBrandKit(workId: string) {
+    this.requireActiveBrand(this.deps.repo.getWork(requireId(workId, 'workId')).brandId);
     return this.branding.importBrandKit(workId);
   }
 
   async publishBrandKit(workId: string, expectedVersion: number) {
+    this.requireActiveBrand(this.deps.repo.getWork(requireId(workId, 'workId')).brandId);
     return this.branding.publishBrandKit(workId, expectedVersion);
   }
 
@@ -337,6 +361,7 @@ export class LatteService implements BackendApi {
   }
 
   async setWorkBrandChoice(workId: string, choice: WorkBrandChoiceInput, expectedRevision: number) {
+    this.requireActiveBrand(this.deps.repo.getWork(requireId(workId, 'workId')).brandId);
     return this.branding.setWorkBrandChoice(workId, choice, expectedRevision);
   }
 
@@ -355,7 +380,7 @@ export class LatteService implements BackendApi {
   async createWork(brandId: string, title: string): Promise<Work> {
     const id = requireId(brandId, 'brandId');
     const cleanTitle = requireLabel(title, 'Work title', LIMITS.title);
-    const brand = this.deps.repo.getBrand(id);
+    const brand = this.requireActiveBrand(id);
     const initialDocument = `# ${cleanTitle}\n\n`;
     const work: Work = { id: newId('wrk'), brandId: id, title: cleanTitle, brief: initialDocument, folder: null, updatedAt: this.clock() };
     this.deps.repo.insertWork(work);
@@ -417,6 +442,9 @@ export class LatteService implements BackendApi {
     } catch (error) {
       if (error instanceof NotFoundError) throw new GenerationContractError('WORK_NOT_FOUND', error.message);
       throw error;
+    }
+    if (this.deps.repo.getBrand(work.brandId).archivedAt) {
+      throw new LatteError('BRAND_ARCHIVED', `Brand is archived: ${work.brandId}`);
     }
     this.deps.files.ensureWork(work.brandId, work.id, work.brief);
     const result = runPrepareGeneration({

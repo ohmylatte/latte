@@ -98,9 +98,9 @@ describe.each(ENGINES)('Learning persistence on %s', (engine) => {
     removeDir(dir);
   });
 
-  it('migrates additively to schema 8 and keeps shipped tables', () => {
-    expect(SCHEMA_VERSION).toBe('8');
-    expect(repo.getMeta('schema_version')).toBe('8');
+  it('migrates additively to schema 9 and keeps shipped tables', () => {
+    expect(SCHEMA_VERSION).toBe('9');
+    expect(repo.getMeta('schema_version')).toBe('9');
     expect(repo.getMeta(FEATURE_KEYS.learning)).toBeNull();
     repo.insertBrand({ id: 'brd_one', name: 'One', context: '', createdAt: '2026-01-01T00:00:00.000Z' });
     expect(repo.getBrand('brd_one').name).toBe('One');

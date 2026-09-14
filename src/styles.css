@@ -568,3 +568,7 @@ html,body,#root{height:100%;overflow:hidden}
 .work-outcome-link select{display:block;width:100%;margin-top:5px;font-size:12px;padding:9px}
 .work-outcome .footnote{margin:0}
 @media(max-width:850px){.work-outcome{padding:8px 14px}.work-outcome-file{max-width:55%}}
+.archived-brands{padding:0 10px 8px;display:flex;flex-direction:column;gap:6px}
+.archived-brand-row{display:flex;align-items:center;gap:6px;min-width:0}
+.archived-brand-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--muted)}
+.archived-brand-row button{flex-shrink:0;padding:4px 8px;font-size:11px}

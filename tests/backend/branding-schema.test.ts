@@ -28,8 +28,8 @@ describe.each(ENGINES)('branding schema on %s', (engine) => {
   });
 
   it(`bumps schema to ${SCHEMA_VERSION} and creates branding tables`, () => {
-    expect(SCHEMA_VERSION).toBe('8');
-    expect(repo.getMeta('schema_version')).toBe('8');
+    expect(SCHEMA_VERSION).toBe('9');
+    expect(repo.getMeta('schema_version')).toBe('9');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_kit_versions'")?.name).toBe('brand_kit_versions');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='work_brand_policies'")?.name).toBe('work_brand_policies');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='agency_profile_versions'")?.name).toBe('agency_profile_versions');

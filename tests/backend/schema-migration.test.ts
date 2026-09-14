@@ -50,12 +50,52 @@ describe.each(ENGINES)('schema 7 → 8 migration on %s', (engine) => {
 
     const repo = new LatteRepository(driver);
     repo.migrate();
-    expect(repo.getMeta('schema_version')).toBe('8');
-    expect(SCHEMA_VERSION).toBe('8');
+    expect(repo.getMeta('schema_version')).toBe(SCHEMA_VERSION);
+    expect(SCHEMA_VERSION).toBe('9');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='generations'")?.name).toBe('generations');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_kit_versions'")?.name).toBe('brand_kit_versions');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='learned_skills'")?.name).toBe('learned_skills');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='delivery_evidence'")?.name).toBe('delivery_evidence');
+    expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_archives'")?.name).toBe('brand_archives');
+    expect(repo.getWork('wrk_1').title).toBe('Uno');
+    repo.close();
+    driver = undefined;
+  });
+});
+
+describe.each(ENGINES)('schema 8 → 9 migration on %s', (engine) => {
+  let dir: string;
+  let driver: SqlDriver | undefined;
+  afterEach(() => {
+    try { driver?.close(); } catch { /* closed */ }
+    if (dir) removeDir(dir);
+  });
+
+  it('backs up the v8 file and creates brand_archives without rewriting brands', async () => {
+    dir = makeTempDir(`latte-mig8-${engine.replace(/[^a-z]/g, '')}-`);
+    const file = path.join(dir, 'latte.db');
+    const opened = await openDriver(file, engine);
+    driver = opened.driver;
+    driver.exec(UPSTREAM_V7);
+    driver.run('INSERT INTO meta(key, value) VALUES (?, ?)', ['schema_version', '8']);
+    driver.run('INSERT INTO brands(id, name, context, created_at) VALUES (?, ?, ?, ?)', [
+      'brd_1', 'Casa', 'tono', '2026-01-01T00:00:00.000Z',
+    ]);
+    driver.run('INSERT INTO works(id, brand_id, title, brief, dir, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [
+      'wrk_1', 'brd_1', 'Uno', '# Viejo', null, '2026-01-02T00:00:00.000Z',
+    ]);
+
+    const backup = prepareForMigration(file, '8', SCHEMA_VERSION, { now: () => new Date('2026-09-14T12:00:00Z') });
+    expect(backup).toBe(path.join(dir, 'backups', 'latte-v8-20260914T120000.db'));
+    expect(fs.existsSync(backup!)).toBe(true);
+
+    const repo = new LatteRepository(driver);
+    repo.migrate();
+    expect(repo.getMeta('schema_version')).toBe('9');
+    expect(SCHEMA_VERSION).toBe('9');
+    expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_archives'")?.name).toBe('brand_archives');
+    expect(repo.getBrand('brd_1')).toMatchObject({ name: 'Casa', context: 'tono', archivedAt: null });
+    expect(repo.listBrands().map((b) => b.id)).toEqual(['brd_1']);
     expect(repo.getWork('wrk_1').title).toBe('Uno');
     repo.close();
     driver = undefined;
