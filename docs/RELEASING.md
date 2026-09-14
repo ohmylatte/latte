@@ -73,8 +73,8 @@ migrada a 8 (`isNewerSchema`). Quien actualice y después intente volver atrás
 tiene que restaurar el backup `latte-v7-*`, no el `latte.db` nuevo.
 
 Las features (`feature:generation`, `feature:brand-kits`, `feature:learning`)
-siguen apagadas por defecto. La migración corre igual, con o sin flags: no
-queremos instalaciones con esquemas distintos.
+encienden con el valor `'on'` y siguen apagadas por defecto. La migración corre
+igual, con o sin flags: no queremos instalaciones con esquemas distintos.
 
 ---
 
