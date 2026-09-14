@@ -1,8 +1,8 @@
+import { featureEnabled } from '../core/features';
 import { skillContentHash } from './hash';
 import { brandScopeKey } from './ids';
 import {
   AGENCY_SCOPE_KEY,
-  LEARNING_FEATURE_KEY,
   MAX_LEARNED_PER_TASK,
   type ResolveApprovedInput,
   type ResolveApprovedResult,
@@ -25,7 +25,7 @@ export class CatalogSkillResolver implements SkillResolver {
   constructor(private readonly deps: SkillResolverDeps) {}
 
   resolveApproved(input: ResolveApprovedInput): ResolveApprovedResult {
-    if (this.deps.getMeta(LEARNING_FEATURE_KEY) !== '1') {
+    if (!featureEnabled((key) => this.deps.getMeta(key), 'learning')) {
       return { refs: [], excluded: [] };
     }
     if (typeof input.brandId !== 'string' || typeof input.budgetChars !== 'number' || input.budgetChars < 0) {

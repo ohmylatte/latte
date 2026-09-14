@@ -60,6 +60,7 @@ export const browserAPI: LatteAPI = {
   getContentLocale: async () => localStorage.getItem('latte-content-locale') === 'en-US' ? 'en-US' : 'es-AR',
   setContentLocale: async locale => { localStorage.setItem('latte-content-locale', locale); return locale; },
   appInfo: async () => ({ dataDir: '', engine: 'localStorage (vista previa)', engineReason: 'La vista web no usa SQLite', pack: null, packRoles: 0, version: 'web' }),
+  featureFlags: async () => ({ generation: false, brandKits: false, learning: false }),
   listBrands: async () => read().brands,
   createBrand: async name => change(s => { const b = { id: id(), name, context: '', createdAt: now() }; s.brands.push(b); return b; }),
   updateBrand: async (brandId, context) => change(s => { const b = s.brands.find(b => b.id === brandId)!; b.context = context; return b; }),

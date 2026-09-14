@@ -34,6 +34,15 @@ export interface WorkPatch { expectedOutput?: string | null; resultPath?: string
 export type BrandIdentityMode = 'brand' | 'agency' | 'neutral';
 export type BrandSignatureMode = 'none' | 'agency';
 export interface BrandChoice { identity: BrandIdentityMode; signature: BrandSignatureMode }
+export interface WorkBrandChoiceInput extends BrandChoice {
+  allowNeutral?: boolean;
+  allowAgencySignature?: boolean;
+}
+export interface FeatureFlags {
+  generation: boolean;
+  brandKits: boolean;
+  learning: boolean;
+}
 export interface AgencyProfilePatch { publicName: string; website?: string | null; contact?: string | null }
 export interface AgencyProfileView {
   revision: number;
@@ -477,8 +486,10 @@ export interface LatteAPI {
   revokeBrandKit(workId: string, version: number, reason: string): Promise<void>;
   importAgencyKit(): Promise<BrandKitDraftView | null>;
   publishAgencyKit(expectedVersion: number): Promise<BrandKitView>;
-  setWorkBrandChoice(workId: string, choice: BrandChoice, expectedRevision: number): Promise<WorkBrandPolicyView>;
+  setWorkBrandChoice(workId: string, choice: WorkBrandChoiceInput, expectedRevision: number): Promise<WorkBrandPolicyView>;
   readWorkBrandContext(workId: string): Promise<WorkBrandContextView>;
+  /** Installation feature switches. Default off; no secrets. */
+  featureFlags(): Promise<FeatureFlags>;
   listWorks(brandId: string): Promise<Work[]>;
   createWork(brandId: string, title: string): Promise<Work>;
   /**

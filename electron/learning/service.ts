@@ -1,4 +1,5 @@
 import { ConflictError, NotFoundError, ValidationError } from '../core/errors';
+import { featureEnabled, requireFeature } from '../core/features';
 import { requireId, requireInt, requireRequestId } from '../services/validation';
 import { PointerConflictError, type LearningRepository } from '../storage/learningRepository';
 import { allowObserve } from './capture';
@@ -10,7 +11,6 @@ import {
   AGENCY_SCOPE_KEY,
   LEARNING_CAPTURE_KEY,
   LEARNING_DAILY_CAP_KEY,
-  LEARNING_FEATURE_KEY,
   type CaptureMode,
   type CandidatePayload,
   type LearningSignal,
@@ -124,7 +124,11 @@ export class LearningService {
   }
 
   featureOn(): boolean {
-    return this.deps.meta.getMeta(LEARNING_FEATURE_KEY) === '1';
+    return featureEnabled((key) => this.deps.meta.getMeta(key), 'learning');
+  }
+
+  private requireEnabled(): void {
+    requireFeature((key) => this.deps.meta.getMeta(key), 'learning');
   }
 
   captureMode(): CaptureMode {
@@ -151,7 +155,8 @@ export class LearningService {
    * A completed chat event is not a valid caller of this method.
    */
   observe(signal: LearningSignal, payload?: CandidatePayload): { jobId: string; created: boolean; candidateId: string | null } {
-    if (!this.featureOn() || !allowObserve({ featureOn: true, mode: this.captureMode() }, signal.kind)) {
+    this.requireEnabled();
+    if (!allowObserve({ featureOn: true, mode: this.captureMode() }, signal.kind)) {
       throw new ValidationError('Learning capture is off');
     }
     const work = this.deps.works.getWork(requireId(signal.workId, 'workId'));
@@ -214,6 +219,7 @@ export class LearningService {
     createdAt: string;
     targetSkillId?: string | null;
   }): SkillCandidateRecord {
+    this.requireEnabled();
     const payload = validateCandidatePayload(input.payload);
     const hash = skillContentHash(payload);
     const skillId = payload.targetSkillId ?? input.targetSkillId ?? newLearningId('lsk');
@@ -246,7 +252,7 @@ export class LearningService {
   }
 
   approve(input: unknown): SkillCandidateRecord {
-    if (!this.featureOn()) throw new ValidationError('Learning is disabled');
+    this.requireEnabled();
     const command = requireReviewInput(input);
     try {
       return this.deps.learning.transaction(() => this.deps.learning.approveCandidate({
@@ -269,7 +275,7 @@ export class LearningService {
   }
 
   reject(input: unknown): SkillCandidateRecord {
-    if (!this.featureOn()) throw new ValidationError('Learning is disabled');
+    this.requireEnabled();
     const command = requireReviewInput(input);
     return this.deps.learning.transaction(() => this.deps.learning.rejectWithReceipt({
       candidateId: command.candidateId,
@@ -281,7 +287,7 @@ export class LearningService {
   }
 
   promote(input: unknown): SkillCandidateRecord {
-    if (!this.featureOn()) throw new ValidationError('Learning is disabled');
+    this.requireEnabled();
     const parsed = requirePromoteInput(input);
     return this.deps.learning.transaction(() => {
       const source = this.deps.learning.getCandidate(parsed.candidateId);
@@ -314,6 +320,7 @@ export class LearningService {
   }
 
   async processJobs(): Promise<'idle' | 'processed' | 'deferred' | 'failed'> {
+    this.requireEnabled();
     return this.worker.processNext();
   }
 }

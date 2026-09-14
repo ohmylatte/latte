@@ -11,6 +11,7 @@ const METHODS = [
   'getContentLocale',
   'setContentLocale',
   'appInfo',
+  'featureFlags',
   'listBrands',
   'createBrand',
   'updateBrand',

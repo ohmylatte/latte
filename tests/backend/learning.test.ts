@@ -176,7 +176,7 @@ describe('Learning service', () => {
   afterEach(() => b.cleanup());
 
   function enable(mode: 'manual' | 'auto' = 'manual', cap?: string) {
-    b.repo.setMeta(LEARNING_FEATURE_KEY, '1');
+    b.repo.setMeta(LEARNING_FEATURE_KEY, 'on');
     b.repo.setMeta(LEARNING_CAPTURE_KEY, mode);
     if (cap !== undefined) b.repo.setMeta(LEARNING_DAILY_CAP_KEY, cap);
   }

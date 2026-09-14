@@ -18,13 +18,27 @@ import { api, isDesktop } from './browser-api';
 export function SkillsView({ onError, onNotice }: { onError: (text: string) => void; onNotice: (text: string) => void }) {
   const [skills, setSkills] = useState<AgentSkill[]>([]);
   const [candidates, setCandidates] = useState<SkillCandidate[]>([]);
+  const [learningOn, setLearningOn] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
 
   useEffect(() => {
     let live = true;
-    Promise.all([api.listSkills(), api.listSkillCandidates()])
-      .then(([list, inbox]) => { if (live) { setSkills(list); setCandidates(inbox); } })
+    api.featureFlags()
+      .then((flags) => {
+        if (!live) return null;
+        setLearningOn(flags.learning);
+        return Promise.all([
+          api.listSkills(),
+          flags.learning ? api.listSkillCandidates() : Promise.resolve([] as SkillCandidate[]),
+        ]);
+      })
+      .then((loaded) => {
+        if (!live || !loaded) return;
+        const [list, inbox] = loaded;
+        setSkills(list);
+        setCandidates(inbox);
+      })
       .catch(e => { if (live) onError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
@@ -80,6 +94,29 @@ export function SkillsView({ onError, onNotice }: { onError: (text: string) => v
     }
   };
 
+  return <SkillsViewContent
+    learningOn={learningOn}
+    skills={skills}
+    candidates={candidates}
+    loading={loading}
+    busy={busy}
+    onToggle={toggle}
+    onDecide={decide}
+    onPromote={promote}
+  />;
+}
+
+export function SkillsViewContent(props: {
+  learningOn: boolean;
+  skills: AgentSkill[];
+  candidates: SkillCandidate[];
+  loading: boolean;
+  busy: string;
+  onToggle: (skill: AgentSkill) => void;
+  onDecide: (candidate: SkillCandidate, decision: 'approve' | 'reject') => void;
+  onPromote: (candidate: SkillCandidate) => void;
+}) {
+  const { learningOn, skills, candidates, loading, busy, onToggle, onDecide, onPromote } = props;
   return <section className="settings-section">
     <h2>{t('ui.auto.394')}</h2>
     <p className="settings-lead">{t('ui.auto.263')}</p>
@@ -93,27 +130,29 @@ export function SkillsView({ onError, onNotice }: { onError: (text: string) => v
           <strong>{skill.name}<small>{skill.enabled ? t('ui.auto.397') : t('ui.auto.398')}</small></strong>
           <p>{skill.summary}</p>
         </div>
-        <button aria-pressed={skill.enabled} disabled={busy === skill.id} onClick={() => void toggle(skill)}>
+        <button aria-pressed={skill.enabled} disabled={busy === skill.id} onClick={() => onToggle(skill)}>
           {skill.enabled ? t('ui.auto.399') : t('ui.auto.400')}
         </button>
       </div>)}
     </div>
     {skills.length > 0 && <p className="footnote">{t('ui.auto.265')}</p>}
-    <h2>{t('learning.inbox')}</h2>
-    <p className="settings-lead">{t('learning.lead')}</p>
-    {candidates.some(c => c.duplicateSpend) && <p className="footnote">{t('learning.spend')}</p>}
-    {!loading && candidates.length === 0 && <p className="footnote">{t('learning.empty')}</p>}
-    <div className="skill-list">
-      {candidates.map(candidate => <div key={candidate.id} className="skill-card">
-        <Sparkles size={17} />
-        <div>
-          <strong>{candidate.name}<small>{candidate.scopeKey}</small></strong>
-          <p>{candidate.description}</p>
-        </div>
-        <button disabled={busy === candidate.id} onClick={() => void decide(candidate, 'approve')}>{t('learning.approve')}</button>
-        <button disabled={busy === candidate.id} onClick={() => void decide(candidate, 'reject')}>{t('learning.reject')}</button>
-        <button disabled={busy === candidate.id} onClick={() => void promote(candidate)}>{t('learning.promote')}</button>
-      </div>)}
-    </div>
+    {learningOn && <>
+      <h2>{t('learning.inbox')}</h2>
+      <p className="settings-lead">{t('learning.lead')}</p>
+      {candidates.some(c => c.duplicateSpend) && <p className="footnote">{t('learning.spend')}</p>}
+      {!loading && candidates.length === 0 && <p className="footnote">{t('learning.empty')}</p>}
+      <div className="skill-list">
+        {candidates.map(candidate => <div key={candidate.id} className="skill-card">
+          <Sparkles size={17} />
+          <div>
+            <strong>{candidate.name}<small>{candidate.scopeKey}</small></strong>
+            <p>{candidate.description}</p>
+          </div>
+          <button disabled={busy === candidate.id} onClick={() => onDecide(candidate, 'approve')}>{t('learning.approve')}</button>
+          <button disabled={busy === candidate.id} onClick={() => onDecide(candidate, 'reject')}>{t('learning.reject')}</button>
+          <button disabled={busy === candidate.id} onClick={() => onPromote(candidate)}>{t('learning.promote')}</button>
+        </div>)}
+      </div>
+    </>}
   </section>;
 }
