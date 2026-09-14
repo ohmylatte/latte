@@ -239,7 +239,7 @@ describe('Migration v3 -> v4', () => {
     const revisions = repo.listDocumentRevisions('wrk_1', briefDocumentId('wrk_1'));
     expect(revisions.map((r) => [r.id, r.documentId, r.source])).toEqual([['rev_old', briefDocumentId('wrk_1'), 'human']]);
     expect(driver.get<{ document_id: string | null }>('SELECT document_id FROM revisions WHERE id = ?', ['rev_old'])?.document_id).toBeNull();
-    expect(repo.getMeta('schema_version')).toBe('7');
+    expect(repo.getMeta('schema_version')).toBe('8');
     repo.close();
   });
 });

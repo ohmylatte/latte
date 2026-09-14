@@ -39,7 +39,7 @@ it.each(['node:sqlite', 'sql.js'] as const)('migrates legacy v5 and reopens twic
       const { driver } = await openDriver(file, engine);
       const repo = new LatteRepository(driver);
       repo.migrate(); repo.migrate();
-      expect(repo.getMeta('schema_version')).toBe('7');
+      expect(repo.getMeta('schema_version')).toBe('8');
       expect(repo.getWork('w').brief).toBe('content');
       const document = repo.briefDocument('w');
       expect(document.funnelStages).toEqual(pass === 0 ? [] : ['retention']);

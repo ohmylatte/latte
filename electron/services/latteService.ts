@@ -50,12 +50,25 @@ import type {
   Work,
   WorkDocument,
   WorkPatch,
+  PrepareGenerationOutcome,
 } from '../../shared/contracts';
+import {
+  GENERATION_ENABLED_META,
+  NOOP_BRAND_CONTEXT,
+  NOOP_SKILL_RESOLVER,
+  isGenerationEnabled,
+  type BrandContextPort,
+  type SkillRef,
+  type SkillResolverPort,
+} from '../../shared/generationContracts';
+import { GenerationContractError } from '../generation/errors';
+import { prepareGeneration as runPrepareGeneration } from '../generation/prepare';
+import { pinGeneration } from '../generation/pin';
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 import { createHash } from 'node:crypto';
 import { writeFileAtomic } from '../core/atomicFile';
-import { UnavailableError, ValidationError } from '../core/errors';
+import { NotFoundError, UnavailableError, ValidationError } from '../core/errors';
 import { isValidId, newId, nowIso, slugify } from '../core/ids';
 import { WORK_FILES } from '../core/paths';
 import { EngramClient, memoryProjectFor } from '../memory/engram';
@@ -69,7 +82,7 @@ import { RuntimeDetector } from '../runtime/detect';
 import { assertProvider } from '../runtime/providers';
 import { TerminalManager } from '../runtime/terminalManager';
 import { briefDocumentId, type DocumentRecord, type LatteRepository } from '../storage/repository';
-import { isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
+import { INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
 import { checkFolder, contains, importFileName, kindFromFileName, readFunnelProposal, readHandoff, scanFolder, titleFromFileName } from '../workspace/linkFolder';
 import { renderDocumentTemplate } from '../workspace/templates';
 import { openItems, renderContinuation } from '../workspace/continuation';
@@ -132,6 +145,10 @@ export interface LatteServiceDeps {
   /** The running app's version, sourced from `app.getVersion()`; tests pass a fixed string. */
   version: string;
   clock?: () => string;
+  /** Brand-kit worktree owns the real adapter; default is a no-op (neutral, no kit). */
+  brandContext?: BrandContextPort;
+  /** Learned-skills worktree owns the real adapter; default returns no learned refs. */
+  skillResolver?: SkillResolverPort;
 }
 
 const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -323,6 +340,58 @@ export class LatteService implements BackendApi {
       resultPath = patch.resultPath === null || patch.resultPath === '' ? null : this.existingDeliverable(id, patch.resultPath);
     }
     return this.deps.repo.setWorkOutcome(id, expectedOutput, resultPath, this.clock());
+  }
+
+  async prepareGeneration(workId: string): Promise<PrepareGenerationOutcome> {
+    if (!this.generationEnabled()) {
+      throw new GenerationContractError('DISABLED', 'Generation context is disabled');
+    }
+    const id = requireId(workId, 'workId');
+    let work;
+    try {
+      work = this.deps.repo.getWork(id);
+    } catch (error) {
+      if (error instanceof NotFoundError) throw new GenerationContractError('WORK_NOT_FOUND', error.message);
+      throw error;
+    }
+    this.deps.files.ensureWork(work.brandId, work.id, work.brief);
+    const result = runPrepareGeneration({
+      works: {
+        requireWork: (wid) => {
+          const found = this.deps.repo.getWork(wid);
+          return { id: found.id, brandId: found.brandId };
+        },
+      },
+      brand: this.deps.brandContext ?? NOOP_BRAND_CONTEXT,
+      skills: this.deps.skillResolver ?? NOOP_SKILL_RESOLVER,
+      insert: (receipt) => this.deps.repo.insertGeneration(receipt),
+      pin: ({ generationId, work: pinned, context, snapshot, contextHash }) => {
+        pinGeneration({
+          workDir: this.deps.files.workDir(pinned.brandId, pinned.id),
+          generationId,
+          context,
+          snapshot,
+          contextHash,
+        });
+      },
+      liveMemberCount: (wid) => this.deps.hub.liveMemberCount(wid),
+      refreshInstructions: (target) => {
+        this.refreshInstructions(this.deps.repo.getBrand(target.brandId), this.deps.repo.getWork(target.id));
+      },
+      newId: () => newId('gen'),
+      now: () => this.clock(),
+      budgetChars: INSTRUCTIONS_MAX_CHARS,
+    }, id);
+    return {
+      generationId: result.generationId,
+      contextHash: result.contextHash,
+      pending: result.pending,
+      instructionsRefreshed: result.instructionsRefreshed,
+    };
+  }
+
+  private generationEnabled(): boolean {
+    return isGenerationEnabled(this.deps.repo.getMeta(GENERATION_ENABLED_META));
   }
 
   /** A Deliverables file that is there right now, or a message that says why it cannot be linked. */
@@ -1474,7 +1543,20 @@ export class LatteService implements BackendApi {
     const storedLocale = this.deps.repo.getMeta(`work_content_locale:${work.id}`);
     const outputLanguage = storedLocale === 'en-US' ? 'en-US' : 'es-AR';
     const decisionAuthority=(this.deps.repo.getMeta('decision_authority:'+work.id) as DecisionAuthorityMode|null)??'suggest';
-    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })) });
+    const generation = this.generationEnabled() ? this.pinnedGenerationPointer(work.id) : null;
+    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation });
     this.deps.files.writeInstructions(brand.id, work.id, bundle.text, bundle.files);
+  }
+
+  /** Latest receipt for this work. Not called when the feature flag is off. */
+  private pinnedGenerationPointer(workId: string): { generationId: string; contextHash: string; kitHash: string | null; skillRefs: SkillRef[] } | null {
+    const latest = this.deps.repo.listGenerationsForWork(workId)[0];
+    if (!latest) return null;
+    return {
+      generationId: latest.id,
+      contextHash: latest.contextHash,
+      kitHash: latest.context.brandContext?.hash ?? null,
+      skillRefs: latest.context.skillRefs,
+    };
   }
 }

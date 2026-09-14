@@ -38,6 +38,11 @@ export const WORK_FILES = {
   contextDir: 'context',
   /** Full bodies of skills the instruction files reference by pointer instead of inlining. */
   skillsDir: 'skills',
+  /**
+   * Pinned generation receipts. Not a side-file dir: syncSideFiles must never
+   * walk or delete this name. Do not reuse snapshots/context/skills.
+   */
+  generationsDir: 'generations',
 } as const;
 
 export class LattePaths {

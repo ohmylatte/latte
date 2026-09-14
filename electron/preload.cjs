@@ -17,6 +17,7 @@ const METHODS = [
   'listWorks',
   'createWork',
   'updateWork',
+  'prepareGeneration',
   'saveBrief',
   'listRevisions',
   'snapshot',

@@ -353,6 +353,14 @@ export interface ProviderAuthMethod { index: number; type: 'oauth' | 'api'; labe
 export interface ProviderInfo { id: string; name: string; connected: boolean; models: string[]; methods: ProviderAuthMethod[] }
 export interface ProviderOAuthStart { url: string; method: 'auto' | 'code'; instructions: string }
 
+/** Result of pinning a generation receipt. `pending` means live members blocked rewriting CLAUDE.md/AGENTS.md. */
+export interface PrepareGenerationOutcome {
+  generationId: string;
+  contextHash: string;
+  pending: boolean;
+  instructionsRefreshed: boolean;
+}
+
 export interface LatteAPI {
   getUiLocale(): Promise<UiLocale>;
   setUiLocale(locale: UiLocale): Promise<UiLocale>;
@@ -369,6 +377,12 @@ export interface LatteAPI {
    * of Deliverables as its result. A link is refused unless the file is there.
    */
   updateWork(workId: string, patch: WorkPatch): Promise<Work>;
+  /**
+   * Pins an immutable generation receipt for this work. `brandId` is derived
+   * from the work in the repository; a brand id in the payload is ignored.
+   * No-op of product behaviour when the installation flag is off: the call is refused.
+   */
+  prepareGeneration(workId: string): Promise<PrepareGenerationOutcome>;
   /** Saves the work's brief document. `baseFingerprint` is the one handed out by the last read; omitting it falls back to the database copy. */
   saveBrief(workId: string, brief: string, baseFingerprint?: string | null): Promise<SaveOutcome>;
   listRevisions(workId: string): Promise<Revision[]>;

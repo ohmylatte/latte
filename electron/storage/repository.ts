@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
+import type { ArtifactCheck, DeliveryEvidence, GenerationReceipt } from '../../shared/generationContracts';
+import { GenerationContractError } from '../generation/errors';
+import { hashGenerationContext } from '../generation/canon';
 import { NotFoundError, ValidationError } from '../core/errors';
 import { addUsage, parseUsage, serializeUsage } from '../core/usage';
 import type { SqlDriver, SqlRow } from './driver';
@@ -12,6 +15,9 @@ interface DecisionRow extends SqlRow { id: string; work_id: string; text: string
 interface DecisionProposalRow extends SqlRow { id:string; work_id:string; statement:string; rationale:string; alternatives:string; evidence:string; status:string; source_chat_id:string|null; source_message_id:string|null; source_member_id:string|null; source_role_id:string|null; source_runtime:string|null; client_request_id:string; fingerprint:string; created_at:string; decided_at:string|null }
 interface DocumentRow extends SqlRow { id: string; work_id: string; kind: string; title: string; file_name: string; status: string; funnel_stages: string; proposed_stages: string; base_doc_id: string | null; base_rev_id: string | null; base_print: string | null; last_print: string | null; created_at: string; updated_at: string }
 interface MemberRow extends SqlRow { id: string; work_id: string; role_id: string; role_name: string; initial: string; runtime: string; model: string | null; account_id: string | null; session_id: string; done: number; continued_from: string | null; tier: string | null; usage_json: string | null; created_at: string; updated_at: string }
+interface GenerationRow extends SqlRow { id: string; work_id: string; brand_id: string; context_json: string; context_hash: string; created_at: string }
+interface EvidenceRow extends SqlRow { id: string; generation_id: string; runtime: string; chat_id: string | null; projected_at: string; files_written: string }
+interface CheckRow extends SqlRow { id: string; generation_id: string; relative_path: string; file_hash: string | null; checks_json: string; brand_compliant: number | null; created_at: string }
 
 /** Persisted part of a tracked document. Titles and status are UI-facing; the file name is Latte-generated. */
 export interface DocumentRecord {
@@ -89,6 +95,44 @@ const emptySource = (): DecisionSource => ({ chatId:null,messageId:null,memberId
 const jsonStrings = (value:string):string[] => { try { const v:unknown=JSON.parse(value); return Array.isArray(v)?v.filter((x):x is string=>typeof x==='string'):[]; } catch { return []; } };
 const toDecision = (r: DecisionRow): Decision => ({ id:r.id,workId:r.work_id,text:r.text,rationale:'',alternativesRejected:[],evidenceRefs:[],status:'approved',source:emptySource(),clientRequestId:null,fingerprint:'',createdAt:r.created_at,decidedAt:r.created_at });
 const toProposal = (r:DecisionProposalRow):Decision => ({id:r.id,workId:r.work_id,text:r.statement,rationale:r.rationale,alternativesRejected:jsonStrings(r.alternatives),evidenceRefs:jsonStrings(r.evidence),status:r.status as DecisionStatus,source:{chatId:r.source_chat_id,messageId:r.source_message_id,memberId:r.source_member_id,roleId:r.source_role_id,runtime:(r.source_runtime==='claude'||r.source_runtime==='codex'||r.source_runtime==='opencode')?r.source_runtime:null},clientRequestId:r.client_request_id,fingerprint:r.fingerprint,createdAt:r.created_at,decidedAt:r.decided_at});
+const toGeneration = (r: GenerationRow): GenerationReceipt => ({
+  id: r.id,
+  workId: r.work_id,
+  brandId: r.brand_id,
+  context: JSON.parse(r.context_json) as GenerationReceipt['context'],
+  contextJson: r.context_json,
+  contextHash: r.context_hash,
+  createdAt: r.created_at,
+});
+const toEvidence = (r: EvidenceRow): DeliveryEvidence => ({
+  id: r.id,
+  generationId: r.generation_id,
+  runtime: r.runtime,
+  chatId: r.chat_id,
+  projectedAt: r.projected_at,
+  filesWritten: jsonStrings(r.files_written),
+});
+const toCheck = (r: CheckRow): ArtifactCheck => {
+  let checks: ArtifactCheck['checks'] = [];
+  try {
+    const parsed: unknown = JSON.parse(r.checks_json);
+    if (Array.isArray(parsed)) {
+      checks = parsed.filter((c): c is ArtifactCheck['checks'][number] =>
+        !!c && typeof c === 'object' && typeof (c as { name?: unknown }).name === 'string'
+        && typeof (c as { passed?: unknown }).passed === 'boolean'
+        && typeof (c as { note?: unknown }).note === 'string');
+    }
+  } catch { /* stored payload is audit data; a corrupt row still has identity */ }
+  return {
+    id: r.id,
+    generationId: r.generation_id,
+    relativePath: r.relative_path,
+    fileHash: r.file_hash,
+    checks,
+    brandCompliant: r.brand_compliant === null ? null : r.brand_compliant === 1,
+    createdAt: r.created_at,
+  };
+};
 const toMember = (r: MemberRow): TeamMemberRecord => ({
   id: r.id,
   workId: r.work_id,
@@ -508,5 +552,66 @@ export class LatteRepository {
 
   transitionDecision(id:string,status:DecisionStatus,statement:string|null,at:string,actor='human'):Decision {
     return this.db.transaction(()=>{ const before=this.getDecision(id); if(before.status===status)return before; const allowed=(before.status==='pending'&&(status==='approved'||status==='rejected'))||(before.status==='approved'&&status==='archived'); if(!allowed)throw new ValidationError(`Decision cannot transition from ${before.status} to ${status}`); const text=statement??before.text; this.db.run('UPDATE decision_proposals SET status=?, statement=?, decided_at=? WHERE id=?',[status,text,at,id]); this.db.run('INSERT INTO decision_events(id,decision_id,action,actor,detail,created_at) VALUES (?,?,?,?,?,?)',[`evt_${createHash('sha1').update(`${id}\0${status}\0${at}`).digest('hex').slice(0,20)}`,id,status,actor,statement&&statement!==before.text?'statement edited':'',at]); return this.getDecision(id); });
+  }
+
+  // Generations (immutable receipts) -----------------------------------------
+
+  insertGeneration(receipt: GenerationReceipt): GenerationReceipt {
+    const existing = this.getGeneration(receipt.id);
+    if (existing) {
+      if (existing.contextHash !== receipt.contextHash || existing.contextJson !== receipt.contextJson) {
+        throw new GenerationContractError('VERSION_CONFLICT', 'Same generation id with different content');
+      }
+      return existing;
+    }
+    const sealed = hashGenerationContext(receipt.context);
+    if (sealed.hash !== receipt.contextHash || sealed.json !== receipt.contextJson) {
+      throw new GenerationContractError('HASH_INVALID', 'Receipt hash does not match canonical context');
+    }
+    this.db.run(
+      'INSERT INTO generations(id, work_id, brand_id, context_json, context_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [receipt.id, receipt.workId, receipt.brandId, receipt.contextJson, receipt.contextHash, receipt.createdAt],
+    );
+    return receipt;
+  }
+
+  getGeneration(id: string): GenerationReceipt | null {
+    const row = this.db.get<GenerationRow>('SELECT * FROM generations WHERE id = ?', [id]);
+    return row ? toGeneration(row) : null;
+  }
+
+  listGenerationsForWork(workId: string): GenerationReceipt[] {
+    return this.db
+      .all<GenerationRow>('SELECT * FROM generations WHERE work_id = ? ORDER BY created_at DESC, id DESC', [workId])
+      .map(toGeneration);
+  }
+
+  insertDeliveryEvidence(row: DeliveryEvidence): DeliveryEvidence {
+    this.db.run(
+      'INSERT INTO delivery_evidence(id, generation_id, runtime, chat_id, projected_at, files_written) VALUES (?, ?, ?, ?, ?, ?)',
+      [row.id, row.generationId, row.runtime, row.chatId, row.projectedAt, JSON.stringify(row.filesWritten)],
+    );
+    return row;
+  }
+
+  listDeliveryEvidence(generationId: string): DeliveryEvidence[] {
+    return this.db
+      .all<EvidenceRow>('SELECT * FROM delivery_evidence WHERE generation_id = ? ORDER BY projected_at ASC, id ASC', [generationId])
+      .map(toEvidence);
+  }
+
+  insertArtifactCheck(row: ArtifactCheck): ArtifactCheck {
+    const compliant = row.brandCompliant === null ? null : row.brandCompliant ? 1 : 0;
+    this.db.run(
+      'INSERT INTO artifact_checks(id, generation_id, relative_path, file_hash, checks_json, brand_compliant, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [row.id, row.generationId, row.relativePath, row.fileHash, JSON.stringify(row.checks), compliant, row.createdAt],
+    );
+    return row;
+  }
+
+  listArtifactChecks(generationId: string): ArtifactCheck[] {
+    return this.db
+      .all<CheckRow>('SELECT * FROM artifact_checks WHERE generation_id = ? ORDER BY created_at ASC, id ASC', [generationId])
+      .map(toCheck);
   }
 }
