@@ -172,6 +172,17 @@ function PermissionCard({ chatId, runtime, request, onError }: { chatId: string;
     setBusy(true);
     api.replyPermission(chatId, request.id, value).catch(e => onError(displayError(e))).finally(() => setBusy(false));
   };
+  if (request.url) {
+    return <div className="chat-card permission" role="group" aria-label="Solicitud de permiso">
+      <div className="chat-card-title"><ShieldQuestion size={15} />{request.serverName ? t('chat.elicitation.server', { name: request.serverName }) : t('ui.auto.102')}</div>
+      {request.title && <p>{request.title}</p>}
+      <p><code>{request.url}</code></p>
+      <div className="chat-card-actions">
+        <button className="primary" disabled={busy} onClick={() => reply('once')}>{t('chat.elicitation.openAccept')}</button>
+        <button disabled={busy} onClick={() => reply('reject')}>{t('chat.elicitation.reject')}</button>
+      </div>
+    </div>;
+  }
   return <div className="chat-card permission" role="group" aria-label="Solicitud de permiso">
     <div className="chat-card-title"><ShieldQuestion size={15} />{t('ui.auto.102')}<strong title={request.permission}>{friendlyTool(request.permission)}</strong></div>
     {request.title && <p>{request.title}</p>}
@@ -192,11 +203,12 @@ function QuestionCard({ chatId, request, onError }: { chatId: string; request: C
   const toggle = (qi: number, label: string, multiple: boolean) => setAnswers(prev => prev.map((a, i) => i !== qi ? a : multiple ? (a.includes(label) ? a.filter(x => x !== label) : [...a, label]) : [label]));
   const submit = () => {
     const final = answers.map((a, i) => (custom[i].trim() ? [...a, custom[i].trim()] : a));
-    if (final.some(a => a.length === 0)) return;
+    if (final.some((a, i) => request.questions[i].required !== false && a.length === 0)) return;
     setBusy(true);
     api.replyQuestion(chatId, request.id, final).catch(e => onError(displayError(e))).finally(() => setBusy(false));
   };
   const reject = () => { setBusy(true); api.replyQuestion(chatId, request.id, null).catch(e => onError(displayError(e))).finally(() => setBusy(false)); };
+  const missingRequired = answers.some((a, i) => request.questions[i].required !== false && a.length === 0 && !custom[i].trim());
   return <div className="chat-card question" role="group" aria-label={t('ui.auto.104')}>
     {request.questions.map((q, qi) => <div key={qi} className="chat-question">
       <div className="chat-card-title"><ShieldQuestion size={15} />{q.header || t('ui.auto.105')}</div>
@@ -205,7 +217,7 @@ function QuestionCard({ chatId, request, onError }: { chatId: string; request: C
       {q.custom && <input aria-label={t('ui.auto.106')} placeholder={t('ui.auto.107')} value={custom[qi]} onChange={e => setCustom(prev => prev.map((c, i) => (i === qi ? e.target.value : c)))} />}
     </div>)}
     <div className="chat-card-actions">
-      <button className="primary" disabled={busy || answers.some((a, i) => a.length === 0 && !custom[i].trim())} onClick={submit}>{t('ui.auto.363')}</button>
+      <button className="primary" disabled={busy || missingRequired} onClick={submit}>{t('ui.auto.363')}</button>
       <button disabled={busy} onClick={reject}>{t('ui.auto.364')}</button>
     </div>
   </div>;

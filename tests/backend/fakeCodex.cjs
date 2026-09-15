@@ -46,6 +46,25 @@ rl.on('line', (line) => {
       reply({ type: 'chatgpt', authUrl: 'https://auth.example.test/codex?login=1', loginId: 'login_1' });
       setTimeout(() => notify('account/login/completed', { loginId: 'login_1', success: true }), 20);
       return;
+    case 'mcpServer/oauth/login':
+      if (process.env.FAKE_CODEX_NO_MCP_OAUTH) {
+        out({ jsonrpc: '2.0', id, error: { code: -32601, message: 'unknown method mcpServer/oauth/login' } });
+        return;
+      }
+      reply({ authorizationUrl: `https://auth.example.test/mcp?server=${encodeURIComponent(params.name || '')}` });
+      return;
+    case 'mcpServerStatus/list':
+      if (process.env.FAKE_CODEX_NO_MCP_STATUS) {
+        out({ jsonrpc: '2.0', id, error: { code: -32601, message: 'unknown method mcpServerStatus/list' } });
+        return;
+      }
+      reply({
+        data: [
+          { name: 'remoto', authStatus: 'notLoggedIn', resourceTemplates: [], resources: [], tools: {} },
+          { name: 'engram', authStatus: 'unsupported', resourceTemplates: [], resources: [], tools: {} },
+        ],
+      });
+      return;
     case 'thread/start': {
       const threadId = `thr_${++counter}`;
       threads.set(threadId, { cwd: params.cwd, turns: [], dev: params.developerInstructions || '' });
@@ -119,6 +138,77 @@ rl.on('line', (line) => {
           finish(`You chose ${picked}.`, 'completed');
         });
         out({ jsonrpc: '2.0', id: requestId, method: 'item/tool/requestUserInput', params: { threadId, turnId, itemId: `item_${++counter}`, isBlocking: true, questions: [{ id: 'q1', header: 'Tono', question: 'Which tone?', options: [{ label: 'Warm', description: 'Close' }, { label: 'Formal', description: 'Distant' }], isOther: false, isSecret: false }] } });
+        return;
+      }
+      if (/elicit-url/i.test(text)) {
+        const requestId = ++serverRequestId;
+        pendingApprovals.set(requestId, (answer) => {
+          const action = answer.result && answer.result.action ? answer.result.action : (answer.error ? 'rpc-error' : 'none');
+          finish(`elicitation ${action}`, 'completed');
+        });
+        out({ jsonrpc: '2.0', id: requestId, method: 'mcpServer/elicitation/request', params: { serverName: 'The-agentcy', threadId, turnId, message: 'Sign in to continue', mode: 'url', url: 'https://auth.example.test/elicit', elicitationId: 'elc_1' } });
+        return;
+      }
+      if (/elicit-form/i.test(text)) {
+        const requestId = ++serverRequestId;
+        pendingApprovals.set(requestId, (answer) => {
+          const action = answer.result && answer.result.action ? answer.result.action : 'none';
+          const content = answer.result && answer.result.content ? JSON.stringify(answer.result.content) : '';
+          finish(`elicitation ${action} ${content}`, 'completed');
+        });
+        out({
+          jsonrpc: '2.0', id: requestId, method: 'mcpServer/elicitation/request',
+          params: {
+            serverName: 'The-agentcy', threadId, turnId, message: 'Workspace profile', mode: 'form',
+            requestedSchema: {
+              type: 'object',
+              properties: {
+                workspace: { type: 'string', title: 'Workspace', description: 'Which workspace?' },
+                count: { type: 'number', title: 'Count' },
+                ok: { type: 'boolean', title: 'Confirm' },
+                tone: { type: 'string', title: 'Tone', enum: ['warm', 'formal'] },
+              },
+              required: ['workspace', 'ok'],
+            },
+          },
+        });
+        return;
+      }
+      if (/elicit-complex/i.test(text)) {
+        const requestId = ++serverRequestId;
+        pendingApprovals.set(requestId, (answer) => {
+          const action = answer.result && answer.result.action ? answer.result.action : 'none';
+          finish(`elicitation ${action}`, 'completed');
+        });
+        out({
+          jsonrpc: '2.0', id: requestId, method: 'mcpServer/elicitation/request',
+          params: {
+            serverName: 'The-agentcy', threadId, turnId, message: 'Pick many', mode: 'form',
+            requestedSchema: { type: 'object', properties: { tags: { type: 'array', items: { type: 'string', enum: ['a', 'b'] } } }, required: ['tags'] },
+          },
+        });
+        return;
+      }
+      if (/mystery-method/i.test(text)) {
+        const requestId = ++serverRequestId;
+        pendingApprovals.set(requestId, () => finish('mystery answered', 'completed'));
+        out({ jsonrpc: '2.0', id: requestId, method: 'account/chatgptAuthTokens/refresh', params: { threadId, reason: 'unauthorized' } });
+        return;
+      }
+      if (/mcp-tool/i.test(text)) {
+        const toolItem = {
+          id: `item_${++counter}`,
+          type: 'mcpToolCall',
+          server: 'The-agentcy',
+          tool: 'set_workspace_profile',
+          status: 'failed',
+          arguments: { workspace: 'acme' },
+          result: { content: [{ type: 'text', text: 'could not apply' }], structuredContent: { code: 17 } },
+          error: { message: 'profile locked' },
+        };
+        notify('item/started', { threadId, turnId, item: toolItem, startedAtMs: Date.now() });
+        notify('item/completed', { threadId, turnId, item: toolItem, completedAtMs: Date.now() });
+        finish('tool failed', 'completed');
         return;
       }
       if (/slow/i.test(text)) {
