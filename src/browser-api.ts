@@ -1,3 +1,4 @@
+import { composeBrandContext } from '../shared/brandContext';
 import type { AgentRole, Brand, BrandContextProposal, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput } from '../shared/contracts';
 import { createAgentBus } from './agent-events';
 import { createChatStore } from './chat-store';
@@ -155,16 +156,19 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
     const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
     const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw new Error('Brand not found: ' + p.brandId);
     if (brand.archivedAt) throw new Error('Brand is archived: ' + brand.id);
+    if (p.status === 'approved') return p;
     if (p.status !== 'pending') throw new Error('La propuesta ya no está pendiente');
     if (edited != null) p.text = edited;
     p.status = 'approved'; p.decidedAt = now();
-    brand.context = p.mode === 'append' && brand.context.trim() ? `${brand.context.replace(/\s+$/u, '')}\n\n${p.text}` : p.text;
+    brand.context = composeBrandContext(brand.context, p.text, p.mode);
     return p;
   }),
   rejectBrandContextProposal: async proposalId => change(s => {
     s.brandContextProposals ??= [];
     const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
     const brand = s.brands.find(b => b.id === p.brandId); if (brand?.archivedAt) throw new Error('Brand is archived: ' + p.brandId);
+    if (p.status === 'rejected') return p;
+    if (p.status !== 'pending') throw new Error('La propuesta ya no está pendiente');
     p.status = 'rejected'; p.decidedAt = now(); return p;
   }),
   requestBrandContextDraft: unavailable,
