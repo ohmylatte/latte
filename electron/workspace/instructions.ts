@@ -2,6 +2,7 @@ import type { Brand, Decision, DecisionAuthorityMode, EffortTier, FunnelStage, W
 import type { SkillRef } from '../../shared/generationContracts';
 import { WORK_FILES } from '../core/paths';
 import {
+  BRAND_MEMORY_DIR,
   BRAND_MEMORY_FILE,
   INHERITED_ARTIFACTS_INLINE_FLOOR,
   INHERITED_ARTIFACTS_INLINE_MAX,
@@ -319,7 +320,7 @@ function renderCore(
       artifacts: inheritedArtifactsMax,
     })
     : null;
-  if (inherited) files.push(inherited.sideFile);
+  if (inherited) files.push(...inherited.files);
 
   // Brand context: same excerpt-plus-pointer pattern as the brief below, so a
   // brand written as a small book never becomes the biggest thing in the file.
@@ -412,7 +413,7 @@ function renderCore(
     `- \`./${WORK_FILES.claude}\` and \`./${WORK_FILES.agents}\` are managed by Latte. Do not edit them.`,
     `- \`./${WORK_FILES.metaDir}/\` holds immutable snapshots. Never modify or delete anything in it.`,
     '- Stay inside this directory. Do not touch other brands, other works or global tool configuration.',
-    `- Brand continuity is automatic: previous works of this same brand are summarized in "Brand knowledge from previous work" and, when present, in ./${SIDE_FILES.brandMemory}. That snapshot is not this work's delta. Do not claim you lack brand context when Brand context or that section has content. Inherited decisions keep their origin work; do not reopen them or treat them as this work's local log. Never read another brand.`,
+    `- Brand continuity is automatic. Inherited knowledge is in "Brand knowledge from previous work", ./${SIDE_FILES.brandMemory} and local copies under ./${BRAND_MEMORY_DIR}/ — not this work's delta. When an excerpt is not enough, read the local copy here; do not leave this directory or open another work. Do not claim you lack brand context when those files have content. Inherited decisions keep their origin; never read another brand.`,
     '- MCP is optional: use only tools actually exposed by the current runtime and configured by the human; never assume a provider or preinstalled server. A missing tool blocks only that external action: explain what is missing, point the human to Herramientas (MCP) / Tools (MCP), and continue ordinary local work. Do not install servers or change global configuration yourself.',
     '- Distinguish a request to plan from a request to execute. Use only the relevant brief, approved decisions, files and expected output, without copying all context. Before external side effects, confirm scope, target account, budget and business authorization (including whether spending is allowed). Technical tool permissions are not business authorization. If any required approval or detail is missing, ask and wait for the human before that action. Once authorized and available, execute with the real tool rather than substituting Markdown; never invent a tool call or success.',
     '- Verify external execution: query remote state after the action when a read/status tool is available; otherwise report the outcome as unconfirmed and explain the verification blocker. A timeout is not proof of failure: reconcile remote state before considering another attempt and do not retry blindly. Put result files in ./entregables/; report remote IDs, observed status and pending steps in the response or a relevant existing document, without inventing confirmation; never include credentials or secrets.',

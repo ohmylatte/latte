@@ -1,16 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import type { Brand, Decision, FunnelStage, Work } from '../../shared/contracts';
 import {
+  ARTIFACT_COPY_PER_FILE_CHARS,
+  ARTIFACT_COPY_TOTAL_CHARS,
   ARTIFACT_EXCERPT_CHARS,
+  BRAND_MEMORY_DIR,
   BRAND_MEMORY_FILE,
   INHERITED_ARTIFACTS_INLINE_MAX,
   INHERITED_DECISIONS_INLINE_MAX,
   collectBrandMemory,
   isPlaceholderBrief,
+  localCopyPath,
   renderBrandMemory,
   type BrandMemoryWorkSource,
 } from '../../electron/workspace/brandMemory';
 import { renderInstructionBundle } from '../../electron/workspace/instructions';
+import { LattePaths } from '../../electron/core/paths';
+import { WorkspaceFiles } from '../../electron/workspace/workspace';
+import { makeTempDir, removeDir } from './helpers';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const brand: Brand = { id: 'brd_bruma', name: 'Bruma Café', context: 'Tono directo, sin muletillas.', createdAt: '2026-01-01T00:00:00.000Z', archivedAt: null };
 const otherBrand: Brand = { id: 'brd_rival', name: 'Rival', context: 'Nunca mezclar.', createdAt: '2026-01-01T00:00:00.000Z', archivedAt: null };
@@ -133,6 +142,9 @@ describe('collectBrandMemory', () => {
       funnelStages: funnel,
     });
     expect(snapshot.artifacts[0].excerpt).toContain('TOFU awareness');
+    expect(snapshot.artifacts[0].copyStatus).toBe('copied');
+    expect(snapshot.artifacts[0].localPath).toBe(localCopyPath(onboarding.id, 'strategy.md'));
+    expect(snapshot.artifacts[0].copyBody).toContain('BOFU conversion con cupón de primera compra');
   });
 
   it('drops sources from another brand even if the caller mixed them in', () => {
@@ -156,9 +168,11 @@ describe('collectBrandMemory', () => {
     expect(JSON.stringify(snapshot)).not.toContain(rivalWork.id);
   });
 
-  it('keeps a linked result as a pointer and excerpts long documents', () => {
+  it('keeps a linked result as a pointer and copies long markdown beyond the excerpt', () => {
     const withResult = work('wrk_old', brand.id, 'Propuesta', '2026-01-20T00:00:00.000Z', 'propuesta.pdf');
-    const long = 'Pieza '.repeat(200);
+    const marker = 'UNIQUE_FUNNEL_CHECKPOINT_BOFU_CUPON';
+    const long = `${'Pieza '.repeat(80)}${marker} and the rest of the landing.`;
+    expect(long.indexOf(marker)).toBeGreaterThan(ARTIFACT_EXCERPT_CHARS);
     const snapshot = collectBrandMemory({
       brand,
       currentWorkId: paid.id,
@@ -171,10 +185,40 @@ describe('collectBrandMemory', () => {
         content: long,
       }])],
     });
-    expect(snapshot.artifacts.some((a) => a.kind === 'result' && a.fileName === 'propuesta.pdf' && a.workId === withResult.id)).toBe(true);
+    const result = snapshot.artifacts.find((a) => a.kind === 'result');
+    expect(result).toMatchObject({ fileName: 'propuesta.pdf', workId: withResult.id, copyStatus: 'omitted-binary', localPath: null });
     const landing = snapshot.artifacts.find((a) => a.fileName === 'landing.md');
     expect(landing?.excerptTruncated).toBe(true);
     expect(landing?.excerpt.length).toBe(ARTIFACT_EXCERPT_CHARS);
+    expect(landing?.excerpt).not.toContain(marker);
+    expect(landing?.copyStatus).toBe('copied');
+    expect(landing?.localPath).toBe(`${BRAND_MEMORY_DIR}/${withResult.id}/landing.md`);
+    expect(landing?.copyBody).toContain(marker);
+  });
+
+  it('stops copying once the global copy budget is spent and still lists omitted files', () => {
+    const docs = Array.from({ length: 6 }, (_, i) => ({
+      kind: 'strategy',
+      title: `Pieza ${i}`,
+      fileName: `pieza-${i}.md`,
+      status: 'review',
+      funnelStages: ['consideration'] as FunnelStage[],
+      content: `DOC_${i}_START ${'m'.repeat(ARTIFACT_COPY_PER_FILE_CHARS)} DOC_${i}_TAIL`,
+    }));
+    const snapshot = collectBrandMemory({
+      brand,
+      currentWorkId: paid.id,
+      sources: [source(onboarding, [], docs)],
+    });
+    const copied = snapshot.artifacts.filter((a) => a.localPath);
+    const omitted = snapshot.artifacts.filter((a) => a.copyStatus === 'omitted-budget');
+    expect(copied.length).toBe(Math.floor(ARTIFACT_COPY_TOTAL_CHARS / ARTIFACT_COPY_PER_FILE_CHARS));
+    expect(omitted.length).toBe(docs.length - copied.length);
+    expect(copied.reduce((n, a) => n + (a.copyBody?.length ?? 0), 0)).toBeLessThanOrEqual(ARTIFACT_COPY_TOTAL_CHARS);
+    expect(copied[0]?.copyStatus).toBe('copied-truncated');
+    expect(copied[0]?.copyBody).toContain('DOC_0_START');
+    expect(copied[0]?.copyBody).not.toContain('DOC_0_TAIL');
+    expect(omitted[0]?.localPath).toBeNull();
   });
 });
 
@@ -187,12 +231,22 @@ describe('renderBrandMemory', () => {
     });
     const rendered = renderBrandMemory(snapshot, { decisions: INHERITED_DECISIONS_INLINE_MAX, artifacts: INHERITED_ARTIFACTS_INLINE_MAX });
     expect(rendered).toBeTruthy();
-    expect(rendered!.sideFile.path).toBe(BRAND_MEMORY_FILE);
-    expect(rendered!.body).toContain(`Inspect the full snapshot in ./${BRAND_MEMORY_FILE}.`);
+    const index = rendered!.files.find((f) => f.path === BRAND_MEMORY_FILE);
+    const copyPath = localCopyPath(onboarding.id, 'strategy.md');
+    expect(index?.path).toBe(BRAND_MEMORY_FILE);
+    expect(rendered!.body).toContain(`Inspect the index in ./${BRAND_MEMORY_FILE}.`);
+    expect(rendered!.body).toContain(`./${BRAND_MEMORY_DIR}/`);
+    expect(rendered!.body).not.toMatch(/files live in their origin work/i);
     expect(rendered!.body).toContain(`from work "Onboarding" (\`${onboarding.id}\`)`);
     expect(rendered!.body).toContain(audienceDecision.text);
     expect(rendered!.body).toContain('funnel: consideration, conversion');
-    expect(rendered!.sideFile.content).toContain(audienceDecision.text);
+    expect(rendered!.body).toContain(`read \`./${copyPath}\``);
+    expect(index?.content).toContain(audienceDecision.text);
+    expect(index?.content).toContain(`./${copyPath}`);
+    const copy = rendered!.files.find((f) => f.path === copyPath);
+    expect(copy?.content).toContain('<!-- latte:brand-memory-copy -->');
+    expect(copy?.content).toContain(`(\`${onboarding.id}\`)`);
+    expect(copy?.content).toContain('BOFU conversion con cupón de primera compra');
     expect(rendered!.truncated).toBe(false);
   });
 
@@ -214,7 +268,8 @@ describe('renderBrandMemory', () => {
     expect(rendered?.body).toContain(`4 earlier inherited decisions are recorded in ./${BRAND_MEMORY_FILE}.`);
     expect(rendered?.body).not.toContain('Inherited decision 0 ');
     expect(rendered?.body).toContain(`Inherited decision ${INHERITED_DECISIONS_INLINE_MAX + 3}`);
-    for (const d of many) expect(rendered?.sideFile.content).toContain(d.text);
+    const index = rendered?.files.find((f) => f.path === BRAND_MEMORY_FILE);
+    for (const d of many) expect(index?.content).toContain(d.text);
   });
 
   it('returns null when the brand has no other work', () => {
@@ -253,6 +308,7 @@ describe('renderInstructionBundle: current delta vs inherited brand knowledge', 
     expect(bundle.text).toMatch(/earlier inherited decisions are recorded in \.\/\.latte\/context\/brand-memory\.md/);
     expect(bundle.text).not.toContain('Inherited decision 0 ');
     expect(bundle.files.find((f) => f.path === BRAND_MEMORY_FILE)?.content).toContain('Inherited decision 0 ');
+    expect(bundle.files.some((f) => f.path === localCopyPath(onboarding.id, 'strategy.md'))).toBe(true);
     expect(bundle.text).toContain('Local decision 39');
     expect(bundle.text).toContain('25 earlier decisions are recorded in ./.latte/context/decisions.md');
   });
@@ -283,5 +339,33 @@ describe('renderInstructionBundle: current delta vs inherited brand knowledge', 
     expect(side?.content).toContain(audienceDecision.text);
     expect(side?.content).not.toContain(localDecision.text);
     expect(side?.content).not.toContain('SECRET_RIVAL_BUDGET_900k');
+    const copy = bundle.files.find((f) => f.path === localCopyPath(onboarding.id, 'strategy.md'));
+    expect(copy?.content).toContain('TOFU awareness');
+    expect(bundle.files.every((f) => !f.content.includes('SECRET_RIVAL_BUDGET_900k'))).toBe(true);
+  });
+
+  it('writes nested copies and removes them when inheritance no longer applies', () => {
+    const dir = makeTempDir();
+    try {
+      const files = new WorkspaceFiles(new LattePaths(dir));
+      files.ensureWork(brand.id, paid.id, paid.brief);
+      const workDir = files.workDir(brand.id, paid.id);
+      const snapshot = collectBrandMemory({
+        brand,
+        currentWorkId: paid.id,
+        sources: [source(onboarding, [audienceDecision], [strategyDoc])],
+      });
+      const bundle = renderInstructionBundle({ brand, work: paid, decisions: [], brandMemory: snapshot });
+      files.writeInstructions(brand.id, paid.id, bundle.text, bundle.files);
+      const copyPath = path.join(workDir, ...localCopyPath(onboarding.id, 'strategy.md')!.split('/'));
+      expect(fs.readFileSync(copyPath, 'utf8')).toContain('BOFU conversion');
+      const clean = renderInstructionBundle({ brand, work: paid, decisions: [] });
+      files.writeInstructions(brand.id, paid.id, clean.text, clean.files);
+      expect(fs.existsSync(copyPath)).toBe(false);
+      expect(fs.existsSync(path.join(workDir, '.latte', 'context', 'brand-memory'))).toBe(false);
+      expect(fs.existsSync(path.join(workDir, '.latte', 'context', 'brand-memory.md'))).toBe(false);
+    } finally {
+      removeDir(dir);
+    }
   });
 });

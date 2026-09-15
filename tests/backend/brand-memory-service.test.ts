@@ -1,15 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BRAND_MEMORY_FILE } from '../../electron/workspace/brandMemory';
+import { ARTIFACT_EXCERPT_CHARS, BRAND_MEMORY_DIR, BRAND_MEMORY_FILE, localCopyPath } from '../../electron/workspace/brandMemory';
 import { makeBackend, type TestBackend } from './helpers';
 
 function readAgents(b: TestBackend, brandId: string, workId: string): string {
   return fs.readFileSync(path.join(b.dir, 'brands', brandId, 'works', workId, 'AGENTS.md'), 'utf8');
 }
 
+function workDir(b: TestBackend, brandId: string, workId: string): string {
+  return path.join(b.dir, 'brands', brandId, 'works', workId);
+}
+
 function readSide(b: TestBackend, brandId: string, workId: string): string {
-  return fs.readFileSync(path.join(b.dir, 'brands', brandId, 'works', workId, ...BRAND_MEMORY_FILE.split('/')), 'utf8');
+  return fs.readFileSync(path.join(workDir(b, brandId, workId), ...BRAND_MEMORY_FILE.split('/')), 'utf8');
+}
+
+function readCopy(b: TestBackend, brandId: string, workId: string, originWorkId: string, fileName: string): string {
+  return fs.readFileSync(path.join(workDir(b, brandId, workId), ...localCopyPath(originWorkId, fileName)!.split('/')), 'utf8');
 }
 
 describe('brand memory inheritance through createWork / refreshInstructions', () => {
@@ -38,7 +46,11 @@ describe('brand memory inheritance through createWork / refreshInstructions', ()
     expect(agents).toContain('Do not claim you lack brand context');
     expect(agents).toContain(BRAND_MEMORY_FILE.replace(/\\/g, '/'));
     expect(agents).toContain('No decisions recorded yet in this work.');
+    expect(agents).toContain(`./${BRAND_MEMORY_DIR}/`);
+    expect(agents).not.toMatch(/files live in their origin work/i);
     expect(readSide(b, bruma.id, paid.id)).toContain('Audiencia primaria: mujeres 25-40 en CABA.');
+    expect(readCopy(b, bruma.id, paid.id, onboarding.id, 'strategy.md')).toContain('TOFU awareness, MOFU consideration.');
+    expect(readCopy(b, bruma.id, paid.id, onboarding.id, 'strategy.md')).toContain(`(\`${onboarding.id}\`)`);
 
     const firstWork = readAgents(b, bruma.id, onboarding.id);
     expect(firstWork).not.toContain('## Brand knowledge from previous work');
@@ -59,6 +71,7 @@ describe('brand memory inheritance through createWork / refreshInstructions', ()
     const paid = await b.service.createWork(bruma.id, 'Paid Media Q2');
     const agents = readAgents(b, bruma.id, paid.id);
     const side = readSide(b, bruma.id, paid.id);
+    const copyRoot = path.join(workDir(b, bruma.id, paid.id), ...BRAND_MEMORY_DIR.split('/'));
     for (const text of [agents, side]) {
       expect(text).toContain('Audiencia Bruma: CABA.');
       expect(text).not.toContain('SECRET_RIVAL_BUDGET_900k');
@@ -66,6 +79,27 @@ describe('brand memory inheritance through createWork / refreshInstructions', ()
       expect(text).not.toContain('SECRET_RIVAL_CREATIVE');
       expect(text).not.toContain(rivalWork.id);
     }
+    expect(fs.existsSync(path.join(copyRoot, rivalWork.id))).toBe(false);
+  });
+
+  it('lets an agent recover inherited markdown past the excerpt without leaving this work', async () => {
+    const marker = 'UNIQUE_FUNNEL_CHECKPOINT_BOFU_CUPON';
+    const bruma = await b.service.createBrand('Bruma Café');
+    const onboarding = await b.service.createWork(bruma.id, 'Onboarding');
+    const strategy = await b.service.createDocument(onboarding.id, 'strategy', 'Embudo de marca');
+    const body = `# Embudo de marca\n\n${'contexto '.repeat(90)}${marker}\nCierre con cupón de primera compra.`;
+    expect(body.indexOf(marker)).toBeGreaterThan(ARTIFACT_EXCERPT_CHARS);
+    await b.service.saveDocument(strategy.document.id, body, strategy.fingerprint);
+
+    const paid = await b.service.createWork(bruma.id, 'Paid Media Q2');
+    const agents = readAgents(b, bruma.id, paid.id);
+    expect(agents).not.toContain(marker);
+    expect(agents).toContain(`read \`./${localCopyPath(onboarding.id, strategy.document.fileName)}\``);
+    const copy = readCopy(b, bruma.id, paid.id, onboarding.id, strategy.document.fileName);
+    expect(copy).toContain(marker);
+    expect(copy).toContain('Cierre con cupón de primera compra.');
+    expect(copy).toContain('<!-- latte:brand-memory-copy -->');
+    expect(copy).toContain('Do not leave this directory to fetch the origin file');
   });
 
   it('shows local current decisions and inherited ones with origin after opening a new session', async () => {
