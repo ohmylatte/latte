@@ -41,6 +41,13 @@ export function requireId(value: unknown, name: string): string {
   return value;
 }
 
+/** Brand context and rationale may include newlines and tabs, never other C0/C1 controls. */
+export function assertNoControlChars(value: string, name: string): void {
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/.test(value)) {
+    throw new ValidationError(`${name} contains control characters`);
+  }
+}
+
 export function requireInt(value: unknown, name: string, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isInteger(value)) throw new ValidationError(`${name} must be an integer`);
   if (value < min || value > max) throw new ValidationError(`${name} must be between ${min} and ${max}`);
