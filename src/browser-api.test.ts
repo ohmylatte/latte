@@ -56,13 +56,16 @@ describe('explicit browser preview', () => {
     expect(await api.listBrandContextProposals(b.id)).toEqual([]);
     const stored = JSON.parse(data.get('latte-preview-v1')!);
     stored.brandContextProposals = [{
-      id: 'bcp_1', brandId: b.id, workId: w.id, chatId: null, messageId: null,
+      id: 'bcp_1', brandId: b.id, workId: w.id,
+      source: { chatId: null, messageId: null, memberId: null, roleId: 'strategist', runtime: null },
       text: 'Tono cercano', rationale: 'Del brief', mode: 'replace', status: 'pending',
       fingerprint: 'x', clientRequestId: 'req_1', createdAt: new Date().toISOString(), decidedAt: null,
     }];
     data.set('latte-preview-v1', JSON.stringify(stored));
     const approved = await api.approveBrandContextProposal('bcp_1', null);
     expect(approved.status).toBe('approved');
+    expect((await api.listBrands()).find(x => x.id === b.id)?.context).toBe('Tono cercano');
+    await api.approveBrandContextProposal('bcp_1', null);
     expect((await api.listBrands()).find(x => x.id === b.id)?.context).toBe('Tono cercano');
     await expect(api.requestBrandContextDraft(w.id)).rejects.toThrow('escritorio');
   });

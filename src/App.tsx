@@ -1,5 +1,5 @@
 import { currentLocale, translate as t } from './i18n';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, LoaderCircle, MessageSquare, Minus, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, X } from 'lucide-react';
@@ -14,6 +14,9 @@ import { SettingsScreen, type SettingsSection } from './SettingsScreen';
 import { TeamPanel, type RuntimeChoice } from './TeamPanel';
 import { TerminalPane } from './TerminalPane';
 import { UpdateBanner } from './UpdateBanner';
+import { composeBrandContext } from '../shared/brandContext';
+import { resolveRemoteBrandContext } from './brand-context-sync';
+import { contextDiff } from './context-diff';
 
 type View = 'brief' | 'funnel' | 'context' | 'memory' | 'decisions';
 type Modal = 'brand' | 'work' | 'document' | null;
@@ -24,29 +27,6 @@ const maxAgentWidth = () => Math.max(AGENT_MIN, window.innerWidth - SIDEBAR - WO
 const clampAgentWidth = (value: number) => Math.min(maxAgentWidth(), Math.max(AGENT_MIN, Math.round(value)));
 const readAgentWidth = () => { try { const raw = localStorage.getItem(AGENT_WIDTH_KEY); const n = raw ? Number(raw) : NaN; return Number.isFinite(n) ? clampAgentWidth(n) : 355; } catch { return 355; } };
 const displayError = (e: unknown) => e instanceof Error ? e.message : String(e);
-
-function diffLines(before: string, after: string): Array<{ kind: 'same' | 'add' | 'del'; text: string }> {
-  const a = before.split('\n');
-  const b = after.split('\n');
-  const n = a.length, m = b.length;
-  const dp: number[][] = Array.from({ length: n + 1 }, () => Array<number>(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  const out: Array<{ kind: 'same' | 'add' | 'del'; text: string }> = [];
-  let i = 0, j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) { out.push({ kind: 'same', text: a[i] }); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ kind: 'del', text: a[i++] }); }
-    else { out.push({ kind: 'add', text: b[j++] }); }
-  }
-  while (i < n) out.push({ kind: 'del', text: a[i++] });
-  while (j < m) out.push({ kind: 'add', text: b[j++] });
-  return out;
-}
-
-function proposedContext(current: string, proposal: BrandContextProposal): string {
-  if (proposal.mode === 'append' && current.trim()) return `${current.replace(/\s+$/u, '')}\n\n${proposal.text}`;
-  return proposal.text;
-}
 
 /**
  * The window is frameless, so Latte draws its own controls. The title bar area
@@ -131,6 +111,9 @@ export function App() {
   const sessionEnded = Boolean(session && endedSessions.has(session.id));
   const generation = useRef(0), memoryGeneration = useRef(0);
   const dirty = profileDirty || documentDirty || documentDrafts.hasUnsaved() || hasMetadataDrafts() || hasOutcomeDrafts(), contextDirty = Boolean(brand && context !== brand.context);
+  const brandRef = useRef(brand); brandRef.current = brand;
+  const contextRef = useRef(context); contextRef.current = context;
+  const contextDirtyRef = useRef(contextDirty); contextDirtyRef.current = contextDirty;
   const selectedDocId = work ? selectedDoc[work.id] ?? null : null;
   // Who is writing to which file right now, straight from each runtime's own
   // tool reports. A write that did not come through a tool is never attributed.
@@ -238,7 +221,28 @@ export function App() {
     let wasBusy = anyBusy();
     return chatStore.subscribe(() => {
       const busyNow = anyBusy();
-      if (wasBusy && !busyNow) void Promise.all([loadDocuments(work.id),api.listDecisions(work.id).then(setDecisions)]).catch(() => undefined);
+      if (wasBusy && !busyNow) {
+        const currentBrand = brandRef.current;
+        void Promise.all([
+          loadDocuments(work.id),
+          api.listDecisions(work.id).then(setDecisions),
+          currentBrand ? api.listBrandContextProposals(currentBrand.id).then(setContextProposals) : Promise.resolve(),
+          currentBrand ? api.listBrands().then((list) => {
+            const updated = list.find((x) => x.id === currentBrand.id);
+            if (!updated) return;
+            const next = resolveRemoteBrandContext({
+              draft: contextRef.current,
+              persisted: updated.context,
+              previousPersisted: currentBrand.context,
+              dirty: contextDirtyRef.current,
+            });
+            setBrand(updated);
+            setBrands((prev) => prev.map((x) => x.id === updated.id ? updated : x));
+            setContext(next.draft);
+            if (next.notice) setNotice(t('context.staleDraft'));
+          }) : Promise.resolve(),
+        ]).catch(() => undefined);
+      }
       wasBusy = busyNow;
     });
   }, [work?.id, workChatIds]);
@@ -270,10 +274,16 @@ export function App() {
   const selectWork = (w: Work) => { if (!guard()) return; setWork(w); setContext(brand?.context ?? ''); setView('brief'); };
   const saveContext = async () => { if (!brand) return; const b = await api.updateBrand(brand.id, context); setBrand(b); setBrands(prev => prev.map(x => x.id === b.id ? b : x)); setNotice(t('ui.auto.005')); };
   const pendingContext = contextProposals.find((p) => p.status === 'pending') ?? null;
+  const pendingProposed = pendingContext && brand ? composeBrandContext(brand.context, pendingContext.text, pendingContext.mode) : '';
+  const pendingDiff = useMemo(
+    () => pendingContext && brand ? contextDiff(brand.context, pendingProposed, pendingContext.mode).lines : [],
+    [brand?.context, pendingProposed, pendingContext?.mode],
+  );
   const decideContextProposal = async (proposalId: string, action: 'approve' | 'edit' | 'reject') => {
     if (!brand) return;
     if (action === 'reject') await api.rejectBrandContextProposal(proposalId);
     else {
+      if (!guard()) return;
       let edited: string | null = null;
       if (action === 'edit') {
         const current = contextProposals.find((p) => p.id === proposalId);
@@ -288,16 +298,20 @@ export function App() {
     }
     setContextProposals(await api.listBrandContextProposals(brand.id));
   };
-  const askStrategist = () => run(async () => {
-    if (!work) return;
-    const session = await api.requestBrandContextDraft(work.id);
-    setChats((prev) => ({ ...prev, [session.id]: session }));
-    setSelectedMembers((prev) => ({ ...prev, [work.id]: session.id }));
-    await loadTeam(work.id);
-    setLayout('conversation');
-    setView('brief');
-    setNotice(t('ui.auto.341', { p0: session.roleName }));
-  });
+  const askStrategist = () => {
+    if (!work || startingChat) return;
+    void openSession(() => api.requestBrandContextDraft(work.id), work.id)
+      .then(() => { setLayout('conversation'); setView('brief'); })
+      .catch(() => undefined);
+  };
+  const strategist = team.find((m) => m.roleId === 'strategist' && m.status !== 'ended');
+  const strategistBusy = Boolean(
+    strategist && (
+      strategist.status === 'working'
+      || chatStore.get(strategist.id).status === 'busy'
+      || chatStore.get(strategist.id).status === 'retry'
+    ),
+  );
   const reloadBrandLists = async () => {
     const [list, archived] = await Promise.all([api.listBrands(), api.listArchivedBrands()]);
     setBrands(list);
@@ -550,9 +564,9 @@ export function App() {
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}
       {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={setView} work={work} brandName={brand?.name ?? ''} documents={documents} selectedId={selectedDocId} onSelect={id => work && setSelectedDoc(prev => ({ ...prev, [work.id]: id }))} onDocumentsChanged={async () => { if (work) await loadDocuments(work.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} />}
       {view === 'context' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.045')}</div><h1>{t('ui.auto.046')}<br />{t('ui.auto.047')}</h1><p className="intro">{t('ui.auto.048')}</p>
-        {pendingContext && brand && <div className="decision-card status-pending"><div><small>{t('context.proposal')} · {date(pendingContext.createdAt)}</small><p className="footnote">{pendingContext.mode === 'append' ? t('context.mode.append') : t('context.mode.replace')}</p>{pendingContext.rationale && <p className="footnote">{pendingContext.rationale}</p>}<div className="context-diff" aria-label={t('context.diff')}>{diffLines(brand.context, proposedContext(brand.context, pendingContext)).map((line, i) => <div key={i} className={'context-diff-line context-diff-' + line.kind}>{line.kind === 'add' ? '+ ' : line.kind === 'del' ? '− ' : '  '}{line.text}</div>)}</div><div className="chat-card-actions"><button className="primary" onClick={() => void run(() => decideContextProposal(pendingContext.id, 'approve'))}>{t('context.accept')}</button><button onClick={() => void run(() => decideContextProposal(pendingContext.id, 'edit'))}>{t('context.editAccept')}</button><button onClick={() => void run(() => decideContextProposal(pendingContext.id, 'reject'))}>{t('context.reject')}</button></div></div></div>}
+        {pendingContext && brand && <div className="decision-card status-pending"><div><small>{(roles.find((r) => r.id === pendingContext.source.roleId)?.name ?? pendingContext.source.roleId) || t('context.proposal')} · {date(pendingContext.createdAt)}</small><p className="footnote">{pendingContext.mode === 'append' ? t('context.mode.append') : t('context.mode.replace')}</p>{pendingContext.rationale && <p className="footnote">{pendingContext.rationale}</p>}<div className="context-diff" aria-label={t('context.diff')}>{pendingDiff.map((line, i) => <div key={i} className={'context-diff-line context-diff-' + line.kind}>{line.kind === 'add' ? '+ ' : line.kind === 'del' ? '− ' : '  '}{line.text}</div>)}</div><div className="chat-card-actions"><button className="primary" disabled={busy} onClick={() => void run(() => decideContextProposal(pendingContext.id, 'approve'))}>{t('context.accept')}</button><button disabled={busy} onClick={() => void run(() => decideContextProposal(pendingContext.id, 'edit'))}>{t('context.editAccept')}</button><button disabled={busy} onClick={() => void run(() => decideContextProposal(pendingContext.id, 'reject'))}>{t('context.reject')}</button></div></div></div>}
         <label className="field-label" htmlFor="brand-context">{t('ui.auto.049')} {brand?.name}</label><textarea id="brand-context" className="context-editor" value={context} onChange={e => setContext(e.target.value)} placeholder={t('ui.auto.050')} /><button className="primary" disabled={!contextDirty || busy} onClick={() => run(saveContext)}><Save size={16} />{t('ui.auto.051')}</button>
-        <p className="footnote"><button type="button" className="subtle" disabled={!work || busy} title={!work ? t('context.ask.needWork') : undefined} onClick={() => { if (!work) return; void askStrategist(); }}>{t('context.ask')}</button>{!work ? ` ${t('context.ask.needWork')}` : ''}</p>
+        <p className="footnote"><button type="button" className="subtle" disabled={!work || busy || startingChat || strategistBusy} title={!work ? t('context.ask.needWork') : undefined} onClick={() => { if (!work) return; askStrategist(); }}>{t('context.ask')}</button>{!work ? ` ${t('context.ask.needWork')}` : ''}</p>
         {brand && <p className="footnote"><button type="button" className="subtle" disabled={busy} onClick={() => { if (!guard()) return; void run(archiveSelectedBrand); }}>{t('brand.archive')}</button></p>}<p className="footnote">{t('ui.auto.052')}</p></div>}
       {view === 'decisions' && <div className="document-scroll"><div className="document-kicker">CRITERIO QUE PERMANECE</div><h1>No empezar<br />de cero otra vez.</h1><p className="intro">{t('ui.auto.053')}</p>{work && <><label className="field-label">{t('decision.authority.label')}</label><select value={decisionAuthority} onChange={e=>{const mode=e.target.value as DecisionAuthorityMode;void api.setDecisionAuthority(work.id,mode).then(setDecisionAuthority).catch(x=>setError(displayError(x)));}}><option value="off">{t('decision.authority.off')}</option><option value="suggest">{t('decision.authority.suggest')}</option><option value="auto-record">{t('decision.authority.auto')}</option></select><p className="footnote">{t('decision.authority.help')}</p><form className="decision-form" onSubmit={e => { e.preventDefault(); void run(async () => { if (!decision.trim()) return; await api.addDecision(work.id, decision.trim()); setDecisions(await api.listDecisions(work.id)); setDecision(''); }); }}><textarea aria-label={t('ui.auto.054')} placeholder="Elegimos? porque?" value={decision} onChange={e => setDecision(e.target.value)} /><button className="primary" disabled={!decision.trim() || busy}><Plus size={15} />{t('ui.auto.055')}</button></form></>}<div className="decision-list">{decisions.filter(d=>d.status!=='rejected'&&d.status!=='archived').map((d, i) => <div className={'decision-card status-'+d.status} key={d.id}><span className="decision-number">{String(i + 1).padStart(2, '0')}</span><div><small>{d.status==='pending'?t('decision.pending'):d.source.chatId?t('decision.autoNotice'):''}</small><p>{d.text}</p>{d.rationale&&<p className="footnote">{d.rationale}</p>}<small>{date(d.createdAt)}</small>{d.status==='pending'&&<div className="chat-card-actions"><button className="primary" onClick={()=>void api.approveDecision(d.id,null).then(()=>api.listDecisions(work!.id)).then(setDecisions)}>{t('decision.add')}</button><button onClick={()=>{const edited=window.prompt(t('decision.editAdd'),d.text);if(edited?.trim())void api.approveDecision(d.id,edited.trim()).then(()=>api.listDecisions(work!.id)).then(setDecisions)}}>{t('decision.editAdd')}</button><button onClick={()=>void api.rejectDecision(d.id).then(()=>api.listDecisions(work!.id)).then(setDecisions)}>{t('decision.discard')}</button></div>}{d.status==='approved'&&d.source.chatId&&<button onClick={()=>void api.archiveDecision(d.id).then(()=>api.listDecisions(work!.id)).then(setDecisions)}>{t('decision.undo')}</button>}</div></div>)}{!decisions.filter(d=>d.status==='approved'||d.status==='pending').length && <p className="footnote">{t('ui.auto.056')}</p>}</div></div>}
       {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice('Aprendizaje guardado en Engram'); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
