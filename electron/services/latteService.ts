@@ -521,6 +521,17 @@ export class LatteService implements BackendApi {
   }
 
   /**
+   * Brand-scoped knowledge: every tracked document of every work of this brand.
+   * Mutations stay on listDocuments / createDocument / saveDocument (work or document id).
+   */
+  async listBrandDocuments(brandId: string): Promise<WorkDocument[]> {
+    const id = requireId(brandId, 'brandId');
+    const brand = this.deps.repo.getBrand(id);
+    for (const work of this.deps.repo.listWorks(id)) this.deps.files.ensureWork(brand.id, work.id, work.brief);
+    return this.deps.repo.listDocumentsForBrand(id).map((record) => this.describeDocument(this.collectFunnelProposal(brand.id, record)));
+  }
+
+  /**
    * Picks up a funnel block the agent left on a document Latte already tracks.
    *
    * The block leaves the file the moment it is seen, so it never reaches the
@@ -1038,6 +1049,16 @@ export class LatteService implements BackendApi {
     const id = requireId(workId, 'workId');
     this.deps.repo.getWork(id);
     return this.deps.repo.listDecisions(id);
+  }
+
+  /**
+   * Brand-scoped knowledge: decisions of every work of this brand.
+   * addDecision / approve / reject stay work- or decision-scoped.
+   */
+  async listBrandDecisions(brandId: string): Promise<Decision[]> {
+    const id = requireId(brandId, 'brandId');
+    this.deps.repo.getBrand(id);
+    return this.deps.repo.listDecisionsForBrand(id);
   }
 
   async addDecision(workId: string, text: string): Promise<Decision> {

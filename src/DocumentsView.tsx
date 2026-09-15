@@ -12,6 +12,7 @@ import { useDocumentStates } from './document-states';
 import { DocumentMetadata, hasMetadataDrafts } from './DocumentMetadata';
 import { documentDrafts } from './document-drafts';
 import { WorkOutcome, hasOutcomeDrafts, isWorkBrief } from './WorkOutcome';
+import { KnowledgeOrigin } from './KnowledgeScope';
 
 const KIND_LABEL: Record<DocumentKind, string> = new Proxy({} as Record<DocumentKind,string>, { get: (_, key: DocumentKind) => t(`kind.${key}` as 'kind.brief') });
 const KIND_HINT: Record<DocumentKind, string> = new Proxy({} as Record<DocumentKind,string>, { get: (_, key: DocumentKind) => t(`kindHint.${key}` as 'kindHint.brief') });
@@ -51,6 +52,9 @@ export interface DocumentsViewProps {
   /** Role currently writing to each file, by file name. */
   editors: Record<string, { roleId: string; roleName: string }>;
   busy: boolean;
+  currentWorkId: string | null;
+  workTitles: Record<string, string>;
+  showWorkDelta: boolean;
 }
 
 /**
@@ -228,11 +232,11 @@ export function DocumentsView(props: DocumentsViewProps) {
       : null;
   return <div className={'documents' + (funnel ? ' funnel-mode' : '')}>
     {funnel
-      ? <FunnelView documents={documents} selectedId={selected?.id ?? null} states={states} checking={checking} onRefresh={refreshStates} onSelect={id => { if (!saving) { props.onSelect(id); props.onView('brief'); } }} busy={props.busy} />
-      : <><DocumentList documents={documents} workId={work.id} selectedId={selected?.id ?? null} states={states} failed={failed} checking={checking} onRefresh={refreshStates} onSelect={id => { if (!saving) props.onSelect(id); }} onCreate={props.onCreate} onUseFolder={props.onUseFolder} folder={linked} untracked={props.untracked} onTrack={props.onTrack} busy={props.busy || saving} suggestion={suggestion} onImported={names => { void props.onDocumentsChanged(); props.onNotice(names.length === 1 ? t('ui.auto.374', { p0: names[0] }) : t('ui.auto.375', { p0: names.length })); }} />
+      ? <FunnelView documents={documents} selectedId={selected?.id ?? null} states={states} checking={checking} onRefresh={refreshStates} onSelect={id => { if (!saving) { props.onSelect(id); props.onView('brief'); } }} busy={props.busy} currentWorkId={props.currentWorkId} workTitles={props.workTitles} />
+      : <><DocumentList documents={documents} workId={work.id} currentWorkId={work.id} workTitles={props.workTitles} selectedId={selected?.id ?? null} states={states} failed={failed} checking={checking} onRefresh={refreshStates} onSelect={id => { if (!saving) props.onSelect(id); }} onCreate={props.onCreate} onUseFolder={props.onUseFolder} folder={linked} untracked={props.untracked} onTrack={props.onTrack} busy={props.busy || saving} suggestion={suggestion} showWorkDelta={props.showWorkDelta} onImported={names => { void props.onDocumentsChanged(); props.onNotice(names.length === 1 ? t('ui.auto.374', { p0: names[0] }) : t('ui.auto.375', { p0: names.length })); }} />
     <div className="doc-pane">
     {selected && <div className="document-toolbar">
-      <span><FileText size={16} />{selected.title}<small>{kindLabel} · {editing?.dirty ? t('ui.auto.148') : selected.status === 'approved' ? 'Aprobado' : selected.status === 'review' ? t('ui.auto.149') : 'Borrador'}</small></span>
+      <span><FileText size={16} />{selected.title}<small>{kindLabel} · {editing?.dirty ? t('ui.auto.148') : selected.status === 'approved' ? 'Aprobado' : selected.status === 'review' ? t('ui.auto.149') : 'Borrador'}</small><KnowledgeOrigin workId={selected.workId} currentWorkId={props.currentWorkId} titles={props.workTitles} /></span>
       <div className="doc-actions">
         <button className="primary" disabled={!editing?.dirty || saving || props.busy} onClick={() => void save()}>{saving ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}{t('ui.auto.150')}</button>
         <button disabled={props.busy || saving} onClick={() => setMode(mode === 'edit' ? 'read' : 'edit')}>{mode === 'edit' ? 'Leer' : 'Editar'}</button>
@@ -245,7 +249,7 @@ export function DocumentsView(props: DocumentsViewProps) {
 
     {selected && organizing && <DocumentMetadata key={selected.id} document={selected} onChanged={props.onDocumentsChanged} onError={props.onError} onDirtyChange={reportDirty}/>}
 
-    {selected && isWorkBrief(selected) && <WorkOutcome key={work.id} work={work} busy={props.busy} onUpdated={props.onWorkUpdated} onNotice={props.onNotice} onError={props.onError} onDirtyChange={reportDirty} />}
+    {selected && isWorkBrief(selected) && selected.workId === work.id && <WorkOutcome key={work.id} work={work} busy={props.busy} onUpdated={props.onWorkUpdated} onNotice={props.onNotice} onError={props.onError} onDirtyChange={reportDirty} />}
 
     {selected && selected.proposedFunnelStages.length > 0 && <div className="doc-banner proposal" role="status">
       <SlidersHorizontal size={14} />
@@ -267,7 +271,7 @@ export function DocumentsView(props: DocumentsViewProps) {
       </div>
     </div>}
 
-    {selected && props.editors[selected.fileName] && <div className="doc-banner editing" role="status" data-role={props.editors[selected.fileName].roleId}>
+    {selected && selected.workId === work.id && props.editors[selected.fileName] && <div className="doc-banner editing" role="status" data-role={props.editors[selected.fileName].roleId}>
       <i className="doc-editing" data-role={props.editors[selected.fileName].roleId} />
       <span><strong>{props.editors[selected.fileName].roleName}</strong>  {t('ui.auto.161')}</span>
     </div>}

@@ -572,3 +572,11 @@ html,body,#root{height:100%;overflow:hidden}
 .archived-brand-row{display:flex;align-items:center;gap:6px;min-width:0}
 .archived-brand-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--muted)}
 .archived-brand-row button{flex-shrink:0;padding:4px 8px;font-size:11px}
+.knowledge-scope{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 16px;padding:8px 18px 4px;border-bottom:1px solid var(--line);background:#f7f3eb}
+.knowledge-scope label{display:flex;flex-direction:column;gap:4px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.knowledge-scope select{text-transform:none;letter-spacing:0;font-size:13px;padding:7px 10px;min-width:220px}
+.knowledge-scope .footnote{margin:0;flex:1;min-width:220px}
+.knowledge-origin{display:block;font-size:10px;font-style:normal;color:var(--muted);margin-top:3px;letter-spacing:.02em}
+.knowledge-origin.current{color:var(--accent);font-weight:600}
+.doc-row[data-current-work='true'],.funnel-card[data-current-work='true']{border-color:#e0c8b6;background:#fbf4ec}
+.decision-card[data-current-work='true']{border-color:#e0c8b6}

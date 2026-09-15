@@ -25,6 +25,10 @@ describe('IPC surface', () => {
     expect(API_METHODS).toContain('archiveBrand');
     expect(API_METHODS).toContain('restoreBrand');
     expect(API_METHODS).toContain('listArchivedBrands');
+    expect(API_METHODS).toContain('listBrandDocuments');
+    expect(API_METHODS).toContain('listBrandDecisions');
+    expect(API_ARITY.listBrandDocuments).toBe(1);
+    expect(API_ARITY.listBrandDecisions).toBe(1);
     expect(API_ARITY.featureFlags).toBe(0);
     expect(API_ARITY.saveProfile).toBe(2);
     expect(API_ARITY.prepareGeneration).toBe(1);

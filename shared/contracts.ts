@@ -512,6 +512,8 @@ export interface LatteAPI {
   snapshot(workId: string): Promise<Revision>;
   // Documents
   listDocuments(workId: string): Promise<WorkDocument[]>;
+  /** Documents of every work of this brand. Each item keeps its originating workId. */
+  listBrandDocuments(brandId: string): Promise<WorkDocument[]>;
   readDocument(documentId: string): Promise<DocumentContent>;
   /** Cheap: only the fingerprint, for noticing external edits. */
   documentState(documentId: string): Promise<DocumentState>;
@@ -574,6 +576,8 @@ export interface LatteAPI {
    */
   useFolder(workId: string): Promise<FolderLinkResult | null>;
   listDecisions(workId: string): Promise<Decision[]>;
+  /** Decisions of every work of this brand. Each item keeps its originating workId. */
+  listBrandDecisions(brandId: string): Promise<Decision[]>;
   addDecision(workId: string, text: string): Promise<Decision>;
   getDecisionAuthority(workId: string): Promise<DecisionAuthorityMode>;
   setDecisionAuthority(workId: string, mode: DecisionAuthorityMode): Promise<DecisionAuthorityMode>;

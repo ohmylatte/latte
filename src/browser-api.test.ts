@@ -50,6 +50,23 @@ describe('explicit browser preview', () => {
     expect(await api.listDecisions(other.id)).toEqual([]);
     expect(await api.listDecisions(a.id)).toHaveLength(1);
   });
+  it('aggregates brand documents and decisions without leaking another brand', async () => {
+    const brand = await api.createBrand('Casa');
+    const launch = await api.createWork(brand.id, 'Lanzamiento');
+    const retain = await api.createWork(brand.id, 'Retención');
+    const other = await api.createBrand('Otra');
+    const alien = await api.createWork(other.id, 'Ajeno');
+    const copy = await api.createDocument(launch.id, 'copy', 'Anuncio');
+    await api.addDecision(retain.id, 'Email mensual');
+    await api.addDecision(alien.id, 'No cruzar');
+    const docs = await api.listBrandDocuments(brand.id);
+    expect(docs.some(d => d.id === copy.document.id && d.workId === launch.id)).toBe(true);
+    expect(docs.some(d => d.workId === alien.id)).toBe(false);
+    const decisions = await api.listBrandDecisions(brand.id);
+    expect(decisions.map(d => d.text)).toEqual(['Email mensual']);
+    expect(await api.listDecisions(launch.id)).toEqual([]);
+    expect((await api.listBrandDecisions(other.id)).map(d => d.text)).toEqual(['No cruzar']);
+  });
   it('does not pretend to run an agent or memory server', async () => {
     expect((await api.runtimeStatus()).every(r => !r.available)).toBe(true);
     await expect(api.startAgent('demo-work', 'claude')).rejects.toThrow('escritorio');

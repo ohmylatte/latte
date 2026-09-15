@@ -100,6 +100,11 @@ export const browserAPI: LatteAPI = {
   saveBrief: async (workId, brief, baseFingerprint) => browserAPI.saveDocument(previewDocId(workId),brief,baseFingerprint??null),
   listRevisions: async workId => read().revisions.filter(r=>r.workId===workId).reverse(),
   listDocuments: async workId => normalized().documents.filter(d=>d.workId===workId),
+  listBrandDocuments: async brandId => {
+    const s = normalized();
+    const workIds = new Set(s.works.filter(w => w.brandId === brandId).map(w => w.id));
+    return s.documents.filter(d => workIds.has(d.workId));
+  },
   readDocument: previewContent,
   documentState: async documentId=>{const c=await previewContent(documentId);return {documentId,fingerprint:c.fingerprint,modifiedAt:null,baseOutdated:c.baseOutdated};},
   createDocument: async(workId,kind,title,baseDocumentId)=>mutate(s=>{
@@ -133,6 +138,11 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   useFolder: unavailable,
   snapshot: async workId => change(s => { const r: Revision = { id: id(), workId, documentId: previewDocId(workId), source: 'human', content: s.works.find(w => w.id === workId)!.brief, createdAt: now() }; s.revisions.push(r); return r; }),
   listDecisions: async workId => read().decisions.filter(d => d.workId === workId),
+  listBrandDecisions: async brandId => {
+    const s = read();
+    const workIds = new Set(s.works.filter(w => w.brandId === brandId).map(w => w.id));
+    return s.decisions.filter(d => workIds.has(d.workId));
+  },
   addDecision: async (workId, text) => change(s => { const createdAt=now(); const d:Decision = { id:id(),workId,text,rationale:'',alternativesRejected:[],evidenceRefs:[],status:'approved',source:{chatId:null,messageId:null,memberId:null,roleId:null,runtime:null},clientRequestId:null,fingerprint:'',createdAt,decidedAt:createdAt }; s.decisions.push(d); return d; }),
   getDecisionAuthority:async workId=>(localStorage.getItem('latte:decision-authority:'+workId) as 'off'|'suggest'|'auto-record'|null)??'suggest',
   setDecisionAuthority:async(workId,mode)=>{localStorage.setItem('latte:decision-authority:'+workId,mode);return mode;},

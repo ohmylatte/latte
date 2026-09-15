@@ -377,6 +377,16 @@ export class LatteRepository {
     return this.db.all<DocumentRow>('SELECT * FROM documents WHERE work_id = ? ORDER BY created_at ASC, id ASC', [workId]).map(toDocument);
   }
 
+  /** Every tracked document of every work that belongs to this brand. */
+  listDocumentsForBrand(brandId: string): DocumentRecord[] {
+    return this.db
+      .all<DocumentRow>(
+        'SELECT d.* FROM documents d INNER JOIN works w ON w.id = d.work_id WHERE w.brand_id = ? ORDER BY d.created_at ASC, d.id ASC',
+        [brandId],
+      )
+      .map(toDocument);
+  }
+
   getDocument(id: string): DocumentRecord {
     const row = this.db.get<DocumentRow>('SELECT * FROM documents WHERE id = ?', [id]);
     if (!row) throw new NotFoundError('Document', id);
@@ -546,6 +556,23 @@ export class LatteRepository {
       .map(toDecision);
     const proposals=this.db.all<DecisionProposalRow>('SELECT * FROM decision_proposals WHERE work_id = ? ORDER BY created_at ASC, id ASC',[workId]).map(toProposal);
     return [...legacy,...proposals].sort((a,b)=>a.createdAt.localeCompare(b.createdAt)||a.id.localeCompare(b.id));
+  }
+
+  /** Approved, pending and legacy decisions of every work of this brand. */
+  listDecisionsForBrand(brandId: string): Decision[] {
+    const legacy = this.db
+      .all<DecisionRow>(
+        'SELECT d.* FROM decisions d INNER JOIN works w ON w.id = d.work_id WHERE w.brand_id = ? ORDER BY d.created_at ASC, d.id ASC',
+        [brandId],
+      )
+      .map(toDecision);
+    const proposals = this.db
+      .all<DecisionProposalRow>(
+        'SELECT p.* FROM decision_proposals p INNER JOIN works w ON w.id = p.work_id WHERE w.brand_id = ? ORDER BY p.created_at ASC, p.id ASC',
+        [brandId],
+      )
+      .map(toProposal);
+    return [...legacy, ...proposals].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
   }
 
   insertDecision(decision: Pick<Decision,'id'|'workId'|'text'|'createdAt'>): Decision {

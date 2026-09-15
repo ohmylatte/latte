@@ -2,6 +2,7 @@ import { translate as t } from './i18n';
 import { FileText, RefreshCw } from 'lucide-react';
 import type { DocumentState, WorkDocument } from '../shared/contracts';
 import { groupByStage, reviewReasons, STAGES, STAGE_LABEL, STATUS_LABEL } from './document-organizer';
+import { KnowledgeOrigin } from './KnowledgeScope';
 
 /**
  * The campaign by funnel stage, on its own screen.
@@ -11,7 +12,7 @@ import { groupByStage, reviewReasons, STAGES, STAGE_LABEL, STATUS_LABEL } from '
  * and pushed the unclassified documents — every document there is — below the
  * fold. A zero is worth one line; what you have to work on is worth the space.
  */
-export function FunnelView({ documents, selectedId, states, checking, onRefresh, onSelect, busy }: {
+export function FunnelView({ documents, selectedId, states, checking, onRefresh, onSelect, busy, currentWorkId, workTitles }: {
   documents: WorkDocument[];
   selectedId: string | null;
   states: Record<string, DocumentState>;
@@ -19,15 +20,18 @@ export function FunnelView({ documents, selectedId, states, checking, onRefresh,
   onRefresh: () => void;
   onSelect: (id: string) => void;
   busy: boolean;
+  currentWorkId: string | null;
+  workTitles: Record<string, string>;
 }) {
   const groups = groupByStage(documents);
   const empty = STAGES.filter(s => groups[s].length === 0);
 
-  const card = (d: WorkDocument) => <button key={d.id} data-document-id={d.id} disabled={busy} className={'funnel-card' + (selectedId === d.id ? ' selected' : '')} onClick={() => onSelect(d.id)} aria-label={t('ui.auto.124') + d.title}>
+  const card = (d: WorkDocument) => <button key={d.id} data-document-id={d.id} data-origin-work={d.workId} data-current-work={d.workId === currentWorkId ? 'true' : 'false'} disabled={busy} className={'funnel-card' + (selectedId === d.id ? ' selected' : '')} onClick={() => onSelect(d.id)} aria-label={t('ui.auto.124') + d.title}>
     <FileText size={14} />
     <span>
       <strong>{d.title}</strong>
       <small>{STATUS_LABEL[d.status]} · {d.fileName}</small>
+      <KnowledgeOrigin workId={d.workId} currentWorkId={currentWorkId} titles={workTitles} />
       {d.proposedFunnelStages.length > 0 && <em className="proposed">{t('ui.auto.373')} {d.proposedFunnelStages.map(s => STAGE_LABEL[s]).join(' + ')}</em>}
       {reviewReasons(d, states[d.id]?.baseOutdated ?? false).map(reason => <em key={reason}>{reason}</em>)}
     </span>
