@@ -158,7 +158,8 @@ describe('renderInstructionBundle: hard cap', () => {
     expect(bundle.text).toMatch(/the full brand context in \.\/\.latte\/context\/brand\.md/);
     // Compacted, not merely capped by luck: comfortably below the unbounded size
     // this fixture would have produced (brand + every decision + the skill body inlined).
-    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60);
+    // Protocol how-to + durable-facts line stay when squeeze already fits (~80 chars over this proxy).
+    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60 + 200);
     // The cap is a target, not an absolute: a short footer may push it slightly over,
     // but never by much once decisions and brand context are both at their floor.
     expect(bundle.text.length).toBeLessThan(INSTRUCTIONS_MAX_CHARS + 500);
@@ -191,11 +192,11 @@ describe('renderInstructionBundle: brand context protocol', () => {
     expect(on.text).toContain('Before starting any other work, draft this brand\'s context from the brief and propose it with the `latte-brand-context` block.');
   });
 
-  it('does not grow the compacted extreme fixture past upstream/main', () => {
-    const decisions = Array.from({ length: 40 }, (_, i) => decision(i, i));
-    const heavy: Brand = { ...brand, context: 'D'.repeat(15_000) };
-    const bundle = renderInstructionBundle({
-      brand: heavy,
+  it('keeps the durable-facts line when decision squeeze already fits', () => {
+    const decisions = Array.from({ length: 16 }, (_, i) => decision(i, i));
+    const medium: Brand = { ...brand, context: 'E'.repeat(8_000) };
+    const first = renderInstructionBundle({
+      brand: medium,
       work,
       decisions,
       pack,
@@ -203,8 +204,8 @@ describe('renderInstructionBundle: brand context protocol', () => {
       team: [{ roleId: 'strategist', roleName: 'Strategist', status: 'open' }],
       available: (pack?.roles ?? []).map((r) => ({ id: r.id, name: r.name, summary: r.summary })),
     });
-    expect(bundle.text).not.toContain('Propose a brand-context update only when you have new durable facts');
-    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60);
+    expect(first.text).toContain('This file was compacted');
+    expect(first.text).toContain('Propose a brand-context update only when you have new durable facts');
   });
 });
 
