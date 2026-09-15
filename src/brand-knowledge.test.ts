@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { groupByStage } from './document-organizer';
-import { ALL_BRAND_SCOPE, inKnowledgeScope, workTitles } from './brand-knowledge';
+import { ALL_BRAND_SCOPE, documentOriginTitle, inKnowledgeScope, selectWorkBrief, workBrief, workTitles } from './brand-knowledge';
 import type { WorkDocument } from '../shared/contracts';
 
 const doc = (patch: Partial<WorkDocument>): WorkDocument => ({
@@ -31,5 +31,17 @@ describe('brand knowledge scope', () => {
       w1: 'Lanzamiento',
       w2: 'Retención',
     });
+  });
+
+  it('selects the current work brief when switching work, without mixing origin metadata', () => {
+    const launch = doc({ id: 'doc-launch', workId: 'w1', kind: 'brief', fileName: 'brief.md', title: 'Lanzamiento' });
+    const retain = doc({ id: 'doc-retain', workId: 'w2', kind: 'brief', fileName: 'brief.md', title: 'Retención Q4' });
+    const titles = { w1: 'Lanzamiento', w2: 'Retención Q4' };
+    expect(workBrief([launch, retain], 'w2')?.id).toBe('doc-retain');
+    const after = selectWorkBrief({ brand: launch.id }, 'brand', 'w2', [launch, retain]);
+    expect(after.brand).toBe(retain.id);
+    expect(documentOriginTitle(launch.workId, 'Retención Q4', titles)).toBe('Lanzamiento');
+    expect(documentOriginTitle(retain.workId, 'Retención Q4', titles)).toBe('Retención Q4');
+    expect(selectWorkBrief(after, 'brand', 'w2', [launch, retain])).toBe(after);
   });
 });

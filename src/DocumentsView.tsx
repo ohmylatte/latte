@@ -13,6 +13,7 @@ import { DocumentMetadata, hasMetadataDrafts } from './DocumentMetadata';
 import { documentDrafts } from './document-drafts';
 import { WorkOutcome, hasOutcomeDrafts, isWorkBrief } from './WorkOutcome';
 import { KnowledgeOrigin } from './KnowledgeScope';
+import { documentOriginTitle } from './brand-knowledge';
 
 const KIND_LABEL: Record<DocumentKind, string> = new Proxy({} as Record<DocumentKind,string>, { get: (_, key: DocumentKind) => t(`kind.${key}` as 'kind.brief') });
 const KIND_HINT: Record<DocumentKind, string> = new Proxy({} as Record<DocumentKind,string>, { get: (_, key: DocumentKind) => t(`kindHint.${key}` as 'kindHint.brief') });
@@ -289,7 +290,7 @@ export function DocumentsView(props: DocumentsViewProps) {
     </div>}
 
     <div className="document-scroll">
-      <div className="document-kicker">{props.brandName} / {work.title}{selected ? ` / ${kindLabel}` : ''}</div>
+      <div className="document-kicker" data-origin-work={selected?.workId ?? work.id}>{props.brandName} / {documentOriginTitle(selected?.workId, work.title, props.workTitles)}{selected ? ` / ${kindLabel}` : ''}</div>
       {loading && !editing && <p className="footnote"><LoaderCircle className="spin" size={13} />  {t('ui.auto.168')}</p>}
       {editing && mode === 'edit' && <textarea className="markdown-editor" aria-label={t('ui.auto.169')} value={editing.content} spellCheck={false} onChange={e => setEditing({ ...editing, content: e.target.value, dirty: true })} />}
       {editing && mode === 'read' && <article className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{editing.content || t('ui.auto.170')}</ReactMarkdown></article>}

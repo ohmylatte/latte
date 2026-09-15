@@ -43,4 +43,7 @@ it('keeps review and document selection as explicit navigation actions', () => {
   expect(initializer).not.toContain('setSelectedDoc');
   expect(source).toContain("onClick={() => { setLayout('review'); setView('brief'); }}");
   expect(source).toContain("onSelect={id => brand && setSelectedDoc");
+  expect(source).toContain('selectWorkBrief');
+  expect(source).toContain('knowledge.docsBrand');
+  expect(source).toContain('knowledge.docsWork');
 });
