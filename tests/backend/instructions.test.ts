@@ -158,10 +158,27 @@ describe('renderInstructionBundle: hard cap', () => {
     expect(bundle.text).toMatch(/the full brand context in \.\/\.latte\/context\/brand\.md/);
     // Compacted, not merely capped by luck: comfortably below the unbounded size
     // this fixture would have produced (brand + every decision + the skill body inlined).
-    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60);
+    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60 + 200);
     // The cap is a target, not an absolute: a short footer may push it slightly over,
     // but never by much once decisions and brand context are both at their floor.
     expect(bundle.text.length).toBeLessThan(INSTRUCTIONS_MAX_CHARS + 500);
+  });
+});
+
+describe('renderInstructionBundle: brand context protocol', () => {
+  it('tells every role to draft the context when it is empty', () => {
+    const empty: Brand = { ...brand, context: '' };
+    const bundle = renderInstructionBundle({ brand: empty, work, decisions: [], decisionAuthority: 'suggest' });
+    expect(bundle.text).toContain('Before starting any other work, draft this brand\'s context from the brief and propose it with the `latte-brand-context` block.');
+    expect(bundle.text).toContain('fenced `latte-brand-context` JSON block');
+    expect(bundle.text.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX_CHARS + 400);
+  });
+
+  it('does not include the empty-context draft instruction when context exists', () => {
+    const bundle = renderInstructionBundle({ brand, work, decisions: [], decisionAuthority: 'suggest' });
+    expect(bundle.text).not.toContain('Before starting any other work, draft this brand\'s context');
+    expect(bundle.text).toContain('Propose a brand-context update only when you have new durable facts');
+    expect(bundle.text.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX_CHARS + 400);
   });
 });
 

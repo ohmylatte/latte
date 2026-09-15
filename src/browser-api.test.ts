@@ -50,6 +50,22 @@ describe('explicit browser preview', () => {
     expect(await api.listDecisions(other.id)).toEqual([]);
     expect(await api.listDecisions(a.id)).toHaveLength(1);
   });
+  it('applies an approved brand-context proposal and refuses the strategist draft in the preview', async () => {
+    const b = await api.createBrand('Marca');
+    const w = await api.createWork(b.id, 'Uno');
+    expect(await api.listBrandContextProposals(b.id)).toEqual([]);
+    const stored = JSON.parse(data.get('latte-preview-v1')!);
+    stored.brandContextProposals = [{
+      id: 'bcp_1', brandId: b.id, workId: w.id, chatId: null, messageId: null,
+      text: 'Tono cercano', rationale: 'Del brief', mode: 'replace', status: 'pending',
+      fingerprint: 'x', clientRequestId: 'req_1', createdAt: new Date().toISOString(), decidedAt: null,
+    }];
+    data.set('latte-preview-v1', JSON.stringify(stored));
+    const approved = await api.approveBrandContextProposal('bcp_1', null);
+    expect(approved.status).toBe('approved');
+    expect((await api.listBrands()).find(x => x.id === b.id)?.context).toBe('Tono cercano');
+    await expect(api.requestBrandContextDraft(w.id)).rejects.toThrow('escritorio');
+  });
   it('does not pretend to run an agent or memory server', async () => {
     expect((await api.runtimeStatus()).every(r => !r.available)).toBe(true);
     await expect(api.startAgent('demo-work', 'claude')).rejects.toThrow('escritorio');
