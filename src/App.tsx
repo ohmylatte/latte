@@ -15,7 +15,7 @@ import { TeamPanel, type RuntimeChoice } from './TeamPanel';
 import { TerminalPane } from './TerminalPane';
 import { UpdateBanner } from './UpdateBanner';
 import { composeBrandContext } from '../shared/brandContext';
-import { resolveRemoteBrandContext } from './brand-context-sync';
+import { applyFetchedBrand } from './brand-context-sync';
 import { contextDiff } from './context-diff';
 
 type View = 'brief' | 'funnel' | 'context' | 'memory' | 'decisions';
@@ -219,32 +219,36 @@ export function App() {
     if (ids.length === 0) return;
     const anyBusy = () => ids.some(id => chatStore.get(id).status !== 'idle');
     let wasBusy = anyBusy();
-    return chatStore.subscribe(() => {
+    let cancelled = false;
+    const workId = work.id;
+    const unsub = chatStore.subscribe(() => {
       const busyNow = anyBusy();
       if (wasBusy && !busyNow) {
-        const currentBrand = brandRef.current;
+        const selected = brandRef.current;
         void Promise.all([
-          loadDocuments(work.id),
-          api.listDecisions(work.id).then(setDecisions),
-          currentBrand ? api.listBrandContextProposals(currentBrand.id).then(setContextProposals) : Promise.resolve(),
-          currentBrand ? api.listBrands().then((list) => {
-            const updated = list.find((x) => x.id === currentBrand.id);
-            if (!updated) return;
-            const next = resolveRemoteBrandContext({
+          loadDocuments(workId),
+          api.listDecisions(workId).then((d) => { if (!cancelled) setDecisions(d); }),
+          selected ? api.listBrandContextProposals(selected.id).then((list) => { if (!cancelled && brandRef.current?.id === selected.id) setContextProposals(list); }) : Promise.resolve(),
+          selected ? api.getBrand(selected.id).then((updated) => {
+            if (cancelled) return;
+            const result = applyFetchedBrand({
+              selectedId: brandRef.current?.id ?? null,
+              fetched: updated,
+              previousPersisted: selected.context,
               draft: contextRef.current,
-              persisted: updated.context,
-              previousPersisted: currentBrand.context,
               dirty: contextDirtyRef.current,
             });
-            setBrand(updated);
-            setBrands((prev) => prev.map((x) => x.id === updated.id ? updated : x));
-            setContext(next.draft);
-            if (next.notice) setNotice(t('context.staleDraft'));
+            if (!result.applied) return;
+            setBrand(result.brand);
+            setBrands((prev) => prev.map((x) => x.id === result.brand.id ? result.brand : x));
+            setContext(result.draft);
+            if (result.notice) setNotice(t('context.staleDraft'));
           }) : Promise.resolve(),
         ]).catch(() => undefined);
       }
       wasBusy = busyNow;
     });
+    return () => { cancelled = true; unsub(); };
   }, [work?.id, workChatIds]);
   // Only real unsaved edits are worth a confirmation. Open chats and terminals
   // are not: closing the app is how you end them.
@@ -272,14 +276,38 @@ export function App() {
   }, [modal, busy]);
   const selectBrand = (b: Brand) => { if (!guard()) return; setBrand(b); setContext(b.context); setView('brief'); setMemory(''); setMemoryAvailable(false); memoryGeneration.current++; };
   const selectWork = (w: Work) => { if (!guard()) return; setWork(w); setContext(brand?.context ?? ''); setView('brief'); };
-  const saveContext = async () => { if (!brand) return; const b = await api.updateBrand(brand.id, context); setBrand(b); setBrands(prev => prev.map(x => x.id === b.id ? b : x)); setNotice(t('ui.auto.005')); };
+  const refreshBrand = async (brandId: string, known?: Brand, forceContext = false) => {
+    const fetched = known ?? await api.getBrand(brandId);
+    const selected = brandRef.current;
+    const result = applyFetchedBrand({
+      selectedId: selected?.id ?? null,
+      fetched,
+      previousPersisted: selected?.id === fetched.id ? selected.context : fetched.context,
+      draft: contextRef.current,
+      dirty: contextDirtyRef.current,
+      forceContext,
+    });
+    if (!result.applied) return fetched;
+    setBrand(result.brand);
+    setBrands((prev) => prev.map((x) => x.id === result.brand.id ? result.brand : x));
+    setContext(result.draft);
+    if (result.notice) setNotice(t('context.staleDraft'));
+    return fetched;
+  };
+  const saveContext = async () => {
+    if (!brand) return;
+    const b = await api.updateBrand(brand.id, context);
+    await refreshBrand(brand.id, b, true);
+    setContextProposals(await api.listBrandContextProposals(brand.id));
+    setNotice(t('ui.auto.005'));
+  };
   const pendingContext = contextProposals.find((p) => p.status === 'pending') ?? null;
   const pendingProposed = pendingContext && brand ? composeBrandContext(brand.context, pendingContext.text, pendingContext.mode) : '';
   const pendingDiff = useMemo(
     () => pendingContext && brand ? contextDiff(brand.context, pendingProposed, pendingContext.mode).lines : [],
     [brand?.context, pendingProposed, pendingContext?.mode],
   );
-  const decideContextProposal = async (proposalId: string, action: 'approve' | 'edit' | 'reject') => {
+  const decideContextProposal = async (proposalId: string, action: 'approve' | 'edit' | 'reject', acceptStale = false) => {
     if (!brand) return;
     if (action === 'reject') await api.rejectBrandContextProposal(proposalId);
     else {
@@ -291,10 +319,8 @@ export function App() {
         if (!next?.trim()) return;
         edited = next.trim();
       }
-      await api.approveBrandContextProposal(proposalId, edited);
-      const list = await api.listBrands();
-      const updated = list.find((x) => x.id === brand.id);
-      if (updated) { setBrand(updated); setBrands((prev) => prev.map((x) => x.id === updated.id ? updated : x)); setContext(updated.context); }
+      await api.approveBrandContextProposal(proposalId, edited, acceptStale);
+      await refreshBrand(brand.id, undefined, true);
     }
     setContextProposals(await api.listBrandContextProposals(brand.id));
   };
@@ -564,7 +590,7 @@ export function App() {
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}
       {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={setView} work={work} brandName={brand?.name ?? ''} documents={documents} selectedId={selectedDocId} onSelect={id => work && setSelectedDoc(prev => ({ ...prev, [work.id]: id }))} onDocumentsChanged={async () => { if (work) await loadDocuments(work.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} />}
       {view === 'context' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.045')}</div><h1>{t('ui.auto.046')}<br />{t('ui.auto.047')}</h1><p className="intro">{t('ui.auto.048')}</p>
-        {pendingContext && brand && <div className="decision-card status-pending"><div><small>{(roles.find((r) => r.id === pendingContext.source.roleId)?.name ?? pendingContext.source.roleId) || t('context.proposal')} · {date(pendingContext.createdAt)}</small><p className="footnote">{pendingContext.mode === 'append' ? t('context.mode.append') : t('context.mode.replace')}</p>{pendingContext.rationale && <p className="footnote">{pendingContext.rationale}</p>}<div className="context-diff" aria-label={t('context.diff')}>{pendingDiff.map((line, i) => <div key={i} className={'context-diff-line context-diff-' + line.kind}>{line.kind === 'add' ? '+ ' : line.kind === 'del' ? '− ' : '  '}{line.text}</div>)}</div><div className="chat-card-actions"><button className="primary" disabled={busy} onClick={() => void run(() => decideContextProposal(pendingContext.id, 'approve'))}>{t('context.accept')}</button><button disabled={busy} onClick={() => void run(() => decideContextProposal(pendingContext.id, 'edit'))}>{t('context.editAccept')}</button><button disabled={busy} onClick={() => void run(() => decideContextProposal(pendingContext.id, 'reject'))}>{t('context.reject')}</button></div></div></div>}
+        {pendingContext && brand && <div className="decision-card status-pending"><div><small>{(roles.find((r) => r.id === pendingContext.source.roleId)?.name ?? pendingContext.source.roleId) || t('context.proposal')} · {date(pendingContext.createdAt)}</small><p className="footnote">{pendingContext.mode === 'append' ? t('context.mode.append') : t('context.mode.replace')}</p>{pendingContext.stale && <p className="footnote">{t('context.changedSince')}</p>}{pendingContext.rationale && <p className="footnote">{pendingContext.rationale}</p>}<div className="context-diff" aria-label={t('context.diff')}>{pendingDiff.map((line, i) => <div key={i} className={'context-diff-line context-diff-' + line.kind}>{line.kind === 'add' ? '+ ' : line.kind === 'del' ? '− ' : '  '}{line.text}</div>)}</div><div className="chat-card-actions"><button className="primary" disabled={busy} onClick={() => void run(() => decideContextProposal(pendingContext.id, 'approve', Boolean(pendingContext.stale)))}>{pendingContext.stale ? t('context.acceptStale') : t('context.accept')}</button><button disabled={busy} onClick={() => void run(() => decideContextProposal(pendingContext.id, 'edit', Boolean(pendingContext.stale)))}>{t('context.editAccept')}</button><button disabled={busy} onClick={() => void run(() => decideContextProposal(pendingContext.id, 'reject'))}>{t('context.reject')}</button></div></div></div>}
         <label className="field-label" htmlFor="brand-context">{t('ui.auto.049')} {brand?.name}</label><textarea id="brand-context" className="context-editor" value={context} onChange={e => setContext(e.target.value)} placeholder={t('ui.auto.050')} /><button className="primary" disabled={!contextDirty || busy} onClick={() => run(saveContext)}><Save size={16} />{t('ui.auto.051')}</button>
         <p className="footnote"><button type="button" className="subtle" disabled={!work || busy || startingChat || strategistBusy} title={!work ? t('context.ask.needWork') : undefined} onClick={() => { if (!work) return; askStrategist(); }}>{t('context.ask')}</button>{!work ? ` ${t('context.ask.needWork')}` : ''}</p>
         {brand && <p className="footnote"><button type="button" className="subtle" disabled={busy} onClick={() => { if (!guard()) return; void run(archiveSelectedBrand); }}>{t('brand.archive')}</button></p>}<p className="footnote">{t('ui.auto.052')}</p></div>}
