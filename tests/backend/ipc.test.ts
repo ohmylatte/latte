@@ -37,6 +37,10 @@ describe('IPC surface', () => {
     expect(API_ARITY.restoreBrand).toBe(1);
     expect(API_ARITY.listArchivedBrands).toBe(0);
     expect(API_ARITY.listBrands).toBe(0);
+    expect(API_METHODS).toContain('loginMcpServer');
+    expect(API_METHODS).toContain('authenticateClaudeMcp');
+    expect(API_ARITY.loginMcpServer).toBe(2);
+    expect(API_ARITY.authenticateClaudeMcp).toBe(2);
   });
 
   it('preload never exposes a generic invoke or Node globals', () => {

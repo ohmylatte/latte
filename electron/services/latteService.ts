@@ -1441,6 +1441,21 @@ export class LatteService implements BackendApi {
     await this.deps.mcp.remove(runtime, requireLabel(name, 'Server name', 64));
   }
 
+  async loginMcpServer(runtime: 'codex', name: string): Promise<AccountLoginStart> {
+    if (runtime !== 'codex') throw new TypeError('Unknown runtime');
+    if (!this.deps.mcp) throw new UnavailableError('MCP requiere la aplicación de escritorio');
+    const start = await this.deps.mcp.loginCodex(requireLabel(name, 'Server name', 64));
+    if (start.mode === 'browser' && /^https?:\/\//.test(start.url)) await this.deps.openExternal?.(start.url);
+    return start;
+  }
+
+  async authenticateClaudeMcp(workId: string, accountId: string | null): Promise<AccountLoginStart> {
+    if (!this.deps.mcp) throw new UnavailableError('MCP requiere la aplicación de escritorio');
+    const work = this.deps.repo.getWork(requireId(workId, 'workId'));
+    if (accountId !== null && !AccountStore.isValidId(accountId)) throw new TypeError('Invalid account id');
+    return this.deps.mcp.authenticateClaude(this.deps.files.workDir(work.brandId, work.id), accountId);
+  }
+
   async addAgentAccount(runtime: 'claude' | 'codex', label: string): Promise<AgentAccount> {
     if (!isAccountRuntime(runtime)) throw new TypeError('Unknown runtime');
     return this.deps.hub.addAccount(runtime, requireLabel(label, 'Account label', 80));

@@ -164,7 +164,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   windowControl: () => {},
   onWindowState: () => () => {},
   listProviders: async () => [], connectProviderKey: unavailable, disconnectProvider: unavailable, startProviderOAuth: unavailable, completeProviderOAuth: unavailable,
-  listMcpServers: async () => [], addMcpServer: unavailable, removeMcpServer: unavailable,
+  listMcpServers: async () => [], addMcpServer: unavailable, removeMcpServer: unavailable, loginMcpServer: unavailable, authenticateClaudeMcp: unavailable,
   getPrimaryAgent: async () => null, setPrimaryAgent: unavailable, listAgentRuntimes: async () => [], addAgentAccount: unavailable, removeAgentAccount: unavailable, startAccountLogin: unavailable, logoutAccount: unavailable,
   // No CLI to ask in a browser tab: no catalog, and no pretending there is one.
   listAccountModels: async () => ({ source: 'suggested' as const, models: [], detail: 'Los modelos se consultan desde Latte Desktop, donde corren los runtimes.' }),

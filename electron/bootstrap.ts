@@ -125,7 +125,8 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
         void service.proposeDecisionFromAgent(event.chatId,event.message.id,proposal).catch(error=>options.log?.(`[latte] decision proposal failed: ${error instanceof Error?error.message:String(error)}`));
       }
     }
-    if (event.type !== 'permission' || !service.autoApprovesChat(event.chatId)) { forward(event); return; }
+    // MCP URL elicitations are consent/login, not tool grants: auto mode must still show the card.
+    if (event.type !== 'permission' || event.request.url || !service.autoApprovesChat(event.chatId)) { forward(event); return; }
     void hub.replyPermission(event.chatId, event.request.id, 'once').catch((error: unknown) => {
       // The conversation may have ended between the request and the answer.
       options.log?.(`[latte] auto-approval failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -178,13 +179,25 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     env,
     platform,
     log: options.log,
+    openExternal: options.openExternal,
   });
   const packsDir = options.packsDir ?? path.resolve(__dirname, '..', 'packs');
   const pack = loadInstructionPack(packsDir, 'marketing-core');
   const roles = new RoleCatalog(pack, new ProfileStore(path.join(paths.root, 'agents')));
   const hub: AgentHub = new AgentHub({ opencode: chat, claude, codex, accounts, repo, detector, terminal, runner, roles, transcripts, promptDir: path.join(paths.root, 'prompts'), loginCwd: paths.root, env });
 
-  const mcp = new McpCatalog({ runner, detector, accountEnv: (runtime, accountId) => accounts.envFor(runtime, accountId), env });
+  const mcp = new McpCatalog({
+    runner,
+    detector,
+    accountEnv: (runtime, accountId) => accounts.envFor(runtime, accountId),
+    env,
+    codex: {
+      listMcpStatus: (accountId) => codex.listMcpStatus(accountId),
+      startMcpLogin: (accountId, name) => codex.startMcpOauthLogin(accountId, name),
+    },
+    claudeMcpFromInit: () => claude.mcpServersFromInit(),
+    startTerminal: (input) => terminal.start(input),
+  });
 
   const engram = new EngramClient({
     runner,

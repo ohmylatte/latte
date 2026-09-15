@@ -100,6 +100,8 @@ const METHODS = [
   'listMcpServers',
   'addMcpServer',
   'removeMcpServer',
+  'loginMcpServer',
+  'authenticateClaudeMcp',
   'addAgentAccount',
   'removeAgentAccount',
   'startAccountLogin',

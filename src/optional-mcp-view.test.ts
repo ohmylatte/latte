@@ -45,4 +45,18 @@ describe('Optional user-selected MCP tools', () => {
     expect(formatMessage('en-US', 'tools.removed', { name: 'demo', runtime: 'Codex' })).toContain('removed from Codex');
     expect(formatMessage('en-US', 'tools.added', { name: 'demo', runtime: 'Codex' })).toContain('configured in Codex');
   });
+  it('offers Codex login and Claude authenticate when the server needs it', () => {
+    ui.locale = 'es-AR';
+    const html = renderToStaticMarkup(createElement(ToolsViewContent, {
+      runtimes: [
+        { runtime: 'codex', installed: true, canEdit: true, detail: '', servers: [{ name: 'remoto', status: 'needsAuth', transport: 'http', target: 'https://example.invalid/mcp', detail: '', needsAuth: true }] },
+        { runtime: 'claude', installed: true, canEdit: true, detail: '', servers: [{ name: 'sentry', status: 'failed', transport: 'http', target: 'https://example.invalid/mcp', detail: 'auth' }] },
+      ],
+      loading: false, busy: false, adding: null, onRefresh: () => {}, onRemove: () => {}, onAdding: () => {}, onAdd: async () => {},
+      onLoginCodex: () => {}, onAuthenticateClaude: () => {},
+    }));
+    expect(html).toContain(formatMessage('es-AR', 'tools.login'));
+    expect(html).toContain(formatMessage('es-AR', 'tools.authenticateClaude'));
+    expect(html).toContain(formatMessage('es-AR', 'tools.status.needsAuth'));
+  });
 });
