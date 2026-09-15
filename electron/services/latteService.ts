@@ -99,6 +99,7 @@ import { openItems, renderContinuation } from '../workspace/continuation';
 import { DELIVERABLES_DIR, DeliverableFiles, deliverableName } from '../workspace/deliverables';
 import { documentFileName, fingerprintOf, type DocumentOnDisk, type WorkspaceFiles } from '../workspace/workspace';
 import { BRAND_CONTEXT_DRAFT_PROMPT_EN, BRAND_CONTEXT_DRAFT_PROMPT_ES, brandContextFingerprint } from '../workspace/brandContextProtocol';
+import { BRAND_CONTEXT_INPUT_KEY_SET, composeBrandContext } from '../../shared/brandContext';
 import { LIMITS, assertNoControlChars, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
 import { BrandingService } from '../branding/service';
 
@@ -1052,13 +1053,13 @@ export class LatteService implements BackendApi {
     return decision;
   }
 
-  async getDecisionAuthority(workId:string):Promise<DecisionAuthorityMode> { const id=requireId(workId,'workId'); this.deps.repo.getWork(id); const raw=this.deps.repo.getMeta('decision_authority:'+id); return raw==='off'||raw==='auto-record'?raw:'suggest'; }
+  async getDecisionAuthority(workId:string):Promise<DecisionAuthorityMode> { const id=requireId(workId,'workId'); this.deps.repo.getWork(id); return this.readDecisionAuthority(id); }
   async setDecisionAuthority(workId:string,mode:DecisionAuthorityMode):Promise<DecisionAuthorityMode> { const id=requireId(workId,'workId'); this.deps.repo.getWork(id); if(mode!=='off'&&mode!=='suggest'&&mode!=='auto-record') throw new ValidationError('Invalid decision authority'); this.deps.repo.setMeta('decision_authority:'+id,mode); return mode; }
 
   /** Structured fallback used by every runtime. It never infers decisions from prose. */
   async proposeDecisionFromAgent(chatId:string,messageId:string,input:DecisionProposalInput):Promise<Decision|null> {
     const member=this.deps.repo.findMember(requireId(chatId,'chatId')); if(!member) throw new ValidationError('Unknown decision source');
-    const rawMode=this.deps.repo.getMeta('decision_authority:'+member.workId); const mode:DecisionAuthorityMode=rawMode==='off'||rawMode==='auto-record'?rawMode:'suggest'; if(mode==='off') return null;
+    const mode=this.readDecisionAuthority(member.workId); if(mode==='off') return null;
     const request=requireRequestId(input.clientRequestId); const existing=this.deps.repo.findDecisionRequest(member.workId,chatId,request); if(existing) return existing;
     const statement=requireText(input.statement,'Decision statement',LIMITS.decision).trim().normalize('NFC');
     const rationale=typeof input.rationale==='string'?input.rationale.trim().normalize('NFC').slice(0,LIMITS.decision):'';
@@ -1083,8 +1084,7 @@ export class LatteService implements BackendApi {
     if (!member) throw new ValidationError('Unknown brand context source');
     const work = this.deps.repo.getWork(member.workId);
     const brand = this.requireActiveBrand(work.brandId);
-    const rawMode = this.deps.repo.getMeta('decision_authority:' + member.workId);
-    const authority: DecisionAuthorityMode = rawMode === 'off' || rawMode === 'auto-record' ? rawMode : 'suggest';
+    const authority = this.readDecisionAuthority(member.workId);
     if (authority === 'off') return null;
     const parsed = requireBrandContextInput(input);
     const existing = this.deps.repo.findBrandContextRequest(brand.id, parsed.clientRequestId);
@@ -1097,8 +1097,7 @@ export class LatteService implements BackendApi {
       id: newId('bcp'),
       brandId: brand.id,
       workId: work.id,
-      chatId,
-      messageId: requireRequestId(messageId),
+      source: { chatId, messageId: requireRequestId(messageId), memberId: member.id, roleId: member.roleId, runtime: member.runtime },
       text: parsed.text,
       rationale: parsed.rationale,
       mode: parsed.mode,
@@ -1122,6 +1121,8 @@ export class LatteService implements BackendApi {
     const proposalId = requireId(id, 'proposalId');
     const before = this.deps.repo.getBrandContextProposal(proposalId);
     const brand = this.requireActiveBrand(before.brandId);
+    if (before.status === 'approved') return before;
+    if (before.status !== 'pending') throw new LatteError('PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
     const clean = edited == null ? null : this.requireBrandContextText(edited);
     const updated = this.deps.repo.transaction(() => {
       const next = this.deps.repo.transitionBrandContextProposal(proposalId, 'approved', clean, this.clock());
@@ -1136,6 +1137,8 @@ export class LatteService implements BackendApi {
     const proposalId = requireId(id, 'proposalId');
     const before = this.deps.repo.getBrandContextProposal(proposalId);
     this.requireActiveBrand(before.brandId);
+    if (before.status === 'rejected') return before;
+    if (before.status !== 'pending') throw new LatteError('PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
     return this.deps.repo.transitionBrandContextProposal(proposalId, 'rejected', null, this.clock());
   }
 
@@ -1143,9 +1146,13 @@ export class LatteService implements BackendApi {
     const work = this.deps.repo.getWork(requireId(workId, 'workId'));
     this.requireActiveBrand(work.brandId);
     const team = this.deps.hub.listTeam(work.id);
-    const existing = team.find((m) => m.roleId === 'strategist' && m.status !== 'ended');
-    const session = existing
-      ? await this.deps.hub.openMember(existing.id, this.memberContext(work.id))
+    const strategists = team.filter((m) => m.roleId === 'strategist' && m.status !== 'ended');
+    const available = strategists.find((m) => m.status !== 'working');
+    if (strategists.length > 0 && !available) {
+      throw new LatteError('MEMBER_BUSY', 'The strategist is already working on this work');
+    }
+    const session = available
+      ? await this.deps.hub.openMember(available.id, this.memberContext(work.id))
       : await this.deps.hub.addMember({ ...this.memberContext(work.id), roleId: 'strategist' });
     const locale = this.deps.repo.getMeta(`work_content_locale:${work.id}`) === 'en-US' ? 'en-US' : 'es-AR';
     const prompt = locale === 'en-US' ? BRAND_CONTEXT_DRAFT_PROMPT_EN : BRAND_CONTEXT_DRAFT_PROMPT_ES;
@@ -1160,12 +1167,15 @@ export class LatteService implements BackendApi {
   }
 
   private applyApprovedContext(brand: Brand, incoming: string, mode: BrandContextMode): Brand {
-    const next = mode === 'append' && brand.context.trim().length > 0
-      ? `${brand.context.replace(/\s+$/u, '')}\n\n${incoming}`
-      : incoming;
+    const next = composeBrandContext(brand.context, incoming, mode);
     const clean = requireText(next, 'Brand context', LIMITS.context, { allowEmpty: true });
     assertNoControlChars(clean, 'Brand context');
     return this.deps.repo.updateBrandContext(brand.id, clean);
+  }
+
+  private readDecisionAuthority(workId: string): DecisionAuthorityMode {
+    const raw = this.deps.repo.getMeta('decision_authority:' + workId);
+    return raw === 'off' || raw === 'auto-record' ? raw : 'suggest';
   }
 
   private refreshBrandWorks(brand: Brand): void {
@@ -1763,7 +1773,7 @@ export class LatteService implements BackendApi {
     this.deps.files.ensureWork(brand.id, work.id, work.brief);
     const storedLocale = this.deps.repo.getMeta(`work_content_locale:${work.id}`);
     const outputLanguage = storedLocale === 'en-US' ? 'en-US' : 'es-AR';
-    const decisionAuthority=(this.deps.repo.getMeta('decision_authority:'+work.id) as DecisionAuthorityMode|null)??'suggest';
+    const decisionAuthority=this.readDecisionAuthority(work.id);
     const generation = this.generationEnabled() ? this.pinnedGenerationPointer(work.id) : null;
     const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation });
     this.deps.files.writeInstructions(brand.id, work.id, bundle.text, bundle.files);
@@ -1782,12 +1792,10 @@ export class LatteService implements BackendApi {
   }
 }
 
-const BRAND_CONTEXT_INPUT_KEYS = new Set(['text', 'rationale', 'mode', 'clientRequestId']);
-
 function requireBrandContextInput(input: unknown): BrandContextProposalInput {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new ValidationError('Invalid brand context proposal');
   const record = input as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !BRAND_CONTEXT_INPUT_KEYS.has(key))) throw new ValidationError('Unknown brand context proposal field');
+  if (Object.keys(record).some((key) => !BRAND_CONTEXT_INPUT_KEY_SET.has(key))) throw new ValidationError('Unknown brand context proposal field');
   const text = requireText(record.text, 'Brand context', LIMITS.context).normalize('NFC');
   assertNoControlChars(text, 'Brand context');
   const rationale = requireText(record.rationale, 'Rationale', LIMITS.context, { allowEmpty: true }).normalize('NFC');

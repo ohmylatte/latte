@@ -16,7 +16,9 @@ interface RevisionRow extends SqlRow { id: string; work_id: string; document_id:
 interface DecisionRow extends SqlRow { id: string; work_id: string; text: string; created_at: string }
 interface DecisionProposalRow extends SqlRow { id:string; work_id:string; statement:string; rationale:string; alternatives:string; evidence:string; status:string; source_chat_id:string|null; source_message_id:string|null; source_member_id:string|null; source_role_id:string|null; source_runtime:string|null; client_request_id:string; fingerprint:string; created_at:string; decided_at:string|null }
 interface BrandContextProposalRow extends SqlRow {
-  id: string; brand_id: string; work_id: string; chat_id: string | null; message_id: string | null;
+  id: string; brand_id: string; work_id: string;
+  source_chat_id: string | null; source_message_id: string | null; source_member_id: string | null;
+  source_role_id: string | null; source_runtime: string | null;
   text: string; rationale: string; mode: string; status: string; fingerprint: string;
   client_request_id: string | null; created_at: string; decided_at: string | null;
 }
@@ -107,8 +109,13 @@ const toBrandContextProposal = (r: BrandContextProposalRow): BrandContextProposa
   id: r.id,
   brandId: r.brand_id,
   workId: r.work_id,
-  chatId: r.chat_id,
-  messageId: r.message_id,
+  source: {
+    chatId: r.source_chat_id,
+    messageId: r.source_message_id,
+    memberId: r.source_member_id,
+    roleId: r.source_role_id,
+    runtime: (r.source_runtime === 'claude' || r.source_runtime === 'codex' || r.source_runtime === 'opencode') ? r.source_runtime : null,
+  },
   text: r.text,
   rationale: r.rationale,
   mode: r.mode === 'replace' ? 'replace' : 'append',
@@ -630,9 +637,10 @@ export class LatteRepository {
 
   insertBrandContextProposal(proposal: BrandContextProposal): BrandContextProposal {
     this.db.run(
-      'INSERT INTO brand_context_proposals(id, brand_id, work_id, chat_id, message_id, text, rationale, mode, status, fingerprint, client_request_id, created_at, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO brand_context_proposals(id, brand_id, work_id, source_chat_id, source_message_id, source_member_id, source_role_id, source_runtime, text, rationale, mode, status, fingerprint, client_request_id, created_at, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
-        proposal.id, proposal.brandId, proposal.workId, proposal.chatId, proposal.messageId,
+        proposal.id, proposal.brandId, proposal.workId,
+        proposal.source.chatId, proposal.source.messageId, proposal.source.memberId, proposal.source.roleId, proposal.source.runtime,
         proposal.text, proposal.rationale, proposal.mode, proposal.status, proposal.fingerprint,
         proposal.clientRequestId, proposal.createdAt, proposal.decidedAt,
       ],
