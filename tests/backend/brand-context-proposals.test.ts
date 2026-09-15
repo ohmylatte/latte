@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { composeBrandContext } from '../../shared/brandContext';
+import { EMPTY_USAGE, type TeamMember } from '../../shared/contracts';
 import { LIMITS } from '../../electron/services/validation';
 import { brandContextProtocolBlocks, parseBrandContextJson } from '../../electron/workspace/brandContextProtocol';
 import { BRAND_CONTEXT_DRAFT_PROMPT_ES } from '../../electron/workspace/brandContextProtocol';
@@ -68,7 +70,9 @@ describe('brand context proposals', () => {
       text: 'Audiencia: 25-40.', rationale: 'Del research.', mode: 'append', clientRequestId: 'req_ctx_append',
     });
     await b.service.approveBrandContextProposal(append!.id, null);
-    expect((await b.service.listBrands())[0].context).toBe(`${VALID.text}\n\nAudiencia: 25-40.`);
+    const appended = composeBrandContext(VALID.text, 'Audiencia: 25-40.', 'append');
+    expect((await b.service.listBrands())[0].context).toBe(appended);
+    expect(appended).toBe(`${VALID.text}\n\nAudiencia: 25-40.`);
 
     const edited = await b.service.proposeBrandContextFromAgent(chatId, 'msg_3', {
       text: 'Descartable', rationale: 'x', mode: 'replace', clientRequestId: 'req_ctx_edit',
@@ -140,6 +144,40 @@ describe('brand context proposals', () => {
   it('rejects unknown fields at the service boundary', async () => {
     await expect(b.service.proposeBrandContextFromAgent(chatId, 'msg_x', { ...VALID, extra: 'no' })).rejects.toThrow(/Unknown/);
   });
+
+  it('applies an append proposal only on pending → approved', async () => {
+    await b.service.updateBrand(brandId, 'Base.');
+    const append = await b.service.proposeBrandContextFromAgent(chatId, 'msg_dup', {
+      text: 'Extra.', rationale: 'x', mode: 'append', clientRequestId: 'req_dup',
+    });
+    await b.service.approveBrandContextProposal(append!.id, null);
+    const once = (await b.service.listBrands())[0].context;
+    expect(once).toBe(composeBrandContext('Base.', 'Extra.', 'append'));
+    const again = await b.service.approveBrandContextProposal(append!.id, null);
+    expect(again.status).toBe('approved');
+    expect((await b.service.listBrands())[0].context).toBe(once);
+  });
+
+  it('stores the proposing member role on the proposal source', async () => {
+    const proposal = await b.service.proposeBrandContextFromAgent(chatId, 'msg_src', VALID);
+    expect(proposal?.source).toMatchObject({ chatId, messageId: 'msg_src', memberId: chatId, roleId: 'strategist', runtime: 'codex' });
+  });
+
+  it('persists the same text the preview compose would show', async () => {
+    await b.service.updateBrand(brandId, 'Actual.');
+    const replace = await b.service.proposeBrandContextFromAgent(chatId, 'msg_prev_r', {
+      text: 'Nuevo.', rationale: 'r', mode: 'replace', clientRequestId: 'req_prev_r',
+    });
+    await b.service.approveBrandContextProposal(replace!.id, null);
+    expect((await b.service.listBrands())[0].context).toBe(composeBrandContext('Actual.', 'Nuevo.', 'replace'));
+
+    const append = await b.service.proposeBrandContextFromAgent(chatId, 'msg_prev_a', {
+      text: 'Más.', rationale: 'a', mode: 'append', clientRequestId: 'req_prev_a',
+    });
+    const current = (await b.service.listBrands())[0].context;
+    await b.service.approveBrandContextProposal(append!.id, null);
+    expect((await b.service.listBrands())[0].context).toBe(composeBrandContext(current, 'Más.', 'append'));
+  });
 });
 
 describe('requestBrandContextDraft', () => {
@@ -159,6 +197,28 @@ describe('requestBrandContextDraft', () => {
     } finally {
       b.cleanup();
       await fake.close();
+    }
+  });
+
+  it('throws MEMBER_BUSY and does not send when the only strategist is working', async () => {
+    const b = await makeBackend();
+    const send = vi.spyOn(b.hub, 'send');
+    const open = vi.spyOn(b.hub, 'openMember');
+    try {
+      const brand = await b.service.createBrand('Marca');
+      const work = await b.service.createWork(brand.id, 'Trabajo');
+      const at = new Date().toISOString();
+      const busy: TeamMember = {
+        id: 'mem_busy', workId: work.id, roleId: 'strategist', roleName: 'Strategist', initial: 'S',
+        runtime: 'opencode', model: null, accountId: null, label: 'OpenCode', status: 'working',
+        tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: at, updatedAt: at,
+      };
+      vi.spyOn(b.hub, 'listTeam').mockReturnValue([busy]);
+      await expect(b.service.requestBrandContextDraft(work.id)).rejects.toMatchObject({ code: 'MEMBER_BUSY' });
+      expect(send).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+    } finally {
+      b.cleanup();
     }
   });
 });

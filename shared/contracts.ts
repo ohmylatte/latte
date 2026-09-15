@@ -265,8 +265,8 @@ export interface BrandContextProposal {
   id: string;
   brandId: string;
   workId: string;
-  chatId: string | null;
-  messageId: string | null;
+  /** Who proposed it: same shape as a decision source. */
+  source: DecisionSource;
   text: string;
   rationale: string;
   mode: BrandContextMode;
