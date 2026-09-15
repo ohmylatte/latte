@@ -42,8 +42,14 @@ export function requireId(value: unknown, name: string): string {
 }
 
 /** Brand context and rationale may include newlines and tabs, never other C0/C1 controls. */
+export const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/;
+
+export function hasControlChars(value: string): boolean {
+  return CONTROL_CHARS.test(value);
+}
+
 export function assertNoControlChars(value: string, name: string): void {
-  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/.test(value)) {
+  if (hasControlChars(value)) {
     throw new ValidationError(`${name} contains control characters`);
   }
 }
