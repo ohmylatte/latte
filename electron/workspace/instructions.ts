@@ -539,13 +539,13 @@ export function renderInstructionBundle(input: InstructionsInput): InstructionBu
     overCap = dropped.overCap;
     includeLearned = false;
   }
-  // Brand-context protocol extras participate in the budget: drop the filled-context
-  // update line first, then shorten the empty-context nudge to one sentence.
-  if (overCap) {
-    rendered = run(includeLearned, { updateLine: false, emptyNudge: 'full' }).rendered;
-  }
+  // Protocol extras participate in the budget only while the squeezed file still
+  // overflows: drop the filled-context update line, or shorten the empty nudge.
   if (overCap && !fits(rendered.text)) {
-    rendered = run(includeLearned, { updateLine: false, emptyNudge: 'short' }).rendered;
+    const protocol: BrandContextProtocolOpts = input.brand.context.trim()
+      ? { updateLine: false, emptyNudge: 'full' }
+      : { updateLine: true, emptyNudge: 'short' };
+    rendered = run(includeLearned, protocol).rendered;
   }
   if (!overCap) return { text: rendered.text, files: rendered.files };
 
