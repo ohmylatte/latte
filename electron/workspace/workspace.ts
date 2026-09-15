@@ -7,9 +7,10 @@ import { LattePaths, WORK_FILES, safeJoin } from '../core/paths';
 import { isManagedFile, type RenderedInstructionFile } from './instructions';
 
 /**
- * The only two directories side files (truncated sections, skill bodies) ever live under.
- * `.latte/generations` is a pinned receipt store: it MUST NOT appear here, because
- * every writeInstructions call deletes side-file entries that the compositor did not
+ * The only two directories side files (truncated sections, skill bodies,
+ * nested brand-memory copies) ever live under. `.latte/generations` is a
+ * pinned receipt store: it MUST NOT appear here, because every
+ * writeInstructions call deletes side-file entries that the compositor did not
  * re-request.
  */
 const SIDE_FILE_DIRS = [WORK_FILES.contextDir, WORK_FILES.skillsDir];
@@ -161,18 +162,33 @@ export class WorkspaceFiles {
     const wanted = new Map(files.map((f) => [safeJoin(root, ...f.path.split('/')), f.content]));
     for (const dirName of SIDE_FILE_DIRS) {
       const dir = safeJoin(root, WORK_FILES.metaDir, dirName);
-      let existing: string[];
-      try {
-        existing = fs.readdirSync(dir);
-      } catch {
-        continue; // nothing written there yet
-      }
-      for (const entry of existing) {
-        const absolute = path.join(dir, entry);
-        if (!wanted.has(absolute)) fs.rmSync(absolute, { force: true });
-      }
+      this.removeUnwantedSideFiles(dir, wanted);
     }
     for (const [absolute, content] of wanted) writeFileAtomic(absolute, content);
+  }
+
+  /**
+   * Recursively drops side files (and leftover empty dirs) that this render
+   * did not re-request, including nested brand-memory copies.
+   */
+  private removeUnwantedSideFiles(dir: string, wanted: Map<string, string>): void {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const absolute = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        this.removeUnwantedSideFiles(absolute, wanted);
+        try {
+          if (fs.readdirSync(absolute).length === 0) fs.rmdirSync(absolute);
+        } catch { /* already gone or not empty */ }
+      } else if (!wanted.has(absolute)) {
+        fs.rmSync(absolute, { force: true });
+      }
+    }
   }
 
   writeSnapshot(brandId: string, workId: string, revisionId: string, createdAt: string, content: string): string {

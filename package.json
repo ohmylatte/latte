@@ -1,6 +1,6 @@
 {
   "name": "latte",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Latte - An Agent Marketing Platform. Local-first desktop workspace for directing coding/marketing agents around brands and deliverables.",
   "license": "MIT",

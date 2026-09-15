@@ -89,6 +89,7 @@ import type { SkillCandidateRecord } from '../learning/types';
 import type { CandidateGenerator } from '../learning/worker';
 import type { LearningRepository } from '../storage/learningRepository';
 import { briefDocumentId, type DocumentRecord, type LatteRepository } from '../storage/repository';
+import { collectBrandMemory, type BrandMemorySnapshot } from '../workspace/brandMemory';
 import { INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
 import { checkFolder, contains, importFileName, kindFromFileName, readFunnelProposal, readHandoff, scanFolder, titleFromFileName } from '../workspace/linkFolder';
 import { renderDocumentTemplate } from '../workspace/templates';
@@ -1658,8 +1659,31 @@ export class LatteService implements BackendApi {
     const outputLanguage = storedLocale === 'en-US' ? 'en-US' : 'es-AR';
     const decisionAuthority=(this.deps.repo.getMeta('decision_authority:'+work.id) as DecisionAuthorityMode|null)??'suggest';
     const generation = this.generationEnabled() ? this.pinnedGenerationPointer(work.id) : null;
-    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation });
+    const brandMemory = this.loadBrandMemory(brand, work);
+    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation, brandMemory });
     this.deps.files.writeInstructions(brand.id, work.id, bundle.text, bundle.files);
+  }
+
+  /**
+   * Local-db snapshot of other works of this brand. Never Engram, never another
+   * brand. Called from refreshInstructions so every new/opened agent gets it.
+   */
+  private loadBrandMemory(brand: Brand, work: Work): BrandMemorySnapshot {
+    const sources = this.deps.repo.listWorks(brand.id)
+      .filter((other) => other.id !== work.id)
+      .map((other) => ({
+        work: other,
+        decisions: this.deps.repo.listDecisions(other.id),
+        documents: this.deps.repo.listDocuments(other.id).map((doc) => ({
+          kind: doc.kind,
+          title: doc.title,
+          fileName: doc.fileName,
+          status: doc.status,
+          funnelStages: doc.funnelStages,
+          content: this.deps.files.readDocument(brand.id, other.id, doc.fileName).content,
+        })),
+      }));
+    return collectBrandMemory({ brand, currentWorkId: work.id, sources });
   }
 
   /** Latest receipt for this work. Not called when the feature flag is off. */
