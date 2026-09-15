@@ -54,6 +54,17 @@ export function assertNoControlChars(value: string, name: string): void {
   }
 }
 
+/** Trim + NFC + control-char check used by updateBrand and brand-context proposals. */
+export function requireCleanContext(value: unknown, name: string, options: { allowEmpty?: boolean } = {}): string {
+  if (typeof value !== 'string') throw new ValidationError(`${name} must be a string`);
+  if (value.includes('\0')) throw new ValidationError(`${name} contains a NUL byte`);
+  const clean = value.trim().normalize('NFC');
+  if (!options.allowEmpty && clean.length === 0) throw new ValidationError(`${name} cannot be empty`);
+  if (clean.length > LIMITS.context) throw new ValidationError(`${name} is too long (max ${LIMITS.context} characters)`);
+  assertNoControlChars(clean, name);
+  return clean;
+}
+
 export function requireInt(value: unknown, name: string, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isInteger(value)) throw new ValidationError(`${name} must be an integer`);
   if (value < min || value > max) throw new ValidationError(`${name} must be between ${min} and ${max}`);
