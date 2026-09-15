@@ -154,7 +154,7 @@ describe('renderInstructionBundle: hard cap', () => {
       available: (pack?.roles ?? []).map((r) => ({ id: r.id, name: r.name, summary: r.summary })),
     });
     expect(bundle.text).toContain('This file was compacted');
-    expect(bundle.text).toMatch(/the full decision log in \.\/\.latte\/context\/decisions\.md/);
+    expect(bundle.text).toMatch(/the full decision log of this work in \.\/\.latte\/context\/decisions\.md/);
     expect(bundle.text).toMatch(/the full brand context in \.\/\.latte\/context\/brand\.md/);
     // Compacted, not merely capped by luck: comfortably below the unbounded size
     // this fixture would have produced (brand + every decision + the skill body inlined).
