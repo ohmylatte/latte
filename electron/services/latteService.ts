@@ -98,9 +98,9 @@ import { renderDocumentTemplate } from '../workspace/templates';
 import { openItems, renderContinuation } from '../workspace/continuation';
 import { DELIVERABLES_DIR, DeliverableFiles, deliverableName } from '../workspace/deliverables';
 import { documentFileName, fingerprintOf, type DocumentOnDisk, type WorkspaceFiles } from '../workspace/workspace';
-import { BRAND_CONTEXT_DRAFT_PROMPT_EN, BRAND_CONTEXT_DRAFT_PROMPT_ES, brandContextFingerprint } from '../workspace/brandContextProtocol';
-import { BRAND_CONTEXT_INPUT_KEY_SET, composeBrandContext } from '../../shared/brandContext';
-import { LIMITS, assertNoControlChars, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
+import { BRAND_CONTEXT_DRAFT_PROMPT_EN, BRAND_CONTEXT_DRAFT_PROMPT_ES, brandContextFingerprint, requireBrandContextInput } from '../workspace/brandContextProtocol';
+import { composeBrandContext } from '../../shared/brandContext';
+import { LIMITS, requireCleanContext, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
 import { BrandingService } from '../branding/service';
 
 /** Stable content identity; request identity handles retries, this flags similar proposals without merging them. */
@@ -299,6 +299,10 @@ export class LatteService implements BackendApi {
     return this.deps.repo.listBrands();
   }
 
+  async getBrand(brandId: string): Promise<Brand> {
+    return this.deps.repo.getBrand(requireId(brandId, 'brandId'));
+  }
+
   async createBrand(name: string): Promise<Brand> {
     const cleanName = requireLabel(name, 'Brand name', LIMITS.name);
     const brand: Brand = { id: newId('brd'), name: cleanName, context: '', createdAt: this.clock(), archivedAt: null };
@@ -309,7 +313,7 @@ export class LatteService implements BackendApi {
 
   async updateBrand(id: string, context: string): Promise<Brand> {
     const brandId = requireId(id, 'brandId');
-    const cleanContext = requireText(context, 'Brand context', LIMITS.context, { allowEmpty: true });
+    const cleanContext = requireCleanContext(context, 'Brand context', { allowEmpty: true });
     return this.deps.repo.updateBrandContext(brandId, cleanContext);
   }
 
@@ -1075,11 +1079,12 @@ export class LatteService implements BackendApi {
   // Brand context proposals -------------------------------------------------
 
   async listBrandContextProposals(brandId: string): Promise<BrandContextProposal[]> {
-    this.deps.repo.getBrand(requireId(brandId, 'brandId'));
-    return this.deps.repo.listBrandContextProposals(brandId);
+    const brand = this.deps.repo.getBrand(requireId(brandId, 'brandId'));
+    const base = brandContextFingerprint(brand.context);
+    return this.deps.repo.listBrandContextProposals(brandId).map((p) => ({ ...p, stale: p.baseFingerprint !== base }));
   }
 
-  async proposeBrandContextFromAgent(chatId: string, messageId: string, input: unknown): Promise<BrandContextProposal | null> {
+  async proposeBrandContextFromAgent(chatId: string, messageId: string, input: BrandContextProposalInput): Promise<BrandContextProposal | null> {
     const member = this.deps.repo.findMember(requireId(chatId, 'chatId'));
     if (!member) throw new ValidationError('Unknown brand context source');
     const work = this.deps.repo.getWork(member.workId);
@@ -1087,11 +1092,12 @@ export class LatteService implements BackendApi {
     const authority = this.readDecisionAuthority(member.workId);
     if (authority === 'off') return null;
     const parsed = requireBrandContextInput(input);
-    const existing = this.deps.repo.findBrandContextRequest(brand.id, parsed.clientRequestId);
+    const existing = this.deps.repo.findBrandContextRequest(brand.id, work.id, chatId, parsed.clientRequestId);
     if (existing) return existing;
     const fingerprint = brandContextFingerprint(parsed.text);
     const pending = this.deps.repo.findPendingBrandContext(brand.id);
     if (pending && pending.fingerprint === fingerprint) return pending;
+    this.assertComposedFits(brand.context, parsed.text, parsed.mode);
     const now = this.clock();
     const proposal: BrandContextProposal = {
       id: newId('bcp'),
@@ -1103,6 +1109,7 @@ export class LatteService implements BackendApi {
       mode: parsed.mode,
       status: authority === 'auto-record' ? 'approved' : 'pending',
       fingerprint,
+      baseFingerprint: brandContextFingerprint(brand.context),
       clientRequestId: parsed.clientRequestId,
       createdAt: now,
       decidedAt: authority === 'auto-record' ? now : null,
@@ -1113,24 +1120,27 @@ export class LatteService implements BackendApi {
       if (proposal.status === 'approved') this.applyApprovedContext(brand, proposal.text, proposal.mode);
       return proposal;
     });
-    if (stored.status === 'approved') this.refreshBrandWorks(this.deps.repo.getBrand(brand.id));
     return stored;
   }
 
-  async approveBrandContextProposal(id: string, edited: string | null): Promise<BrandContextProposal> {
+  async approveBrandContextProposal(id: string, edited: string | null, acceptStale = false): Promise<BrandContextProposal> {
     const proposalId = requireId(id, 'proposalId');
     const before = this.deps.repo.getBrandContextProposal(proposalId);
     const brand = this.requireActiveBrand(before.brandId);
     if (before.status === 'approved') return before;
     if (before.status !== 'pending') throw new LatteError('PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
-    const clean = edited == null ? null : this.requireBrandContextText(edited);
-    const updated = this.deps.repo.transaction(() => {
+    const clean = edited == null ? null : requireCleanContext(edited, 'Brand context');
+    const text = clean ?? before.text;
+    this.assertComposedFits(brand.context, text, before.mode);
+    if (!acceptStale && before.baseFingerprint !== brandContextFingerprint(brand.context)) {
+      throw new LatteError('PROPOSAL_STALE', 'Brand context changed since this proposal');
+    }
+    return this.deps.repo.transaction(() => {
+      const current = this.deps.repo.getBrand(brand.id);
       const next = this.deps.repo.transitionBrandContextProposal(proposalId, 'approved', clean, this.clock());
-      this.applyApprovedContext(brand, next.text, next.mode);
+      this.applyApprovedContext(current, next.text, next.mode);
       return this.deps.repo.getBrandContextProposal(proposalId);
     });
-    this.refreshBrandWorks(this.deps.repo.getBrand(brand.id));
-    return updated;
   }
 
   async rejectBrandContextProposal(id: string): Promise<BrandContextProposal> {
@@ -1160,28 +1170,22 @@ export class LatteService implements BackendApi {
     return session;
   }
 
-  private requireBrandContextText(value: string): string {
-    const clean = requireText(value, 'Brand context', LIMITS.context).normalize('NFC');
-    assertNoControlChars(clean, 'Brand context');
-    return clean;
+  private applyApprovedContext(brand: Brand, incoming: string, mode: BrandContextMode): Brand {
+    const next = this.assertComposedFits(brand.context, incoming, mode);
+    return this.deps.repo.updateBrandContext(brand.id, next);
   }
 
-  private applyApprovedContext(brand: Brand, incoming: string, mode: BrandContextMode): Brand {
-    const next = composeBrandContext(brand.context, incoming, mode);
-    const clean = requireText(next, 'Brand context', LIMITS.context, { allowEmpty: true });
-    assertNoControlChars(clean, 'Brand context');
-    return this.deps.repo.updateBrandContext(brand.id, clean);
+  private assertComposedFits(current: string, incoming: string, mode: BrandContextMode): string {
+    const next = composeBrandContext(current, incoming, mode);
+    if (next.length > LIMITS.context) {
+      throw new LatteError('CONTEXT_TOO_LONG', `Brand context is ${next.length - LIMITS.context} characters over the ${LIMITS.context}-character limit`);
+    }
+    return requireCleanContext(next, 'Brand context', { allowEmpty: true });
   }
 
   private readDecisionAuthority(workId: string): DecisionAuthorityMode {
     const raw = this.deps.repo.getMeta('decision_authority:' + workId);
     return raw === 'off' || raw === 'auto-record' ? raw : 'suggest';
-  }
-
-  private refreshBrandWorks(brand: Brand): void {
-    for (const work of this.deps.repo.listWorks(brand.id)) {
-      if (this.deps.hub.liveMemberCount(work.id) === 0) this.refreshInstructions(brand, work);
-    }
   }
 
   // Agents ------------------------------------------------------------------
@@ -1790,18 +1794,6 @@ export class LatteService implements BackendApi {
       skillRefs: latest.context.skillRefs,
     };
   }
-}
-
-function requireBrandContextInput(input: unknown): BrandContextProposalInput {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new ValidationError('Invalid brand context proposal');
-  const record = input as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !BRAND_CONTEXT_INPUT_KEY_SET.has(key))) throw new ValidationError('Unknown brand context proposal field');
-  const text = requireText(record.text, 'Brand context', LIMITS.context).normalize('NFC');
-  assertNoControlChars(text, 'Brand context');
-  const rationale = requireText(record.rationale, 'Rationale', LIMITS.context, { allowEmpty: true }).normalize('NFC');
-  assertNoControlChars(rationale, 'Rationale');
-  if (record.mode !== 'replace' && record.mode !== 'append') throw new ValidationError('Invalid brand context mode');
-  return { text, rationale, mode: record.mode, clientRequestId: requireRequestId(record.clientRequestId) };
 }
 
 function toSkillCandidate(row: SkillCandidateRecord, duplicateSpend: boolean): SkillCandidate {

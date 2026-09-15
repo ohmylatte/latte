@@ -133,7 +133,7 @@ describe.each(ENGINES)('schema 9 → 10 migration on %s', (engine) => {
     expect(repo.getMeta('schema_version')).toBe('10');
     expect(SCHEMA_VERSION).toBe('10');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_context_proposals'")?.name).toBe('brand_context_proposals');
-    expect(driver.all<{ name: string }>('PRAGMA table_info(brand_context_proposals)').map((c) => c.name)).toEqual(expect.arrayContaining(['source_member_id', 'source_role_id', 'source_runtime']));
+    expect(driver.all<{ name: string }>('PRAGMA table_info(brand_context_proposals)').map((c) => c.name)).toEqual(expect.arrayContaining(['source_member_id', 'source_role_id', 'source_runtime', 'base_fingerprint']));
     expect(repo.getBrand('brd_1')).toMatchObject({ name: 'Casa', context: 'tono' });
     expect(repo.getWork('wrk_1').title).toBe('Uno');
     repo.close();

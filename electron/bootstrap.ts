@@ -128,7 +128,11 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
         void service.proposeDecisionFromAgent(event.chatId,event.message.id,proposal).catch(error=>options.log?.(`[latte] decision proposal failed: ${error instanceof Error?error.message:String(error)}`));
       }
       for (const proposal of brandContextProtocolBlocks(assistantText)) {
-        void service.proposeBrandContextFromAgent(event.chatId,event.message.id,proposal).catch(error=>options.log?.(`[latte] brand context proposal failed: ${error instanceof Error?error.message:String(error)}`));
+        void service.proposeBrandContextFromAgent(event.chatId,event.message.id,proposal).catch(error=>{
+          const message = error instanceof Error ? error.message : String(error);
+          options.log?.(`[latte] brand context proposal failed: ${message}`);
+          forward({ chatId: event.chatId, type: 'error', message });
+        });
       }
     }
     if (event.type !== 'permission' || !service.autoApprovesChat(event.chatId)) { forward(event); return; }
