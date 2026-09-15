@@ -71,6 +71,7 @@ interface LiveChat {
    * restored one that happens to share the id.
    */
   epoch: string;
+  mcpServers: Array<{ name: string; status: string }>;
   /** What this process has consumed since it started. The lifetime total is the hub's job. */
   usage: ChatUsage;
   /**
@@ -132,6 +133,15 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
     return this.chats.get(chatId)?.busy ?? false;
   }
 
+  /** Last `mcp_servers` array from each live `system/init`, later chats win on name. */
+  mcpServersFromInit(): Array<{ name: string; status: string }> {
+    const byName = new Map<string, string>();
+    for (const live of this.chats.values()) {
+      for (const server of live.mcpServers) byName.set(server.name, server.status);
+    }
+    return [...byName.entries()].map(([name, status]) => ({ name, status }));
+  }
+
   async start(input: AdapterStartInput): Promise<AdapterStartResult> {
     if (this.chats.size >= this.maxChats) throw new ValidationError(`Too many open Claude chats (max ${this.maxChats})`);
     const chatId = input.chatId ?? newId('ses');
@@ -180,6 +190,7 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       restored: 0,
       restoredIds: new Set(),
       epoch: randomUUID().slice(0, 8),
+      mcpServers: [],
       usage: EMPTY_USAGE,
       costSoFar: null,
     };
@@ -361,6 +372,7 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
             live.sessionId = msg.session_id;
             this.deps.onSessionId?.(live.chatId, msg.session_id);
           }
+          live.mcpServers = parseInitMcpServers(msg.mcp_servers);
         } else if (msg.subtype === 'permission_denied') {
           const toolUseId = str(msg.tool_use_id);
           const message = str(msg.message, 'Permission denied');
@@ -679,4 +691,14 @@ function patternsFromInput(input: unknown): string[] {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function parseInitMcpServers(raw: unknown): Array<{ name: string; status: string }> {
+  if (!Array.isArray(raw)) return [];
+  const servers: Array<{ name: string; status: string }> = [];
+  for (const entry of raw) {
+    if (!isRecord(entry) || typeof entry.name !== 'string' || !entry.name) continue;
+    servers.push({ name: entry.name, status: typeof entry.status === 'string' ? entry.status : '' });
+  }
+  return servers;
 }
