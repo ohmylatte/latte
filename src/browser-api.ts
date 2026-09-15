@@ -63,6 +63,11 @@ export const browserAPI: LatteAPI = {
   appInfo: async () => ({ dataDir: '', engine: 'localStorage (vista previa)', engineReason: 'La vista web no usa SQLite', pack: null, packRoles: 0, version: 'web' }),
   featureFlags: async () => ({ generation: false, brandKits: false, learning: false }),
   listBrands: async () => read().brands.filter(b => !b.archivedAt),
+  getBrand: async brandId => {
+    const b = read().brands.find(x => x.id === brandId);
+    if (!b) throw new Error('Brand not found: ' + brandId);
+    return b;
+  },
   createBrand: async name => change(s => { const b: Brand = { id: id(), name, context: '', createdAt: now(), archivedAt: null }; s.brands.push(b); return b; }),
   updateBrand: async (brandId, context) => change(s => { const b = s.brands.find(b => b.id === brandId)!; b.context = context; return b; }),
   archiveBrand: async brandId => change(s => {
@@ -140,8 +145,12 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   approveDecision:async(decisionId,edited)=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='approved';if(edited)d.text=edited;d.decidedAt=now();return d;}),
   rejectDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='rejected';d.decidedAt=now();return d;}),
   archiveDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='archived';d.decidedAt=now();return d;}),
-  listBrandContextProposals: async brandId => (read().brandContextProposals ?? []).filter(p => p.brandId === brandId),
-  approveBrandContextProposal: async (proposalId, edited) => change(s => {
+  listBrandContextProposals: async brandId => {
+    const s = read();
+    const brand = s.brands.find(b => b.id === brandId);
+    return (s.brandContextProposals ?? []).filter(p => p.brandId === brandId).map(p => ({ ...p, stale: Boolean(brand && p.baseFingerprint && p.baseFingerprint !== brand.context) }));
+  },
+  approveBrandContextProposal: async (proposalId, edited, acceptStale = false) => change(s => {
     s.brandContextProposals ??= [];
     const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
     const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw new Error('Brand not found: ' + p.brandId);
@@ -149,8 +158,11 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
     if (p.status === 'approved') return p;
     if (p.status !== 'pending') throw new Error('La propuesta ya no está pendiente');
     if (edited != null) p.text = edited;
+    const composed = composeBrandContext(brand.context, p.text, p.mode);
+    if (composed.length > 60_000) throw new Error(`Brand context is ${composed.length - 60_000} characters over the 60000-character limit`);
+    if (!acceptStale && p.baseFingerprint && p.baseFingerprint !== brand.context) throw new Error('Brand context changed since this proposal');
     p.status = 'approved'; p.decidedAt = now();
-    brand.context = composeBrandContext(brand.context, p.text, p.mode);
+    brand.context = composed;
     return p;
   }),
   rejectBrandContextProposal: async proposalId => change(s => {
