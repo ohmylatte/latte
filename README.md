@@ -2,7 +2,7 @@
 
 Espacio de trabajo de escritorio, local, para marketers que dirigen agentes de IA.
 Marcas, trabajos, varios entregables Markdown por trabajo, versiones inmutables,
-registro de decisiones, memoria de marca y conversaciones reales con agentes.
+registro de decisiones, memoria de marca compartida entre trabajos y conversaciones reales con agentes.
 Todo en tu máquina.
 
 ![Latte: documentos de un trabajo, equipo de roles y aviso de cambio externo](assets/latte-documents-1440x1000.png)
@@ -102,7 +102,7 @@ y el agente puede leerlo.
 | Node.js | Solo para correrlo desde el código: 24 LTS (el proyecto usa `node:sqlite`, incorporado en Node 24) |
 | Agentes | Al menos uno instalado y con sesión iniciada: [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex/cli/) u [OpenCode](https://opencode.ai) |
 | Facturación | La inferencia la paga tu cuenta con tu proveedor. Latte no factura ni intermedia nada |
-| Engram | Opcional, para memoria de marca. Sin él, la app lo dice y sigue andando |
+| Engram | Opcional, para memoria persistente adicional. La continuidad local entre trabajos de una misma marca no depende de Engram |
 
 La vista web (`npm run dev:web`) es solo previsualización de interfaz: guarda en
 el navegador y **no ejecuta ningún agente**.
@@ -112,6 +112,7 @@ el navegador y **no ejecuta ningún agente**.
 - **Conversar y revisar, separados.** Un trabajo abre en su conversación, a ancho completo. «Revisar» trae los documentos al lado. Las dos vistas son los mismos paneles montados, así que un borrador a medio escribir sobrevive al cambio.
 - **Conversaciones por rol.** Cada trabajo tiene un equipo: el Asistente neutral más roles opcionales (Estrategia, Investigación, Análisis, Paid Media, Revisión). Cada miembro es una conversación propia con su runtime y su cuenta.
 - **Instrucciones de marketing por defecto.** Toda conversación, incluida la neutral, recibe el comportamiento de marketing del pack `marketing-core`: objetivo, audiencia, oferta, etapa del embudo, baseline y restricciones antes de recomendar; hecho contra hipótesis; marca aprobada contra propuesta; experimentos con guardrail y cadencia de revisión.
+- **Memoria de marca entre trabajos.** Una entrega nueva hereda automáticamente el contexto de marca, las decisiones aprobadas y copias locales acotadas de documentos Markdown relevantes de entregas anteriores. Cada dato conserva su trabajo de origen; no se mezcla otra marca ni se confunde ese conocimiento con el delta actual.
 - **Varios entregables por trabajo.** Encargo, estrategia, calendario, investigación y piezas, cada uno con su archivo Markdown, sus versiones y su exportación.
 - **La lista al costado, el documento a pantalla completa.** Buscar, filtrar y la cola de revisión viven en una columna angosta; el documento se queda con el alto entero. Arriba: Documentos, Embudo y Decisiones.
 - **Embudo de campaña.** Cada documento puede estar en varias etapas a la vez —descubrimiento, consideración, conversión, retención— o en ninguna. La clasificación es virtual: no mueve ni renombra un solo archivo. Una etapa vacía se muestra como hallazgo, porque es la parte del recorrido que nadie está atendiendo.
@@ -146,7 +147,7 @@ el navegador y **no ejecuta ningún agente**.
 
 Latte is a local-first desktop workspace for marketers who direct AI agents.
 Brands, works, several tracked Markdown deliverables per work, immutable
-snapshots, a decision log, brand memory (Engram) and real agent sessions, all on
+snapshots, a decision log, brand memory shared across works, optional Engram-backed persistent memory, and real agent sessions, all on
 your machine.
 
 - **Chat (default):** a native Latte chat on top of whichever runtime you picked as primary — Claude Code and Codex with your own subscription, or any API-key provider through [OpenCode](https://opencode.ai). One conversation per team member, inside that work's folder, streaming messages, tool calls, permission requests and questions into the UI. No fake replies: when a runtime, a provider or a balance is missing you see the real reason.
