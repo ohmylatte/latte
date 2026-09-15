@@ -383,6 +383,12 @@ function renderCore(
     input.decisionAuthority === 'off'
       ? '- Decision suggestions are disabled for this work. Do not emit decision protocol blocks.'
       : '- When the human explicitly agrees to a durable choice, invoke Latte\'s decision protocol by appending exactly one fenced `latte-decision` JSON block with: `statement`, `rationale`, optional `alternativesRejected` and `evidenceRefs`, and a stable unique `clientRequestId`. This is a structured tool fallback, not prose detection. Never emit it for facts, hypotheses, recommendations awaiting approval, summaries, temporary actions or technical permissions. Latte will either ask the human to approve it or record it according to the separate decision-authority setting.',
+    input.decisionAuthority === 'off'
+      ? '- Brand-context suggestions are disabled for this work. Do not emit brand-context protocol blocks.'
+      : '- When the brand context should change, invoke Latte\'s brand-context protocol by appending exactly one fenced `latte-brand-context` JSON block per conversation with: `text`, `rationale`, `mode` (`replace` or `append`; default `append` when context already exists), and a stable unique `clientRequestId`. Emit it only with evidence from the brief or this work\'s documents; never for hypotheses or anything the human has not confirmed. Latte will ask the human to approve it or apply it according to the same decision-authority setting.',
+    brand.context.trim().length === 0
+      ? '- Before starting any other work, draft this brand\'s context from the brief and propose it with the `latte-brand-context` block.'
+      : '- Propose a brand-context update only when you have new durable facts the current context does not already hold.',
     `- The funnel stages are \`${FUNNEL_STAGES.join('`, `')}\`. You do not assign them; the human does, when they adopt the file. What you can do is propose one: begin a Markdown file you create with a front matter block — a line \`---\`, then \`funnel: ${FUNNEL_STAGES[2]}, ${FUNNEL_STAGES[3]}\`, then a line \`---\`. Latte reads it when the human adopts the file and takes it out of the deliverable. Name only the stages the piece really serves.`,
     '- Say plainly which stages have nothing in them. An empty stage is a finding, not a detail.',
     '- You share this folder with the team, but not their conversations: you cannot read what they said and you cannot write to them. What you can do is ask for one of them, and the human decides.',
