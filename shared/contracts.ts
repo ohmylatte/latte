@@ -257,6 +257,24 @@ export interface Decision {
   status: DecisionStatus; source: DecisionSource; clientRequestId: string | null; fingerprint: string; createdAt: string; decidedAt: string | null;
 }
 export interface DecisionProposalInput { statement: string; rationale: string; alternativesRejected?: string[]; evidenceRefs?: string[]; clientRequestId: string }
+export type BrandContextMode = 'replace' | 'append';
+export type BrandContextProposalStatus = 'pending' | 'approved' | 'rejected';
+export interface BrandContextProposal {
+  id: string;
+  brandId: string;
+  workId: string;
+  chatId: string | null;
+  messageId: string | null;
+  text: string;
+  rationale: string;
+  mode: BrandContextMode;
+  status: BrandContextProposalStatus;
+  fingerprint: string;
+  clientRequestId: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+export interface BrandContextProposalInput { text: string; rationale: string; mode: BrandContextMode; clientRequestId: string }
 export interface AgentEvent { sessionId: string; type: 'output' | 'exit' | 'error'; data: string }
 export interface AgentSession { id: string; provider: Provider; workId: string }
 export interface RuntimeStatus { provider: Provider; available: boolean; detail: string }
@@ -580,6 +598,10 @@ export interface LatteAPI {
   approveDecision(decisionId: string, editedStatement?: string | null): Promise<Decision>;
   rejectDecision(decisionId: string): Promise<Decision>;
   archiveDecision(decisionId: string): Promise<Decision>;
+  listBrandContextProposals(brandId: string): Promise<BrandContextProposal[]>;
+  approveBrandContextProposal(id: string, edited: string | null): Promise<BrandContextProposal>;
+  rejectBrandContextProposal(id: string): Promise<BrandContextProposal>;
+  requestBrandContextDraft(workId: string): Promise<ChatSession>;
   runtimeStatus(): Promise<RuntimeStatus[]>;
   startAgent(workId: string, provider: Provider): Promise<AgentSession>;
   writeAgent(sessionId: string, data: string): Promise<void>;
