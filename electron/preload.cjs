@@ -73,6 +73,7 @@ const METHODS = [
   'listBrandDecisions',
   'addDecision',
   'getDecisionAuthority','setDecisionAuthority','approveDecision','rejectDecision','archiveDecision',
+  'listBrandContextProposals','approveBrandContextProposal','rejectBrandContextProposal','requestBrandContextDraft',
   'runtimeStatus',
   'startAgent',
   'writeAgent',
