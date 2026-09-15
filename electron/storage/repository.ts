@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
+import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
 import type { ArtifactCheck, DeliveryEvidence, GenerationReceipt } from '../../shared/generationContracts';
 import { GenerationContractError } from '../generation/errors';
 import { hashGenerationContext } from '../generation/canon';
@@ -15,6 +15,11 @@ interface WorkRow extends SqlRow { id: string; brand_id: string; title: string; 
 interface RevisionRow extends SqlRow { id: string; work_id: string; document_id: string | null; source: string; content: string; created_at: string }
 interface DecisionRow extends SqlRow { id: string; work_id: string; text: string; created_at: string }
 interface DecisionProposalRow extends SqlRow { id:string; work_id:string; statement:string; rationale:string; alternatives:string; evidence:string; status:string; source_chat_id:string|null; source_message_id:string|null; source_member_id:string|null; source_role_id:string|null; source_runtime:string|null; client_request_id:string; fingerprint:string; created_at:string; decided_at:string|null }
+interface BrandContextProposalRow extends SqlRow {
+  id: string; brand_id: string; work_id: string; chat_id: string | null; message_id: string | null;
+  text: string; rationale: string; mode: string; status: string; fingerprint: string;
+  client_request_id: string | null; created_at: string; decided_at: string | null;
+}
 interface DocumentRow extends SqlRow { id: string; work_id: string; kind: string; title: string; file_name: string; status: string; funnel_stages: string; proposed_stages: string; base_doc_id: string | null; base_rev_id: string | null; base_print: string | null; last_print: string | null; created_at: string; updated_at: string }
 interface MemberRow extends SqlRow { id: string; work_id: string; role_id: string; role_name: string; initial: string; runtime: string; model: string | null; account_id: string | null; session_id: string; done: number; continued_from: string | null; tier: string | null; usage_json: string | null; created_at: string; updated_at: string }
 interface GenerationRow extends SqlRow { id: string; work_id: string; brand_id: string; context_json: string; context_hash: string; created_at: string }
@@ -98,6 +103,21 @@ const emptySource = (): DecisionSource => ({ chatId:null,messageId:null,memberId
 const jsonStrings = (value:string):string[] => { try { const v:unknown=JSON.parse(value); return Array.isArray(v)?v.filter((x):x is string=>typeof x==='string'):[]; } catch { return []; } };
 const toDecision = (r: DecisionRow): Decision => ({ id:r.id,workId:r.work_id,text:r.text,rationale:'',alternativesRejected:[],evidenceRefs:[],status:'approved',source:emptySource(),clientRequestId:null,fingerprint:'',createdAt:r.created_at,decidedAt:r.created_at });
 const toProposal = (r:DecisionProposalRow):Decision => ({id:r.id,workId:r.work_id,text:r.statement,rationale:r.rationale,alternativesRejected:jsonStrings(r.alternatives),evidenceRefs:jsonStrings(r.evidence),status:r.status as DecisionStatus,source:{chatId:r.source_chat_id,messageId:r.source_message_id,memberId:r.source_member_id,roleId:r.source_role_id,runtime:(r.source_runtime==='claude'||r.source_runtime==='codex'||r.source_runtime==='opencode')?r.source_runtime:null},clientRequestId:r.client_request_id,fingerprint:r.fingerprint,createdAt:r.created_at,decidedAt:r.decided_at});
+const toBrandContextProposal = (r: BrandContextProposalRow): BrandContextProposal => ({
+  id: r.id,
+  brandId: r.brand_id,
+  workId: r.work_id,
+  chatId: r.chat_id,
+  messageId: r.message_id,
+  text: r.text,
+  rationale: r.rationale,
+  mode: r.mode === 'replace' ? 'replace' : 'append',
+  status: r.status === 'approved' || r.status === 'rejected' ? r.status : 'pending',
+  fingerprint: r.fingerprint,
+  clientRequestId: r.client_request_id,
+  createdAt: r.created_at,
+  decidedAt: r.decided_at,
+});
 const toGeneration = (r: GenerationRow): GenerationReceipt => ({
   id: r.id,
   workId: r.work_id,
@@ -603,6 +623,66 @@ export class LatteRepository {
 
   transitionDecision(id:string,status:DecisionStatus,statement:string|null,at:string,actor='human'):Decision {
     return this.db.transaction(()=>{ const before=this.getDecision(id); if(before.status===status)return before; const allowed=(before.status==='pending'&&(status==='approved'||status==='rejected'))||(before.status==='approved'&&status==='archived'); if(!allowed)throw new ValidationError(`Decision cannot transition from ${before.status} to ${status}`); const text=statement??before.text; this.db.run('UPDATE decision_proposals SET status=?, statement=?, decided_at=? WHERE id=?',[status,text,at,id]); this.db.run('INSERT INTO decision_events(id,decision_id,action,actor,detail,created_at) VALUES (?,?,?,?,?,?)',[`evt_${createHash('sha1').update(`${id}\0${status}\0${at}`).digest('hex').slice(0,20)}`,id,status,actor,statement&&statement!==before.text?'statement edited':'',at]); return this.getDecision(id); });
+  }
+
+  // Brand context proposals -------------------------------------------------
+
+  listBrandContextProposals(brandId: string): BrandContextProposal[] {
+    return this.db
+      .all<BrandContextProposalRow>('SELECT * FROM brand_context_proposals WHERE brand_id = ? ORDER BY created_at ASC, id ASC', [brandId])
+      .map(toBrandContextProposal);
+  }
+
+  getBrandContextProposal(id: string): BrandContextProposal {
+    const row = this.db.get<BrandContextProposalRow>('SELECT * FROM brand_context_proposals WHERE id = ?', [id]);
+    if (!row) throw new NotFoundError('BrandContextProposal', id);
+    return toBrandContextProposal(row);
+  }
+
+  findBrandContextRequest(brandId: string, clientRequestId: string): BrandContextProposal | null {
+    const row = this.db.get<BrandContextProposalRow>(
+      'SELECT * FROM brand_context_proposals WHERE brand_id = ? AND client_request_id = ?',
+      [brandId, clientRequestId],
+    );
+    return row ? toBrandContextProposal(row) : null;
+  }
+
+  findPendingBrandContext(brandId: string): BrandContextProposal | null {
+    const row = this.db.get<BrandContextProposalRow>(
+      "SELECT * FROM brand_context_proposals WHERE brand_id = ? AND status = 'pending'",
+      [brandId],
+    );
+    return row ? toBrandContextProposal(row) : null;
+  }
+
+  insertBrandContextProposal(proposal: BrandContextProposal): BrandContextProposal {
+    this.db.run(
+      'INSERT INTO brand_context_proposals(id, brand_id, work_id, chat_id, message_id, text, rationale, mode, status, fingerprint, client_request_id, created_at, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        proposal.id, proposal.brandId, proposal.workId, proposal.chatId, proposal.messageId,
+        proposal.text, proposal.rationale, proposal.mode, proposal.status, proposal.fingerprint,
+        proposal.clientRequestId, proposal.createdAt, proposal.decidedAt,
+      ],
+    );
+    return proposal;
+  }
+
+  rejectPendingBrandContext(brandId: string, at: string): BrandContextProposal | null {
+    const pending = this.findPendingBrandContext(brandId);
+    if (!pending) return null;
+    this.db.run("UPDATE brand_context_proposals SET status = 'rejected', decided_at = ? WHERE id = ?", [at, pending.id]);
+    return this.getBrandContextProposal(pending.id);
+  }
+
+  transitionBrandContextProposal(id: string, status: BrandContextProposalStatus, text: string | null, at: string): BrandContextProposal {
+    const before = this.getBrandContextProposal(id);
+    if (before.status === status) return before;
+    if (before.status !== 'pending' || (status !== 'approved' && status !== 'rejected')) {
+      throw new ValidationError(`Brand context proposal cannot transition from ${before.status} to ${status}`);
+    }
+    const nextText = text ?? before.text;
+    this.db.run('UPDATE brand_context_proposals SET status = ?, text = ?, decided_at = ? WHERE id = ?', [status, nextText, at, id]);
+    return this.getBrandContextProposal(id);
   }
 
   // Generations (immutable receipts) -----------------------------------------
