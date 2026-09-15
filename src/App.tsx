@@ -14,6 +14,8 @@ import { SettingsScreen, type SettingsSection } from './SettingsScreen';
 import { TeamPanel, type RuntimeChoice } from './TeamPanel';
 import { TerminalPane } from './TerminalPane';
 import { UpdateBanner } from './UpdateBanner';
+import { ALL_BRAND_SCOPE, inKnowledgeScope, selectWorkBrief, workBrief, workTitles, type KnowledgeScope } from './brand-knowledge';
+import { KnowledgeOrigin, KnowledgeScopeFilter } from './KnowledgeScope';
 
 type View = 'brief' | 'funnel' | 'context' | 'memory' | 'decisions';
 type Modal = 'brand' | 'work' | 'document' | null;
@@ -57,6 +59,7 @@ export function App() {
   const [untracked, setUntracked] = useState<UntrackedFile[]>([]);
   const [handoffs, setHandoffs] = useState<HandoffRequest[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>(ALL_BRAND_SCOPE);
   const [decisionAuthority,setDecisionAuthority]=useState<DecisionAuthorityMode>('suggest');
   const [modal, setModal] = useState<Modal>(null), [name, setName] = useState('');
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
@@ -106,8 +109,13 @@ export function App() {
   const [endedSessions, setEndedSessions] = useState<Set<string>>(new Set());
   const sessionEnded = Boolean(session && endedSessions.has(session.id));
   const generation = useRef(0), memoryGeneration = useRef(0);
+  const selectionWorkRef = useRef<string | null>(null);
   const dirty = profileDirty || documentDirty || documentDrafts.hasUnsaved() || hasMetadataDrafts() || hasOutcomeDrafts(), contextDirty = Boolean(brand && context !== brand.context);
-  const selectedDocId = work ? selectedDoc[work.id] ?? null : null;
+  const selectedDocId = brand ? selectedDoc[brand.id] ?? null : null;
+  const titlesByWork = workTitles(works);
+  const visibleDocuments = inKnowledgeScope(documents, knowledgeScope);
+  const visibleDecisions = inKnowledgeScope(decisions, knowledgeScope);
+  const showWorkDelta = knowledgeScope === ALL_BRAND_SCOPE || knowledgeScope === (work?.id ?? '');
   // Who is writing to which file right now, straight from each runtime's own
   // tool reports. A write that did not come through a tool is never attributed.
   const documentFileNames = documents.map(d => d.fileName);
@@ -118,14 +126,18 @@ export function App() {
     if (!session) continue;
     for (const file of files) editors[file] = { roleId: session.roleId, roleName: session.roleName };
   }
-  const loadDocuments = async (workId: string) => {
-    const list = await api.listDocuments(workId);
-    setDocuments(list);
+  const loadFolderDelta = (workId: string) => {
     // An agent can create a file but cannot register it: Latte finds it and offers to adopt it.
     void api.listUntrackedFiles(workId).then(setUntracked).catch(() => setUntracked([]));
     // An agent can ask for a colleague the same way: by leaving a file.
     void api.listHandoffs(workId).then(setHandoffs).catch(() => setHandoffs([]));
-    return list;
+  };
+  const loadKnowledge = async (brandId: string, workId?: string | null) => {
+    const [docs, listed] = await Promise.all([api.listBrandDocuments(brandId), api.listBrandDecisions(brandId)]);
+    setDocuments(docs);
+    setDecisions(listed);
+    if (workId) loadFolderDelta(workId);
+    return docs;
   };
   /** Saves an answer from the conversation as a document of this work. */
   const saveAnswerAsDocument = (text: string) => {
@@ -135,8 +147,8 @@ export function App() {
     const guess = /calendario|cronograma/i.test(title) ? 'calendar' : /estrateg/i.test(title) ? 'strategy' : /investigac|research/i.test(title) ? 'research' : /copy|pieza/i.test(title) ? 'copy' : 'note';
     void run(async () => {
       const document = await api.saveAsDocument(work.id, guess as DocumentKind, title.trim(), text);
-      await loadDocuments(work.id);
-      setSelectedDoc(prev => ({ ...prev, [work.id]: document.id }));
+      await loadKnowledge(work.brandId, work.id);
+      setSelectedDoc(prev => ({ ...prev, [work.brandId]: document.id }));
       setLayout('review'); setView('brief');
       setNotice(t('ui.auto.336', { p0: document.title }));
     });
@@ -149,7 +161,7 @@ export function App() {
     const scrollTop = conversation?.scrollTop;
     await run(async () => {
       const trackedDocument = await api.trackFile(work.id, fileName);
-      await loadDocuments(work.id);
+      await loadKnowledge(work.brandId, work.id);
       setNotice(t('chat.fileAdded', { name: trackedDocument.title }));
       requestAnimationFrame(() => {
         if (conversation && scrollTop !== undefined) conversation.scrollTop = scrollTop;
@@ -188,8 +200,23 @@ export function App() {
   ].filter(c => !(c.runtime === primaryRuntime && (c.runtime === 'opencode' || c.accountId === (primary?.accountId ?? 'system'))));
   useEffect(() => { void Promise.all([api.listBrands(), api.listArchivedBrands()]).then(([list, archived]) => { setBrands(list); setArchivedBrands(archived); if (list[0]) { setBrand(list[0]); setContext(list[0].context); } }).catch(e => setError(displayError(e))); void api.runtimeStatus().then(setRuntimes).catch(e => setError(displayError(e))); void api.listRoles().then(setRoles).catch(e => setError(displayError(e))); void api.appInfo().then(setAppInfo).catch(e => setError(displayError(e))); void refreshChatStatus(); }, []);
   useEffect(() => { if (!work) { setTeam([]); setPermissions('ask'); setDecisionAuthority('suggest'); return; } void loadTeam(work.id).catch(e => setError(displayError(e))); void api.getWorkPermissions(work.id).then(setPermissions).catch(() => setPermissions('ask')); void api.getDecisionAuthority(work.id).then(setDecisionAuthority).catch(()=>setDecisionAuthority('suggest')); }, [work?.id]);
-  useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setDecisions([]); setDocuments([]); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); if (list[0]) setWork(list[0]); }).catch(e => setError(displayError(e))); }, [brand?.id]);
-  useEffect(() => { if (!work) { setDocuments([]); setDecisions([]); setUntracked([]); setHandoffs([]); return; } let active = true; void Promise.all([api.listDocuments(work.id), api.listDecisions(work.id), api.listUntrackedFiles(work.id).catch(() => []), api.listHandoffs(work.id).catch(() => [])]).then(([docs, d, untrackedFiles, asks]) => { if (active) { setDocuments(docs); setDecisions(d); setUntracked(untrackedFiles); setHandoffs(asks); } }).catch(e => setError(displayError(e))); return () => { active = false; }; }, [work?.id]);
+  useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setKnowledgeScope(ALL_BRAND_SCOPE); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); if (list[0]) setWork(list[0]); }).catch(e => setError(displayError(e))); }, [brand?.id]);
+  useEffect(() => {
+    if (!brand) { setDocuments([]); setDecisions([]); return; }
+    let active = true;
+    void Promise.all([api.listBrandDocuments(brand.id), api.listBrandDecisions(brand.id)]).then(([docs, listed]) => {
+      if (active) { setDocuments(docs); setDecisions(listed); }
+    }).catch(e => { if (active) setError(displayError(e)); });
+    return () => { active = false; };
+  }, [brand?.id, works.map(w => w.id).join(',')]);
+  useEffect(() => { if (!work) { setUntracked([]); setHandoffs([]); return; } loadFolderDelta(work.id); }, [work?.id]);
+  useEffect(() => {
+    if (!brand || !work) { selectionWorkRef.current = null; return; }
+    if (selectionWorkRef.current === work.id) return;
+    if (!workBrief(documents, work.id)) return;
+    selectionWorkRef.current = work.id;
+    setSelectedDoc((prev) => selectWorkBrief(prev, brand.id, work.id, documents));
+  }, [brand?.id, work?.id, documents]);
   /**
    * When an agent finishes a turn, look at the folder again.
    *
@@ -208,7 +235,7 @@ export function App() {
     let wasBusy = anyBusy();
     return chatStore.subscribe(() => {
       const busyNow = anyBusy();
-      if (wasBusy && !busyNow) void Promise.all([loadDocuments(work.id),api.listDecisions(work.id).then(setDecisions)]).catch(() => undefined);
+      if (wasBusy && !busyNow) void loadKnowledge(work.brandId, work.id).catch(() => undefined);
       wasBusy = busyNow;
     });
   }, [work?.id, workChatIds]);
@@ -237,7 +264,13 @@ export function App() {
     document.addEventListener('keydown', key); return () => { document.removeEventListener('keydown', key); previous?.focus(); };
   }, [modal, busy]);
   const selectBrand = (b: Brand) => { if (!guard()) return; setBrand(b); setContext(b.context); setView('brief'); setMemory(''); setMemoryAvailable(false); memoryGeneration.current++; };
-  const selectWork = (w: Work) => { if (!guard()) return; setWork(w); setContext(brand?.context ?? ''); setView('brief'); };
+  const selectWork = (w: Work) => {
+    if (!guard()) return;
+    setWork(w);
+    setContext(brand?.context ?? '');
+    setView('brief');
+    if (brand) setSelectedDoc((prev) => selectWorkBrief(prev, brand.id, w.id, documents));
+  };
   const saveContext = async () => { if (!brand) return; const b = await api.updateBrand(brand.id, context); setBrand(b); setBrands(prev => prev.map(x => x.id === b.id ? b : x)); setNotice(t('ui.auto.005')); };
   const reloadBrandLists = async () => {
     const [list, archived] = await Promise.all([api.listBrands(), api.listArchivedBrands()]);
@@ -274,8 +307,8 @@ export function App() {
     if (!work) return;
     await run(async () => {
       const created = await api.createDocument(work.id, kind, title, baseDocumentId);
-      await loadDocuments(work.id);
-      setSelectedDoc(prev => ({ ...prev, [work.id]: created.document.id }));
+      await loadKnowledge(work.brandId, work.id);
+      setSelectedDoc(prev => ({ ...prev, [work.brandId]: created.document.id }));
       setModal(null);
       // A template is an empty structure on purpose: nobody wants invented data.
       // But a derived document that stays empty is a dead end, so the ask to
@@ -313,7 +346,7 @@ export function App() {
       const result = await api.useFolder(work.id);
       if (!result) return;
       onWorkUpdated(result.work);
-      await loadDocuments(work.id);
+      await loadKnowledge(work.brandId, work.id);
       const extra = result.otherFiles.length + result.subfolders.length;
       setNotice(result.documents.length > 0
         ? t('ui.auto.340', { p0: result.documents.length, p1: result.documents.length === 1 ? '' : 's', p2: extra ? `; hay ${extra} archivo(s) y carpeta(s) más que el agente puede leer` : '' })
@@ -487,13 +520,14 @@ export function App() {
     </aside>
     <header className="topbar"><div className="breadcrumb">{brand?.name ?? 'Bienvenido a Latte'}<span>/</span><strong>{work?.title ?? 'Tu espacio de marketing'}</strong></div>{work && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}<span className="local-badge"><i />{isDesktop ? t('ui.auto.042') : 'Vista previa web'}</span>{isDesktop && <WindowControls />}</header>
     <main className="workspace" aria-hidden={focusChat} inert={focusChat}>
-      <div className="tabs"><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{documents.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{decisions.length}</span></button><div className="tab-spacer" /></div>
+      <div className="tabs"><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><div className="tab-spacer" /></div>
+      {(view === 'brief' || view === 'funnel' || view === 'decisions') && brand && <KnowledgeScopeFilter works={works} currentWorkId={work?.id ?? null} value={knowledgeScope} onChange={setKnowledgeScope} />}
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}
-      {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={setView} work={work} brandName={brand?.name ?? ''} documents={documents} selectedId={selectedDocId} onSelect={id => work && setSelectedDoc(prev => ({ ...prev, [work.id]: id }))} onDocumentsChanged={async () => { if (work) await loadDocuments(work.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} />}
+      {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={setView} work={work} brandName={brand?.name ?? ''} documents={visibleDocuments} selectedId={selectedDocId} onSelect={id => brand && setSelectedDoc(prev => ({ ...prev, [brand.id]: id }))} onDocumentsChanged={async () => { if (brand) await loadKnowledge(brand.id, work?.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} currentWorkId={work?.id ?? null} workTitles={titlesByWork} showWorkDelta={showWorkDelta} />}
       {view === 'context' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.045')}</div><h1>{t('ui.auto.046')}<br />{t('ui.auto.047')}</h1><p className="intro">{t('ui.auto.048')}</p><label className="field-label" htmlFor="brand-context">{t('ui.auto.049')} {brand?.name}</label><textarea id="brand-context" className="context-editor" value={context} onChange={e => setContext(e.target.value)} placeholder={t('ui.auto.050')} /><button className="primary" disabled={!contextDirty || busy} onClick={() => run(saveContext)}><Save size={16} />{t('ui.auto.051')}</button>{brand && <p className="footnote"><button type="button" className="subtle" disabled={busy} onClick={() => { if (!guard()) return; void run(archiveSelectedBrand); }}>{t('brand.archive')}</button></p>}<p className="footnote">{t('ui.auto.052')}</p></div>}
-      {view === 'decisions' && <div className="document-scroll"><div className="document-kicker">CRITERIO QUE PERMANECE</div><h1>No empezar<br />de cero otra vez.</h1><p className="intro">{t('ui.auto.053')}</p>{work && <><label className="field-label">{t('decision.authority.label')}</label><select value={decisionAuthority} onChange={e=>{const mode=e.target.value as DecisionAuthorityMode;void api.setDecisionAuthority(work.id,mode).then(setDecisionAuthority).catch(x=>setError(displayError(x)));}}><option value="off">{t('decision.authority.off')}</option><option value="suggest">{t('decision.authority.suggest')}</option><option value="auto-record">{t('decision.authority.auto')}</option></select><p className="footnote">{t('decision.authority.help')}</p><form className="decision-form" onSubmit={e => { e.preventDefault(); void run(async () => { if (!decision.trim()) return; await api.addDecision(work.id, decision.trim()); setDecisions(await api.listDecisions(work.id)); setDecision(''); }); }}><textarea aria-label={t('ui.auto.054')} placeholder="Elegimos? porque?" value={decision} onChange={e => setDecision(e.target.value)} /><button className="primary" disabled={!decision.trim() || busy}><Plus size={15} />{t('ui.auto.055')}</button></form></>}<div className="decision-list">{decisions.filter(d=>d.status!=='rejected'&&d.status!=='archived').map((d, i) => <div className={'decision-card status-'+d.status} key={d.id}><span className="decision-number">{String(i + 1).padStart(2, '0')}</span><div><small>{d.status==='pending'?t('decision.pending'):d.source.chatId?t('decision.autoNotice'):''}</small><p>{d.text}</p>{d.rationale&&<p className="footnote">{d.rationale}</p>}<small>{date(d.createdAt)}</small>{d.status==='pending'&&<div className="chat-card-actions"><button className="primary" onClick={()=>void api.approveDecision(d.id,null).then(()=>api.listDecisions(work!.id)).then(setDecisions)}>{t('decision.add')}</button><button onClick={()=>{const edited=window.prompt(t('decision.editAdd'),d.text);if(edited?.trim())void api.approveDecision(d.id,edited.trim()).then(()=>api.listDecisions(work!.id)).then(setDecisions)}}>{t('decision.editAdd')}</button><button onClick={()=>void api.rejectDecision(d.id).then(()=>api.listDecisions(work!.id)).then(setDecisions)}>{t('decision.discard')}</button></div>}{d.status==='approved'&&d.source.chatId&&<button onClick={()=>void api.archiveDecision(d.id).then(()=>api.listDecisions(work!.id)).then(setDecisions)}>{t('decision.undo')}</button>}</div></div>)}{!decisions.filter(d=>d.status==='approved'||d.status==='pending').length && <p className="footnote">{t('ui.auto.056')}</p>}</div></div>}
+      {view === 'decisions' && <div className="document-scroll"><div className="document-kicker">CRITERIO QUE PERMANECE</div><h1>No empezar<br />de cero otra vez.</h1><p className="intro">{t('ui.auto.053')}</p>{work && <><label className="field-label">{t('decision.authority.label')}</label><select value={decisionAuthority} onChange={e=>{const mode=e.target.value as DecisionAuthorityMode;void api.setDecisionAuthority(work.id,mode).then(setDecisionAuthority).catch(x=>setError(displayError(x)));}}><option value="off">{t('decision.authority.off')}</option><option value="suggest">{t('decision.authority.suggest')}</option><option value="auto-record">{t('decision.authority.auto')}</option></select><p className="footnote">{t('decision.authority.help')}</p><form className="decision-form" onSubmit={e => { e.preventDefault(); void run(async () => { if (!decision.trim()) return; await api.addDecision(work.id, decision.trim()); setDecisions(await api.listBrandDecisions(work.brandId)); setDecision(''); }); }}><textarea aria-label={t('ui.auto.054')} placeholder="Elegimos? porque?" value={decision} onChange={e => setDecision(e.target.value)} /><button className="primary" disabled={!decision.trim() || busy}><Plus size={15} />{t('ui.auto.055')}</button></form></>}<div className="decision-list">{visibleDecisions.filter(d=>d.status!=='rejected'&&d.status!=='archived').map((d, i) => <div className={'decision-card status-'+d.status} data-origin-work={d.workId} data-current-work={d.workId === work?.id ? 'true' : 'false'} key={d.id}><span className="decision-number">{String(i + 1).padStart(2, '0')}</span><div><small>{d.status==='pending'?t('decision.pending'):d.source.chatId?t('decision.autoNotice'):''}</small><KnowledgeOrigin workId={d.workId} currentWorkId={work?.id ?? null} titles={titlesByWork} /><p>{d.text}</p>{d.rationale&&<p className="footnote">{d.rationale}</p>}<small>{date(d.createdAt)}</small>{d.status==='pending'&&<div className="chat-card-actions"><button className="primary" onClick={()=>void api.approveDecision(d.id,null).then(()=>api.listBrandDecisions(brand!.id)).then(setDecisions)}>{t('decision.add')}</button><button onClick={()=>{const edited=window.prompt(t('decision.editAdd'),d.text);if(edited?.trim())void api.approveDecision(d.id,edited.trim()).then(()=>api.listBrandDecisions(brand!.id)).then(setDecisions)}}>{t('decision.editAdd')}</button><button onClick={()=>void api.rejectDecision(d.id).then(()=>api.listBrandDecisions(brand!.id)).then(setDecisions)}>{t('decision.discard')}</button></div>}{d.status==='approved'&&d.source.chatId&&<button onClick={()=>void api.archiveDecision(d.id).then(()=>api.listBrandDecisions(brand!.id)).then(setDecisions)}>{t('decision.undo')}</button>}</div></div>)}{!visibleDecisions.filter(d=>d.status==='approved'||d.status==='pending').length && <p className="footnote">{t('ui.auto.056')}</p>}</div></div>}
       {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice('Aprendizaje guardado en Engram'); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
-      <div className="document-footer"><span><FileText size={13} />{work ? t('ui.auto.352', { p0: documents.length, p1: documents.length === 1 ? '' : 's' }) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
+      <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
     </main>
     <aside className="agent-panel">{focusChat && (error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}<button type="button" className={'panel-resizer' + (dragging ? ' dragging' : '')} aria-label={t('ui.auto.066')} title={t('ui.auto.067')} onPointerDown={startResize} />
       <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} />
@@ -509,7 +543,7 @@ export function App() {
     </aside>
     <footer className="statusbar"><span><Circle size={11} />{isDesktop ? t('ui.auto.354', { p0: activeChats, p1: activeTerminals }) : t('ui.auto.074')}</span><span>{busy ? t('ui.auto.355') : dirty || contextDirty ? t('ui.auto.075') : 'Todo guardado'}<Check size={13} /></span>{appInfo && <span>Latte <span className="status-version">{appInfo.version} · ALPHA</span></span>}</footer>
     {(modal === 'brand' || modal === 'work') && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setModal(null); }}><section role="dialog" aria-modal="true" aria-labelledby="dialog-title" className="modal"><div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="dialog-title">{modal === 'brand' ? t('ui.auto.077') : t('ui.auto.078')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setModal(null)}><X size={20} /></button></div><div className="modal-body"><form onSubmit={e => { e.preventDefault(); void create(); }}><label className="field-label" htmlFor="new-name">{modal === 'brand' ? t('ui.auto.079') : t('ui.auto.080')}</label><input autoFocus id="new-name" maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder={modal === 'brand' ? 'Ej. Casa Oliva' : t('ui.auto.081')} /><p className="footnote">{t('ui.auto.082')}</p><button className="primary" disabled={!name.trim() || busy}>{t('ui.auto.083')} {modal === 'brand' ? t('ui.auto.084') : t('ui.auto.085')}<ArrowUpRight size={16} /></button></form></div></section></div>}
-    {modal === 'document' && <NewDocumentDialog documents={documents} busy={busy} onCancel={() => setModal(null)} onCreate={createDocument} />}
+    {modal === 'document' && <NewDocumentDialog documents={documents.filter(d => d.workId === work?.id)} busy={busy} onCancel={() => setModal(null)} onCreate={createDocument} />}
     <UpdateBanner />
   </div>;
 }

@@ -5,6 +5,7 @@ import type { DocumentState, DocumentStatus, FunnelStage, WorkDocument } from '.
 import { filterDocuments, reviewReasons, STAGES, STAGE_LABEL, STATUS_LABEL } from './document-organizer';
 import { Deliverables } from './Deliverables';
 import { FolderContents } from './FolderContents';
+import { KnowledgeOrigin } from './KnowledgeScope';
 
 interface Untracked { fileName: string; title: string; funnelStages?: FunnelStage[] }
 
@@ -15,9 +16,11 @@ interface Untracked { fileName: string; title: string; funnelStages?: FunnelStag
  * review queue and what the folder holds. The document keeps the full height
  * of the screen, which is the only reason any of this exists.
  */
-export function DocumentList({ documents, workId, selectedId, states, failed, checking, onRefresh, onSelect, onCreate, onUseFolder, folder, untracked, onTrack, suggestion, onImported, busy }: {
+export function DocumentList({ documents, workId, currentWorkId, workTitles, selectedId, states, failed, checking, onRefresh, onSelect, onCreate, onUseFolder, folder, untracked, onTrack, suggestion, onImported, busy, showWorkDelta }: {
   documents: WorkDocument[];
   workId: string;
+  currentWorkId: string;
+  workTitles: Record<string, string>;
   selectedId: string | null;
   states: Record<string, DocumentState>;
   failed: string[];
@@ -33,6 +36,7 @@ export function DocumentList({ documents, workId, selectedId, states, failed, ch
   suggestion: { label: string; hint: string } | null;
   onImported: (fileNames: string[]) => void;
   busy: boolean;
+  showWorkDelta: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [stage, setStage] = useState<FunnelStage | 'all' | 'unclassified'>('all');
@@ -72,11 +76,12 @@ export function DocumentList({ documents, workId, selectedId, states, failed, ch
     {failed.length > 0 && <div role="alert" className="explorer-warning">No se pudo verificar {failed.length}  {t('ui.auto.123')}<button onClick={onRefresh}>{t('ui.auto.372')}</button></div>}
 
     <div className="doc-list-rows">
-      {visible.map(d => <button key={d.id} data-document-id={d.id} disabled={busy} className={'doc-row' + (selectedId === d.id ? ' selected' : '')} onClick={() => onSelect(d.id)} aria-label={t('ui.auto.124') + d.title} aria-current={selectedId === d.id}>
+      {visible.map(d => <button key={d.id} data-document-id={d.id} data-origin-work={d.workId} data-current-work={d.workId === currentWorkId ? 'true' : 'false'} disabled={busy} className={'doc-row' + (selectedId === d.id ? ' selected' : '')} onClick={() => onSelect(d.id)} aria-label={t('ui.auto.124') + d.title} aria-current={selectedId === d.id}>
         <FileText size={14} />
         <span>
           <strong>{d.title}</strong>
           <small>{STATUS_LABEL[d.status]} · {d.fileName}</small>
+          <KnowledgeOrigin workId={d.workId} currentWorkId={currentWorkId} titles={workTitles} />
           {d.proposedFunnelStages.length > 0 && <em className="proposed">{t('ui.auto.373')} {d.proposedFunnelStages.map(s => STAGE_LABEL[s]).join(' + ')}</em>}
           {needsReview(d).map(reason => <em key={reason}>{reason}</em>)}
           {failed.includes(d.id) && <em>{t('ui.auto.125')}</em>}
@@ -85,9 +90,9 @@ export function DocumentList({ documents, workId, selectedId, states, failed, ch
       {visible.length === 0 && <p className="stage-empty">{onlyReview ? t('ui.auto.126') : t('ui.auto.127')}</p>}
     </div>
 
-    <FolderContents workId={workId} untracked={untracked} onTrack={onTrack} onImported={onImported} busy={busy} />
+    {showWorkDelta && <FolderContents workId={workId} untracked={untracked} onTrack={onTrack} onImported={onImported} busy={busy} />}
 
-    <Deliverables workId={workId} />
+    {showWorkDelta && <Deliverables workId={workId} />}
 
     {suggestion && <div className="doc-suggestion">
       <span><strong>{suggestion.label}</strong> {suggestion.hint}</span>

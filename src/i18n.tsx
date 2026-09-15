@@ -198,6 +198,14 @@ const es = {
   'brand.restore': 'Restaurar',
   'brand.restored': 'Marca restaurada.',
   'brand.noneArchived': 'No hay marcas archivadas.',
+  'knowledge.filter': 'Conocimiento',
+  'knowledge.allBrand': 'Toda la marca',
+  'knowledge.thisWork': 'este trabajo',
+  'knowledge.origin': 'De {title}',
+  'knowledge.delta': 'Este trabajo',
+  'knowledge.help': 'Documentos, embudo y decisiones se leen como conocimiento de toda la marca. El trabajo actual es el delta: brief, ejecución y entregables.',
+  'knowledge.docsBrand': '{p0} documento{p1} · Toda la marca',
+  'knowledge.docsWork': '{p0} documento{p1} en {title}',
   ...generatedEs,
 } as const;
 
@@ -379,6 +387,14 @@ const en: Record<MessageKey, string> = {
   'brand.restore': 'Restore',
   'brand.restored': 'Brand restored.',
   'brand.noneArchived': 'No archived brands.',
+  'knowledge.filter': 'Knowledge',
+  'knowledge.allBrand': 'Whole brand',
+  'knowledge.thisWork': 'this work',
+  'knowledge.origin': 'From {title}',
+  'knowledge.delta': 'This work',
+  'knowledge.help': 'Documents, funnel and decisions are brand knowledge. The current work is the operational delta: brief, execution and deliverables.',
+  'knowledge.docsBrand': '{p0} document{p1} · Whole brand',
+  'knowledge.docsWork': '{p0} document{p1} in {title}',
   ...generatedEn,
 };
 export const catalogs: Record<UiLocale, Record<MessageKey, string>> = { 'es-AR': es, 'en-US': en };
