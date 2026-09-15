@@ -1,16 +1,16 @@
-import type { AgentRole, Brand, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput } from '../shared/contracts';
+import type { AgentRole, Brand, BrandContextProposal, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput } from '../shared/contracts';
 import { createAgentBus } from './agent-events';
 import { createChatStore } from './chat-store';
 
 const KEY = 'latte-preview-v1';
 const initialBrief = '# Una nueva forma de habitar.\n\n_Brief de lanzamiento · Casa Oliva_\n\n## 01 / Objetivo\nPresentar la nueva colección a una audiencia que valora el diseño y la vida cotidiana.\n\n## 02 / Audiencia\nPersonas que eligen menos objetos, con más intención.\n\n## 03 / Propuesta\nDiseño que acompaña tu manera de vivir.\n\n> Hipótesis de ejemplo: contrastar con entrevistas antes de dar por validada.\n\n## 04 / Próximos pasos\n- [ ] Incorporar entrevistas reales\n- [ ] Revisar la propuesta de valor\n- [ ] Definir el primer experimento';
-interface Store { brands: Brand[]; works: Work[]; revisions: Revision[]; decisions: Decision[]; documents?: WorkDocument[]; contents?: Record<string,string>; profiles?: AgentProfile[] }
+interface Store { brands: Brand[]; works: Work[]; revisions: Revision[]; decisions: Decision[]; brandContextProposals?: BrandContextProposal[]; documents?: WorkDocument[]; contents?: Record<string,string>; profiles?: AgentProfile[] }
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
 function read(): Store {
   const raw = localStorage.getItem(KEY);
   if (raw) return JSON.parse(raw);
-  return { brands: [{ id: 'demo', name: 'Casa Oliva · Ejemplo', context: 'Marca ficticia de objetos de diseño. Tono cálido, preciso y cercano. Este espacio contiene material de demostración, no investigación real.', createdAt: now(), archivedAt: null }], works: [{ id: 'demo-work', brandId: 'demo', title: 'Lanzamiento primavera', brief: initialBrief, folder: null, updatedAt: now() }], revisions: [], decisions: [] };
+  return { brands: [{ id: 'demo', name: 'Casa Oliva · Ejemplo', context: 'Marca ficticia de objetos de diseño. Tono cálido, preciso y cercano. Este espacio contiene material de demostración, no investigación real.', createdAt: now(), archivedAt: null }], works: [{ id: 'demo-work', brandId: 'demo', title: 'Lanzamiento primavera', brief: initialBrief, folder: null, updatedAt: now() }], revisions: [], decisions: [], brandContextProposals: [] };
 }
 function change<T>(fn: (store: Store) => T): T { const s = read(); const result = fn(s); localStorage.setItem(KEY, JSON.stringify(s)); return result; }
 /** The web preview tracks a single brief document per work; the real model lives on the desktop. */
@@ -139,6 +139,25 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   approveDecision:async(decisionId,edited)=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='approved';if(edited)d.text=edited;d.decidedAt=now();return d;}),
   rejectDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='rejected';d.decidedAt=now();return d;}),
   archiveDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='archived';d.decidedAt=now();return d;}),
+  listBrandContextProposals: async brandId => (read().brandContextProposals ?? []).filter(p => p.brandId === brandId),
+  approveBrandContextProposal: async (proposalId, edited) => change(s => {
+    s.brandContextProposals ??= [];
+    const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
+    const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw new Error('Brand not found: ' + p.brandId);
+    if (brand.archivedAt) throw new Error('Brand is archived: ' + brand.id);
+    if (p.status !== 'pending') throw new Error('La propuesta ya no está pendiente');
+    if (edited != null) p.text = edited;
+    p.status = 'approved'; p.decidedAt = now();
+    brand.context = p.mode === 'append' && brand.context.trim() ? `${brand.context.replace(/\s+$/u, '')}\n\n${p.text}` : p.text;
+    return p;
+  }),
+  rejectBrandContextProposal: async proposalId => change(s => {
+    s.brandContextProposals ??= [];
+    const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
+    const brand = s.brands.find(b => b.id === p.brandId); if (brand?.archivedAt) throw new Error('Brand is archived: ' + p.brandId);
+    p.status = 'rejected'; p.decidedAt = now(); return p;
+  }),
+  requestBrandContextDraft: unavailable,
   runtimeStatus: async () => ['claude', 'codex', 'opencode'].map(provider => ({ provider: provider as 'claude' | 'codex' | 'opencode', available: false, detail: 'Requiere escritorio' })),
   startAgent: unavailable, writeAgent: unavailable, resizeAgent: unavailable, stopAgent: unavailable,
   onAgentEvent: () => () => {},
