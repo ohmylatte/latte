@@ -75,7 +75,7 @@ describe('explicit browser preview', () => {
       id: 'bcp_1', brandId: b.id, workId: w.id,
       source: { chatId: null, messageId: null, memberId: null, roleId: 'strategist', runtime: null },
       text: 'Tono cercano', rationale: 'Del brief', mode: 'replace', status: 'pending',
-      fingerprint: 'x', clientRequestId: 'req_1', createdAt: new Date().toISOString(), decidedAt: null,
+      fingerprint: 'x', baseFingerprint: '', clientRequestId: 'req_1', createdAt: new Date().toISOString(), decidedAt: null,
     }];
     data.set('latte-preview-v1', JSON.stringify(stored));
     const approved = await api.approveBrandContextProposal('bcp_1', null);

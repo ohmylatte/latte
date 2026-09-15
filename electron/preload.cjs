@@ -13,6 +13,7 @@ const METHODS = [
   'appInfo',
   'featureFlags',
   'listBrands',
+  'getBrand',
   'createBrand',
   'updateBrand',
   'archiveBrand',
