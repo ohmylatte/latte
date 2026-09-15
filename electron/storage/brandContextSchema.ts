@@ -18,11 +18,12 @@ CREATE TABLE IF NOT EXISTS brand_context_proposals (
   mode TEXT NOT NULL,
   status TEXT NOT NULL,
   fingerprint TEXT NOT NULL,
+  base_fingerprint TEXT NOT NULL,
   client_request_id TEXT,
   created_at TEXT NOT NULL,
   decided_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_brand_context_proposals_brand ON brand_context_proposals(brand_id, created_at);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_brand_context_request ON brand_context_proposals(brand_id, client_request_id) WHERE client_request_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_brand_context_request ON brand_context_proposals(brand_id, work_id, source_chat_id, client_request_id) WHERE client_request_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_brand_context_pending ON brand_context_proposals(brand_id) WHERE status = 'pending';
 `;

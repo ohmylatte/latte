@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { composeBrandContext } from '../../shared/brandContext';
-import { EMPTY_USAGE, type TeamMember } from '../../shared/contracts';
+import { EMPTY_USAGE, type ChatSession, type TeamMember } from '../../shared/contracts';
 import { LIMITS } from '../../electron/services/validation';
 import { brandContextProtocolBlocks, parseBrandContextJson } from '../../electron/workspace/brandContextProtocol';
 import { BRAND_CONTEXT_DRAFT_PROMPT_ES } from '../../electron/workspace/brandContextProtocol';
@@ -25,6 +25,12 @@ describe('brand context protocol parser', () => {
     expect(parseBrandContextJson(JSON.stringify({ ...VALID, mode: 'merge' }))).toBeNull();
     expect(parseBrandContextJson(JSON.stringify({ ...VALID, text: 'A'.repeat(LIMITS.context + 1) }))).toBeNull();
     expect(parseBrandContextJson(JSON.stringify({ ...VALID, text: 'hola\u0007' }))).toBeNull();
+  });
+
+  it('trims text and rationale', () => {
+    expect(parseBrandContextJson(JSON.stringify({ ...VALID, text: '\n  Hola  \n', rationale: '  Porque  ' }))).toEqual({
+      ...VALID, text: 'Hola', rationale: 'Porque',
+    });
   });
 
   it('extracts two blocks from one message', () => {
@@ -129,20 +135,75 @@ describe('brand context proposals', () => {
     await expect(b.service.requestBrandContextDraft(workId)).rejects.toMatchObject({ code: 'BRAND_ARCHIVED' });
   });
 
-  it('refreshes instructions only for works of the brand without live members', async () => {
-    const other = await b.service.createWork(brandId, 'Otro');
+  it('does not rewrite instruction files on approve; a later idle open sees the new context', async () => {
+    const session = (work: string, roleId: string, roleName: string): ChatSession => ({
+      id: `ses_${roleId}`, workId: work, provider: 'opencode', model: null, accountId: null,
+      label: roleName, resumed: false, roleId, roleName, historyRecovered: false,
+    });
+    vi.spyOn(b.hub, 'addMember').mockImplementation(async (input) => session(input.workId, input.roleId, input.roleId));
     const write = vi.spyOn(b.files, 'writeInstructions');
-    vi.spyOn(b.hub, 'liveMemberCount').mockImplementation((id) => (id === workId ? 1 : 0));
     const pending = await b.service.proposeBrandContextFromAgent(chatId, 'msg_1', VALID);
     write.mockClear();
     await b.service.approveBrandContextProposal(pending!.id, null);
-    const refreshedWorks = write.mock.calls.map((call) => call[1]);
-    expect(refreshedWorks).toContain(other.id);
-    expect(refreshedWorks).not.toContain(workId);
+    expect(write).not.toHaveBeenCalled();
+    expect((await b.service.listBrands())[0].context).toBe(VALID.text);
+
+    vi.spyOn(b.hub, 'liveMemberCount').mockReturnValue(0);
+    await b.service.addTeamMember(workId, 'researcher');
+    expect(write.mock.calls.some((call) => call[1] === workId && String(call[2]).includes(VALID.text))).toBe(true);
+
+    write.mockClear();
+    vi.spyOn(b.hub, 'liveMemberCount').mockReturnValue(1);
+    await b.service.addTeamMember(workId, 'analyst');
+    expect(write).not.toHaveBeenCalled();
   });
 
   it('rejects unknown fields at the service boundary', async () => {
-    await expect(b.service.proposeBrandContextFromAgent(chatId, 'msg_x', { ...VALID, extra: 'no' })).rejects.toThrow(/Unknown/);
+    await expect(b.service.proposeBrandContextFromAgent(chatId, 'msg_x', { ...VALID, extra: 'no' } as never)).rejects.toThrow(/Unknown/);
+  });
+
+  it('keeps a second chat\'s clientRequestId instead of swallowing it', async () => {
+    const at = new Date().toISOString();
+    b.repo.insertMember({
+      id: 'ses_other', workId, roleId: 'researcher', roleName: 'Researcher', initial: 'R',
+      runtime: 'codex', model: null, accountId: null, sessionId: '', done: false, createdAt: at, updatedAt: at,
+    });
+    const first = await b.service.proposeBrandContextFromAgent(chatId, 'msg_a', { ...VALID, clientRequestId: 'req_shared' });
+    const second = await b.service.proposeBrandContextFromAgent('ses_other', 'msg_b', {
+      ...VALID, text: 'Otro agente, otro texto.', clientRequestId: 'req_shared',
+    });
+    expect(second?.id).not.toBe(first?.id);
+    expect(second?.status).toBe('pending');
+    expect((await b.service.listBrandContextProposals(brandId)).find((p) => p.id === first!.id)?.status).toBe('rejected');
+  });
+
+  it('refuses a composed append that would exceed LIMITS.context', async () => {
+    await b.service.updateBrand(brandId, 'A'.repeat(LIMITS.context - 8));
+    await expect(b.service.proposeBrandContextFromAgent(chatId, 'msg_big', {
+      text: 'BBBBBBBBBB', rationale: 'x', mode: 'append', clientRequestId: 'req_big',
+    })).rejects.toMatchObject({ code: 'CONTEXT_TOO_LONG' });
+    expect((await b.service.listBrandContextProposals(brandId))).toEqual([]);
+  });
+
+  it('rejects a stale replace unless acceptStale is set', async () => {
+    await b.service.updateBrand(brandId, 'Base X');
+    const pending = await b.service.proposeBrandContextFromAgent(chatId, 'msg_stale', {
+      text: 'Propuesto', rationale: 'x', mode: 'replace', clientRequestId: 'req_stale',
+    });
+    await b.service.updateBrand(brandId, 'Base Y');
+    await expect(b.service.approveBrandContextProposal(pending!.id, null)).rejects.toMatchObject({ code: 'PROPOSAL_STALE' });
+    expect((await b.service.listBrands())[0].context).toBe('Base Y');
+    await b.service.approveBrandContextProposal(pending!.id, null, true);
+    expect((await b.service.listBrands())[0].context).toBe('Propuesto');
+  });
+
+  it('trims proposal text and rationale and rejects control chars on updateBrand', async () => {
+    const pending = await b.service.proposeBrandContextFromAgent(chatId, 'msg_trim', {
+      text: '\n  Recortado  \n', rationale: '  Motivo  ', mode: 'replace', clientRequestId: 'req_trim',
+    });
+    expect(pending?.text).toBe('Recortado');
+    expect(pending?.rationale).toBe('Motivo');
+    await expect(b.service.updateBrand(brandId, 'hola\u0007')).rejects.toThrow(/control characters/);
   });
 
   it('applies an append proposal only on pending → approved', async () => {

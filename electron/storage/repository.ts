@@ -20,7 +20,7 @@ interface BrandContextProposalRow extends SqlRow {
   source_chat_id: string | null; source_message_id: string | null; source_member_id: string | null;
   source_role_id: string | null; source_runtime: string | null;
   text: string; rationale: string; mode: string; status: string; fingerprint: string;
-  client_request_id: string | null; created_at: string; decided_at: string | null;
+  base_fingerprint: string; client_request_id: string | null; created_at: string; decided_at: string | null;
 }
 interface DocumentRow extends SqlRow { id: string; work_id: string; kind: string; title: string; file_name: string; status: string; funnel_stages: string; proposed_stages: string; base_doc_id: string | null; base_rev_id: string | null; base_print: string | null; last_print: string | null; created_at: string; updated_at: string }
 interface MemberRow extends SqlRow { id: string; work_id: string; role_id: string; role_name: string; initial: string; runtime: string; model: string | null; account_id: string | null; session_id: string; done: number; continued_from: string | null; tier: string | null; usage_json: string | null; created_at: string; updated_at: string }
@@ -121,6 +121,7 @@ const toBrandContextProposal = (r: BrandContextProposalRow): BrandContextProposa
   mode: r.mode === 'replace' ? 'replace' : 'append',
   status: r.status === 'approved' || r.status === 'rejected' ? r.status : 'pending',
   fingerprint: r.fingerprint,
+  baseFingerprint: r.base_fingerprint,
   clientRequestId: r.client_request_id,
   createdAt: r.created_at,
   decidedAt: r.decided_at,
@@ -646,10 +647,10 @@ export class LatteRepository {
     return toBrandContextProposal(row);
   }
 
-  findBrandContextRequest(brandId: string, clientRequestId: string): BrandContextProposal | null {
+  findBrandContextRequest(brandId: string, workId: string, chatId: string, clientRequestId: string): BrandContextProposal | null {
     const row = this.db.get<BrandContextProposalRow>(
-      'SELECT * FROM brand_context_proposals WHERE brand_id = ? AND client_request_id = ?',
-      [brandId, clientRequestId],
+      'SELECT * FROM brand_context_proposals WHERE brand_id = ? AND work_id = ? AND source_chat_id = ? AND client_request_id = ?',
+      [brandId, workId, chatId, clientRequestId],
     );
     return row ? toBrandContextProposal(row) : null;
   }
@@ -664,11 +665,11 @@ export class LatteRepository {
 
   insertBrandContextProposal(proposal: BrandContextProposal): BrandContextProposal {
     this.db.run(
-      'INSERT INTO brand_context_proposals(id, brand_id, work_id, source_chat_id, source_message_id, source_member_id, source_role_id, source_runtime, text, rationale, mode, status, fingerprint, client_request_id, created_at, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO brand_context_proposals(id, brand_id, work_id, source_chat_id, source_message_id, source_member_id, source_role_id, source_runtime, text, rationale, mode, status, fingerprint, base_fingerprint, client_request_id, created_at, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         proposal.id, proposal.brandId, proposal.workId,
         proposal.source.chatId, proposal.source.messageId, proposal.source.memberId, proposal.source.roleId, proposal.source.runtime,
-        proposal.text, proposal.rationale, proposal.mode, proposal.status, proposal.fingerprint,
+        proposal.text, proposal.rationale, proposal.mode, proposal.status, proposal.fingerprint, proposal.baseFingerprint,
         proposal.clientRequestId, proposal.createdAt, proposal.decidedAt,
       ],
     );

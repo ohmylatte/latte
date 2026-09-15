@@ -272,6 +272,10 @@ export interface BrandContextProposal {
   mode: BrandContextMode;
   status: BrandContextProposalStatus;
   fingerprint: string;
+  /** Huella de Brand.context al momento de proponer. */
+  baseFingerprint: string;
+  /** True when Brand.context no longer matches baseFingerprint. Filled when listing. */
+  stale?: boolean;
   clientRequestId: string | null;
   createdAt: string;
   decidedAt: string | null;
@@ -506,6 +510,7 @@ export interface LatteAPI {
   setContentLocale(locale: ContentLocale): Promise<ContentLocale>;
   appInfo(): Promise<AppInfo>;
   listBrands(): Promise<Brand[]>;
+  getBrand(brandId: string): Promise<Brand>;
   createBrand(name: string): Promise<Brand>;
   updateBrand(id: string, context: string): Promise<Brand>;
   archiveBrand(id: string): Promise<Brand>;
@@ -614,7 +619,7 @@ export interface LatteAPI {
   rejectDecision(decisionId: string): Promise<Decision>;
   archiveDecision(decisionId: string): Promise<Decision>;
   listBrandContextProposals(brandId: string): Promise<BrandContextProposal[]>;
-  approveBrandContextProposal(id: string, edited: string | null): Promise<BrandContextProposal>;
+  approveBrandContextProposal(id: string, edited: string | null, acceptStale?: boolean): Promise<BrandContextProposal>;
   rejectBrandContextProposal(id: string): Promise<BrandContextProposal>;
   requestBrandContextDraft(workId: string): Promise<ChatSession>;
   runtimeStatus(): Promise<RuntimeStatus[]>;
