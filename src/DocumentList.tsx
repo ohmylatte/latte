@@ -96,7 +96,7 @@ export function DocumentList({ documents, workId, currentWorkId, workTitles, sel
 
     {suggestion && <div className="doc-suggestion">
       <span><strong>{suggestion.label}</strong> {suggestion.hint}</span>
-      <button onClick={onCreate} disabled={busy}><Plus size={13} />{t('ui.auto.083')}</button>
+      <button onClick={onCreate} disabled={busy}><Plus size={13} />{t('ui.auto.118')}</button>
     </div>}
 
     <footer className="doc-list-footer">
