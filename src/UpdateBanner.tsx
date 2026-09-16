@@ -8,6 +8,14 @@ const START: UpdateState = { phase: 'idle', version: null, percent: 0, message: 
 /** Identity of what is being offered: dismissing one state must not hide the next. */
 const key = (state: UpdateState) => `${state.phase}:${state.version ?? ''}`;
 
+/** Only installed .deb builds need persistent manual-update guidance here. */
+export function UnsupportedUpdateNotice({ state }: { state: UpdateState }) {
+  if (state.phase !== 'unsupported' || state.unsupportedKind !== 'manual-install') return null;
+  return <section className="update-toast" role="status" aria-live="polite">
+    <p>{state.message}</p>
+  </section>;
+}
+
 /**
  * The update notice.
  *
@@ -29,6 +37,7 @@ export function UpdateBanner() {
     return stop;
   }, []);
 
+  if (state.phase === 'unsupported') return <UnsupportedUpdateNotice state={state} />;
   const visible = state.phase === 'available' || state.phase === 'downloading' || state.phase === 'ready' || (state.phase === 'error' && state.version !== null);
   if (!visible || dismissed === key(state)) return null;
 

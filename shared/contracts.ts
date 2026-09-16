@@ -304,9 +304,12 @@ export interface AppInfo {
  * promised.
  */
 export type UpdatePhase = 'unsupported' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error';
+export type UpdateUnsupportedKind = 'source' | 'manual-install' | 'unavailable';
 
 export interface UpdateState {
   phase: UpdatePhase;
+  /** Backend-owned reason category. Present only while `phase` is unsupported. */
+  unsupportedKind?: UpdateUnsupportedKind;
   /** Version being offered, downloaded or ready. Null when there is nothing. */
   version: string | null;
   /** 0..100 while downloading; 0 otherwise. */

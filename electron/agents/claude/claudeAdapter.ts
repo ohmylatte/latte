@@ -6,8 +6,8 @@ import { DEFAULT_EFFORT_TIER, EMPTY_USAGE, type ChatEvent, type ChatMessage, typ
 import { writeFileAtomic } from '../../core/atomicFile';
 import { NotFoundError, UnavailableError, ValidationError } from '../../core/errors';
 import { newId } from '../../core/ids';
+import { killProcessTree, spawnInOwnProcessGroup } from '../../core/processTree';
 import { addUsage, tokenCount } from '../../core/usage';
-import { killTree } from '../../opencode/server';
 import { spawnSpecFor } from '../../runtime/commandRunner';
 import { scrubEnv } from '../../runtime/terminalManager';
 import { claudeArgsForTier } from '../tiers';
@@ -167,7 +167,7 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
 
     let child: ChildProcess;
     try {
-      child = (this.deps.spawnImpl ?? spawn)(spec.file, spec.args, { cwd: input.directory, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      child = spawnInOwnProcessGroup(this.deps.spawnImpl ?? spawn, spec.file, spec.args, { cwd: input.directory, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }, this.platform);
     } catch (error) {
       throw new UnavailableError(`Could not start Claude Code: ${describe(error)}`);
     }
@@ -336,7 +336,7 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
     live.busy = false;
     this.chats.delete(live.chatId);
     try { live.child.stdin?.end(); } catch { /* ignore */ }
-    killTree(live.child, this.platform);
+    killProcessTree(live.child, this.platform);
     this.deps.emit({ chatId: live.chatId, type: 'closed', reason });
   }
 

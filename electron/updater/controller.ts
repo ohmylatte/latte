@@ -1,4 +1,4 @@
-import type { InstallOutcome, UpdateState } from '../../shared/contracts';
+import type { InstallOutcome, UpdateState, UpdateUnsupportedKind } from '../../shared/contracts';
 
 /**
  * The part of an update engine this controller needs. Deliberately smaller
@@ -30,6 +30,8 @@ export interface UpdateControllerDeps {
   engine: UpdaterEngine | null;
   /** Why there is no engine. Shown verbatim; must be honest. */
   unsupportedReason?: string;
+  /** Structured reason for renderer presentation; never inferred from prose. */
+  unsupportedKind?: UpdateUnsupportedKind;
   emit: (state: UpdateState) => void;
   /** Latest state reported by the renderer. A restart must never discard it. */
   hasUnsavedWork: () => boolean;
@@ -57,7 +59,13 @@ export class UpdateController {
   constructor(private readonly deps: UpdateControllerDeps) {
     this.state = deps.engine
       ? { ...IDLE }
-      : { phase: 'unsupported', version: null, percent: 0, message: deps.unsupportedReason ?? 'Las actualizaciones automáticas no están disponibles en esta instalación.' };
+      : {
+        phase: 'unsupported',
+        unsupportedKind: deps.unsupportedKind ?? 'unavailable',
+        version: null,
+        percent: 0,
+        message: deps.unsupportedReason ?? 'Las actualizaciones automáticas no están disponibles en esta instalación.',
+      };
     if (deps.engine) this.listen(deps.engine);
   }
 

@@ -210,7 +210,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   listTeam: async () => [], addTeamMember: unavailable, openTeamMember: unavailable, pauseTeamMember: unavailable, finishTeamMember: unavailable, restartTeamMember: unavailable, removeTeamMember: unavailable, setTeamMemberModel: unavailable, setTeamMemberTier: unavailable, draftContinuation: unavailable,
   // The web preview is always whatever ohmylatte.app is serving: there is
   // nothing to download and nothing to restart.
-  checkForUpdate: async () => ({ phase: 'unsupported' as const, version: null, percent: 0, message: 'Esta es la vista previa web: se actualiza sola al recargar la página.' }),
+  checkForUpdate: async () => ({ phase: 'unsupported' as const, unsupportedKind: 'source' as const, version: null, percent: 0, message: 'Esta es la vista previa web: se actualiza sola al recargar la página.' }),
   downloadUpdate: async () => browserAPI.checkForUpdate(),
   installUpdate: async () => ({ status: 'not-ready' as const }),
   onUpdateState: () => () => {},

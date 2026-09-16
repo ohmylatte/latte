@@ -13,8 +13,13 @@ export function ensureUserBinPath(
   const candidates = home
     ? [path.posix.join(home, '.local/bin'), '/usr/local/bin']
     : ['/usr/local/bin'];
-  const parts = (env.PATH ?? '').split(':').filter(Boolean);
+  const originalPath = env.PATH;
+  const parts = (originalPath ?? '').split(':').filter(Boolean);
   const added = candidates.filter((c) => !parts.includes(c));
   if (added.length === 0) return { env, added };
-  return { env: { ...env, PATH: [...added, ...parts].join(':') }, added };
+  const prefix = added.join(':');
+  return {
+    env: { ...env, PATH: originalPath === undefined ? prefix : `${prefix}:${originalPath}` },
+    added,
+  };
 }

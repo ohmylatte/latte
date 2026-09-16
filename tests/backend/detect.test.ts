@@ -59,6 +59,114 @@ describe('RuntimeDetector', () => {
     expect(claude.detail).toMatch(/found, but the terminal backend is unavailable: node-pty binary missing/);
   });
 
+  it('coalesces concurrent lookups for one provider and caches the settled result', async () => {
+    let releaseLookup!: () => void;
+    const lookupGate = new Promise<void>((resolve) => { releaseLookup = resolve; });
+    const runner = fakeRunner(async (file) => {
+      if (file === 'which') {
+        await lookupGate;
+        return { code: 0, stdout: '/bin/opencode\n' };
+      }
+      return { code: 0, stdout: 'opencode 1.2.3\n' };
+    });
+    const detector = new RuntimeDetector({ runner, terminalAvailability: () => ({ available: true }), platform: 'linux', env: {}, ttlMs: 60_000 });
+
+    const pending = [detector.resolve('opencode'), detector.resolve('opencode'), detector.resolve('opencode')];
+    expect(runner.calls).toEqual([{ file: 'which', args: ['opencode'], timeoutMs: 4_000 }]);
+
+    releaseLookup();
+    const [first, second, third] = await Promise.all(pending);
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+    expect(runner.calls).toEqual([
+      { file: 'which', args: ['opencode'], timeoutMs: 4_000 },
+      { file: '/bin/opencode', args: ['--version'], timeoutMs: 8_000 },
+    ]);
+
+    expect(await detector.resolve('opencode')).toBe(first);
+    expect(runner.calls).toHaveLength(2);
+  });
+
+  it('does not serialize detection across different providers', async () => {
+    let releaseOpenCode!: () => void;
+    const openCodeGate = new Promise<void>((resolve) => { releaseOpenCode = resolve; });
+    const runner = fakeRunner(async (file, args) => {
+      if (file === 'which' && args[0] === 'opencode') {
+        await openCodeGate;
+        return { code: 0, stdout: '/bin/opencode\n' };
+      }
+      if (file === 'which') return { code: 0, stdout: `/bin/${args[0]}\n` };
+      return { code: 0, stdout: '1.0.0\n' };
+    });
+    const detector = new RuntimeDetector({ runner, terminalAvailability: () => ({ available: true }), platform: 'linux', env: {} });
+
+    const openCodePending = detector.resolve('opencode');
+    await expect(detector.resolve('codex')).resolves.toEqual({ provider: 'codex', executable: '/bin/codex', version: '1.0.0' });
+    releaseOpenCode();
+    await expect(openCodePending).resolves.toEqual({ provider: 'opencode', executable: '/bin/opencode', version: '1.0.0' });
+  });
+
+  it('clears a rejected in-flight lookup so a later call can retry', async () => {
+    let attempts = 0;
+    const runner = fakeRunner((file) => {
+      if (file === 'which') {
+        attempts += 1;
+        if (attempts === 1) throw new Error('unexpected runner failure');
+        return { code: 0, stdout: '/bin/opencode\n' };
+      }
+      return { code: 0, stdout: 'opencode 1.2.3\n' };
+    });
+    const detector = new RuntimeDetector({ runner, terminalAvailability: () => ({ available: true }), platform: 'linux', env: {} });
+
+    const rejected = await Promise.allSettled([detector.resolve('opencode'), detector.resolve('opencode')]);
+    expect(rejected).toEqual([
+      { status: 'rejected', reason: expect.objectContaining({ message: 'unexpected runner failure' }) },
+      { status: 'rejected', reason: expect.objectContaining({ message: 'unexpected runner failure' }) },
+    ]);
+
+    await expect(detector.resolve('opencode')).resolves.toEqual({
+      provider: 'opencode',
+      executable: '/bin/opencode',
+      version: 'opencode 1.2.3',
+    });
+    expect(attempts).toBe(2);
+  });
+
+  it('prevents an older in-flight result from repopulating the cache after invalidate', async () => {
+    let releaseOld!: () => void;
+    let releaseFresh!: () => void;
+    const oldGate = new Promise<void>((resolve) => { releaseOld = resolve; });
+    const freshGate = new Promise<void>((resolve) => { releaseFresh = resolve; });
+    let lookups = 0;
+    const runner = fakeRunner(async (file) => {
+      if (file === 'which') {
+        lookups += 1;
+        if (lookups === 1) {
+          await oldGate;
+          return { code: 0, stdout: '/bin/opencode-old\n' };
+        }
+        await freshGate;
+        return { code: 0, stdout: '/bin/opencode-fresh\n' };
+      }
+      return { code: 0, stdout: `${file} 1.0.0\n` };
+    });
+    const detector = new RuntimeDetector({ runner, terminalAvailability: () => ({ available: true }), platform: 'linux', env: {}, ttlMs: 60_000 });
+
+    const oldPending = detector.resolve('opencode');
+    detector.invalidate();
+    const freshPending = detector.resolve('opencode');
+    expect(runner.calls.filter((call) => call.file === 'which')).toHaveLength(2);
+
+    releaseFresh();
+    const fresh = await freshPending;
+    releaseOld();
+    const old = await oldPending;
+    expect(old?.executable).toBe('/bin/opencode-old');
+    expect(fresh?.executable).toBe('/bin/opencode-fresh');
+    expect(await detector.resolve('opencode')).toBe(fresh);
+    expect(runner.calls.filter((call) => call.file === 'which')).toHaveLength(2);
+  });
+
   it('caches lookups within the ttl and refreshes after invalidate', async () => {
     let hits = 0;
     const runner = fakeRunner((file) => {

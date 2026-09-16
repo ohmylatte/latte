@@ -1,6 +1,6 @@
 {
   "name": "latte",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "private": true,
   "description": "Latte - An Agent Marketing Platform. Local-first desktop workspace for directing coding/marketing agents around brands and deliverables.",
   "license": "MIT",
@@ -59,6 +59,7 @@
     "electron": "^44.2.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
+    "js-yaml": "^5.4.1",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vite": "^7.1.0",

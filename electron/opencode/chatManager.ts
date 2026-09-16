@@ -1,3 +1,4 @@
+import type { spawn } from 'node:child_process';
 import { DEFAULT_EFFORT_TIER, EMPTY_USAGE, type ChatEvent, type ChatMessage, type ChatPart, type ChatRuntimeStatus, type ChatSession, type ChatUsage, type PermissionReply, type ProviderAuthMethod, type ProviderInfo, type ProviderOAuthStart } from '../../shared/contracts';
 import { opencodeVariantForTier } from '../agents/tiers';
 import { sessionFrom, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../agents/types';
@@ -33,6 +34,8 @@ export interface ChatManagerDeps {
   clientTimeoutMs?: number;
   startupTimeoutMs?: number;
   log?: (line: string) => void;
+  /** Injectable process launcher for bounded tests. */
+  spawnImpl?: typeof spawn;
   /** Tests: talk to an already running (fake) server instead of spawning one. */
   endpoint?: OpenCodeEndpoint;
   maxChats?: number;
@@ -86,32 +89,14 @@ export class ChatManager implements RuntimeAdapter {
 
   // Status ------------------------------------------------------------------
 
-  /**
-   * Starts the local runtime lazily (it is the default agent path) so the UI
-   * can show the configured models before the first message.
-   */
+  /** Detects OpenCode without starting its server or loading providers. */
   async status(): Promise<ChatRuntimeStatus> {
     const runtime = await this.deps.resolveExecutable();
     if (!runtime && !this.deps.endpoint) {
       return { available: false, detail: 'OpenCode is not installed or not on PATH. Install it to use the native chat.', version: null, models: [], defaultModel: null };
     }
     const version = runtime?.version ?? null;
-    let client: OpenCodeClient;
-    try {
-      client = await this.ensureClient();
-    } catch (error) {
-      return { available: false, detail: `OpenCode runtime could not start: ${describe(error)}`, version, models: [], defaultModel: null };
-    }
-    try {
-      const providers = await client.providers(this.deps.serverCwd);
-      const { models, defaultModel } = summariseProviders(providers);
-      if (models.length === 0) {
-        return { available: false, detail: 'OpenCode is running but no provider is configured. Run "opencode auth login" in a terminal, then retry.', version, models, defaultModel };
-      }
-      return { available: true, detail: `OpenCode${version ? ` ${version}` : ''} · ${models.length} model(s) configured`, version, models, defaultModel };
-    } catch (error) {
-      return { available: false, detail: `OpenCode runtime not reachable: ${describe(error)}`, version, models: [], defaultModel: null };
-    }
+    return { available: true, detail: `OpenCode${version ? ` ${version}` : ''} detected. It will start when a chat or provider action is used.`, version, models: [], defaultModel: null };
   }
 
   // Providers ---------------------------------------------------------------
@@ -357,6 +342,7 @@ export class ChatManager implements RuntimeAdapter {
         platform: this.deps.platform,
         startupTimeoutMs: this.deps.startupTimeoutMs,
         log: this.deps.log,
+        spawnImpl: this.deps.spawnImpl,
       });
       try {
         endpoint = await this.server.ensure();

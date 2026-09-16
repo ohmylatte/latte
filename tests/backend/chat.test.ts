@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ChatEvent } from '../../shared/contracts';
 import { ChatManager, summariseProviders } from '../../electron/opencode/chatManager';
@@ -49,6 +50,67 @@ describe('OpenCode protocol helpers', () => {
   });
 });
 
+describe('ChatManager runtime detection', () => {
+  it('reports an installed runtime without starting it or loading providers', async () => {
+    let spawnCount = 0;
+    const manager = new ChatManager({
+      resolveExecutable: async () => ({ executable: '/definitely-not-opencode', version: '1.18.26' }),
+      serverCwd: '/latte-data',
+      emit: () => {},
+      platform: 'linux',
+      spawnImpl: (() => {
+        spawnCount += 1;
+        throw new Error('status must not spawn OpenCode');
+      }) as typeof spawn,
+    });
+
+    await expect(manager.status()).resolves.toEqual({
+      available: true,
+      detail: 'OpenCode 1.18.26 detected. It will start when a chat or provider action is used.',
+      version: '1.18.26',
+      models: [],
+      defaultModel: null,
+    });
+    expect(spawnCount).toBe(0);
+    manager.shutdown();
+  });
+
+  it('still reports OpenCode as unavailable when no executable is installed', async () => {
+    const manager = new ChatManager({
+      resolveExecutable: async () => null,
+      serverCwd: '/latte-data',
+      emit: () => {},
+    });
+
+    await expect(manager.status()).resolves.toEqual({
+      available: false,
+      detail: 'OpenCode is not installed or not on PATH. Install it to use the native chat.',
+      version: null,
+      models: [],
+      defaultModel: null,
+    });
+    manager.shutdown();
+  });
+
+  it('starts the OpenCode server path when a chat is explicitly started', async () => {
+    let spawnCount = 0;
+    const manager = new ChatManager({
+      resolveExecutable: async () => ({ executable: '/definitely-not-opencode', version: '1.18.26' }),
+      serverCwd: '/latte-data',
+      emit: () => {},
+      platform: 'linux',
+      spawnImpl: (() => {
+        spawnCount += 1;
+        throw new Error('spawn requested');
+      }) as typeof spawn,
+    });
+
+    await expect(manager.start({ workId: 'wrk_1', directory: '/work', title: 't' })).rejects.toThrow(/spawn requested/);
+    expect(spawnCount).toBe(1);
+    manager.shutdown();
+  });
+});
+
 describe('ChatManager against a fake OpenCode server', () => {
   let fake: FakeOpenCode;
   let events: ChatEvent[];
@@ -71,9 +133,16 @@ describe('ChatManager against a fake OpenCode server', () => {
     await fake.close();
   });
 
-  it('reports status with the configured models (starting the runtime lazily)', async () => {
+  it('reports the detected runtime without querying the configured endpoint', async () => {
     const status = await manager.status();
-    expect(status).toMatchObject({ available: true, version: '1.18.26', models: ['fake-provider/fake-model'], defaultModel: 'fake-provider/fake-model' });
+    expect(status).toEqual({
+      available: true,
+      detail: 'OpenCode 1.18.26 detected. It will start when a chat or provider action is used.',
+      version: '1.18.26',
+      models: [],
+      defaultModel: null,
+    });
+    expect(fake.requests).toEqual([]);
   });
 
   it('lets the user pick a configured model and rejects unknown ones', async () => {

@@ -4,6 +4,7 @@ import type { AgentEvent, ChatEvent, InstallOutcome, UpdateState } from '../shar
 import { createBackend, type Backend } from './bootstrap';
 import { errorMessage } from './core/errors';
 import { ensureUserBinPath } from './core/linuxPath';
+import { installProcessStreamErrorGuards } from './core/processStreams';
 import {
   AGENT_EVENT_CHANNEL,
   CHAT_EVENT_CHANNEL,
@@ -15,10 +16,12 @@ import {
 } from './ipc/channels';
 import { IncompatibleSchemaError } from './storage/backup';
 import { UpdateController, type UpdateActivity } from './updater/controller';
-import { createUpdaterEngine } from './updater/engine';
+import { createUpdaterEngine, decideUpdaterAvailability } from './updater/engine';
 import { attachCloseGuard, attachQuitGuard, type CloseGuardHandle } from './windowClose';
 import { registerIpc } from './ipc/register';
 import { mainMessage } from './i18n';
+
+installProcessStreamErrorGuards(process.stdout, process.stderr);
 
 const uiLocale = () => backend?.repo.getMeta('ui_locale') === 'en-US' ? 'en-US' as const : 'es-AR' as const;
 const mt = (key: Parameters<typeof mainMessage>[1], params?: Record<string,string|number>) => mainMessage(uiLocale(), key, params);
@@ -51,7 +54,7 @@ if (!app.requestSingleInstanceLock()) {
   // Only one Latte at a time: they would share the same data directory.
   // Say so, or this looks like "the app simply did not open".
   console.error('[latte] Ya hay una ventana de Latte abierta. Se trae al frente esa y esta instancia se cierra.');
-  if (process.platform === 'linux') console.error('[latte] Si no la ves, buscá el proceso con `pgrep -af electron` y terminalo (`pkill -f "electron ."`) y volvé a intentar.');
+  if (process.platform === 'linux') console.error("[latte] Si no la ves, tanto en la app empaquetada como desde el código fuente, ejecutá `pgrep -af 'Latte|latte'`, inspeccioná el resultado para identificar el PID exacto de Latte, ejecutá `kill <PID>` y volvé a intentar.");
   else if (process.platform === 'darwin') console.error('[latte] Si no la ves, buscá el proceso Latte en el Monitor de Actividad y terminalo, y volvé a intentar.');
   else console.error('[latte] Si no la ves, cerrá el proceso electron.exe desde el Administrador de tareas y volvé a intentar.');
   app.quit();
@@ -150,10 +153,16 @@ async function start(): Promise<void> {
  * and the renderer is told exactly that.
  */
 function setupUpdates(): void {
-  const enabled = app.isPackaged && DEV_SERVER_URL === null;
-  const { engine, reason, quitAndInstall } = createUpdaterEngine({
-    enabled,
-    disabledReason: 'Estás usando Latte desde el código fuente. Las actualizaciones automáticas vienen con el instalador.',
+  const availability = decideUpdaterAvailability({
+    isPackaged: app.isPackaged,
+    devServerUrl: DEV_SERVER_URL,
+    platform: process.platform,
+    appImage: process.env.APPIMAGE,
+  });
+  const { engine, reason, unsupportedKind, quitAndInstall } = createUpdaterEngine({
+    enabled: availability.enabled,
+    disabledReason: availability.reason,
+    unsupportedKind: availability.unsupportedKind,
     // Alpha builds are published as normal releases so the direct download and
     // the updater agree; the pre-release channel stays behind an explicit opt-in.
     allowPrerelease: process.env.LATTE_UPDATE_PRERELEASE === '1',
@@ -162,6 +171,7 @@ function setupUpdates(): void {
   updates = new UpdateController({
     engine,
     unsupportedReason: reason,
+    unsupportedKind,
     emit: (state) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(UPDATE_STATE_CHANNEL, state);
     },

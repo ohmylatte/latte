@@ -3,7 +3,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ChatEvent } from '../../shared/contracts';
 import { SYSTEM_ACCOUNT_ID } from '../../electron/agents/accounts';
-import { resolveCodexBinary } from '../../electron/agents/codex/appServer';
+import { CodexAppServer, resolveCodexBinary } from '../../electron/agents/codex/appServer';
 import { CodexChatAdapter, partFromItem } from '../../electron/agents/codex/codexAdapter';
 import { contentFromAnswers, mapElicitationForm } from '../../electron/agents/codex/elicitation';
 import { makeTempDir, removeDir } from './helpers';
@@ -36,6 +36,26 @@ function fakeAdapter(events: ChatEvent[], dir: string, spawned?: Array<{ args: s
 }
 
 describe('Codex binary resolution and item translation', () => {
+  it.each([
+    ['linux', true],
+    ['win32', undefined],
+  ] as const)('owns an app-server process group only on POSIX (%s)', async (platform, detached) => {
+    let options: Parameters<typeof spawn>[2];
+    const server = new CodexAppServer({
+      executable: process.execPath,
+      env: {},
+      cwd: process.cwd(),
+      platform,
+      spawnImpl: ((...args: Parameters<typeof spawn>) => {
+        options = args[2];
+        throw new Error('spawn captured');
+      }) as unknown as typeof spawn,
+    });
+
+    await expect(server.ensure()).rejects.toThrow(/spawn captured/);
+    expect(options!.detached).toBe(detached);
+  });
+
   it('finds the platform binary behind the npm shim', () => {
     const shim = 'C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd';
     const real = 'C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe';
@@ -248,6 +268,21 @@ describe('CodexChatAdapter against a fake app-server', () => {
     expect(adapter.listMessages(session.id).at(-1)?.parts[0]).toMatchObject({
       text: expect.stringContaining('"workspace":"acme"'),
     });
+  });
+
+  it('turns an empty MCP form into a consent card and accepts with empty content', async () => {
+    const { session } = await adapter.start({ workId: 'wrk_1', directory: dir, title: 't', label: 'Codex', accountId: null });
+    await adapter.send(session.id, 'elicit-empty-form please');
+    await waitFor(() => events.some((e) => e.type === 'permission'));
+    const permission = events.find((e) => e.type === 'permission') as Extract<ChatEvent, { type: 'permission' }>;
+    expect(permission.request).toMatchObject({
+      permission: 'mcp-elicitation',
+      serverName: 'The-agentcy',
+      title: expect.stringContaining('set_workspace_profile'),
+    });
+    await adapter.replyPermission(session.id, permission.request.id, 'once');
+    await waitFor(() => events.some((e) => e.type === 'status' && e.status === 'idle'));
+    expect(adapter.listMessages(session.id).at(-1)?.parts[0]).toMatchObject({ text: 'elicitation accept {}' });
   });
 
   it('declines an unsupported elicitation schema with a visible notice', async () => {
