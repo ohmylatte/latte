@@ -158,8 +158,8 @@ describe('renderInstructionBundle: hard cap', () => {
     expect(bundle.text).toMatch(/the full brand context in \.\/\.latte\/context\/brand\.md/);
     // Compacted, not merely capped by luck: comfortably below the unbounded size
     // this fixture would have produced (brand + every decision + the skill body inlined).
-    // Protocol how-to + durable-facts line stay when squeeze already fits (~80 chars over this proxy).
-    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60 + 200);
+    // The protocol stays available under compaction; inherited brand memory adds a bounded summary on 0.5+.
+    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60 + 600);
     // The cap is a target, not an absolute: a short footer may push it slightly over,
     // but never by much once decisions and brand context are both at their floor.
     expect(bundle.text.length).toBeLessThan(INSTRUCTIONS_MAX_CHARS + 500);
