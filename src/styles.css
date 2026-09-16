@@ -547,6 +547,21 @@ html,body,#root{height:100%;overflow:hidden}
 .continuation .chat-card-actions .subtle{margin-top:0}
 .team-resume h3 small+small{margin-top:3px}
 .continuation .runtime-detail{display:block;margin:0 0 10px}
+/* --- Dónde estamos: la franja de orientación, de solo lectura ----------------- */
+.orientation-strip{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:8px 22px;border-bottom:1px solid var(--line);background:#faf7ef;font-size:11px;color:#5f5749;flex-shrink:0}
+.orientation-cells{display:flex;align-items:center;gap:16px;flex-wrap:wrap;min-width:0;flex:1}
+.orientation-cell{display:inline-flex;align-items:baseline;gap:6px;min-width:0}
+.orientation-cell>strong{font-weight:550;color:#302c26;white-space:nowrap}
+.orientation-value{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.orientation-cell[data-cell=outcome]{flex:1 1 180px;min-width:120px}
+.orientation-cell[data-cell=outcome] .orientation-value{max-width:100%}
+.orientation-cell[data-state=empty] .orientation-value{color:var(--muted)}
+.orientation-cell[data-state=unset] .orientation-value{color:var(--muted)}
+.orientation-cell[data-state=pending] .orientation-value{color:#8d4b21}
+.orientation-next{display:inline-flex;align-items:baseline;gap:6px;flex-shrink:0;white-space:nowrap}
+.orientation-next>strong{font-weight:550;color:#302c26}
+.orientation-next>span{color:var(--accent)}
+@media(max-width:850px){.orientation-strip{padding:8px 14px;gap:10px}.orientation-cells{gap:10px}}
 /* Expected output of a work, inside the Encargo: one line closed, a short form open. */
 .work-outcome{padding:8px 22px;border-bottom:1px solid var(--line);flex-shrink:0;background:#faf7ef;font-size:11px}
 .work-outcome-bar{display:flex;align-items:center;gap:9px;min-width:0}
