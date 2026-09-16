@@ -383,13 +383,16 @@ export function App() {
   };
   // First-run gate actions: skip sets the flag and keeps the returning-user path
   // intact; completion re-bootstraps and pre-selects the recommended role.
+  //
+  // Both REJECT on failure on purpose. While the gate is mounted it is the only
+  // surface on screen, so writing the failure into the shell's `error` state
+  // renders it off-screen: the human sees nothing. The gate owns the failure and
+  // shows it with a retry that finishes the same action.
   const skipOnboarding = async () => {
-    try {
-      await api.setOnboardingComplete(true);
-      setOnboarding('complete');
-      // The demo brand is already seeded by the backend on an empty database; just re-read it.
-      void api.listBrands().then(list => { setBrands(list); if (list[0]) { setBrand(list[0]); setContext(list[0].context); } }).catch(() => undefined);
-    } catch (e) { setError(displayError(e)); }
+    await api.setOnboardingComplete(true);
+    setOnboarding('complete');
+    // The demo brand is already seeded by the backend on an empty database; just re-read it.
+    void api.listBrands().then(list => { setBrands(list); if (list[0]) { setBrand(list[0]); setContext(list[0].context); } }).catch(() => undefined);
   };
   /**
    * Lands the walk in the shipped workspace.
@@ -417,6 +420,7 @@ export function App() {
     // The gate unmounts with this result, so the shell is the only place the
     // human can still be told what the brief or the folder link did.
     if (result.briefConflict) setNotice(t('onboarding.briefConflict'));
+    else if (result.folderLinkError) setNotice(t('onboarding.folderLinkFailed', { reason: result.folderLinkError }));
     else if (result.folderNotLinked) setNotice(t('onboarding.folderNotLinked'));
     // Pre-select the recommended role (opens its conversation). The web preview has no live team, so this is desktop-only.
     if (isDesktop && result.recommendedRoleId) {

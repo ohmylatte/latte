@@ -46,6 +46,13 @@ export interface OnboardingResult {
   briefConflict?: boolean;
   /** The folder picker was cancelled or declined: the work exists, nothing was linked. */
   folderNotLinked?: boolean;
+  /**
+   * The human accepted the folder link and the link itself failed. Distinct
+   * from `folderNotLinked`: nothing was declined, something broke. The gate
+   * unmounts with this result, so the shell is the only surface left that can
+   * say the link failed — without it the rejection vanished on unmount.
+   */
+  folderLinkError?: string;
 }
 
 export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onAdvanced }: {
@@ -72,7 +79,12 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
   const [chatStatus, setChatStatus] = useState<ChatRuntimeStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [completionFailed, setCompletionFailed] = useState(false);
+  /**
+   * Which in-gate failure the retry belongs to; `null` means there is nothing
+   * to retry. A single value instead of one boolean per path: the gate is the
+   * only mounted surface, so every failure lands in ONE alert with ONE owner.
+   */
+  const [retryAction, setRetryAction] = useState<'completion' | 'skip' | null>(null);
   const [notice, setNotice] = useState('');
   const [connecting, setConnecting] = useState<string | null>(null);
   const [login, setLogin] = useState<{ runtime: 'claude' | 'codex'; accountId: string; sessionId: string | null; url: string | null; instructions: string; ended: boolean } | null>(null);
@@ -95,6 +107,14 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
 
   // Persist on every step transition, so abandoning the walk resumes here.
   const firstRender = useRef(true);
+  /**
+   * The completion path is idempotent across a retry, and it needs TWO
+   * milestones, not one: "a work was created" and "the result is complete".
+   * A failure after `createWork` but before the result exists (`saveBrief`
+   * rejecting) would otherwise leave nothing to resume from, and the retry
+   * would run `createWork` again — a second work for the same brief.
+   */
+  const createdWork = useRef<{ workId: string; brandId: string; title: string } | null>(null);
   // A work already created whose landing failed: the retry must land THIS work,
   // never create a second one.
   const pendingResult = useRef<OnboardingResult | null>(null);
@@ -217,7 +237,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
     }
   };
 
-  const advance = () => { setError(''); setNotice(''); setState((prev) => ({ ...prev, step: 'prepare' })); };
+  const advance = () => { setError(''); setNotice(''); setRetryAction(null); setState((prev) => ({ ...prev, step: 'prepare' })); };
 
   /**
    * Connect a subscription runtime (Claude Code / Codex) for real: reuse the
@@ -312,56 +332,97 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
 
   const startWork = async () => {
     if (busy) return;
-    // A previous attempt created the work but could not land it: retry the
-    // landing only. Re-running createWork would duplicate the human's work.
     const pending = pendingResult.current;
-    if (!pending && (!workType || (!state.brandId && !state.usedDemo))) return;
+    const created = createdWork.current;
+    // A previous attempt created the work but could not land it: retry from
+    // there. Re-running createWork would duplicate the human's work.
+    if (!pending && !created && (!workType || (!state.brandId && !state.usedDemo))) return;
     setBusy(true);
     setError('');
+    setRetryAction(null);
     try {
       if (pending) {
+        // The result is already complete: only the landing is left.
         await onComplete(pending);
         pendingResult.current = null;
+        createdWork.current = null;
         return;
       }
-      const brandId = state.brandId;
-      if (!brandId || !workType) return;
-      const title = t(workType.titleKey);
-      const work = await api.createWork(brandId, title);
+      // Resume with what the failed attempt established; only a first attempt
+      // reads the walk's state. `title` and `brandId` come from the created
+      // work so a resume cannot depend on the step the human is looking at.
+      let work = created;
+      if (!work) {
+        const brandId = state.brandId;
+        if (!brandId || !workType) return;
+        const title = t(workType.titleKey);
+        const createdWorkRecord = await api.createWork(brandId, title);
+        work = { workId: createdWorkRecord.id, brandId, title };
+        // Remembered the moment it exists, BEFORE anything else can fail.
+        createdWork.current = work;
+      }
+      const { workId, brandId, title } = work;
       // A save never overwrites silently: on a conflict the disk version wins
       // and the human's text is kept as a revision. The work exists either way,
       // so the walk continues, but the shell is told the brief was not saved.
-      const outcome = await api.saveBrief(work.id, `# ${title}\n\n${state.brief}`);
+      const outcome = await api.saveBrief(workId, `# ${title}\n\n${state.brief}`);
       const briefConflict = outcome.status === 'conflict';
       // Folder linking is optional and honest: the same confirmation the
       // workspace shows comes first, a declined confirm or a cancelled picker
       // means "not linked", and neither ever loses the work just created.
       let folderNotLinked = false;
+      let folderLinkError: string | undefined;
       if (state.linkFolderRequested && isDesktop) {
         if (confirmFolderLink()) {
           try {
-            const result = await api.useFolder(work.id);
+            const result = await api.useFolder(workId);
             if (!result) folderNotLinked = true;
           } catch (e) {
-            setError(displayError(e));
+            // The human said yes and the link failed. Setting the gate's error
+            // here used to be the whole fix, but the gate unmounts right after
+            // and the message died with it: the failure travels in the result
+            // so the shell can render it.
+            folderLinkError = displayError(e);
           }
         } else {
           folderNotLinked = true;
         }
       }
-      const result: OnboardingResult = { workId: work.id, brandId, recommendedRoleId: state.recommendedRoleId, title, briefConflict, folderNotLinked };
+      const result: OnboardingResult = { workId, brandId, recommendedRoleId: state.recommendedRoleId, title, briefConflict, folderNotLinked, folderLinkError };
       // Remembered BEFORE the landing: if the shell cannot take over, the retry
       // lands this same work instead of creating a duplicate.
       pendingResult.current = result;
       await onComplete(result);
       pendingResult.current = null;
+      createdWork.current = null;
     } catch (e) {
       // The gate is still mounted, so the failure has to be visible HERE with a
       // way forward; the shell's error state renders off-screen behind the gate.
       setError(displayError(e));
-      if (pendingResult.current) setCompletionFailed(true);
+      if (createdWork.current) setRetryAction('completion');
     } finally {
       // Whatever happened, the CTA can never be left disabled forever.
+      setBusy(false);
+    }
+  };
+
+  /**
+   * "Saltar por ahora" is an async write of its own: it sets the flag the shell
+   * reads at boot. If it fails, the shell is STILL off-screen, so the failure
+   * is owned here — the same alert and retry the completion path uses — instead
+   * of vanishing into the shell's error state, where nobody could see it.
+   */
+  const skipOnboarding = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    setRetryAction(null);
+    try {
+      await onSkip();
+    } catch (e) {
+      setError(displayError(e));
+      setRetryAction('skip');
+    } finally {
       setBusy(false);
     }
   };
@@ -369,6 +430,10 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
   const goBack = () => {
     setError('');
     setNotice('');
+    // A failure belongs to the step that produced it: leaving the step clears
+    // the alert, so the retry can never land an old result on a new screen.
+    // The created work stays in the ref, so a later attempt resumes it.
+    setRetryAction(null);
     setState((prev) => {
       let step = previousStep(prev);
       // Free-form (no questions) never shows the context step.
@@ -396,19 +461,23 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
             <span key={step} className={'step' + (i <= stepIndex ? ' active' : '')}>{t(`onboarding.step.${step}` as const)}</span>
           ))}
         </div>
-        <button className="onboarding-skip" onClick={() => void onSkip()}>{t('onboarding.skip')}</button>
+        <button className="onboarding-skip" disabled={busy} onClick={() => void skipOnboarding()}>{t('onboarding.skip')}</button>
         {controls}
       </header>
 
       <main className="onboarding-main">
         <div className="onboarding-content">
-          {error && !completionFailed && <div role="alert" className="message error onboarding-message"><span>{error}</span><button aria-label={t('ui.auto.001')} onClick={() => setError('')}><X size={16} /></button></div>}
-          {completionFailed && (
-            // The work exists; only the landing failed. Say so here, inside the
-            // gate, and offer the one action that finishes the walk.
+          {error && !retryAction && <div role="alert" className="message error onboarding-message"><span>{error}</span><button aria-label={t('ui.auto.001')} onClick={() => setError('')}><X size={16} /></button></div>}
+          {retryAction && (
+            // INVARIANT — no async failure may be routed to state owned by a
+            // surface that is not mounted. The gate REPLACES the shell while it
+            // is up, so anything the shell renders (its `error` state) is
+            // invisible here. Every failure that can happen while the gate is
+            // mounted lands in this one alert, with the retry that finishes the
+            // action it belongs to.
             <div role="alert" className="message error onboarding-message">
-              <span>{t('onboarding.completionFailed')}{error ? ` — ${error}` : ''}</span>
-              <button className="primary" disabled={busy} onClick={() => void startWork()}>{busy ? <LoaderCircle className="spin" size={15} /> : <ArrowRight size={15} />}{t('continue.retry')}</button>
+              <span>{t(retryAction === 'skip' ? 'onboarding.skipFailed' : 'onboarding.completionFailed')}{error ? ` — ${error}` : ''}</span>
+              <button className="primary" disabled={busy} onClick={() => void (retryAction === 'skip' ? skipOnboarding() : startWork())}>{busy ? <LoaderCircle className="spin" size={15} /> : <ArrowRight size={15} />}{t('continue.retry')}</button>
             </div>
           )}
           {notice && <div role="status" className="message onboarding-message"><span>{notice}</span><button aria-label={t('ui.auto.001')} onClick={() => setNotice('')}><X size={16} /></button></div>}

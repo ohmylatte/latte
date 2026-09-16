@@ -24,9 +24,13 @@ const state = vi.hoisted(() => ({
   completeWriteError: false,
   /** `saveBrief` reports a conflict: the disk version won, the text was not saved. */
   briefConflict: false,
+  /** `saveBrief` REJECTS after `createWork` already succeeded: the work exists. */
+  briefWriteError: false,
   /** jsdom is not the desktop app; a test that needs the folder picker opts in. */
   isDesktop: false,
   useFolderCalls: 0,
+  /** The folder picker was accepted but the link itself failed. */
+  useFolderError: false,
   saveBrandContextCalls: [] as Array<{ brandId: string; text: string; fingerprint: string | null }>,
 }));
 
@@ -51,11 +55,13 @@ vi.mock('./browser-api', async (importOriginal) => {
         return actual.browserAPI.setOnboardingComplete(complete);
       },
       saveBrief: async (workId: string, brief: string, baseFingerprint?: string | null) => {
+        if (state.briefWriteError) throw new Error('no se pudo guardar el brief');
         if (state.briefConflict) return { status: 'conflict' } as unknown as SaveOutcome;
         return actual.browserAPI.saveBrief(workId, brief, baseFingerprint ?? null);
       },
       useFolder: async () => {
         state.useFolderCalls += 1;
+        if (state.useFolderError) throw new Error('La carpeta ya la usa otro trabajo');
         return null;
       },
       // Only reached when a test opts into the desktop path; the preview throws.
@@ -103,8 +109,10 @@ describe('first-run onboarding gate', () => {
     state.completeError = false;
     state.completeWriteError = false;
     state.briefConflict = false;
+    state.briefWriteError = false;
     state.isDesktop = false;
     state.useFolderCalls = 0;
+    state.useFolderError = false;
     state.saveBrandContextCalls = [];
     localStorage.clear();
   });
@@ -145,6 +153,29 @@ describe('first-run onboarding gate', () => {
     expect(screen.queryByRole('heading', { name: '¿En qué querés trabajar?' })).toBeNull();
     const stored = JSON.parse(localStorage.getItem('latte-preview-v1') ?? '{}');
     expect(stored.onboardingComplete).toBe(true);
+  });
+
+  it('shows a failed skip inside the gate with a retry, never a silent dead gate', async () => {
+    state.completeWriteError = true;
+    const { container } = mount();
+    await gateHeading();
+    fireEvent.click(screen.getByRole('button', { name: 'Saltar por ahora' }));
+
+    // The write failed, so the shell is still off-screen: an error routed there
+    // would be invisible and the gate would look inert. It has to be HERE.
+    expect(shell(container)).toBeNull();
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('No pudimos abrir tu espacio de trabajo. Reintentá para entrar.');
+    // Not frozen: the recovery action is actionable and the skip stays offered.
+    const retry = screen.getByRole('button', { name: 'Reintentar' }) as HTMLButtonElement;
+    expect(retry.disabled).toBe(false);
+    expect(screen.getByRole('button', { name: 'Saltar por ahora' })).toBeDefined();
+
+    // And the recovery action actually recovers.
+    state.completeWriteError = false;
+    fireEvent.click(retry);
+    await waitFor(() => expect(shell(container)).not.toBeNull());
+    expect(screen.queryByRole('heading', { name: '¿En qué querés trabajar?' })).toBeNull();
   });
 
   it('skips the context step entirely for the free-form work type', async () => {
@@ -298,6 +329,32 @@ describe('first-run onboarding gate', () => {
     expect(worksAfter).toBe(worksBefore);
   });
 
+  it('resumes the completion instead of creating a second work when the brief write rejects', async () => {
+    state.briefWriteError = true;
+    const { container } = mount();
+    await gateHeading();
+    clickCard(/Empezar libremente/);
+    await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
+    chooseDemoBrand();
+    clickCard(/Explorar con un proyecto demo/);
+    fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
+
+    // `createWork` succeeded and `saveBrief` did not: the work EXISTS, so the
+    // gate still owns the screen and must own this failure too.
+    expect(shell(container)).toBeNull();
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('El trabajo ya quedó creado');
+    const createdWorks = () => (JSON.parse(localStorage.getItem('latte-preview-v1') ?? '{}') as { works?: Array<{ title: string }> }).works?.filter((w) => w.title === 'Empezar libremente').length ?? 0;
+    expect(createdWorks()).toBe(1);
+
+    // The retry resumes the failed step. Re-running createWork here is exactly
+    // the duplicate the human would get charged for.
+    state.briefWriteError = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
+    await waitFor(() => expect(shell(container)).not.toBeNull());
+    expect(createdWorks()).toBe(1);
+  });
+
   it('surfaces a brief conflict in the shell and never claims the brief was saved', async () => {
     state.briefConflict = true;
     const { container } = mount();
@@ -357,6 +414,28 @@ describe('first-run onboarding gate', () => {
     await waitFor(() => expect(shell(container)).not.toBeNull());
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     expect(state.useFolderCalls).toBe(1);
+  });
+
+  it('surfaces a folder-link failure instead of losing it with the unmount', async () => {
+    state.isDesktop = true;
+    state.useFolderError = true;
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container } = mount();
+    await gateHeading();
+    clickCard(/Empezar libremente/);
+    await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
+    fireEvent.click(screen.getByRole('button', { name: /Vincular una carpeta o archivos/ }));
+    chooseDemoBrand();
+    clickCard(/Explorar con un proyecto demo/);
+    fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
+
+    // The human said yes and the link itself failed. The gate unmounts here, so
+    // the only surface left is the shell: silence is the bug.
+    await waitFor(() => expect(shell(container)).not.toBeNull());
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(state.useFolderCalls).toBe(1);
+    const notices = await screen.findAllByText(/No se pudo vincular la carpeta/);
+    expect(notices.length).toBeGreaterThan(0);
   });
 
   it('keeps the gate a pre-shell branch: no new workspace view was added', () => {
