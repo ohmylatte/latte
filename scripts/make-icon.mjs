@@ -1,8 +1,12 @@
-// Draws the Latte mark into PNG files, with no image dependency: the shape is
-// the same polygon the UI uses for `.logo-mark`, rasterised by hand and
-// compressed with Node's own zlib.
+// Draws the Latte mark into PNG files, with no image dependency.
+//
+// The shape is no longer a polygon written here by hand: it is the master SVG in
+// assets/latte-mark.svg. This file flattens that path's quadratic curves into a
+// polygon and rasterises it with the same 4x supersampling it always used, then
+// compresses with Node's own zlib. One source of truth, zero new dependencies.
 //
 // Usage: node scripts/make-icon.mjs
+
 import { deflateSync } from 'node:zlib';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,11 +14,85 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-/** The wordmark's L, as fractions of the box: same polygon as the CSS clip-path. */
-const MARK = [[0, 0.28], [0.33, 0], [0.33, 0.72], [1, 0.72], [0.72, 1], [0, 1]];
-const BACKGROUND = [40, 37, 31];      // --dark
-const GRADIENT_TOP = [217, 134, 89];  // #d98659
-const GRADIENT_BOTTOM = [174, 76, 45]; // #ae4c2d
+const SVG_FILE = path.join(root, 'assets', 'latte-mark.svg');
+const BACKGROUND = [40, 37, 31];       // --dark
+const MARK = [183, 85, 52];            // --accent, #b75534
+const CORNER = 0.22;                   // rounded tile, as a fraction of the side
+const INSET = 0.22;                    // breathing room around the mark
+
+/* ------------------------------------------------------------- the SVG path */
+
+/**
+ * Flattens an SVG path of M/L/Q/Z into a polygon.
+ * Q segments are sampled; that is all this mark uses, so nothing else is handled.
+ */
+function flattenPath(d, steps = 8) {
+  const tokens = d.match(/[MLQZmlqz]|-?\d*\.?\d+/g) ?? [];
+  const pts = [];
+  let i = 0;
+  let cmd = null;
+  let cur = [0, 0];
+  const num = () => Number.parseFloat(tokens[i++]);
+
+  while (i < tokens.length) {
+    const token = tokens[i];
+    if (/^[MLQZmlqz]$/.test(token)) { cmd = token; i += 1; continue; }
+
+    if (cmd === 'M' || cmd === 'm') {
+      cur = [num(), num()];
+      pts.push(cur);
+      cmd = 'L';                       // later coordinate pairs are implicit lineto
+    } else if (cmd === 'L' || cmd === 'l') {
+      cur = [num(), num()];
+      pts.push(cur);
+    } else if (cmd === 'Q' || cmd === 'q') {
+      const cx = num();
+      const cy = num();
+      const x = num();
+      const y = num();
+      for (let s = 1; s <= steps; s += 1) {
+        const t = s / steps;
+        const m = 1 - t;
+        pts.push([
+          m * m * cur[0] + 2 * m * t * cx + t * t * x,
+          m * m * cur[1] + 2 * m * t * cy + t * t * y,
+        ]);
+      }
+      cur = [x, y];
+    } else if (cmd === 'Z' || cmd === 'z') {
+      cmd = null;
+    } else {
+      i += 1;
+    }
+  }
+  return pts;
+}
+
+/** Reads the master SVG and returns its outline normalised to the 0..1 box. */
+function loadMark() {
+  const svg = fs.readFileSync(SVG_FILE, 'utf8');
+  const vb = svg.match(/viewBox="([^"]+)"/);
+  if (!vb) throw new Error(`${SVG_FILE} has no viewBox`);
+  const [vx, vy, vw, vh] = vb[1].trim().split(/\s+/).map(Number);
+
+  const d = svg.match(/\sd="([^"]+)"/);
+  if (!d) throw new Error(`${SVG_FILE} has no path`);
+
+  const pts = flattenPath(d[1]).map(([x, y]) => [(x - vx) / vw, (y - vy) / vh]);
+
+  // The icon is square, so the mark is fitted by its longest side and centred.
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of pts) {
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  const scale = 1 / Math.max(x1 - x0, y1 - y0);
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  return pts.map(([x, y]) => [(x - cx) * scale + 0.5, (y - cy) * scale + 0.5]);
+}
+
+/* ---------------------------------------------------------------- rasteriser */
 
 function insidePolygon(polygon, x, y) {
   let inside = false;
@@ -26,7 +104,7 @@ function insidePolygon(polygon, x, y) {
   return inside;
 }
 
-/** 4x supersampling: the diagonals of the mark need it or they look ragged. */
+/** 4x supersampling: the curves need it or they look ragged. */
 function coverage(polygon, px, py, size, inset) {
   let hits = 0;
   for (let sy = 0; sy < 4; sy += 1) {
@@ -47,24 +125,20 @@ function roundedCorner(px, py, size, radius) {
   if (!outside) return 1;
   const [cx, cy] = corners.find(([ax, ay]) => Math.abs(x - ax) < radius && Math.abs(y - ay) < radius) ?? [];
   if (cx === undefined) return 1;
-  const distance = Math.hypot(x - cx, y - cy);
-  return Math.max(0, Math.min(1, radius - distance + 0.5));
+  return Math.max(0, Math.min(1, radius - Math.hypot(x - cx, y - cy) + 0.5));
 }
 
-function renderIcon(size, { transparent = false } = {}) {
-  const radius = Math.round(size * 0.22);
-  const inset = 0.22;
+function renderIcon(polygon, size, { transparent = false } = {}) {
+  const radius = Math.round(size * CORNER);
   const rows = [];
   for (let y = 0; y < size; y += 1) {
     const row = Buffer.alloc(1 + size * 4);
     row[0] = 0; // filter: none
     for (let x = 0; x < size; x += 1) {
-      const mark = coverage(MARK, x, y, size, inset);
-      const t = y / size;
-      const markColor = GRADIENT_TOP.map((c, i) => Math.round(c + (GRADIENT_BOTTOM[i] - c) * t));
-      const base = transparent ? markColor : BACKGROUND;
+      const mark = coverage(polygon, x, y, size, INSET);
+      const base = transparent ? MARK : BACKGROUND;
       const alphaBase = transparent ? 0 : 255;
-      const rgb = base.map((c, i) => Math.round(c + (markColor[i] - c) * mark));
+      const rgb = base.map((c, i) => Math.round(c + (MARK[i] - c) * mark));
       const alpha = Math.round((alphaBase + (255 - alphaBase) * mark) * roundedCorner(x, y, size, radius));
       const at = 1 + x * 4;
       row[at] = rgb[0];
@@ -76,6 +150,8 @@ function renderIcon(size, { transparent = false } = {}) {
   }
   return png(size, Buffer.concat(rows));
 }
+
+/* -------------------------------------------------------------- PNG encoder */
 
 function chunk(type, data) {
   const length = Buffer.alloc(4);
@@ -115,6 +191,11 @@ function png(size, raw) {
   ]);
 }
 
+/* --------------------------------------------------------------------- run */
+
+const polygon = loadMark();
+console.log(`[icon] ${path.relative(root, SVG_FILE)} -> ${polygon.length} points`);
+
 const targets = [
   ['assets/icon-512.png', 512, {}],
   ['assets/icon-256.png', 256, {}],
@@ -124,6 +205,6 @@ const targets = [
 for (const [file, size, options] of targets) {
   const target = path.join(root, file);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, renderIcon(size, options));
+  fs.writeFileSync(target, renderIcon(polygon, size, options));
   console.log(`${file}  ${size}x${size}  ${fs.statSync(target).size} bytes`);
 }

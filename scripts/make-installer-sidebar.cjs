@@ -19,6 +19,10 @@ app.commandLine.appendSwitch('force-device-scale-factor', '1');
 
 const { pathToFileURL } = require('node:url');
 const fuente = (archivo) => pathToFileURL(path.join(raiz, 'src', 'fonts', archivo)).href;
+// La marca es el SVG maestro, embebido como data URI: este HTML se escribe en un
+// archivo temporal, así que una ruta relativa no resolvería.
+const marcaUrl = 'data:image/svg+xml;charset=utf-8,' +
+  encodeURIComponent(fs.readFileSync(path.join(raiz, 'assets', 'latte-mark.svg'), 'utf8'));
 const html = `<!doctype html><meta charset="utf-8"><style>
   @font-face { font-family: 'Serif'; src: url('${fuente('dm-serif-display.ttf')}'); }
   @font-face { font-family: 'Sans'; src: url('${fuente('dm-sans.ttf')}'); }
@@ -29,14 +33,15 @@ const html = `<!doctype html><meta charset="utf-8"><style>
     display: flex; flex-direction: column; justify-content: space-between;
     padding: 26px 22px; box-sizing: border-box;
   }
-  .marca { width: 34px; height: 39px; background: linear-gradient(135deg, #d98659, #ae4c2d);
-    clip-path: polygon(0 28%, 33% 0, 33% 72%, 100% 72%, 72% 100%, 0 100%); }
+  .marca { width: 34px; height: 43px; background: #b75534;
+    -webkit-mask: url("${marcaUrl}") center/contain no-repeat;
+    mask: url("${marcaUrl}") center/contain no-repeat; }
   h1 { font-family: 'Serif', serif; font-weight: 400; font-size: 27px;
     line-height: 1.1; letter-spacing: -.7px; margin: 16px 0 0; }
   h1 em { display: block; font-style: italic; color: #d98659; }
   .pie { font-size: 9.5px; line-height: 1.7; color: #9c9184; letter-spacing: .3px; }
   .pie strong { display: block; color: #cfc6b8; font-weight: 500; letter-spacing: 1.6px; font-size: 8.5px; margin-bottom: 3px; }
-  .linea { width: 34px; height: 2px; background: #ae4c2d; margin-bottom: 10px; }
+  .linea { width: 34px; height: 2px; background: #b75534; margin-bottom: 10px; }
 </style>
 <body>
   <div><div class="marca"></div><h1>Tu marketing,<em>en su lugar.</em></h1></div>
