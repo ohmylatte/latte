@@ -66,6 +66,7 @@ describe('explicit browser preview', () => {
     expect(decisions.map(d => d.text)).toEqual(['Email mensual']);
     expect(await api.listDecisions(launch.id)).toEqual([]);
     expect((await api.listBrandDecisions(other.id)).map(d => d.text)).toEqual(['No cruzar']);
+  });
   it('applies an approved brand-context proposal and refuses the strategist draft in the preview', async () => {
     const b = await api.createBrand('Marca');
     const w = await api.createWork(b.id, 'Uno');
