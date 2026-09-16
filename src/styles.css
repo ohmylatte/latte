@@ -318,10 +318,8 @@ html,body,#root{height:100%;overflow:hidden}
 .role-dot.busy{animation:pulse 1.2s ease-in-out infinite}
 .role-dot.ended{background:#b5ab9c}
 @keyframes pulse{50%{opacity:.35}}
-/* El badge va pegado a los controles de ventana, no flotando en el medio. */
 .topbar{justify-content:flex-start}
 .topbar .breadcrumb{flex:1;min-width:0}
-.topbar .local-badge{margin-left:auto;padding-right:4px}
 /* Quién está escribiendo, con el color de su rol. */
 .doc-editing{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0;background:var(--role-default);animation:pulse 1.2s ease-in-out infinite}
 .doc-editing[data-role=assistant]{background:var(--role-assistant)}
