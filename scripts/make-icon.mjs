@@ -15,8 +15,12 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SVG_FILE = path.join(root, 'assets', 'latte-mark.svg');
-const BACKGROUND = [40, 37, 31];       // --dark
-const MARK = [183, 85, 52];            // --accent, #b75534
+const BACKGROUND = [40, 37, 31];        // --dark
+const ACCENT = [183, 85, 52];           // --accent, #b75534
+// El tile es oscuro, asi que la marca usa el tinte claro: el acento puro sobre
+// carbon queda por debajo del contraste minimo. El favicon es transparente y se
+// ve sobre fondos claros, asi que se queda con el acento primario.
+const ACCENT_ON_DARK = [210, 125, 96];  // --accent-on-dark, #d27d60
 const CORNER = 0.22;                   // rounded tile, as a fraction of the side
 const INSET = 0.22;                    // breathing room around the mark
 
@@ -136,9 +140,10 @@ function renderIcon(polygon, size, { transparent = false } = {}) {
     row[0] = 0; // filter: none
     for (let x = 0; x < size; x += 1) {
       const mark = coverage(polygon, x, y, size, INSET);
-      const base = transparent ? MARK : BACKGROUND;
+      const ink = transparent ? ACCENT : ACCENT_ON_DARK;
+      const base = transparent ? ACCENT : BACKGROUND;
       const alphaBase = transparent ? 0 : 255;
-      const rgb = base.map((c, i) => Math.round(c + (MARK[i] - c) * mark));
+      const rgb = base.map((c, i) => Math.round(c + (ink[i] - c) * mark));
       const alpha = Math.round((alphaBase + (255 - alphaBase) * mark) * roundedCorner(x, y, size, radius));
       const at = 1 + x * 4;
       row[at] = rgb[0];
