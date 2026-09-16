@@ -62,6 +62,10 @@ vi.mock('./browser-api', async (importOriginal) => {
     isDesktop: false,
     api: {
       ...actual.browserAPI,
+      // These tests describe the workspace of a returning user: the first-run
+      // gate has already been completed, so the shell mounts directly.
+      getOnboardingComplete: async () => true,
+      getOnboardingDraft: async () => null,
       listBrandContextProposals: async (brandId: string) => [{ ...superseded, brandId }, { ...pending, brandId }],
       brandContextStatus: async (brandId: string) => ({
         ...(await actual.browserAPI.brandContextStatus(brandId)),

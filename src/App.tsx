@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, LoaderCircle, MessageSquare, Minus, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, X } from 'lucide-react';
-import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, AppInfo } from '../shared/contracts';
+import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, AppInfo, OnboardingDraft } from '../shared/contracts';
 import { api, chatStore, isDesktop } from './browser-api';
 import { DocumentsView, NewDocumentDialog } from './DocumentsView';
 import { hasMetadataDrafts } from './DocumentMetadata';
@@ -17,8 +17,10 @@ import { UpdateBanner } from './UpdateBanner';
 import { ALL_BRAND_SCOPE, inKnowledgeScope, selectWorkBrief, workBrief, workTitles, type KnowledgeScope } from './brand-knowledge';
 import { KnowledgeOrigin, KnowledgeScopeFilter } from './KnowledgeScope';
 import { ContextView } from './ContextView';
+import { OnboardingGate, type OnboardingResult } from './OnboardingGate';
 import { contextSaveNotice } from './context-view';
 import { applyFetchedBrand } from './brand-context-sync';
+import { confirmFolderLink } from './folder-link';
 
 /**
  * Every workspace view, in one place.
@@ -88,6 +90,18 @@ export function App() {
   const setSession = (value: AgentSession | null) => setSessions(previous => { const next = { ...previous }; if (value) next[value.workId] = value; else if (work) delete next[work.id]; return next; });
   // Settings is a screen of its own: the workspace shell unmounts while it is open (no document controls in the DOM) and comes back untouched.
   const [settings, setSettings] = useState<SettingsSection | null>(null);
+  // First-run gate: while loading we render the shell (the returning-user path); once the flag resolves the gate takes over for fresh installs.
+  const [onboarding, setOnboarding] = useState<'loading' | 'incomplete' | 'complete'>('loading');
+  // Persisted mid-flow draft, read at boot so a first paint resumes instantly.
+  const [onboardingDraft, setOnboardingDraft] = useState<OnboardingDraft | null>(null);
+  // The work the walk just created. The brand effect consumes it: `selectWork`
+  // would read `brand?.context` from a stale closure and the new work is not
+  // guaranteed to be `works[0]` once the list is re-read.
+  const pendingWorkRef = useRef<string | null>(null);
+  // The brand effect re-reads works when the id changes. Finishing the walk on
+  // the already-selected brand (the demo) changes nothing, so it needs its own
+  // reason to run; the ref above is only honoured if the effect runs.
+  const [brandEpoch, setBrandEpoch] = useState(0);
   // Review retains its resizable split; conversation focus leaves that width untouched.
   const [agentWidth, setAgentWidth] = useState<number>(readAgentWidth), [dragging, setDragging] = useState(false);
   const [layout, setLayout] = useState<'conversation' | 'review'>('conversation');
@@ -286,9 +300,9 @@ export function App() {
     ...agentRuntimes.flatMap(r => r.accounts.filter(a => a.loggedIn).map(a => ({ key: `${r.runtime}:${a.id}`, label: `${r.runtime === 'claude' ? 'Claude Code' : 'Codex'} · ${a.label}`, runtime: r.runtime, accountId: a.id }))),
     ...(chatRuntime?.available ? [{ key: 'opencode', label: `OpenCode · ${chatRuntime.defaultModel ?? 'modelo por defecto'}`, runtime: 'opencode' as const, accountId: null }] : []),
   ].filter(c => !(c.runtime === primaryRuntime && (c.runtime === 'opencode' || c.accountId === (primary?.accountId ?? 'system'))));
-  useEffect(() => { void Promise.all([api.listBrands(), api.listArchivedBrands()]).then(([list, archived]) => { setBrands(list); setArchivedBrands(archived); if (list[0]) { setBrand(list[0]); setContext(list[0].context); } }).catch(e => setError(displayError(e))); void api.runtimeStatus().then(setRuntimes).catch(e => setError(displayError(e))); void api.listRoles().then(setRoles).catch(e => setError(displayError(e))); void api.appInfo().then(setAppInfo).catch(e => setError(displayError(e))); void refreshChatStatus(); }, []);
+  useEffect(() => { void Promise.all([api.listBrands(), api.listArchivedBrands()]).then(([list, archived]) => { setBrands(list); setArchivedBrands(archived); if (list[0]) { setBrand(list[0]); setContext(list[0].context); } }).catch(e => setError(displayError(e))); void api.runtimeStatus().then(setRuntimes).catch(e => setError(displayError(e))); void api.listRoles().then(setRoles).catch(e => setError(displayError(e))); void api.appInfo().then(setAppInfo).catch(e => setError(displayError(e))); void refreshChatStatus(); void Promise.all([api.getOnboardingComplete(), api.getOnboardingDraft().catch(() => null)]).then(([complete, draft]) => { setOnboardingDraft(draft); setOnboarding(complete ? 'complete' : 'incomplete'); }).catch(() => setOnboarding('complete')); }, []);
   useEffect(() => { if (!work) { setTeam([]); setPermissions('ask'); setDecisionAuthority('suggest'); return; } void loadTeam(work.id).catch(e => setError(displayError(e))); void api.getWorkPermissions(work.id).then(setPermissions).catch(() => setPermissions('ask')); void api.getDecisionAuthority(work.id).then(setDecisionAuthority).catch(()=>setDecisionAuthority('suggest')); }, [work?.id]);
-  useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setKnowledgeScope(ALL_BRAND_SCOPE); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); if (list[0]) setWork(list[0]); }).catch(e => setError(displayError(e))); }, [brand?.id]);
+  useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setKnowledgeScope(ALL_BRAND_SCOPE); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); const preferred = list.find(w => w.id === pendingWorkRef.current) ?? list[0] ?? null; pendingWorkRef.current = null; setWork(preferred); }).catch(e => setError(displayError(e))); }, [brand?.id, brandEpoch]);
   useEffect(() => {
     if (!brand) { setDocuments([]); setDecisions([]); return; }
     let active = true;
@@ -367,6 +381,53 @@ export function App() {
     setView('brief');
     if (brand) setSelectedDoc((prev) => selectWorkBrief(prev, brand.id, w.id, documents));
   };
+  // First-run gate actions: skip sets the flag and keeps the returning-user path
+  // intact; completion re-bootstraps and pre-selects the recommended role.
+  const skipOnboarding = async () => {
+    try {
+      await api.setOnboardingComplete(true);
+      setOnboarding('complete');
+      // The demo brand is already seeded by the backend on an empty database; just re-read it.
+      void api.listBrands().then(list => { setBrands(list); if (list[0]) { setBrand(list[0]); setContext(list[0].context); } }).catch(() => undefined);
+    } catch (e) { setError(displayError(e)); }
+  };
+  /**
+   * Lands the walk in the shipped workspace.
+   *
+   * `selectBrand` is reused so guard(), the context swap, the memory reset and
+   * `memoryGeneration` behave exactly like a sidebar switch. The work is picked
+   * by the brand effect through `pendingWorkRef`, never by calling `selectWork`:
+   * that one reads `brand?.context` from a stale closure and would put the old
+   * brand's context on screen.
+   */
+  const finishOnboarding = async (result: OnboardingResult) => {
+    // No catch on purpose: the gate owns this call and shows the failure with a
+    // retry. Swallowing it here used to leave the gate frozen with no message,
+    // because the shell's error state renders off-screen behind the gate.
+    await api.setOnboardingComplete(true);
+    const list = await api.listBrands();
+    setBrands(list);
+    const brand = list.find(b => b.id === result.brandId) ?? list[0] ?? null;
+    pendingWorkRef.current = result.workId;
+    if (brand) selectBrand(brand);
+    // The extra bump re-reads the works even when the brand was already the
+    // selected one (choosing the demo), which changes no id at all.
+    setBrandEpoch(n => n + 1);
+    setOnboarding('complete');
+    // The gate unmounts with this result, so the shell is the only place the
+    // human can still be told what the brief or the folder link did.
+    if (result.briefConflict) setNotice(t('onboarding.briefConflict'));
+    else if (result.folderNotLinked) setNotice(t('onboarding.folderNotLinked'));
+    // Pre-select the recommended role (opens its conversation). The web preview has no live team, so this is desktop-only.
+    if (isDesktop && result.recommendedRoleId) {
+      void api.addTeamMember(result.workId, result.recommendedRoleId).then(s => {
+        setChats(prev => ({ ...prev, [s.id]: s }));
+        setSelectedMembers(prev => ({ ...prev, [result.workId]: s.id }));
+        void loadTeam(result.workId);
+      }).catch(e => setError(displayError(e)));
+    }
+  };
+  const reopenOnboarding = () => { void api.setOnboardingComplete(false).then(() => setOnboarding('incomplete')).catch(e => setError(displayError(e))); };
   /**
    * A brand-context write landed. The report is what makes it honest: when a
    * work has a live session, the write does not reach it, and the notice says
@@ -528,18 +589,7 @@ export function App() {
    */
   const useFolder = () => {
     if (!work) return;
-    const warning = [
-      'Latte va a trabajar directamente en la carpeta que elijas. No copia nada.',
-      '',
-      'Dentro de esa carpeta va a crear o actualizar:',
-      '  CLAUDE.md y AGENTS.md (contexto para los agentes)',
-      '  README.md y .latte/ (versiones)',
-      '',
-      'Los agentes que abras van a tener esa carpeta como espacio de trabajo.',
-      '',
-      '¿Elegimos la carpeta?',
-    ].join('\n');
-    if (!window.confirm(warning)) return;
+    if (!confirmFolderLink()) return;
     void run(async () => {
       const result = await api.useFolder(work.id);
       if (!result) return;
@@ -702,7 +752,10 @@ export function App() {
         {session ? <><div className="session-heading"><span><i className={sessionEnded ? 'ended-dot' : 'live-dot'} />{session.provider} · {sessionWork?.title ?? t('ui.auto.017')}</span><button aria-label={t('ui.auto.018')} title={t('ui.auto.018')} onClick={() => run(async () => { await api.stopAgent(session.id); setSession(null); })}><Square size={13} /></button></div><form className="prompt-form" onSubmit={e => { e.preventDefault(); if (!prompt.trim() || sessionEnded) return; void run(async () => { await api.writeAgent(session.id, prompt + '\r'); setPrompt(''); }); }}><textarea aria-label={t('ui.auto.019')} placeholder={t('ui.auto.020')} value={prompt} onChange={e => setPrompt(e.target.value)} /><div><small>{sessionEnded ? t('ui.auto.021') : t('ui.auto.022')}</small><button className="primary icon-button" disabled={!prompt.trim() || busy || sessionEnded} aria-label={t('ui.auto.023')}><ArrowUpRight size={18} /></button></div></form></> : <div className="agent-idle"><div className="agent-symbol"><TerminalSquare size={27} /></div><h3>{t('ui.auto.024')}<br />{t('ui.auto.025')}</h3><p>{t('ui.auto.026')}</p><button className="primary" disabled={!work || starting || !runtimes.find(r => r.provider === provider)?.available} onClick={start}>{starting ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}{starting ? t('ui.auto.347') : t('ui.auto.027')}</button>{!isDesktop && <small className="preview-note">{t('ui.auto.028')}</small>}</div>}</>}
   </section>;
 
-  if (settings) return <><SettingsScreen workId={work?.id ?? null} terminal={terminalConsole} onProfileDirtyChange={setProfileDirty} controls={isDesktop ? <WindowControls /> : null} section={settings} onSection={setSettings} onClose={() => { setSettings(null); setError(''); setNotice(''); }} onChanged={() => { void refreshChatStatus(); void api.listRoles().then(setRoles).catch(e=>setError(displayError(e))); }} onNotice={setNotice} onError={setError} notice={notice} error={error} onDismiss={() => { setError(''); setNotice(''); }} /><UpdateBanner /></>;
+  if (settings) return <><SettingsScreen workId={work?.id ?? null} terminal={terminalConsole} onProfileDirtyChange={setProfileDirty} controls={isDesktop ? <WindowControls /> : null} section={settings} onSection={setSettings} onClose={() => { setSettings(null); setError(''); setNotice(''); }} onChanged={() => { void refreshChatStatus(); void api.listRoles().then(setRoles).catch(e=>setError(displayError(e))); }} onNotice={setNotice} onError={setError} notice={notice} error={error} onDismiss={() => { setError(''); setNotice(''); }} onReopenOnboarding={reopenOnboarding} /><UpdateBanner /></>;
+  // Order matters: settings first, so the gate's "Configuración avanzada" wins
+  // and closing Settings returns to the walk with its draft re-hydrated.
+  if (onboarding === 'incomplete') return <><OnboardingGate controls={isDesktop ? <WindowControls /> : null} onComplete={finishOnboarding} onSkip={skipOnboarding} initialDraft={onboardingDraft} onAdvanced={() => setSettings('agents')} /><UpdateBanner /></>;
   return <div className={'app-shell' + (railed ? ' railed' : '') + (focusChat ? ' conversation-focus' : '') + (dragging ? ' dragging' : '')} style={{ ['--agent-width' as string]: `${agentWidth}px` }}>
     <aside className="sidebar">
       <div className="wordmark"><span className="logo-mark" aria-hidden="true" />Latte<span className="alpha">ALPHA</span><button className="rail-toggle" aria-expanded={!railed} aria-label={railed ? t('ui.auto.029') : t('ui.auto.030')} title={railed ? t('ui.auto.029') : t('ui.auto.030')} onClick={() => setRailed(v => !v)}>{railed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button></div>
