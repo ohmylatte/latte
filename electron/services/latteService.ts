@@ -21,9 +21,15 @@ import type {
   ChatRuntimeStatus,
   ChatSession,
   ContinuationDraft,
+  BrandContextDecisionResult,
   BrandContextMode,
   BrandContextProposal,
   BrandContextProposalInput,
+  BrandContextRefreshReport,
+  BrandContextRevision,
+  BrandContextRevisionSource,
+  BrandContextSaveResult,
+  BrandContextStatus,
   Decision,
   DecisionAuthorityMode,
   DecisionProposalInput,
@@ -92,7 +98,8 @@ import type { SkillCandidateRecord } from '../learning/types';
 import type { CandidateGenerator } from '../learning/worker';
 import type { LearningRepository } from '../storage/learningRepository';
 import { briefDocumentId, type DocumentRecord, type LatteRepository } from '../storage/repository';
-import { collectBrandMemory, type BrandMemorySnapshot } from '../workspace/brandMemory';
+import { collectBrandMemory, hasInheritedContent, type BrandMemorySnapshot } from '../workspace/brandMemory';
+import { brandContextNudge, electBrandContextOwner } from '../workspace/brandContextNudge';
 import { INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
 import { checkFolder, contains, importFileName, kindFromFileName, readFunnelProposal, readHandoff, scanFolder, titleFromFileName } from '../workspace/linkFolder';
 import { renderDocumentTemplate } from '../workspace/templates';
@@ -107,6 +114,11 @@ import { BrandingService } from '../branding/service';
 /** Stable content identity; request identity handles retries, this flags similar proposals without merging them. */
 export function decisionFingerprint(statement:string):string {
   return createHash('sha256').update(statement.normalize('NFC').trim().replace(/\s+/gu,' ').toLocaleLowerCase('und'),'utf8').digest('hex').slice(0,24);
+}
+
+/** A propagation report with nothing in it, for a decision that changed no work. */
+function emptyRefreshReport(): BrandContextRefreshReport {
+  return { updated: [], unchanged: [], live: [], userOwned: [] };
 }
 
 /** Everything the renderer can call, minus the event subscriptions (wired in the preload). */
@@ -312,10 +324,112 @@ export class LatteService implements BackendApi {
     return brand;
   }
 
+  /**
+   * The raw write, kept for the existing API surface and the QA script. It
+   * propagates like every other brand-context write, but reports nothing; the
+   * UI uses `saveBrandContext` when it needs the report.
+   *
+   * It stays the raw primitive on purpose: it accepts an empty value and does
+   * not check a fingerprint. Emptying on purpose is `clearBrandContext`, and a
+   * checked write is `saveBrandContext`.
+   */
   async updateBrand(id: string, context: string): Promise<Brand> {
-    const brandId = requireId(id, 'brandId');
+    return this.writeBrandContext(requireId(id, 'brandId'), context, null, 'human', null, true).brand;
+  }
+
+  /**
+   * The human wrote the context by hand: persist it and tell them what reached
+   * each work.
+   *
+   * An empty value is refused (`CONTEXT_EMPTY`) so a stray save cannot wipe the
+   * brand context by accident, and a fingerprint that no longer matches is
+   * refused (`CONTEXT_STALE`) so a change made underneath is never overwritten
+   * in silence. Both refusals leave the draft in the editor.
+   */
+  async saveBrandContext(brandId: string, context: string, expectedFingerprint: string | null = null): Promise<BrandContextSaveResult> {
+    return this.writeBrandContext(requireId(brandId, 'brandId'), context, expectedFingerprint, 'human', null, false);
+  }
+
+  /** The explicit clear: the only way an empty context is written on purpose. */
+  async clearBrandContext(brandId: string, expectedFingerprint: string | null = null): Promise<BrandContextSaveResult> {
+    return this.writeBrandContext(requireId(brandId, 'brandId'), '', expectedFingerprint, 'clear', null, true);
+  }
+
+  /** The history of `brands.context`, newest first. */
+  async listBrandContextRevisions(brandId: string): Promise<BrandContextRevision[]> {
+    const id = requireId(brandId, 'brandId');
+    this.deps.repo.getBrand(id);
+    return this.deps.repo.listBrandContextRevisions(id);
+  }
+
+  /**
+   * Applies a past revision. The restore is itself a change, so it records a
+   * new revision (pointing at the one it came from): a restore can be undone by
+   * restoring what it replaced.
+   */
+  async restoreBrandContextRevision(brandId: string, revisionId: string, expectedFingerprint: string | null = null): Promise<BrandContextSaveResult> {
+    const id = requireId(brandId, 'brandId');
+    this.requireActiveBrand(id);
+    const revision = this.deps.repo.getBrandContextRevision(requireId(revisionId, 'revisionId'));
+    if (revision.brandId !== id) throw new ValidationError('That revision belongs to another brand');
+    return this.writeBrandContext(id, revision.content, expectedFingerprint, 'restore', revision.id, true);
+  }
+
+  /** Everything the Contexto view needs about the brand context, in one read. */
+  async brandContextStatus(brandId: string): Promise<BrandContextStatus> {
+    const id = requireId(brandId, 'brandId');
+    const brand = this.deps.repo.getBrand(id);
+    const proposals = await this.listBrandContextProposals(id);
+    const works = this.deps.repo.listWorks(id);
+    return {
+      brandId: id,
+      fingerprint: brandContextFingerprint(brand.context),
+      pending: proposals.find((proposal) => proposal.status === 'pending') ?? null,
+      proposals,
+      works: works.map((work) => ({ id: work.id, title: work.title, live: this.deps.hub.liveMemberCount(work.id) > 0 })),
+      ownerWorkId: electBrandContextOwner(works),
+      revisions: this.deps.repo.listBrandContextRevisions(id),
+    };
+  }
+
+  /**
+   * One write path for `brand.context`: the database commits first, the
+   * instruction files are rewritten after, outside any transaction (a file
+   * cannot be rolled back; the loop is idempotent and re-runnable).
+   */
+  private writeBrandContext(
+    brandId: string,
+    context: string,
+    expectedFingerprint: string | null,
+    source: BrandContextRevisionSource,
+    origin: string | null,
+    allowEmpty: boolean,
+  ): BrandContextSaveResult {
+    const brand = this.requireActiveBrand(brandId);
+    this.assertContextUnchanged(brand, expectedFingerprint);
     const cleanContext = requireCleanContext(context, 'Brand context', { allowEmpty: true });
-    return this.deps.repo.updateBrandContext(brandId, cleanContext);
+    if (!allowEmpty && cleanContext.length === 0) {
+      throw new LatteError('CONTEXT_EMPTY', 'Brand context cannot be emptied by a save');
+    }
+    const at = this.clock();
+    const next = this.deps.repo.transaction(() => {
+      this.deps.repo.recordBrandContextRevision(brand, cleanContext, source, origin, at);
+      return this.deps.repo.updateBrandContext(brand.id, cleanContext);
+    });
+    return { brand: next, refresh: this.refreshBrandWorksInstructions(next) };
+  }
+
+  /**
+   * Refuses a write whose basis is no longer the persisted value. A null
+   * fingerprint means the caller had nothing to compare against (the editor was
+   * opened before the first read came back), which is the pre-CAS behaviour.
+   */
+  private assertContextUnchanged(brand: Brand, expectedFingerprint: string | null): void {
+    if (expectedFingerprint === null || expectedFingerprint === undefined) return;
+    if (typeof expectedFingerprint !== 'string') throw new ValidationError('Invalid context fingerprint');
+    if (expectedFingerprint !== brandContextFingerprint(brand.context)) {
+      throw new LatteError('CONTEXT_STALE', 'Brand context changed since it was loaded');
+    }
   }
 
   async archiveBrand(id: string): Promise<Brand> {
@@ -1135,21 +1249,28 @@ export class LatteService implements BackendApi {
       clientRequestId: parsed.clientRequestId,
       createdAt: now,
       decidedAt: authority === 'auto-record' ? now : null,
+      decidedReason: authority === 'auto-record' ? 'auto-recorded' : null,
+      supersededBy: null,
     };
     const stored = this.deps.repo.transaction(() => {
-      if (pending) this.deps.repo.rejectPendingBrandContext(brand.id, now);
+      // The older pending proposal is kept, marked superseded and pointed at
+      // the newer one: the Contexto view shows the trail instead of silence.
+      if (pending) this.deps.repo.rejectPendingBrandContext(brand.id, now, 'superseded', proposal.id);
       this.deps.repo.insertBrandContextProposal(proposal);
-      if (proposal.status === 'approved') this.applyApprovedContext(brand, proposal.text, proposal.mode);
+      if (proposal.status === 'approved') this.applyApprovedContext(brand, proposal.text, proposal.mode, proposal.id);
       return proposal;
     });
+    // A new pending proposal flips every work's nudge; an auto-recorded one
+    // rewrites every idle work's context. Either way: commit first, files after.
+    this.refreshBrandWorksInstructions(this.deps.repo.getBrand(brand.id));
     return stored;
   }
 
-  async approveBrandContextProposal(id: string, edited: string | null, acceptStale = false): Promise<BrandContextProposal> {
+  async approveBrandContextProposal(id: string, edited: string | null, acceptStale = false): Promise<BrandContextDecisionResult> {
     const proposalId = requireId(id, 'proposalId');
     const before = this.deps.repo.getBrandContextProposal(proposalId);
     const brand = this.requireActiveBrand(before.brandId);
-    if (before.status === 'approved') return before;
+    if (before.status === 'approved') return { proposal: before, brand, refresh: emptyRefreshReport() };
     if (before.status !== 'pending') throw new LatteError('PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
     const clean = edited == null ? null : requireCleanContext(edited, 'Brand context');
     const text = clean ?? before.text;
@@ -1157,21 +1278,26 @@ export class LatteService implements BackendApi {
     if (!acceptStale && before.baseFingerprint !== brandContextFingerprint(brand.context)) {
       throw new LatteError('PROPOSAL_STALE', 'Brand context changed since this proposal');
     }
-    return this.deps.repo.transaction(() => {
+    const proposal = this.deps.repo.transaction(() => {
       const current = this.deps.repo.getBrand(brand.id);
       const next = this.deps.repo.transitionBrandContextProposal(proposalId, 'approved', clean, this.clock());
-      this.applyApprovedContext(current, next.text, next.mode);
-      return this.deps.repo.getBrandContextProposal(proposalId);
+      this.applyApprovedContext(current, next.text, next.mode, next.id);
+      return next;
     });
+    // DB first: the transaction above committed, then the files are rewritten.
+    const nextBrand = this.deps.repo.getBrand(brand.id);
+    return { proposal, brand: nextBrand, refresh: this.refreshBrandWorksInstructions(nextBrand) };
   }
 
-  async rejectBrandContextProposal(id: string): Promise<BrandContextProposal> {
+  async rejectBrandContextProposal(id: string): Promise<BrandContextDecisionResult> {
     const proposalId = requireId(id, 'proposalId');
     const before = this.deps.repo.getBrandContextProposal(proposalId);
-    this.requireActiveBrand(before.brandId);
-    if (before.status === 'rejected') return before;
+    const brand = this.requireActiveBrand(before.brandId);
+    if (before.status === 'rejected') return { proposal: before, brand, refresh: emptyRefreshReport() };
     if (before.status !== 'pending') throw new LatteError('PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
-    return this.deps.repo.transitionBrandContextProposal(proposalId, 'rejected', null, this.clock());
+    const proposal = this.deps.repo.transitionBrandContextProposal(proposalId, 'rejected', null, this.clock());
+    // Rejecting flips the nudge back to the owner, so the files must follow.
+    return { proposal, brand, refresh: this.refreshBrandWorksInstructions(brand) };
   }
 
   async requestBrandContextDraft(workId: string): Promise<ChatSession> {
@@ -1192,8 +1318,11 @@ export class LatteService implements BackendApi {
     return session;
   }
 
-  private applyApprovedContext(brand: Brand, incoming: string, mode: BrandContextMode): Brand {
+  private applyApprovedContext(brand: Brand, incoming: string, mode: BrandContextMode, origin: string | null): Brand {
     const next = this.assertComposedFits(brand.context, incoming, mode);
+    // Approving IS a change of the brand context: it gets a revision like any
+    // other, with the proposal as its origin.
+    this.deps.repo.recordBrandContextRevision(brand, next, 'proposal', origin, this.clock());
     return this.deps.repo.updateBrandContext(brand.id, next);
   }
 
@@ -1800,6 +1929,15 @@ export class LatteService implements BackendApi {
   }
 
   private refreshInstructions(brand: Brand, work: Work): void {
+    this.renderAndWriteInstructions(brand, work);
+  }
+
+  /**
+   * Renders and writes ONE work's instruction files, returning what the write
+   * did. The brand-context nudge is computed here, brand-scoped: only the
+   * elected work of an empty brand may draft it, and the others get a reason.
+   */
+  private renderAndWriteInstructions(brand: Brand, work: Work) {
     const decisions = this.deps.repo.listDecisions(work.id);
     const records = this.deps.repo.listDocuments(work.id);
     const byId = new Map(records.map((r) => [r.id, r]));
@@ -1817,8 +1955,41 @@ export class LatteService implements BackendApi {
     const decisionAuthority=this.readDecisionAuthority(work.id);
     const generation = this.generationEnabled() ? this.pinnedGenerationPointer(work.id) : null;
     const brandMemory = this.loadBrandMemory(brand, work);
-    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation, brandMemory });
-    this.deps.files.writeInstructions(brand.id, work.id, bundle.text, bundle.files);
+    const nudge = brandContextNudge({
+      context: brand.context,
+      hasPendingProposal: this.deps.repo.findPendingBrandContext(brand.id) !== null,
+      // Inherited KNOWLEDGE, not "another work exists": a brand whose siblings
+      // left nothing durable still needs its elected work to draft the context.
+      hasInheritedMemory: hasInheritedContent(brandMemory),
+      workId: work.id,
+      ownerWorkId: electBrandContextOwner(this.deps.repo.listWorks(brand.id)),
+    });
+    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation, brandMemory, brandContextNudge: nudge });
+    return this.deps.files.writeInstructions(brand.id, work.id, bundle.text, bundle.files);
+  }
+
+  /**
+   * Makes a brand-context write reach every work of the brand.
+   *
+   * Sequential and human-triggered, never a background job. A work with a live
+   * agent session is skipped and reported: the shared files must not change
+   * under a conversation that is reading them, and that truth must be visible,
+   * never silent. Called AFTER the database transaction committed — files
+   * cannot be rolled back, so the loop is idempotent and re-runnable.
+   */
+  refreshBrandWorksInstructions(brand: Brand): BrandContextRefreshReport {
+    const report = emptyRefreshReport();
+    for (const work of this.deps.repo.listWorks(brand.id)) {
+      if (this.deps.hub.liveMemberCount(work.id) > 0) {
+        report.live.push(work.id);
+        continue;
+      }
+      const result = this.renderAndWriteInstructions(brand, work);
+      if (result.skipped.length > 0) report.userOwned.push(work.id);
+      else if (result.written.length === 0 && !result.sideFilesChanged) report.unchanged.push(work.id);
+      else report.updated.push(work.id);
+    }
+    return report;
   }
 
   /**

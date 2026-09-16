@@ -143,5 +143,6 @@ CREATE TABLE IF NOT EXISTS meta (
  * defined. Schema 8 adds generation receipts, brand-kit tables and learned-skill tables.
  * Schema 9 adds brand_archives (soft-delete, no ALTER on brands).
  * Schema 10 adds brand_context_proposals (agent drafts of Brand.context).
+ * Schema 11 adds brand_context_revisions (the immutable history of Brand.context).
  */
-export const SCHEMA_VERSION = '10';
+export const SCHEMA_VERSION = '11';

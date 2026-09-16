@@ -80,11 +80,43 @@ describe('explicit browser preview', () => {
     }];
     data.set('latte-preview-v1', JSON.stringify(stored));
     const approved = await api.approveBrandContextProposal('bcp_1', null);
-    expect(approved.status).toBe('approved');
+    expect(approved.proposal.status).toBe('approved');
+    expect(approved.brand.context).toBe('Tono cercano');
     expect((await api.listBrands()).find(x => x.id === b.id)?.context).toBe('Tono cercano');
     await api.approveBrandContextProposal('bcp_1', null);
     expect((await api.listBrands()).find(x => x.id === b.id)?.context).toBe('Tono cercano');
     await expect(api.requestBrandContextDraft(w.id)).rejects.toThrow('escritorio');
+  });
+  it('mirrors the desktop context guards: status, history, conflict, explicit clear and restore', async () => {
+    const b = await api.createBrand('Marca');
+    const w = await api.createWork(b.id, 'Uno');
+    const status = await api.brandContextStatus(b.id);
+    expect(status.brandId).toBe(b.id);
+    expect(status.works.map(x => x.id)).toEqual([w.id]);
+    expect(status.ownerWorkId).toBe(w.id);
+    expect(status.revisions).toEqual([]);
+
+    // A stale fingerprint is refused and the draft survives.
+    await api.saveBrandContext(b.id, 'Tono cercano', status.fingerprint);
+    await expect(api.saveBrandContext(b.id, 'Otro', status.fingerprint)).rejects.toMatchObject({ code: 'CONTEXT_STALE' });
+    expect((await api.listBrands()).find(x => x.id === b.id)?.context).toBe('Tono cercano');
+
+    // An empty save never wipes: the explicit clear does, and records it.
+    await expect(api.saveBrandContext(b.id, '   ', null)).rejects.toMatchObject({ code: 'CONTEXT_EMPTY' });
+    await api.clearBrandContext(b.id, null);
+    expect((await api.listBrands()).find(x => x.id === b.id)?.context).toBe('');
+
+    const history = await api.listBrandContextRevisions(b.id);
+    expect(history.map(r => r.content)).toEqual(['', 'Tono cercano']);
+    expect(history[0].source).toBe('clear');
+
+    const restored = await api.restoreBrandContextRevision(b.id, history[1].id, null);
+    expect(restored.brand.context).toBe('Tono cercano');
+    expect((await api.listBrandContextRevisions(b.id))[0]).toMatchObject({ source: 'restore', origin: history[1].id });
+
+    const after = await api.brandContextStatus(b.id);
+    expect(after.pending).toBeNull();
+    expect(after.revisions.map(r => r.source)).toEqual(['restore', 'clear', 'human']);
   });
   it('does not pretend to run an agent or memory server', async () => {
     expect((await api.runtimeStatus()).every(r => !r.available)).toBe(true);

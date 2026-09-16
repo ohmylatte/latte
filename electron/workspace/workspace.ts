@@ -134,8 +134,13 @@ export class WorkspaceFiles {
     workId: string,
     rendered: string,
     files: RenderedInstructionFile[] = [],
-  ): { written: string[]; skipped: string[] } {
+  ): { written: string[]; unchanged: string[]; skipped: string[]; sideFilesChanged: boolean } {
+    // `written` is what actually hit the disk; `unchanged` is the managed files
+    // whose text was already byte-identical (no write, no mtime change). The
+    // brand-context propagation report needs that distinction: a work that did
+    // not need to change is not the same as one that did.
     const written: string[] = [];
+    const unchanged: string[] = [];
     const skipped: string[] = [];
     for (const name of [WORK_FILES.claude, WORK_FILES.agents]) {
       const file = this.paths.workFile(brandId, workId, name);
@@ -144,51 +149,66 @@ export class WorkspaceFiles {
         skipped.push(name);
         continue;
       }
-      if (existing !== rendered) writeFileAtomic(file, rendered);
+      if (existing === rendered) {
+        unchanged.push(name);
+        continue;
+      }
+      writeFileAtomic(file, rendered);
       written.push(name);
     }
-    this.syncSideFiles(brandId, workId, files);
-    return { written, skipped };
+    const sideFilesChanged = this.syncSideFiles(brandId, workId, files);
+    return { written, unchanged, skipped, sideFilesChanged };
   }
 
   /**
    * Latte owns .latte/context and .latte/skills entirely: every call writes
    * the current side files and removes whatever it left there before that no
    * longer applies (a decision log back under the inline ceiling, a skill
-   * turned off).
+   * turned off). Compares before writing so an unchanged render touches
+   * nothing, and reports whether it changed anything at all.
    */
-  private syncSideFiles(brandId: string, workId: string, files: RenderedInstructionFile[]): void {
+  private syncSideFiles(brandId: string, workId: string, files: RenderedInstructionFile[]): boolean {
     const root = this.paths.workDir(brandId, workId);
     const wanted = new Map(files.map((f) => [safeJoin(root, ...f.path.split('/')), f.content]));
+    let changed = false;
     for (const dirName of SIDE_FILE_DIRS) {
       const dir = safeJoin(root, WORK_FILES.metaDir, dirName);
-      this.removeUnwantedSideFiles(dir, wanted);
+      if (this.removeUnwantedSideFiles(dir, wanted)) changed = true;
     }
-    for (const [absolute, content] of wanted) writeFileAtomic(absolute, content);
+    for (const [absolute, content] of wanted) {
+      if (readTextIfExists(absolute) === content) continue;
+      writeFileAtomic(absolute, content);
+      changed = true;
+    }
+    return changed;
   }
 
   /**
    * Recursively drops side files (and leftover empty dirs) that this render
-   * did not re-request, including nested brand-memory copies.
+   * did not re-request, including nested brand-memory copies. Returns true
+   * when something was removed.
    */
-  private removeUnwantedSideFiles(dir: string, wanted: Map<string, string>): void {
+  private removeUnwantedSideFiles(dir: string, wanted: Map<string, string>): boolean {
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch {
-      return;
+      return false;
     }
+    let changed = false;
     for (const entry of entries) {
       const absolute = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        this.removeUnwantedSideFiles(absolute, wanted);
+        if (this.removeUnwantedSideFiles(absolute, wanted)) changed = true;
         try {
-          if (fs.readdirSync(absolute).length === 0) fs.rmdirSync(absolute);
+          if (fs.readdirSync(absolute).length === 0) { fs.rmdirSync(absolute); changed = true; }
         } catch { /* already gone or not empty */ }
       } else if (!wanted.has(absolute)) {
         fs.rmSync(absolute, { force: true });
+        changed = true;
       }
     }
+    return changed;
   }
 
   writeSnapshot(brandId: string, workId: string, revisionId: string, createdAt: string, content: string): string {

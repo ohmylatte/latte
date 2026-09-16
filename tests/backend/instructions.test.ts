@@ -209,6 +209,74 @@ describe('renderInstructionBundle: brand context protocol', () => {
   });
 });
 
+describe('renderInstructionBundle: brand context nudge policy', () => {
+  const empty: Brand = { ...brand, context: '' };
+  const FULL = 'Before starting any other work, draft this brand\'s context from the brief and propose it with the `latte-brand-context` block.';
+  const SHORT = 'Draft this brand\'s context from the brief and propose it with the `latte-brand-context` block.';
+  const PENDING = 'The brand context is empty. A proposal is already waiting for the human to review: do not ask for positioning, tone or audience, and do not draft or propose it here.';
+  const INHERITED = 'The brand context is empty. Brand knowledge from previous work is inherited below: use it and do not draft or propose a new context here.';
+  const OWNER_ELSEWHERE = 'The brand context is empty. Another work of this brand is drafting it: do not draft or propose it here.';
+
+  it('defaults to the full nudge for an empty brand and to none when context exists', () => {
+    expect(renderInstructionBundle({ brand: empty, work, decisions: [] }).text).toContain(FULL);
+    const defined = renderInstructionBundle({ brand, work, decisions: [] }).text;
+    expect(defined).not.toContain(FULL);
+    expect(defined).toContain('Propose a brand-context update only when you have new durable facts');
+  });
+
+  it('emits one precise line per reason and never the draft nudge', () => {
+    const pending = renderInstructionBundle({ brand: empty, work, decisions: [], brandContextNudge: { form: 'none', reason: 'pending' } }).text;
+    expect(pending).toContain(PENDING);
+    expect(pending).not.toContain(FULL);
+    expect(pending).not.toContain(SHORT);
+
+    const inherited = renderInstructionBundle({ brand: empty, work, decisions: [], brandContextNudge: { form: 'none', reason: 'inherited' } }).text;
+    expect(inherited).toContain(INHERITED);
+    expect(inherited).not.toContain(FULL);
+
+    const elsewhere = renderInstructionBundle({ brand: empty, work, decisions: [], brandContextNudge: { form: 'none', reason: 'owner-elsewhere' } }).text;
+    expect(elsewhere).toContain(OWNER_ELSEWHERE);
+    expect(elsewhere).not.toContain(FULL);
+  });
+
+  it('emits the short form when the policy asks for it', () => {
+    const short = renderInstructionBundle({ brand: empty, work, decisions: [], brandContextNudge: { form: 'short', reason: null } }).text;
+    expect(short).toContain(SHORT);
+    expect(short).not.toContain(FULL);
+  });
+
+  it('never resurrects none when the size squeeze runs', () => {
+    const heavyWork: Work = { ...work, brief: 'C'.repeat(6_000) };
+    const documents = Array.from({ length: 300 }, (_, i) => ({ kind: 'copy', title: `Pieza ${i}`, fileName: `pieza-${i}.md`, status: 'draft' }));
+    const bundle = renderInstructionBundle({
+      brand: empty,
+      work: heavyWork,
+      decisions: Array.from({ length: 40 }, (_, i) => decision(i, i)),
+      pack,
+      documents,
+      brandContextNudge: { form: 'none', reason: 'pending' },
+    });
+    expect(bundle.text).toContain(PENDING);
+    expect(bundle.text).not.toContain(FULL);
+    expect(bundle.text).not.toContain(SHORT);
+  });
+
+  it('downgrades full to short when the size squeeze runs', () => {
+    const heavyWork: Work = { ...work, brief: 'C'.repeat(6_000) };
+    const documents = Array.from({ length: 300 }, (_, i) => ({ kind: 'copy', title: `Pieza ${i}`, fileName: `pieza-${i}.md`, status: 'draft' }));
+    const bundle = renderInstructionBundle({
+      brand: empty,
+      work: heavyWork,
+      decisions: Array.from({ length: 40 }, (_, i) => decision(i, i)),
+      pack,
+      documents,
+      brandContextNudge: { form: 'full', reason: null },
+    });
+    expect(bundle.text).toContain(SHORT);
+    expect(bundle.text).not.toContain(FULL);
+  });
+});
+
 describe('renderInstructions', () => {
   it('is the text half of renderInstructionBundle', () => {
     const input = { brand, work, decisions: [decision(0, 0)] };
@@ -241,6 +309,40 @@ describe('WorkspaceFiles.writeInstructions: side files', () => {
     files.writeInstructions(brand.id, work.id, clean.text, clean.files);
     expect(fs.existsSync(brandSide)).toBe(false);
     expect(fs.existsSync(skillSide)).toBe(false);
+  });
+
+  it('reports byte-identical files as unchanged and writes nothing for them', () => {
+    dir = makeTempDir();
+    const files = new WorkspaceFiles(new LattePaths(dir));
+    files.ensureWork(brand.id, work.id, work.brief);
+    const bundle = renderInstructionBundle({ brand, work, decisions: [] });
+
+    const first = files.writeInstructions(brand.id, work.id, bundle.text, bundle.files);
+    expect(first.written.sort()).toEqual(['AGENTS.md', 'CLAUDE.md']);
+    expect(first.unchanged).toEqual([]);
+    expect(first.skipped).toEqual([]);
+
+    const second = files.writeInstructions(brand.id, work.id, bundle.text, bundle.files);
+    expect(second.written).toEqual([]);
+    expect(second.unchanged.sort()).toEqual(['AGENTS.md', 'CLAUDE.md']);
+    expect(second.sideFilesChanged).toBe(false);
+  });
+
+  it('flags sideFilesChanged when a side file is created or removed', () => {
+    dir = makeTempDir();
+    const files = new WorkspaceFiles(new LattePaths(dir));
+    files.ensureWork(brand.id, work.id, work.brief);
+
+    const long = renderInstructionBundle({ brand: { ...brand, context: 'E'.repeat(BRAND_CONTEXT_CHARS + 100) }, work, decisions: [] });
+    const created = files.writeInstructions(brand.id, work.id, long.text, long.files);
+    expect(created.sideFilesChanged).toBe(true);
+
+    const clean = renderInstructionBundle({ brand, work, decisions: [] });
+    const removed = files.writeInstructions(brand.id, work.id, clean.text, clean.files);
+    expect(removed.sideFilesChanged).toBe(true);
+
+    const again = files.writeInstructions(brand.id, work.id, clean.text, clean.files);
+    expect(again.sideFilesChanged).toBe(false);
   });
 
   it('still syncs side files even when CLAUDE.md itself is user-owned and skipped', () => {

@@ -288,6 +288,21 @@ export function hasBrandMemory(snapshot: BrandMemorySnapshot | null | undefined)
   return (snapshot?.priorWorks.length ?? 0) > 0;
 }
 
+/**
+ * True when another work of the brand actually LEFT something: an approved
+ * decision or a tracked document/linked result.
+ *
+ * `hasBrandMemory` answers "is there another work to list", which is the right
+ * question for the inherited section and the wrong one for the draft nudge. A
+ * brand with three works that have all left nothing has nothing to inherit, so
+ * the elected work must still be asked to draft the context; feeding the nudge
+ * "a sibling exists" suppressed it for every multi-work brand.
+ */
+export function hasInheritedContent(snapshot: BrandMemorySnapshot | null | undefined): boolean {
+  if (!snapshot) return false;
+  return snapshot.decisions.length > 0 || snapshot.artifacts.length > 0;
+}
+
 function decisionLine(d: InheritedDecision): string {
   return `- ${d.createdAt.slice(0, 10)} — from work "${d.workTitle}" (\`${d.workId}\`): ${d.text}`;
 }

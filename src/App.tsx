@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, LoaderCircle, MessageSquare, Minus, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, X } from 'lucide-react';
-import type { Brand, BrandContextProposal, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, AppInfo } from '../shared/contracts';
+import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, AppInfo } from '../shared/contracts';
 import { api, chatStore, isDesktop } from './browser-api';
 import { DocumentsView, NewDocumentDialog } from './DocumentsView';
 import { hasMetadataDrafts } from './DocumentMetadata';
@@ -16,8 +16,19 @@ import { TerminalPane } from './TerminalPane';
 import { UpdateBanner } from './UpdateBanner';
 import { ALL_BRAND_SCOPE, inKnowledgeScope, selectWorkBrief, workBrief, workTitles, type KnowledgeScope } from './brand-knowledge';
 import { KnowledgeOrigin, KnowledgeScopeFilter } from './KnowledgeScope';
+import { ContextView } from './ContextView';
+import { contextSaveNotice } from './context-view';
+import { applyFetchedBrand } from './brand-context-sync';
 
-type View = 'brief' | 'funnel' | 'context' | 'memory' | 'decisions';
+/**
+ * Every workspace view, in one place.
+ *
+ * It is a runtime list on purpose: a view that is added here but has no render
+ * branch in `<main>` shows an empty workspace, and a render test that walks the
+ * list catches it. Deriving the type from the list keeps the two in step.
+ */
+export const VIEWS = ['brief', 'funnel', 'context', 'memory', 'decisions'] as const;
+type View = (typeof VIEWS)[number];
 type Modal = 'brand' | 'work' | 'document' | null;
 const date = (value: string) => new Date(value).toLocaleString(currentLocale(), { dateStyle: 'short', timeStyle: 'short' });
 const AGENT_WIDTH_KEY = 'latte-agent-width';
@@ -26,30 +37,6 @@ const maxAgentWidth = () => Math.max(AGENT_MIN, window.innerWidth - SIDEBAR - WO
 const clampAgentWidth = (value: number) => Math.min(maxAgentWidth(), Math.max(AGENT_MIN, Math.round(value)));
 const readAgentWidth = () => { try { const raw = localStorage.getItem(AGENT_WIDTH_KEY); const n = raw ? Number(raw) : NaN; return Number.isFinite(n) ? clampAgentWidth(n) : 355; } catch { return 355; } };
 const displayError = (e: unknown) => e instanceof Error ? e.message : String(e);
-
-function diffLines(before: string, after: string): Array<{ kind: 'same' | 'add' | 'del'; text: string }> {
-  const a = before.split('\n');
-  const b = after.split('\n');
-  const n = a.length, m = b.length;
-  const dp: number[][] = Array.from({ length: n + 1 }, () => Array<number>(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  const out: Array<{ kind: 'same' | 'add' | 'del'; text: string }> = [];
-  let i = 0, j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) { out.push({ kind: 'same', text: a[i] }); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ kind: 'del', text: a[i++] }); }
-    else { out.push({ kind: 'add', text: b[j++] }); }
-  }
-  while (i < n) out.push({ kind: 'del', text: a[i++] });
-  while (j < m) out.push({ kind: 'add', text: b[j++] });
-  return out;
-}
-
-function proposedContext(current: string, proposal: BrandContextProposal): string {
-  if (proposal.mode === 'append' && current.trim()) return `${current.replace(/\s+$/u, '')}\n\n${proposal.text}`;
-  return proposal.text;
-}
-
 
 /**
  * The window is frameless, so Latte draws its own controls. The title bar area
@@ -84,6 +71,13 @@ export function App() {
   const [handoffs, setHandoffs] = useState<HandoffRequest[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [contextProposals, setContextProposals] = useState<BrandContextProposal[]>([]);
+  // The fingerprint, works and history of the context the editor is editing.
+  // Null until the first read: a save with no fingerprint is a save with nothing
+  // to compare against, which is the pre-CAS behaviour, not a bypass.
+  const [contextStatus, setContextStatus] = useState<BrandContextStatus | null>(null);
+  // A save the CAS refused: the context changed underneath. The draft survives
+  // and Contexto offers reload-or-override instead of leaving the human stuck.
+  const [contextConflict, setContextConflict] = useState(false);
   const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>(ALL_BRAND_SCOPE);
   const [decisionAuthority,setDecisionAuthority]=useState<DecisionAuthorityMode>('suggest');
   const [modal, setModal] = useState<Modal>(null), [name, setName] = useState('');
@@ -136,6 +130,75 @@ export function App() {
   const generation = useRef(0), memoryGeneration = useRef(0);
   const selectionWorkRef = useRef<string | null>(null);
   const dirty = profileDirty || documentDirty || documentDrafts.hasUnsaved() || hasMetadataDrafts() || hasOutcomeDrafts(), contextDirty = Boolean(brand && context !== brand.context);
+  /**
+   * The Contexto editor's live values, for the turn-end refresh.
+   *
+   * That refresh runs from a chat subscription created once per work, so it
+   * cannot close over `brand`, `context` and `contextDirty` without going
+   * stale. The ref is updated after every render and the refresh reads it.
+   */
+  const brandContextRef = useRef({ brand, context, dirty: contextDirty });
+  useEffect(() => { brandContextRef.current = { brand, context, dirty: contextDirty }; });
+  /**
+   * The newest status read in flight.
+   *
+   * Two things read the status: the brand-change / turn-end refresh and the
+   * reload right after a write. Without an order, the slower one can land last
+   * and leave the editor holding a fingerprint that is already superseded — so
+   * the next save is refused with a conflict Latte invented itself.
+   */
+  const contextStatusSeq = useRef(0);
+  /**
+   * How many authoritative brand-context values the editor has taken: a write,
+   * or an explicit reload.
+   *
+   * A refresh that started BEFORE one of those read an older `brands.context`.
+   * If it applied after, it would put that older value back on screen, so it
+   * bails instead: the write's own reload already brought the fresh state.
+   */
+  const contextWriteSeq = useRef(0);
+  /**
+   * Reads the status and applies it only if nothing newer landed since.
+   *
+   * Returns null when the read was superseded, so the caller knows not to trust
+   * its result as the current one.
+   */
+  const readContextStatus = async (brandId: string): Promise<BrandContextStatus | null> => {
+    const seq = ++contextStatusSeq.current;
+    const status = await api.brandContextStatus(brandId);
+    if (seq !== contextStatusSeq.current) return null;
+    if (brandContextRef.current.brand?.id !== brandId) return null;
+    // One read gives the proposals AND the fingerprint the editor is editing
+    // against: without it a save could not tell "changed underneath" from "mine".
+    setContextStatus(status);
+    setContextProposals(status.proposals);
+    return status;
+  };
+  /**
+   * Re-reads `brands.context` and this brand's proposals.
+   *
+   * An agent can propose a context on its own, and the brand can change under
+   * us. `applyFetchedBrand` keeps that honest: a clean editor follows the new
+   * value, a dirty one keeps the human's text and says so (`context.staleDraft`).
+   */
+  const refreshBrandContext = async () => {
+    const current = brandContextRef.current;
+    if (!current.brand) { setContextProposals([]); setContextStatus(null); return; }
+    const brandId = current.brand.id;
+    const writes = contextWriteSeq.current;
+    // The status read applies itself (guarded by sequence); the brand always
+    // lands, because a superseded status says nothing about this brand fetch.
+    const [fetched] = await Promise.all([api.getBrand(brandId), readContextStatus(brandId)]);
+    if (brandContextRef.current.brand?.id !== brandId) return;
+    // A write landed while this read was in flight: its value is newer than ours.
+    if (writes !== contextWriteSeq.current) return;
+    const applied = applyFetchedBrand({ selectedId: brandId, fetched, previousPersisted: current.brand.context, draft: current.context, dirty: current.dirty });
+    if (!applied.applied) return;
+    setBrand(applied.brand);
+    setBrands(previous => previous.map(x => x.id === applied.brand.id ? applied.brand : x));
+    setContext(applied.draft);
+    if (applied.notice) setNotice(t('context.staleDraft'));
+  };
   const selectedDocId = brand ? selectedDoc[brand.id] ?? null : null;
   const titlesByWork = workTitles(works);
   const visibleDocuments = inKnowledgeScope(documents, knowledgeScope);
@@ -244,9 +307,7 @@ export function App() {
   }, [brand?.id, work?.id, documents]);
   useEffect(() => {
     if (!brand) { setContextProposals([]); return; }
-    let active = true;
-    void api.listBrandContextProposals(brand.id).then((list) => { if (active) setContextProposals(list); }).catch((e) => setError(displayError(e)));
-    return () => { active = false; };
+    void refreshBrandContext().catch((e) => setError(displayError(e)));
   }, [brand?.id]);
   /**
    * When an agent finishes a turn, look at the folder again.
@@ -266,7 +327,11 @@ export function App() {
     let wasBusy = anyBusy();
     return chatStore.subscribe(() => {
       const busyNow = anyBusy();
-      if (wasBusy && !busyNow) void loadKnowledge(work.brandId, work.id).catch(() => undefined);
+      if (wasBusy && !busyNow) {
+        void loadKnowledge(work.brandId, work.id).catch(() => undefined);
+        // An agent can also have proposed brand context during that turn.
+        void refreshBrandContext().catch(() => undefined);
+      }
       wasBusy = busyNow;
     });
   }, [work?.id, workChatIds]);
@@ -302,11 +367,88 @@ export function App() {
     setView('brief');
     if (brand) setSelectedDoc((prev) => selectWorkBrief(prev, brand.id, w.id, documents));
   };
-  const saveContext = async () => { if (!brand) return; const b = await api.updateBrand(brand.id, context); setBrand(b); setBrands(prev => prev.map(x => x.id === b.id ? b : x)); setNotice(t('ui.auto.005')); };
-  const pendingContext = contextProposals.find((p) => p.status === 'pending') ?? null;
-  const decideContextProposal = async (proposalId: string, action: 'approve' | 'edit' | 'reject') => {
+  /**
+   * A brand-context write landed. The report is what makes it honest: when a
+   * work has a live session, the write does not reach it, and the notice says
+   * so (`ui.auto.052`) instead of claiming everything is up to date.
+   */
+  const applyBrandDecision = async (result: Pick<BrandContextDecisionResult, 'brand' | 'refresh'>) => {
+    contextWriteSeq.current += 1;
+    setBrand(result.brand);
+    setBrands((prev) => prev.map((x) => x.id === result.brand.id ? result.brand : x));
+    setContext(result.brand.context);
+    // The editor is clean again and the ref must say so BEFORE the status
+    // reload: otherwise the reload reads a stale draft and reports a conflict.
+    brandContextRef.current = { brand: result.brand, context: result.brand.context, dirty: false };
+    setContextConflict(false);
+    const notice = contextSaveNotice(result.refresh);
+    setNotice(t(notice.key, notice.params));
+    // The fingerprint the editor holds changed with the write, and this reload
+    // is AWAITED on purpose. The save controls are disabled while a write is in
+    // flight, so awaiting is what guarantees the next save sends a fresh
+    // fingerprint instead of being refused with a conflict Latte created itself.
+    await readContextStatus(result.brand.id).catch(() => null);
+  };
+  /** The fingerprint of what the editor loaded, or null before the first read. */
+  const contextFingerprint = contextStatus?.fingerprint ?? null;
+  /**
+   * Runs a brand-context write and keeps the draft when the CAS refuses it.
+   *
+   * A refusal is not a dead end: `contextConflict` turns on the reload/override
+   * affordance in Contexto, and the human's text is untouched.
+   */
+  const writeContext = async (write: () => Promise<Pick<BrandContextDecisionResult, 'brand' | 'refresh'>>) => {
+    try {
+      await applyBrandDecision(await write());
+    } catch (e) {
+      if ((e as { code?: string } | null)?.code === 'CONTEXT_STALE') setContextConflict(true);
+      throw e;
+    }
+  };
+  const saveContext = async () => {
     if (!brand) return;
-    if (action === 'reject') await api.rejectBrandContextProposal(proposalId);
+    await writeContext(() => api.saveBrandContext(brand.id, context, contextFingerprint));
+  };
+  /** Emptying is explicit and confirmed; the empty box alone is refused. */
+  const clearContext = async () => {
+    if (!brand) return;
+    if (!window.confirm(t('context.clear.confirm'))) return;
+    await writeContext(() => api.clearBrandContext(brand.id, contextFingerprint));
+  };
+  /** Restoring is a write too: confirmed, recorded, and reversible. */
+  const restoreContext = async (revisionId: string) => {
+    if (!brand) return;
+    if (!window.confirm(t('context.restore.confirm'))) return;
+    await writeContext(() => api.restoreBrandContextRevision(brand.id, revisionId, contextFingerprint));
+  };
+  /**
+   * The human's answer to a refused save: take what is on disk and drop the
+   * draft. `refreshBrandContext` deliberately keeps a dirty draft, which is the
+   * opposite of what someone asking for the current value wants.
+   */
+  const reloadContext = () => run(async () => {
+    if (!brand) return;
+    const fetched = await api.getBrand(brand.id);
+    contextWriteSeq.current += 1;
+    setBrand(fetched);
+    setBrands((prev) => prev.map((x) => x.id === fetched.id ? fetched : x));
+    setContext(fetched.context);
+    brandContextRef.current = { brand: fetched, context: fetched.context, dirty: false };
+    setContextConflict(false);
+    await readContextStatus(fetched.id).catch(() => null);
+  });
+  /**
+   * The other answer: keep the draft and write it against the value that is
+   * there now. Explicit, never a silent last-write-wins.
+   */
+  const overrideContext = () => run(async () => {
+    if (!brand) return;
+    const status = await readContextStatus(brand.id).catch(() => null);
+    await writeContext(() => api.saveBrandContext(brand.id, context, status?.fingerprint ?? contextFingerprint));
+  });
+  const decideContextProposal = async (proposalId: string, action: 'approve' | 'edit' | 'reject', acceptStale = false) => {
+    if (!brand) return;
+    if (action === 'reject') await writeContext(() => api.rejectBrandContextProposal(proposalId));
     else {
       let edited: string | null = null;
       if (action === 'edit') {
@@ -315,15 +457,11 @@ export function App() {
         if (!next?.trim()) return;
         edited = next.trim();
       }
-      await api.approveBrandContextProposal(proposalId, edited);
-      const list = await api.listBrands();
-      const updated = list.find((x) => x.id === brand.id);
-      if (updated) { setBrand(updated); setBrands((prev) => prev.map((x) => x.id === updated.id ? updated : x)); setContext(updated.context); }
+      await writeContext(() => api.approveBrandContextProposal(proposalId, edited, acceptStale));
     }
-    setContextProposals(await api.listBrandContextProposals(brand.id));
   };
   const askStrategist = () => run(async () => {
-    if (!work) return;
+    if (!work) { setNotice(t('context.ask.needWork')); return; }
     const session = await api.requestBrandContextDraft(work.id);
     setChats((prev) => ({ ...prev, [session.id]: session }));
     setSelectedMembers((prev) => ({ ...prev, [work.id]: session.id }));
@@ -573,7 +711,7 @@ export function App() {
       <button type="button" className="subtle sidebar-add" onClick={() => setShowArchived(v => !v)} aria-expanded={showArchived}>{t('brand.archivedToggle')}{archivedBrands.length ? ` (${archivedBrands.length})` : ''}</button>
       {showArchived && <div className="archived-brands">{archivedBrands.length === 0 ? <p className="sidebar-hint">{t('brand.noneArchived')}</p> : archivedBrands.map(b => <div key={b.id} className="archived-brand-row"><span title={b.name}>{b.name}</span><button type="button" className="subtle" disabled={busy} onClick={() => run(() => restoreArchivedBrand(b.id))}>{t('brand.restore')}</button></div>)}</div>}
       <div className="nav-label">{t('ui.auto.034')}</div>
-      <nav><button disabled={!brand} title={t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button></nav>
+      <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button></nav>
       <div className="sidebar-rule" /><div className="nav-label">TRABAJOS <span>{works.length.toString().padStart(2, '0')}</span></div>
       <nav className="work-nav">{works.map(w => <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'decisions') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{(workHasLiveChat(w.id) || sessions[w.id]) && <i className={sessions[w.id] && endedSessions.has(sessions[w.id].id) && !workHasLiveChat(w.id) ? 'ended-dot' : 'live-dot'} />}</button>)}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
       <div className="sidebar-bottom"><button disabled={!brand || transitioning} title={t('ui.auto.038')} onClick={() => { setName(''); setModal('work'); }}><Plus size={20} />{t('ui.auto.038')}</button><div className="sidebar-rule" /><nav><button onClick={() => setSettings('agents')} title={t('ui.auto.348')}><Settings2 size={17} />{t('ui.auto.348')}</button></nav><div className="profile"><span className="avatar">G</span><div>Tu estudio<small>{t('ui.auto.039')}</small></div></div></div>
@@ -584,7 +722,29 @@ export function App() {
       {(view === 'brief' || view === 'funnel' || view === 'decisions') && brand && <KnowledgeScopeFilter works={works} currentWorkId={work?.id ?? null} value={knowledgeScope} onChange={setKnowledgeScope} />}
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}
       {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={setView} work={work} brandName={brand?.name ?? ''} documents={visibleDocuments} selectedId={selectedDocId} onSelect={id => brand && setSelectedDoc(prev => ({ ...prev, [brand.id]: id }))} onDocumentsChanged={async () => { if (brand) await loadKnowledge(brand.id, work?.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} currentWorkId={work?.id ?? null} workTitles={titlesByWork} showWorkDelta={showWorkDelta} />}
-      <nav><button disabled={!brand} title={t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button></nav>
+      {view === 'context' && brand && <ContextView
+        brand={brand}
+        proposals={contextProposals}
+        status={contextStatus ? {
+          liveCount: contextStatus.works.filter(w => w.live).length,
+          worksCount: contextStatus.works.length,
+          fingerprint: contextStatus.fingerprint,
+          revisions: contextStatus.revisions,
+        } : null}
+        work={work}
+        draft={context}
+        busy={busy}
+        desktop={isDesktop}
+        onDraft={setContext}
+        onSave={() => void run(saveContext)}
+        onClear={() => void run(clearContext)}
+        onRestore={(revisionId) => void run(() => restoreContext(revisionId))}
+        onDecide={(id, action, acceptStale) => void run(() => decideContextProposal(id, action, acceptStale))}
+        onAsk={() => void askStrategist()}
+        conflict={contextConflict}
+        onReload={() => void reloadContext()}
+        onOverride={() => void overrideContext()}
+      />}
       {view === 'decisions' && <div className="document-scroll"><div className="document-kicker">CRITERIO QUE PERMANECE</div><h1>No empezar<br />de cero otra vez.</h1><p className="intro">{t('ui.auto.053')}</p>{work && <><label className="field-label">{t('decision.authority.label')}</label><select value={decisionAuthority} onChange={e=>{const mode=e.target.value as DecisionAuthorityMode;void api.setDecisionAuthority(work.id,mode).then(setDecisionAuthority).catch(x=>setError(displayError(x)));}}><option value="off">{t('decision.authority.off')}</option><option value="suggest">{t('decision.authority.suggest')}</option><option value="auto-record">{t('decision.authority.auto')}</option></select><p className="footnote">{t('decision.authority.help')}</p><form className="decision-form" onSubmit={e => { e.preventDefault(); void run(async () => { if (!decision.trim()) return; await api.addDecision(work.id, decision.trim()); setDecisions(await api.listBrandDecisions(work.brandId)); setDecision(''); }); }}><textarea aria-label={t('ui.auto.054')} placeholder="Elegimos? porque?" value={decision} onChange={e => setDecision(e.target.value)} /><button className="primary" disabled={!decision.trim() || busy}><Plus size={15} />{t('ui.auto.055')}</button></form></>}<div className="decision-list">{visibleDecisions.filter(d=>d.status!=='rejected'&&d.status!=='archived').map((d, i) => <div className={'decision-card status-'+d.status} data-origin-work={d.workId} data-current-work={d.workId === work?.id ? 'true' : 'false'} key={d.id}><span className="decision-number">{String(i + 1).padStart(2, '0')}</span><div><small>{d.status==='pending'?t('decision.pending'):d.source.chatId?t('decision.autoNotice'):''}</small><KnowledgeOrigin workId={d.workId} currentWorkId={work?.id ?? null} titles={titlesByWork} /><p>{d.text}</p>{d.rationale&&<p className="footnote">{d.rationale}</p>}<small>{date(d.createdAt)}</small>{d.status==='pending'&&<div className="chat-card-actions"><button className="primary" onClick={()=>void api.approveDecision(d.id,null).then(()=>api.listBrandDecisions(brand!.id)).then(setDecisions)}>{t('decision.add')}</button><button onClick={()=>{const edited=window.prompt(t('decision.editAdd'),d.text);if(edited?.trim())void api.approveDecision(d.id,edited.trim()).then(()=>api.listBrandDecisions(brand!.id)).then(setDecisions)}}>{t('decision.editAdd')}</button><button onClick={()=>void api.rejectDecision(d.id).then(()=>api.listBrandDecisions(brand!.id)).then(setDecisions)}>{t('decision.discard')}</button></div>}{d.status==='approved'&&d.source.chatId&&<button onClick={()=>void api.archiveDecision(d.id).then(()=>api.listBrandDecisions(brand!.id)).then(setDecisions)}>{t('decision.undo')}</button>}</div></div>)}{!visibleDecisions.filter(d=>d.status==='approved'||d.status==='pending').length && <p className="footnote">{t('ui.auto.056')}</p>}</div></div>}
       {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice('Aprendizaje guardado en Engram'); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
       <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>

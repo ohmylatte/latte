@@ -586,3 +586,30 @@ html,body,#root{height:100%;overflow:hidden}
 .context-diff-add{background:#e6f4ea}
 .context-diff-del{background:#fce8e6;text-decoration:line-through}
 .context-diff-same{color:var(--muted)}
+.context-banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 22px}
+.context-state{font-size:9px;letter-spacing:1.4px;text-transform:uppercase;border:1px solid var(--line);border-radius:3px;padding:4px 8px;color:var(--muted)}
+.context-state-defined{color:#4c6146;border-color:#cbd8bf;background:#e8eddf}
+.context-state-pending{color:#8a5230;border-color:#e0c9b3;background:#f3e7da}
+.context-shared{font-size:11px;line-height:1.7;color:var(--muted)}
+.context-decided{margin-top:30px;border-top:1px solid var(--line);padding-top:18px}
+.context-decided ul{list-style:none;margin:0;padding:0}
+.context-decided li{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:8px 0;border-top:1px solid #ece5da;font-size:12px;color:var(--muted)}
+.context-decided li:first-child{border-top:0}
+.context-decided li small{font-size:10px;color:#a89880}
+.nav-badge{width:7px;height:7px;border-radius:50%;background:var(--accent);display:inline-block;flex-shrink:0;margin-left:auto}
+.context-write{border-top:0;margin-top:0;padding-top:0}
+button.danger{color:#91462e;border-color:#e0c0ae}
+button.danger:hover:not(:disabled){background:#f5e3d8;border-color:#c98d72}
+.context-history{margin-top:30px;border-top:1px solid var(--line);padding-top:18px}
+.context-history ul{list-style:none;margin:0;padding:0}
+.context-history li{display:flex;gap:12px;align-items:center;padding:8px 0;border-top:1px solid #ece5da;font-size:12px;color:var(--muted)}
+.context-history li:first-child{border-top:0}
+.context-history li small{font-size:10px;color:#a89880}
+.context-history li button{margin-left:auto;font-size:10px;padding:5px 8px}
+.context-revision-source{flex-shrink:0}
+.context-revision-preview{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#a89880}
+/* The newest revision is the live value: it is a statement, not a button. */
+.context-revision-current{margin-left:auto;font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:#a89880}
+.context-conflict{margin-top:18px;padding:12px 14px;border:1px solid #e0c9b3;border-radius:4px;background:#f3e7da}
+.context-conflict .footnote{margin:0 0 10px}
+.context-conflict .document-actions{margin-top:0;border-top:0;padding-top:0}

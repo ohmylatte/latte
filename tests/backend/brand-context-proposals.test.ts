@@ -1,6 +1,8 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { composeBrandContext } from '../../shared/brandContext';
-import { EMPTY_USAGE, type ChatSession, type TeamMember } from '../../shared/contracts';
+import { EMPTY_USAGE, type TeamMember } from '../../shared/contracts';
 import { LIMITS } from '../../electron/services/validation';
 import { brandContextProtocolBlocks, parseBrandContextJson } from '../../electron/workspace/brandContextProtocol';
 import { BRAND_CONTEXT_DRAFT_PROMPT_ES } from '../../electron/workspace/brandContextProtocol';
@@ -69,7 +71,7 @@ describe('brand context proposals', () => {
   it('approves replace, append, edited text and reject', async () => {
     const first = await b.service.proposeBrandContextFromAgent(chatId, 'msg_1', VALID);
     const approved = await b.service.approveBrandContextProposal(first!.id, null);
-    expect(approved.status).toBe('approved');
+    expect(approved.proposal.status).toBe('approved');
     expect((await b.service.listBrands())[0].context).toBe(VALID.text);
 
     const append = await b.service.proposeBrandContextFromAgent(chatId, 'msg_2', {
@@ -89,7 +91,7 @@ describe('brand context proposals', () => {
     const rejected = await b.service.proposeBrandContextFromAgent(chatId, 'msg_4', {
       text: 'No', rationale: 'y', mode: 'replace', clientRequestId: 'req_ctx_rej',
     });
-    expect((await b.service.rejectBrandContextProposal(rejected!.id)).status).toBe('rejected');
+    expect((await b.service.rejectBrandContextProposal(rejected!.id)).proposal.status).toBe('rejected');
     expect((await b.service.listBrands())[0].context).toBe('Texto editado por el humano.');
   });
 
@@ -107,7 +109,12 @@ describe('brand context proposals', () => {
     const pending = (await b.service.listBrandContextProposals(brandId)).filter((p) => p.status === 'pending');
     expect(pending).toHaveLength(1);
     expect(pending[0].id).toBe(replacement!.id);
-    expect((await b.service.listBrandContextProposals(brandId)).find((p) => p.id === first!.id)?.status).toBe('rejected');
+    // The superseded proposal leaves a visible trail instead of vanishing.
+    const superseded = (await b.service.listBrandContextProposals(brandId)).find((p) => p.id === first!.id);
+    expect(superseded?.status).toBe('rejected');
+    expect(superseded?.decidedReason).toBe('superseded');
+    expect(superseded?.supersededBy).toBe(replacement!.id);
+    expect(superseded?.decidedAt).not.toBeNull();
   });
 
   it('honours decision authority off, suggest and auto-record', async () => {
@@ -135,27 +142,40 @@ describe('brand context proposals', () => {
     await expect(b.service.requestBrandContextDraft(workId)).rejects.toMatchObject({ code: 'BRAND_ARCHIVED' });
   });
 
-  it('does not rewrite instruction files on approve; a later idle open sees the new context', async () => {
-    const session = (work: string, roleId: string, roleName: string): ChatSession => ({
-      id: `ses_${roleId}`, workId: work, provider: 'opencode', model: null, accountId: null,
-      label: roleName, resumed: false, roleId, roleName, historyRecovered: false,
-    });
-    vi.spyOn(b.hub, 'addMember').mockImplementation(async (input) => session(input.workId, input.roleId, input.roleId));
-    const write = vi.spyOn(b.files, 'writeInstructions');
+  it('propagates an approved context to every idle work and reports the live one', async () => {
+    const second = await b.service.createWork(brandId, 'Segundo');
+    const third = await b.service.createWork(brandId, 'Tercero');
+    const liveWork = third.id;
+    const liveDir = b.files.workDir(brandId, liveWork);
+    const liveBefore = fs.readFileSync(path.join(liveDir, 'AGENTS.md'), 'utf8');
+    expect(liveBefore).not.toContain(VALID.text);
+    // Only the third work has a running session.
+    vi.spyOn(b.hub, 'liveMemberCount').mockImplementation((id: string) => (id === liveWork ? 1 : 0));
+
     const pending = await b.service.proposeBrandContextFromAgent(chatId, 'msg_1', VALID);
-    write.mockClear();
-    await b.service.approveBrandContextProposal(pending!.id, null);
-    expect(write).not.toHaveBeenCalled();
-    expect((await b.service.listBrands())[0].context).toBe(VALID.text);
+    const result = await b.service.approveBrandContextProposal(pending!.id, null);
 
-    vi.spyOn(b.hub, 'liveMemberCount').mockReturnValue(0);
-    await b.service.addTeamMember(workId, 'researcher');
-    expect(write.mock.calls.some((call) => call[1] === workId && String(call[2]).includes(VALID.text))).toBe(true);
+    expect(result.brand.context).toBe(VALID.text);
+    expect(result.refresh.updated).toEqual(expect.arrayContaining([workId, second.id]));
+    expect(result.refresh.live).toEqual([liveWork]);
+    expect(result.refresh.unchanged).toEqual([]);
+    expect(fs.readFileSync(path.join(b.files.workDir(brandId, workId), 'AGENTS.md'), 'utf8')).toContain(VALID.text);
+    expect(fs.readFileSync(path.join(b.files.workDir(brandId, second.id), 'AGENTS.md'), 'utf8')).toContain(VALID.text);
+    // The live work keeps the file its session started with, and it is reported.
+    expect(fs.readFileSync(path.join(liveDir, 'AGENTS.md'), 'utf8')).toBe(liveBefore);
+  });
 
-    write.mockClear();
-    vi.spyOn(b.hub, 'liveMemberCount').mockReturnValue(1);
-    await b.service.addTeamMember(workId, 'analyst');
-    expect(write).not.toHaveBeenCalled();
+  it('reports a work whose managed files the human replaced as user-owned', async () => {
+    const second = await b.service.createWork(brandId, 'Segundo');
+    const dir = b.files.workDir(brandId, second.id);
+    fs.writeFileSync(path.join(dir, 'CLAUDE.md'), '# Mine\n');
+    fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# Mine too\n');
+
+    const pending = await b.service.proposeBrandContextFromAgent(chatId, 'msg_1', VALID);
+    const result = await b.service.approveBrandContextProposal(pending!.id, null);
+    expect(result.refresh.userOwned).toContain(second.id);
+    expect(result.refresh.updated).toContain(workId);
+    expect(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8')).toBe('# Mine too\n');
   });
 
   it('rejects unknown fields at the service boundary', async () => {
@@ -215,7 +235,7 @@ describe('brand context proposals', () => {
     const once = (await b.service.listBrands())[0].context;
     expect(once).toBe(composeBrandContext('Base.', 'Extra.', 'append'));
     const again = await b.service.approveBrandContextProposal(append!.id, null);
-    expect(again.status).toBe('approved');
+    expect(again.proposal.status).toBe('approved');
     expect((await b.service.listBrands())[0].context).toBe(once);
   });
 

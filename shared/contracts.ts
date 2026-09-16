@@ -279,8 +279,79 @@ export interface BrandContextProposal {
   clientRequestId: string | null;
   createdAt: string;
   decidedAt: string | null;
+  /** Why it was decided. `superseded` is the visible trail of a replaced pending proposal. */
+  decidedReason?: 'approved' | 'rejected' | 'superseded' | 'auto-recorded' | null;
+  /** The proposal that replaced this one, when `decidedReason` is `superseded`. */
+  supersededBy?: string | null;
 }
 export interface BrandContextProposalInput { text: string; rationale: string; mode: BrandContextMode; clientRequestId: string }
+/** Why a brand-context revision exists: who applied the change. */
+export type BrandContextRevisionSource = 'human' | 'proposal' | 'clear' | 'restore';
+/**
+ * One immutable entry of the history of `brands.context`.
+ *
+ * Nothing can update or delete a row (the database refuses), so a wipe is
+ * always recoverable. `origin` says what produced it: the proposal id for an
+ * approval, the revision id a restore came from, or null for a hand edit.
+ */
+export interface BrandContextRevision {
+  id: string;
+  brandId: string;
+  source: BrandContextRevisionSource;
+  origin: string | null;
+  content: string;
+  /** Canonical hash of `content`; the same value a save sends back for its check. */
+  fingerprint: string;
+  createdAt: string;
+}
+/** One work of the brand, as the Contexto view needs it. */
+export interface BrandContextStatusWork {
+  id: string;
+  title: string;
+  /** A running agent session is reading this work's instruction files. */
+  live: boolean;
+}
+/**
+ * Everything the Contexto view knows about the brand context beyond the brand
+ * record: the fingerprint the editor loaded (sent back on every write so a
+ * concurrent change is refused instead of silently overwritten), the proposals,
+ * the brand's works and the history.
+ */
+export interface BrandContextStatus {
+  brandId: string;
+  fingerprint: string;
+  pending: BrandContextProposal | null;
+  proposals: BrandContextProposal[];
+  works: BrandContextStatusWork[];
+  /** The work that owns the empty-context draft, or null when the brand has none. */
+  ownerWorkId: string | null;
+  /** Newest first. */
+  revisions: BrandContextRevision[];
+}
+/**
+ * What a brand-context write did to the brand's works, as work ids.
+ *
+ * `live` are works with a running agent session: the write does not reach them
+ * and the UI must say so. `userOwned` are works where the human replaced the
+ * managed file with their own. `unchanged` needed no write at all.
+ */
+export interface BrandContextRefreshReport {
+  updated: string[];
+  unchanged: string[];
+  live: string[];
+  userOwned: string[];
+}
+/** Result of approving or rejecting a proposal: the decided proposal, the brand and the propagation. */
+export interface BrandContextDecisionResult {
+  proposal: BrandContextProposal;
+  brand: Brand;
+  refresh: BrandContextRefreshReport;
+}
+/** Result of writing `brand.context` by hand: the persisted brand and the propagation. */
+export interface BrandContextSaveResult {
+  brand: Brand;
+  refresh: BrandContextRefreshReport;
+}
 export interface AgentEvent { sessionId: string; type: 'output' | 'exit' | 'error'; data: string }
 export interface AgentSession { id: string; provider: Provider; workId: string }
 export interface RuntimeStatus { provider: Provider; available: boolean; detail: string }
@@ -622,8 +693,24 @@ export interface LatteAPI {
   rejectDecision(decisionId: string): Promise<Decision>;
   archiveDecision(decisionId: string): Promise<Decision>;
   listBrandContextProposals(brandId: string): Promise<BrandContextProposal[]>;
-  approveBrandContextProposal(id: string, edited: string | null, acceptStale?: boolean): Promise<BrandContextProposal>;
-  rejectBrandContextProposal(id: string): Promise<BrandContextProposal>;
+  /** The fingerprint, proposals, works and history the Contexto view needs in one read. */
+  brandContextStatus(brandId: string): Promise<BrandContextStatus>;
+  /**
+   * Writes `brand.context` by hand and propagates it to the brand's idle works.
+   * `expectedFingerprint` is the value the editor loaded: when it no longer
+   * matches, the write is refused (`CONTEXT_STALE`) and the draft survives.
+   * `null` means the caller has nothing to compare against. An empty value is
+   * refused (`CONTEXT_EMPTY`): emptying is the explicit `clearBrandContext`.
+   */
+  saveBrandContext(brandId: string, context: string, expectedFingerprint: string | null): Promise<BrandContextSaveResult>;
+  /** The explicit clear: records a revision and refuses a stale fingerprint. */
+  clearBrandContext(brandId: string, expectedFingerprint: string | null): Promise<BrandContextSaveResult>;
+  /** The history of `brands.context`, newest first. */
+  listBrandContextRevisions(brandId: string): Promise<BrandContextRevision[]>;
+  /** Applies a past revision and records that restore as a new revision. */
+  restoreBrandContextRevision(brandId: string, revisionId: string, expectedFingerprint: string | null): Promise<BrandContextSaveResult>;
+  approveBrandContextProposal(id: string, edited: string | null, acceptStale?: boolean): Promise<BrandContextDecisionResult>;
+  rejectBrandContextProposal(id: string): Promise<BrandContextDecisionResult>;
   requestBrandContextDraft(workId: string): Promise<ChatSession>;
   runtimeStatus(): Promise<RuntimeStatus[]>;
   startAgent(workId: string, provider: Provider): Promise<AgentSession>;

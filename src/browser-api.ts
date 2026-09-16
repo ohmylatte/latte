@@ -1,11 +1,11 @@
 import { composeBrandContext } from '../shared/brandContext';
-import type { AgentRole, Brand, BrandContextProposal, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput } from '../shared/contracts';
+import type { AgentRole, Brand, BrandContextProposal, BrandContextRevision, BrandContextStatus, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput } from '../shared/contracts';
 import { createAgentBus } from './agent-events';
 import { createChatStore } from './chat-store';
 
 const KEY = 'latte-preview-v1';
 const initialBrief = '# Una nueva forma de habitar.\n\n_Brief de lanzamiento · Casa Oliva_\n\n## 01 / Objetivo\nPresentar la nueva colección a una audiencia que valora el diseño y la vida cotidiana.\n\n## 02 / Audiencia\nPersonas que eligen menos objetos, con más intención.\n\n## 03 / Propuesta\nDiseño que acompaña tu manera de vivir.\n\n> Hipótesis de ejemplo: contrastar con entrevistas antes de dar por validada.\n\n## 04 / Próximos pasos\n- [ ] Incorporar entrevistas reales\n- [ ] Revisar la propuesta de valor\n- [ ] Definir el primer experimento';
-interface Store { brands: Brand[]; works: Work[]; revisions: Revision[]; decisions: Decision[]; brandContextProposals?: BrandContextProposal[]; documents?: WorkDocument[]; contents?: Record<string,string>; profiles?: AgentProfile[] }
+interface Store { brands: Brand[]; works: Work[]; revisions: Revision[]; decisions: Decision[]; brandContextProposals?: BrandContextProposal[]; brandContextRevisions?: BrandContextRevision[]; documents?: WorkDocument[]; contents?: Record<string,string>; profiles?: AgentProfile[] }
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
 function read(): Store {
@@ -14,6 +14,26 @@ function read(): Store {
   return { brands: [{ id: 'demo', name: 'Casa Oliva · Ejemplo', context: 'Marca ficticia de objetos de diseño. Tono cálido, preciso y cercano. Este espacio contiene material de demostración, no investigación real.', createdAt: now(), archivedAt: null }], works: [{ id: 'demo-work', brandId: 'demo', title: 'Lanzamiento primavera', brief: initialBrief, folder: null, updatedAt: now() }], revisions: [], decisions: [], brandContextProposals: [] };
 }
 function change<T>(fn: (store: Store) => T): T { const s = read(); const result = fn(s); localStorage.setItem(KEY, JSON.stringify(s)); return result; }
+/**
+ * The preview's context fingerprint. The desktop hashes with sha256; here the
+ * field only has to be opaque and stable, and comparing the exact text means a
+ * collision can never turn a refused write into an accepted one.
+ */
+const contextFingerprint = (text: string): string => 'web:' + text.normalize('NFC').trim();
+/** The same refusals the backend sends, with a code the view can act on. */
+const contextError = (code: string, message: string): Error => Object.assign(new Error(message), { code });
+const previewRefresh = () => ({ updated: [], unchanged: [], live: [], userOwned: [] });
+function recordRevision(s: Store, brand: Brand, next: string, source: BrandContextRevision['source'], origin: string | null): void {
+  s.brandContextRevisions ??= [];
+  if (next === brand.context) return;
+  const createdAt = now();
+  // Same rule as the backend: the first change of an existing context keeps the
+  // value it replaced, so a wipe is recoverable even in the preview.
+  if (brand.context.trim().length > 0 && !s.brandContextRevisions.some(r => r.brandId === brand.id)) {
+    s.brandContextRevisions.push({ id: id(), brandId: brand.id, source: 'human', origin: null, content: brand.context, fingerprint: contextFingerprint(brand.context), createdAt });
+  }
+  s.brandContextRevisions.push({ id: id(), brandId: brand.id, source, origin, content: next, fingerprint: contextFingerprint(next), createdAt });
+}
 /** The web preview tracks a single brief document per work; the real model lives on the desktop. */
 const previewDocId = (workId: string) => 'doc-' + workId;
 const previewDocument = (w: Work): WorkDocument => ({ id: previewDocId(w.id), workId: w.id, kind: 'brief', title: w.title, fileName: 'brief.md', status: 'draft', funnelStages: [], proposedFunnelStages: [], baseDocumentId: null, baseRevisionId: null, baseFingerprint: null, createdAt: w.updatedAt, updatedAt: w.updatedAt });
@@ -160,28 +180,77 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
     const brand = s.brands.find(b => b.id === brandId);
     return (s.brandContextProposals ?? []).filter(p => p.brandId === brandId).map(p => ({ ...p, stale: Boolean(brand && p.baseFingerprint && p.baseFingerprint !== brand.context) }));
   },
+  brandContextStatus: async brandId => {
+    const s = read();
+    const brand = s.brands.find(b => b.id === brandId); if (!brand) throw new Error('Brand not found: ' + brandId);
+    const proposals = (s.brandContextProposals ?? []).filter(p => p.brandId === brandId).map(p => ({ ...p, stale: Boolean(p.baseFingerprint && p.baseFingerprint !== brand.context) }));
+    const works = s.works.filter(w => w.brandId === brandId);
+    const status: BrandContextStatus = {
+      brandId,
+      fingerprint: contextFingerprint(brand.context),
+      pending: proposals.find(p => p.status === 'pending') ?? null,
+      proposals,
+      works: works.map(w => ({ id: w.id, title: w.title, live: false })),
+      ownerWorkId: works.map(w => w.id).sort()[0] ?? null,
+      revisions: (s.brandContextRevisions ?? []).filter(r => r.brandId === brandId).slice().reverse(),
+    };
+    return status;
+  },
+  // The preview has no instruction files: the report is empty and the notice
+  // stays the plain "saved" line. The desktop reports what each work got.
+  saveBrandContext: async (brandId, context, expectedFingerprint) => change(s => {
+    const b = s.brands.find(x => x.id === brandId); if (!b) throw new Error('Brand not found: ' + brandId);
+    if (expectedFingerprint != null && expectedFingerprint !== contextFingerprint(b.context)) throw contextError('CONTEXT_STALE', 'Brand context changed since it was loaded');
+    const next = context.trim().normalize('NFC');
+    if (next.length === 0) throw contextError('CONTEXT_EMPTY', 'Brand context cannot be emptied by a save');
+    recordRevision(s, b, next, 'human', null);
+    b.context = next;
+    return { brand: b, refresh: previewRefresh() };
+  }),
+  clearBrandContext: async (brandId, expectedFingerprint) => change(s => {
+    const b = s.brands.find(x => x.id === brandId); if (!b) throw new Error('Brand not found: ' + brandId);
+    if (expectedFingerprint != null && expectedFingerprint !== contextFingerprint(b.context)) throw contextError('CONTEXT_STALE', 'Brand context changed since it was loaded');
+    recordRevision(s, b, '', 'clear', null);
+    b.context = '';
+    return { brand: b, refresh: previewRefresh() };
+  }),
+  listBrandContextRevisions: async brandId => (read().brandContextRevisions ?? []).filter(r => r.brandId === brandId).slice().reverse(),
+  restoreBrandContextRevision: async (brandId, revisionId, expectedFingerprint) => change(s => {
+    const b = s.brands.find(x => x.id === brandId); if (!b) throw new Error('Brand not found: ' + brandId);
+    if (expectedFingerprint != null && expectedFingerprint !== contextFingerprint(b.context)) throw contextError('CONTEXT_STALE', 'Brand context changed since it was loaded');
+    const revision = (s.brandContextRevisions ?? []).find(r => r.id === revisionId && r.brandId === brandId);
+    if (!revision) throw new Error('Revisión no encontrada');
+    recordRevision(s, b, revision.content, 'restore', revision.id);
+    b.context = revision.content;
+    return { brand: b, refresh: previewRefresh() };
+  }),
   approveBrandContextProposal: async (proposalId, edited, acceptStale = false) => change(s => {
     s.brandContextProposals ??= [];
     const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
     const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw new Error('Brand not found: ' + p.brandId);
     if (brand.archivedAt) throw new Error('Brand is archived: ' + brand.id);
-    if (p.status === 'approved') return p;
+    const report = { updated: [], unchanged: [], live: [], userOwned: [] };
+    if (p.status === 'approved') return { proposal: p, brand, refresh: report };
     if (p.status !== 'pending') throw new Error('La propuesta ya no está pendiente');
     if (edited != null) p.text = edited;
     const composed = composeBrandContext(brand.context, p.text, p.mode);
     if (composed.length > 60_000) throw new Error(`Brand context is ${composed.length - 60_000} characters over the 60000-character limit`);
     if (!acceptStale && p.baseFingerprint && p.baseFingerprint !== brand.context) throw new Error('Brand context changed since this proposal');
-    p.status = 'approved'; p.decidedAt = now();
+    p.status = 'approved'; p.decidedAt = now(); p.decidedReason = 'approved';
+    recordRevision(s, brand, composed, 'proposal', p.id);
     brand.context = composed;
-    return p;
+    return { proposal: p, brand, refresh: report };
   }),
   rejectBrandContextProposal: async proposalId => change(s => {
     s.brandContextProposals ??= [];
     const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
-    const brand = s.brands.find(b => b.id === p.brandId); if (brand?.archivedAt) throw new Error('Brand is archived: ' + p.brandId);
-    if (p.status === 'rejected') return p;
+    const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw new Error('Brand not found: ' + p.brandId);
+    if (brand.archivedAt) throw new Error('Brand is archived: ' + p.brandId);
+    const report = { updated: [], unchanged: [], live: [], userOwned: [] };
+    if (p.status === 'rejected') return { proposal: p, brand, refresh: report };
     if (p.status !== 'pending') throw new Error('La propuesta ya no está pendiente');
-    p.status = 'rejected'; p.decidedAt = now(); return p;
+    p.status = 'rejected'; p.decidedAt = now(); p.decidedReason = 'rejected';
+    return { proposal: p, brand, refresh: report };
   }),
   requestBrandContextDraft: unavailable,
   runtimeStatus: async () => ['claude', 'codex', 'opencode'].map(provider => ({ provider: provider as 'claude' | 'codex' | 'opencode', available: false, detail: 'Requiere escritorio' })),

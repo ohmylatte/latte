@@ -13,6 +13,7 @@ import {
   type BrandMemorySnapshot,
 } from './brandMemory';
 import { DELIVERABLES_DIR } from './deliverables';
+import type { BrandContextNudge, BrandContextNudgeReason } from './brandContextNudge';
 
 export const MANAGED_MARKER = '<!-- latte:managed -->';
 
@@ -201,6 +202,12 @@ export interface InstructionsInput {
    * documents and decisions stay the work's delta; this is the brand's.
    */
   brandMemory?: BrandMemorySnapshot | null;
+  /**
+   * Who may draft an empty brand context, computed by the service. Omitted in
+   * pure renders: the default keeps today's behaviour (full nudge when the
+   * context is empty, none when it is written).
+   */
+  brandContextNudge?: BrandContextNudge;
 }
 
 /** Compact receipt pointer that rides CLAUDE.md / AGENTS.md. */
@@ -263,7 +270,38 @@ function decisionLine(d: Decision): string {
  * Pulled out of renderInstructionBundle so the hard-cap fallback can re-render
  * with tighter ceilings without duplicating the whole layout.
  */
-type BrandContextProtocolOpts = { updateLine: boolean; emptyNudge: 'full' | 'short' };
+type BrandContextProtocolOpts = { updateLine: boolean; nudge: BrandContextNudge };
+
+/**
+ * Why THIS work must not draft the brand context, said plainly.
+ *
+ * A bare "do not draft it" is what made agents ask anyway: told to stop
+ * without a reason, they ask the human. Each reason names the real one, and
+ * the `pending` line carries the "do not ask for positioning, tone or
+ * audience" wording the empty-context section used to carry on its own.
+ */
+function suppressedNudgeLine(reason: BrandContextNudgeReason | null): string {
+  switch (reason) {
+    case 'pending':
+      return '- The brand context is empty. A proposal is already waiting for the human to review: do not ask for positioning, tone or audience, and do not draft or propose it here.';
+    case 'inherited':
+      return '- The brand context is empty. Brand knowledge from previous work is inherited below: use it and do not draft or propose a new context here.';
+    case 'owner-elsewhere':
+      return '- The brand context is empty. Another work of this brand is drafting it: do not draft or propose it here.';
+    case 'context-exists':
+      return '- The brand context is already written. Do not draft or propose it here.';
+    default:
+      return '- Do not draft or propose a brand context here.';
+  }
+}
+
+/** The form the renderer uses when the caller passed no policy. */
+function resolvedNudge(input: InstructionsInput): BrandContextNudge {
+  if (input.brandContextNudge) return input.brandContextNudge;
+  return input.brand.context.trim().length > 0
+    ? { form: 'none', reason: 'context-exists' }
+    : { form: 'full', reason: null };
+}
 
 function brandContextProtocolLines(input: InstructionsInput, protocol: BrandContextProtocolOpts): string[] {
   const authority = input.decisionAuthority ?? 'suggest';
@@ -274,9 +312,13 @@ function brandContextProtocolLines(input: InstructionsInput, protocol: BrandCont
     '- When the brand context should change, invoke Latte\'s brand-context protocol by appending exactly one fenced `latte-brand-context` JSON block per conversation with: `text`, `rationale`, `mode` (`replace` or `append`; default `append` when context already exists), and a stable unique `clientRequestId`. Emit it only with evidence from the brief or this work\'s documents; never for hypotheses or anything the human has not confirmed. Latte will ask the human to approve it or apply it according to the same decision-authority setting.',
   ];
   if (input.brand.context.trim().length === 0) {
-    lines.push(protocol.emptyNudge === 'short'
-      ? '- Draft this brand\'s context from the brief and propose it with the `latte-brand-context` block.'
-      : '- Before starting any other work, draft this brand\'s context from the brief and propose it with the `latte-brand-context` block.');
+    if (protocol.nudge.form === 'full') {
+      lines.push('- Before starting any other work, draft this brand\'s context from the brief and propose it with the `latte-brand-context` block.');
+    } else if (protocol.nudge.form === 'short') {
+      lines.push('- Draft this brand\'s context from the brief and propose it with the `latte-brand-context` block.');
+    } else {
+      lines.push(suppressedNudgeLine(protocol.nudge.reason));
+    }
   } else if (protocol.updateLine) {
     lines.push('- Propose a brand-context update only when you have new durable facts the current context does not already hold.');
   }
@@ -529,7 +571,10 @@ export function renderInstructionBundle(input: InstructionsInput): InstructionBu
     return { rendered, overCap };
   };
 
-  const fullProtocol: BrandContextProtocolOpts = { updateLine: true, emptyNudge: 'full' };
+  // The nudge is computed by the service (brand-scoped owner election). A pure
+  // render without one keeps the historical default.
+  const nudge = resolvedNudge(input);
+  const fullProtocol: BrandContextProtocolOpts = { updateLine: true, nudge };
   // Base, brief, rules and shipped skills are never dropped to make room for learned refs.
   let { rendered, overCap } = run(true, fullProtocol);
   let includeLearned = true;
@@ -540,12 +585,15 @@ export function renderInstructionBundle(input: InstructionsInput): InstructionBu
     includeLearned = false;
   }
   // Protocol extras participate in the budget only while the squeezed file still
-  // overflows: drop the filled-context update line, or shorten the empty nudge.
+  // overflows: drop the filled-context update line, and shorten the empty nudge.
+  // A suppressed nudge ('none') is NEVER resurrected by the squeeze: the agent
+  // must not be told to draft what another work already owns.
   if (overCap && !fits(rendered.text)) {
-    const protocol: BrandContextProtocolOpts = input.brand.context.trim()
-      ? { updateLine: false, emptyNudge: 'full' }
-      : { updateLine: true, emptyNudge: 'short' };
-    rendered = run(includeLearned, protocol).rendered;
+    const squeezed: BrandContextNudge = {
+      form: nudge.form === 'full' ? 'short' : nudge.form,
+      reason: nudge.reason,
+    };
+    rendered = run(includeLearned, { updateLine: false, nudge: squeezed }).rendered;
   }
   if (!overCap) return { text: rendered.text, files: rendered.files };
 

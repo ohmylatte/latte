@@ -44,13 +44,23 @@ describe('IPC surface', () => {
     expect(API_METHODS).toContain('getBrand');
     expect(API_ARITY.getBrand).toBe(1);
     expect(API_METHODS).toContain('listBrandContextProposals');
+    expect(API_METHODS).toContain('saveBrandContext');
+    expect(API_METHODS).toContain('clearBrandContext');
     expect(API_METHODS).toContain('approveBrandContextProposal');
     expect(API_METHODS).toContain('rejectBrandContextProposal');
     expect(API_METHODS).toContain('requestBrandContextDraft');
+    expect(API_METHODS).toContain('brandContextStatus');
+    expect(API_METHODS).toContain('listBrandContextRevisions');
+    expect(API_METHODS).toContain('restoreBrandContextRevision');
     expect(API_ARITY.listBrandContextProposals).toBe(1);
+    expect(API_ARITY.saveBrandContext).toBe(3);
+    expect(API_ARITY.clearBrandContext).toBe(2);
     expect(API_ARITY.approveBrandContextProposal).toBe(3);
     expect(API_ARITY.rejectBrandContextProposal).toBe(1);
     expect(API_ARITY.requestBrandContextDraft).toBe(1);
+    expect(API_ARITY.brandContextStatus).toBe(1);
+    expect(API_ARITY.listBrandContextRevisions).toBe(1);
+    expect(API_ARITY.restoreBrandContextRevision).toBe(3);
   });
 
   it('preload never exposes a generic invoke or Node globals', () => {

@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
  */
 export const ID_PATTERN = /^[a-z][a-z0-9_-]{2,63}$/;
 
-export type IdPrefix = 'brd' | 'wrk' | 'rev' | 'dec' | 'ses' | 'mem' | 'doc' | 'gen' | 'bcp';
+export type IdPrefix = 'brd' | 'wrk' | 'rev' | 'dec' | 'ses' | 'mem' | 'doc' | 'gen' | 'bcp' | 'bcr';
 
 export function newId(prefix: IdPrefix): string {
   return `${prefix}_${randomBytes(10).toString('hex')}`;

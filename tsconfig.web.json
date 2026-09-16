@@ -20,5 +20,5 @@
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "shared/**/*.ts"],
   "//": "The renderer never gets Node types: an import of node:fs here has to be an error. The unit tests next to the components run in Node and are checked by tsconfig.web-tests.json.",
-  "exclude": ["src/**/*.test.ts"]
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

@@ -1,14 +1,18 @@
 import { createHash } from 'node:crypto';
-import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
+import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
 import type { ArtifactCheck, DeliveryEvidence, GenerationReceipt } from '../../shared/generationContracts';
 import { GenerationContractError } from '../generation/errors';
 import { hashGenerationContext } from '../generation/canon';
+import { newId } from '../core/ids';
 import { NotFoundError, ValidationError } from '../core/errors';
 import { addUsage, parseUsage, serializeUsage } from '../core/usage';
 import type { SqlDriver, SqlRow } from './driver';
 import { BrandingRepository } from './brandingRepository';
 import { BRANDING_SCHEMA_SQL } from './brandingSchema';
 import { SCHEMA_SQL, SCHEMA_VERSION } from './schema';
+// The fingerprint is the SAME value the Contexto view and the CAS check use, so
+// it is imported instead of re-implemented: one algorithm, one history.
+import { brandContextFingerprint } from '../workspace/brandContextProtocol';
 
 interface BrandRow extends SqlRow { id: string; name: string; context: string; created_at: string; archived_at: string | null }
 interface WorkRow extends SqlRow { id: string; brand_id: string; title: string; brief: string; dir: string | null; expected_output: string | null; result_path: string | null; updated_at: string }
@@ -21,8 +25,10 @@ interface BrandContextProposalRow extends SqlRow {
   source_role_id: string | null; source_runtime: string | null;
   text: string; rationale: string; mode: string; status: string; fingerprint: string;
   base_fingerprint: string; client_request_id: string | null; created_at: string; decided_at: string | null;
+  decided_reason: string | null; superseded_by: string | null;
 }
 interface DocumentRow extends SqlRow { id: string; work_id: string; kind: string; title: string; file_name: string; status: string; funnel_stages: string; proposed_stages: string; base_doc_id: string | null; base_rev_id: string | null; base_print: string | null; last_print: string | null; created_at: string; updated_at: string }
+interface BrandContextRevisionRow extends SqlRow { id: string; brand_id: string; source: string; origin: string | null; content: string; fingerprint: string; created_at: string }
 interface MemberRow extends SqlRow { id: string; work_id: string; role_id: string; role_name: string; initial: string; runtime: string; model: string | null; account_id: string | null; session_id: string; done: number; continued_from: string | null; tier: string | null; usage_json: string | null; created_at: string; updated_at: string }
 interface GenerationRow extends SqlRow { id: string; work_id: string; brand_id: string; context_json: string; context_hash: string; created_at: string }
 interface EvidenceRow extends SqlRow { id: string; generation_id: string; runtime: string; chat_id: string | null; projected_at: string; files_written: string }
@@ -125,6 +131,17 @@ const toBrandContextProposal = (r: BrandContextProposalRow): BrandContextProposa
   clientRequestId: r.client_request_id,
   createdAt: r.created_at,
   decidedAt: r.decided_at,
+  decidedReason: r.decided_reason === 'approved' || r.decided_reason === 'rejected' || r.decided_reason === 'superseded' || r.decided_reason === 'auto-recorded' ? r.decided_reason : null,
+  supersededBy: r.superseded_by ?? null,
+});
+const toBrandContextRevision = (r: BrandContextRevisionRow): BrandContextRevision => ({
+  id: r.id,
+  brandId: r.brand_id,
+  source: (r.source === 'proposal' || r.source === 'clear' || r.source === 'restore') ? r.source : 'human',
+  origin: r.origin ?? null,
+  content: r.content,
+  fingerprint: r.fingerprint,
+  createdAt: r.created_at,
 });
 const toGeneration = (r: GenerationRow): GenerationReceipt => ({
   id: r.id,
@@ -252,6 +269,13 @@ export class LatteRepository {
     // which is exactly true — Latte never invents consumption it did not see.
     if (memberColumns.length > 0 && !memberColumns.includes('tier')) this.db.run("ALTER TABLE team_members ADD COLUMN tier TEXT NOT NULL DEFAULT 'balanced'");
     if (memberColumns.length > 0 && !memberColumns.includes('usage_json')) this.db.run('ALTER TABLE team_members ADD COLUMN usage_json TEXT');
+    // The supersede trail on brand-context proposals: why a proposal stopped
+    // being pending, and which one replaced it. Nullable and ignored by older
+    // builds (they name their columns on insert), so, like tier, it needs no
+    // schema version of its own.
+    const brandContextColumns = this.db.all<{ name: string }>("SELECT name FROM pragma_table_info('brand_context_proposals')").map((c) => c.name);
+    if (brandContextColumns.length > 0 && !brandContextColumns.includes('decided_reason')) this.db.run('ALTER TABLE brand_context_proposals ADD COLUMN decided_reason TEXT');
+    if (brandContextColumns.length > 0 && !brandContextColumns.includes('superseded_by')) this.db.run('ALTER TABLE brand_context_proposals ADD COLUMN superseded_by TEXT');
     // v1/v2 kept one runtime session per work in chat_sessions. v3 models a
     // team: every conversation is a member with a role. Old sessions become
     // "assistant" members so nothing already resumable is lost.
@@ -665,21 +689,31 @@ export class LatteRepository {
 
   insertBrandContextProposal(proposal: BrandContextProposal): BrandContextProposal {
     this.db.run(
-      'INSERT INTO brand_context_proposals(id, brand_id, work_id, source_chat_id, source_message_id, source_member_id, source_role_id, source_runtime, text, rationale, mode, status, fingerprint, base_fingerprint, client_request_id, created_at, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO brand_context_proposals(id, brand_id, work_id, source_chat_id, source_message_id, source_member_id, source_role_id, source_runtime, text, rationale, mode, status, fingerprint, base_fingerprint, client_request_id, created_at, decided_at, decided_reason, superseded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         proposal.id, proposal.brandId, proposal.workId,
         proposal.source.chatId, proposal.source.messageId, proposal.source.memberId, proposal.source.roleId, proposal.source.runtime,
         proposal.text, proposal.rationale, proposal.mode, proposal.status, proposal.fingerprint, proposal.baseFingerprint,
         proposal.clientRequestId, proposal.createdAt, proposal.decidedAt,
+        proposal.decidedReason ?? null, proposal.supersededBy ?? null,
       ],
     );
     return proposal;
   }
 
-  rejectPendingBrandContext(brandId: string, at: string): BrandContextProposal | null {
+  /**
+   * Marks the pending proposal of a brand as superseded by a newer one. The
+   * row is kept (never deleted) with a reason and a pointer, so the Contexto
+   * view can show that an earlier proposal existed and was replaced instead of
+   * it vanishing silently. The partial unique index keeps one pending per brand.
+   */
+  rejectPendingBrandContext(brandId: string, at: string, reason: 'superseded' | 'rejected' = 'superseded', supersededBy: string | null = null): BrandContextProposal | null {
     const pending = this.findPendingBrandContext(brandId);
     if (!pending) return null;
-    this.db.run("UPDATE brand_context_proposals SET status = 'rejected', decided_at = ? WHERE id = ?", [at, pending.id]);
+    this.db.run(
+      "UPDATE brand_context_proposals SET status = 'rejected', decided_at = ?, decided_reason = ?, superseded_by = ? WHERE id = ?",
+      [at, reason, supersededBy, pending.id],
+    );
     return this.getBrandContextProposal(pending.id);
   }
 
@@ -690,8 +724,67 @@ export class LatteRepository {
       throw new ValidationError(`Brand context proposal cannot transition from ${before.status} to ${status}`);
     }
     const nextText = text ?? before.text;
-    this.db.run('UPDATE brand_context_proposals SET status = ?, text = ?, decided_at = ? WHERE id = ?', [status, nextText, at, id]);
+    this.db.run('UPDATE brand_context_proposals SET status = ?, text = ?, decided_at = ?, decided_reason = ? WHERE id = ?', [status, nextText, at, status, id]);
     return this.getBrandContextProposal(id);
+  }
+
+  // Brand context history (immutable) ----------------------------------------
+
+  /** The history of `brands.context`, newest first. */
+  listBrandContextRevisions(brandId: string): BrandContextRevision[] {
+    // `rowid` breaks the tie when two revisions share a timestamp: the
+    // back-filled original is inserted before the change that followed it.
+    return this.db
+      .all<BrandContextRevisionRow>('SELECT * FROM brand_context_revisions WHERE brand_id = ? ORDER BY created_at DESC, rowid DESC', [brandId])
+      .map(toBrandContextRevision);
+  }
+
+  getBrandContextRevision(id: string): BrandContextRevision {
+    const row = this.db.get<BrandContextRevisionRow>('SELECT * FROM brand_context_revisions WHERE id = ?', [id]);
+    if (!row) throw new NotFoundError('BrandContextRevision', id);
+    return toBrandContextRevision(row);
+  }
+
+  insertBrandContextRevision(revision: BrandContextRevision): BrandContextRevision {
+    this.db.run(
+      'INSERT INTO brand_context_revisions(id, brand_id, source, origin, content, fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [revision.id, revision.brandId, revision.source, revision.origin, revision.content, revision.fingerprint, revision.createdAt],
+    );
+    return revision;
+  }
+
+  /**
+   * Records a change of `brands.context`, and never loses the value it replaced.
+   *
+   * `brand` must be the row as it was BEFORE the change: when the context was
+   * already written and no revision exists yet (a database from before this
+   * table), the previous value is back-filled first, so the first change of an
+   * existing context cannot erase it. A no-op change records nothing.
+   *
+   * The caller owns the transaction: this only runs statements, so it must be
+   * called inside one that also writes `brands.context`.
+   */
+  recordBrandContextRevision(
+    brand: Brand,
+    next: string,
+    source: BrandContextRevisionSource,
+    origin: string | null,
+    at: string,
+  ): BrandContextRevision[] {
+    if (next === brand.context) return [];
+    const recorded: BrandContextRevision[] = [];
+    const existing = this.db.get<{ count: number }>('SELECT COUNT(*) AS count FROM brand_context_revisions WHERE brand_id = ?', [brand.id]);
+    if (brand.context.trim().length > 0 && (existing?.count ?? 0) === 0) {
+      recorded.push(this.insertBrandContextRevision({
+        id: newId('bcr'), brandId: brand.id, source: 'human', origin: null,
+        content: brand.context, fingerprint: brandContextFingerprint(brand.context), createdAt: at,
+      }));
+    }
+    recorded.push(this.insertBrandContextRevision({
+      id: newId('bcr'), brandId: brand.id, source, origin,
+      content: next, fingerprint: brandContextFingerprint(next), createdAt: at,
+    }));
+    return recorded;
   }
 
   // Generations (immutable receipts) -----------------------------------------
