@@ -18,6 +18,9 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
   const [sending, setSending] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  const restoreComposerFocus = useRef(false);
+  const composerHadFocus = useRef(false);
   const following = useRef(true);
   const [unread, setUnread] = useState(false);
   const busy = state.status === 'busy' || state.status === 'retry';
@@ -38,6 +41,24 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
+
+  // Chromium can drop the renderer's text-input focus while the native window
+  // is minimized. Restore only a composer that had focus before that native
+  // blur; never steal focus from another control inside Latte.
+  useEffect(() => {
+    const onWindowBlur = () => { restoreComposerFocus.current = composerHadFocus.current; };
+    const onWindowFocus = () => {
+      if (!restoreComposerFocus.current || state.closed) return;
+      restoreComposerFocus.current = false;
+      requestAnimationFrame(() => composer.current?.focus());
+    };
+    window.addEventListener('blur', onWindowBlur);
+    window.addEventListener('focus', onWindowFocus);
+    return () => {
+      window.removeEventListener('blur', onWindowBlur);
+      window.removeEventListener('focus', onWindowFocus);
+    };
+  }, [state.closed]);
 
   const showLatest = () => {
     following.current = true;
@@ -100,7 +121,7 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
     {unread && <button className="conversation-new-messages" onClick={showLatest}>Hay mensajes nuevos · Ir al final</button>}
     {beforeComposer}
     <form className="prompt-form" onSubmit={e => { e.preventDefault(); void send(); }}>
-      <textarea aria-label={t('ui.auto.019')} placeholder={state.closed ? t('ui.auto.093') : t('ui.auto.020')} value={draft} disabled={state.closed} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
+      <textarea ref={composer} aria-label={t('ui.auto.019')} placeholder={state.closed ? t('ui.auto.093') : t('ui.auto.020')} value={draft} disabled={state.closed} onFocus={() => { composerHadFocus.current = true; }} onBlur={e => { if (e.relatedTarget) composerHadFocus.current = false; }} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
       <div><small>{state.closed ? t('ui.auto.093') : busy ? t('ui.auto.094') : t('ui.auto.095')}</small><span><button type="button" className="icon-button" disabled={!onAttachFiles || attaching || busy || state.closed} aria-label="Adjuntar archivos al trabajo" title="Adjuntar archivos al trabajo" onClick={() => void attach()}><Paperclip size={16} /></button><button className="primary icon-button" disabled={!draft.trim() || sending || busy || state.closed} aria-label={t('ui.auto.023')}><ArrowUpRight size={18} /></button></span></div>
     </form>
   </div>;
