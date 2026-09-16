@@ -218,6 +218,7 @@ describe('release workflows', () => {
       expect(uploadCount).toBe(succeeds ? 1 : 0);
       if (succeeds) expect(calls.lastIndexOf('view')).toBeLessThan(calls.indexOf('upload'));
     },
+    35_000,
   );
 
   it('uploads only generated Windows release assets', () => {

@@ -174,6 +174,23 @@ rl.on('line', (line) => {
         });
         return;
       }
+      if (/elicit-empty-form/i.test(text)) {
+        const requestId = ++serverRequestId;
+        pendingApprovals.set(requestId, (answer) => {
+          const action = answer.result && answer.result.action ? answer.result.action : 'none';
+          const content = answer.result && answer.result.content ? JSON.stringify(answer.result.content) : '';
+          finish(`elicitation ${action} ${content}`, 'completed');
+        });
+        out({
+          jsonrpc: '2.0', id: requestId, method: 'mcpServer/elicitation/request',
+          params: {
+            serverName: 'The-agentcy', threadId, turnId,
+            message: 'Allow the The-agentcy MCP server to run tool "set_workspace_profile"?',
+            mode: 'form', requestedSchema: { type: 'object', properties: {} },
+          },
+        });
+        return;
+      }
       if (/elicit-complex/i.test(text)) {
         const requestId = ++serverRequestId;
         pendingApprovals.set(requestId, (answer) => {

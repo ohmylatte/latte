@@ -189,10 +189,10 @@ function PermissionCard({ chatId, runtime, request, onError }: { chatId: string;
     {request.patterns.length > 0 && <ul>{request.patterns.map(p => <li key={p}><code>{p}</code></li>)}</ul>}
     <div className="chat-card-actions">
       <button className="primary" disabled={busy} onClick={() => reply('once')}>{t('ui.auto.103')}</button>
-      <button disabled={busy} onClick={() => reply('always')}>{t('ui.auto.361')}</button>
+      {request.always.length > 0 && <button disabled={busy} onClick={() => reply('always')}>{t('ui.auto.361')}</button>}
       <button disabled={busy} onClick={() => reply('reject')}>{t('ui.auto.362')}</button>
     </div>
-    <small className="permission-scope">{alwaysScope()[runtime] ?? alwaysScope().opencode}</small>
+    {request.always.length > 0 && <small className="permission-scope">{alwaysScope()[runtime] ?? alwaysScope().opencode}</small>}
   </div>;
 }
 

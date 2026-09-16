@@ -29,7 +29,7 @@ export interface CodexAdapterDeps {
 }
 
 interface PendingRequest {
-  kind: 'command' | 'fileChange' | 'permissions' | 'question' | 'elicitation-url' | 'elicitation-form';
+  kind: 'command' | 'fileChange' | 'permissions' | 'question' | 'elicitation-url' | 'elicitation-form' | 'elicitation-empty-form';
   respond: (result: unknown) => void;
   fail: (message: string) => void;
   params: Record<string, unknown>;
@@ -234,6 +234,8 @@ export class CodexChatAdapter implements RuntimeAdapter {
         if (isHttpUrl(url) && this.deps.openExternal) await this.deps.openExternal(url);
         pending.respond({ action: 'accept' });
       }
+    } else if (pending.kind === 'elicitation-empty-form') {
+      pending.respond(reply === 'reject' ? { action: 'decline' } : { action: 'accept', content: {} });
     } else if (pending.kind === 'permissions') {
       if (reply === 'reject') pending.fail('The user declined this permission in Latte.');
       else pending.respond({ permissions: pending.params.permissions ?? {}, scope: reply === 'always' ? 'session' : 'turn' });
@@ -599,6 +601,22 @@ export class CodexChatAdapter implements RuntimeAdapter {
     if (params.mode === 'form') {
       const mapped = mapElicitationForm(params.requestedSchema);
       if (!mapped.ok) {
+        if (mapped.reason === 'el formulario no tiene campos') {
+          live.pending.set(requestId, { kind: 'elicitation-empty-form', respond, fail, params });
+          this.deps.emit({
+            chatId: live.chatId,
+            type: 'permission',
+            request: {
+              id: requestId,
+              permission: 'mcp-elicitation',
+              patterns: [],
+              always: [],
+              title: message || `El servidor MCP «${serverName}» pidió confirmar una acción sin valores.`,
+              serverName,
+            },
+          });
+          return true;
+        }
         this.deps.emit({
           chatId: live.chatId,
           type: 'error',
@@ -622,7 +640,7 @@ export class CodexChatAdapter implements RuntimeAdapter {
 
   private settlePending(live: LiveChat, reason: string): void {
     for (const pending of live.pending.values()) {
-      if (pending.kind === 'elicitation-url' || pending.kind === 'elicitation-form') pending.respond({ action: 'cancel' });
+      if (pending.kind === 'elicitation-url' || pending.kind === 'elicitation-form' || pending.kind === 'elicitation-empty-form') pending.respond({ action: 'cancel' });
       else pending.fail(reason);
     }
     live.pending.clear();

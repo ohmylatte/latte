@@ -270,6 +270,21 @@ describe('CodexChatAdapter against a fake app-server', () => {
     });
   });
 
+  it('turns an empty MCP form into a consent card and accepts with empty content', async () => {
+    const { session } = await adapter.start({ workId: 'wrk_1', directory: dir, title: 't', label: 'Codex', accountId: null });
+    await adapter.send(session.id, 'elicit-empty-form please');
+    await waitFor(() => events.some((e) => e.type === 'permission'));
+    const permission = events.find((e) => e.type === 'permission') as Extract<ChatEvent, { type: 'permission' }>;
+    expect(permission.request).toMatchObject({
+      permission: 'mcp-elicitation',
+      serverName: 'The-agentcy',
+      title: expect.stringContaining('set_workspace_profile'),
+    });
+    await adapter.replyPermission(session.id, permission.request.id, 'once');
+    await waitFor(() => events.some((e) => e.type === 'status' && e.status === 'idle'));
+    expect(adapter.listMessages(session.id).at(-1)?.parts[0]).toMatchObject({ text: 'elicitation accept {}' });
+  });
+
   it('declines an unsupported elicitation schema with a visible notice', async () => {
     const { session } = await adapter.start({ workId: 'wrk_1', directory: dir, title: 't', label: 'Codex', accountId: null });
     await adapter.send(session.id, 'elicit-complex please');
