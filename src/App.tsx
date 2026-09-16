@@ -291,7 +291,7 @@ export function App() {
   const primaryRuntime = primary?.runtime ?? 'opencode';
   const primaryAccount = primaryRuntime === 'opencode' ? null : agentRuntimes.find(r => r.runtime === primaryRuntime)?.accounts.find(a => a.id === (primary?.accountId ?? 'system')) ?? null;
   const primaryReady = primaryRuntime === 'opencode' ? Boolean(chatRuntime?.available) : Boolean(primaryAccount?.loggedIn);
-  const primaryLabel = primary?.label ?? (chatRuntime?.defaultModel ? `OpenCode · ${chatRuntime.defaultModel}` : 'OpenCode · modelo por defecto');
+  const primaryLabel = primary?.label ?? t('agent.primaryFallback');
   const activeRuntime = selectedChat?.provider ?? primaryRuntime;
   const runtimeName = activeRuntime === 'claude' ? 'Claude Code' : activeRuntime === 'codex' ? 'Codex' : 'OpenCode';
   const primaryDetail = primaryRuntime === 'opencode' ? (chatRuntime?.detail ?? 'Comprobando OpenCode…') : (primaryAccount ? primaryAccount.detail : `${primaryRuntime === 'claude' ? 'Claude Code' : 'Codex'}: cuenta no disponible`);
@@ -810,7 +810,7 @@ export function App() {
           <span><FileText size={13} />{brand?.context ? t('ui.auto.069') : t('ui.auto.070')}</span>
           <span><Folder size={13} />{work?.title ?? t('ui.auto.071')}</span>
           <span><Bookmark size={13} />{decisions.length}  {t('ui.auto.353')}</span>
-          <p className="agent-footnote">{t('ui.auto.072')} {runtimeName}  {t('ui.auto.073')}</p>
+          <p className="agent-footnote" title={runtimeName}>{t('ui.auto.072')} {t('ui.auto.073')}</p>
         </div>
       </details>
     </aside>
