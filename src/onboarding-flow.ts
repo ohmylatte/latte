@@ -1,6 +1,6 @@
 import type { MessageKey } from './i18n';
 import type { OnboardingDraft, OnboardingStep } from '../shared/contracts';
-import { findWorkType, isAnswered, type Answer, type WorkType } from './work-catalog';
+import { findWorkType, isAnswered, type Answer, type OnboardingQuestion, type WorkType } from './work-catalog';
 
 /**
  * The onboarding state machine, kept pure so the whole walk is testable
@@ -95,6 +95,16 @@ export function declareAssumptions(workType: WorkType, answers: Record<string, A
     if (question.assumptionKey) assumptions.push(t(question.assumptionKey));
   }
   return assumptions;
+}
+
+/**
+ * The required questions still unanswered, in catalog order. The gate uses this
+ * to block the step and to name what is missing: a required field is never a
+ * silent trap. `completeOnboarding` stays the single source of truth for "can
+ * the walk finish".
+ */
+export function missingRequiredQuestions(workType: WorkType, answers: Record<string, Answer>): OnboardingQuestion[] {
+  return workType.questions.filter((question) => question.required && !isAnswered(answers[question.id]));
 }
 
 /**

@@ -18,6 +18,7 @@ import {
   completeOnboarding,
   declareAssumptions,
   initialState,
+  missingRequiredQuestions,
   previousStep,
   toDraft,
   type OnboardingState,
@@ -152,6 +153,9 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
 
   const continueFromContext = () => {
     if (!workType) return;
+    // Defense in depth: the CTA is disabled while a required question is blank,
+    // and the step must never advance in silence if it is reached another way.
+    if (missingRequiredQuestions(workType, state.answers).length > 0) return;
     const assumptions = declareAssumptions(workType, state.answers, (k) => t(k));
     setState((prev) => ({
       ...prev,
@@ -375,6 +379,10 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
 
   const stepIndex = STEP_ORDER.indexOf(state.step);
   const canComplete = Boolean(workType) && completeOnboarding(state) && Boolean(state.brandId);
+  // A required question left blank is a hard stop: the step names it and the
+  // summary explains the disabled CTA, so it is never a silent trap.
+  const missingRequired = workType ? missingRequiredQuestions(workType, state.answers) : [];
+  const missingRequiredLabels = missingRequired.map((q) => t(q.labelKey)).join(', ');
   // The optional field is for a brand this walk just created: it has no context
   // yet, and this is the only moment the human is already thinking about it.
   const showBrandContext = state.step === 'brand' && Boolean(selectedBrand) && selectedBrand!.context.trim() === '';
@@ -465,10 +473,13 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                   )}
                 </div>
               ))}
+              {missingRequired.length > 0 && (
+                <p className="onboarding-note" role="status">{t('onboarding.requiredMissing', { fields: missingRequiredLabels })}</p>
+              )}
               <div className="onboarding-footer">
                 <button onClick={goBack}><ArrowLeft size={15} />{t('onboarding.back')}</button>
                 <span className="spacer" />
-                <button className="primary" onClick={continueFromContext}>{t('onboarding.continue')}<ArrowRight size={15} /></button>
+                <button className="primary" disabled={missingRequired.length > 0} onClick={continueFromContext}>{t('onboarding.continue')}<ArrowRight size={15} /></button>
               </div>
             </>
           )}
@@ -650,7 +661,16 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                   {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                 </select>
               </div>
-              {!completeOnboarding(state) && <p className="onboarding-note">{t('onboarding.connect.unavailable')}</p>}
+              {missingRequired.length > 0 ? (
+                // A disabled CTA with no explanation is a dead end: name the
+                // missing required question and offer the way straight back to it.
+                <>
+                  <p className="onboarding-note" role="alert">{t('onboarding.summary.requiredMissing', { fields: missingRequiredLabels })}</p>
+                  <button className="primary" style={{ marginTop: 10 }} onClick={() => setState((prev) => ({ ...prev, step: 'context' }))}>{t('onboarding.requiredMissing.action')}</button>
+                </>
+              ) : !completeOnboarding(state) && (
+                <p className="onboarding-note">{t('onboarding.connect.unavailable')}</p>
+              )}
               <div className="onboarding-footer">
                 <button onClick={goBack}><ArrowLeft size={15} />{t('onboarding.back')}</button>
                 <span className="spacer" />

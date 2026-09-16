@@ -155,22 +155,32 @@ describe('first-run onboarding gate', () => {
     expect(screen.queryByText('¿Qué querés lograr?')).toBeNull();
   });
 
-  it('blocks completion on a required question and declares an assumption for the optional ones', async () => {
+  it('blocks the context step on an unanswered required question and names what is missing', async () => {
+    mount();
+    await gateHeading();
+    clickCard(/Campaña nueva/);
+    await screen.findByRole('heading', { name: 'Campaña nueva' });
+
+    // The required question is empty: the primary action is blocked and the
+    // gate says exactly what is missing, instead of advancing in silence.
+    const cont = screen.getByRole('button', { name: 'Continuar' }) as HTMLButtonElement;
+    expect(cont.disabled).toBe(true);
+    expect(screen.getByText('Todavía falta responder: ¿Qué querés lograr?')).toBeDefined();
+
+    // A click can never sneak past the missing field.
+    fireEvent.click(cont);
+    expect(screen.queryByRole('heading', { name: '¿Con qué marca trabajamos?' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Campaña nueva' })).toBeDefined();
+  });
+
+  it('declares an assumption for the optional questions once the required one is answered', async () => {
     const { container } = mount();
     await gateHeading();
     clickCard(/Campaña nueva/);
-    // Straight through with the required question blank.
-    fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
-    chooseDemoBrand();
-    clickCard(/Explorar con un proyecto demo/);
-    const start = await screen.findByRole('button', { name: /Empezar trabajo/ });
-    expect((start as HTMLButtonElement).disabled).toBe(true);
-
-    // Back to the context step, answer the required one, and the optional gaps
-    // are stated as assumptions instead of blocking.
-    for (let i = 0; i < 3; i += 1) fireEvent.click(screen.getByRole('button', { name: 'Volver' }));
-    const objective = screen.getByPlaceholderText('¿Qué querés lograr?');
-    fireEvent.change(objective, { target: { value: 'Lanzar la cosecha 2026' } });
+    await screen.findByRole('heading', { name: 'Campaña nueva' });
+    // Answer the required one: the walk advances and the optional gaps become
+    // assumptions instead of blocking.
+    fireEvent.change(screen.getByPlaceholderText('¿Qué querés lograr?'), { target: { value: 'Lanzar la cosecha 2026' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
     chooseDemoBrand();
     clickCard(/Explorar con un proyecto demo/);
@@ -178,6 +188,32 @@ describe('first-run onboarding gate', () => {
     await waitFor(() => expect((enabled as HTMLButtonElement).disabled).toBe(false));
     expect(screen.getByText('Sigo sin audiencia definida; la confirmamos después.')).toBeDefined();
     expect(pageFooter(container)).toBeDefined();
+  });
+
+  it('explains a disabled summary CTA and offers a way back to the missing required question', async () => {
+    // A resumed draft can land on the summary with the required answer missing.
+    state.draft = {
+      step: 'prepare',
+      workTypeId: 'campaign-new',
+      answers: {},
+      assumptions: ['Sigo sin audiencia definida; la confirmamos después.'],
+      brandId: 'demo',
+      usedDemo: true,
+      linkFolderRequested: false,
+      recommendedRoleId: 'strategist',
+      brief: '## Objetivo\n\nPor definir\n',
+    };
+    mount();
+    await screen.findByRole('heading', { name: 'Esto es lo que entendí' });
+
+    // The CTA is blocked, but the dead end is explained...
+    const start = screen.getByRole('button', { name: /Empezar trabajo/ }) as HTMLButtonElement;
+    expect(start.disabled).toBe(true);
+    expect(screen.getByText('No podés empezar todavía. Falta responder: ¿Qué querés lograr?')).toBeDefined();
+    // ...and the recovery action returns to the field that needs it.
+    fireEvent.click(screen.getByRole('button', { name: 'Completar ahora' }));
+    expect(await screen.findByRole('heading', { name: 'Campaña nueva' })).toBeDefined();
+    expect(screen.getByPlaceholderText('¿Qué querés lograr?')).toBeDefined();
   });
 
   it('reveals the optional brand-context field for a new brand and saves it exactly once when non-empty', async () => {

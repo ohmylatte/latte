@@ -6,6 +6,7 @@ import {
   completeOnboarding,
   declareAssumptions,
   initialState,
+  missingRequiredQuestions,
   nextStep,
   previousStep,
   toDraft,
@@ -111,6 +112,34 @@ describe('completeOnboarding', () => {
 
   it('the free-form type has no required questions and completes immediately', () => {
     const s = baseState({ workTypeId: 'free-form' });
+    expect(completeOnboarding(s)).toBe(true);
+  });
+});
+
+describe('missingRequiredQuestions', () => {
+  it('lists the required questions still unanswered, in catalog order', () => {
+    const campaign = findWorkType('campaign-new')!;
+    expect(missingRequiredQuestions(campaign, {}).map((q) => q.id)).toEqual(['objetivo']);
+    expect(missingRequiredQuestions(campaign, { objetivo: 'Vender' })).toEqual([]);
+  });
+
+  it('never lists an optional question, answered or not', () => {
+    const campaign = findWorkType('campaign-new')!;
+    const missing = missingRequiredQuestions(campaign, { audiencia: 'Cocineros' });
+    expect(missing.every((q) => q.required)).toBe(true);
+    expect(missing.map((q) => q.id)).not.toContain('audiencia');
+  });
+
+  it('treats blank text and empty lists as unanswered', () => {
+    const report = findWorkType('report-build')!;
+    expect(missingRequiredQuestions(report, { audiencia: '   ' }).map((q) => q.id)).toEqual(['audiencia']);
+  });
+
+  it('agrees with completeOnboarding: no missing required questions means complete', () => {
+    const campaign = findWorkType('campaign-new')!;
+    const answers: Record<string, Answer> = { objetivo: 'Vender' };
+    const s = baseState({ workTypeId: 'campaign-new', answers });
+    expect(missingRequiredQuestions(campaign, answers)).toEqual([]);
     expect(completeOnboarding(s)).toBe(true);
   });
 });
