@@ -5,6 +5,7 @@ import type { ChatEvent } from '../../shared/contracts';
 import { SYSTEM_ACCOUNT_ID } from '../../electron/agents/accounts';
 import { resolveCodexBinary } from '../../electron/agents/codex/appServer';
 import { CodexChatAdapter, partFromItem } from '../../electron/agents/codex/codexAdapter';
+import { contentFromAnswers, mapElicitationForm } from '../../electron/agents/codex/elicitation';
 import { makeTempDir, removeDir } from './helpers';
 
 const FAKE_CODEX = path.resolve(__dirname, 'fakeCodex.cjs');
@@ -17,7 +18,7 @@ async function waitFor(check: () => boolean, timeoutMs = 6_000): Promise<void> {
   }
 }
 
-function fakeAdapter(events: ChatEvent[], dir: string, spawned?: Array<{ args: string[]; env: Record<string, string | undefined> }>) {
+function fakeAdapter(events: ChatEvent[], dir: string, spawned?: Array<{ args: string[]; env: Record<string, string | undefined> }>, opened?: string[]) {
   return new CodexChatAdapter({
     resolveExecutable: async () => ({ executable: process.execPath, version: '0.153.4' }),
     emit: (e) => events.push(e),
@@ -30,6 +31,7 @@ function fakeAdapter(events: ChatEvent[], dir: string, spawned?: Array<{ args: s
       return spawn(file, [FAKE_CODEX, ...args], options as Parameters<typeof spawn>[2]);
     }) as typeof spawn,
     requestTimeoutMs: 5_000,
+    openExternal: async (url) => { opened?.push(url); },
   });
 }
 
@@ -49,6 +51,37 @@ describe('Codex binary resolution and item translation', () => {
     expect(partFromItem({ id: 'f', type: 'fileChange', status: 'inProgress', changes: [{ path: 'brief.md', kind: 'update', diff: '+hola' }] })).toMatchObject({ type: 'tool', tool: 'edit', status: 'running', title: 'brief.md', input: '+hola' });
     expect(partFromItem({ id: 'u', type: 'userMessage', content: [] })).toBeNull();
     expect(partFromItem({ id: 'r', type: 'reasoning', summary: ['thinking'] })).toEqual({ type: 'reasoning', id: 'r', text: 'thinking' });
+    expect(partFromItem({
+      id: 'm', type: 'mcpToolCall', server: 'The-agentcy', tool: 'set_workspace_profile', status: 'failed',
+      arguments: { workspace: 'acme' },
+      result: { content: [{ type: 'text', text: 'could not apply' }], structuredContent: { code: 17 } },
+      error: { message: 'profile locked' },
+    })).toMatchObject({ type: 'tool', tool: 'The-agentcy/set_workspace_profile', status: 'error', output: 'could not apply', error: 'profile locked' });
+    expect(partFromItem({
+      id: 'm2', type: 'mcpToolCall', server: 's', tool: 't', status: 'completed',
+      result: { content: [{ type: 'image' }], structuredContent: { ok: true } },
+    })).toMatchObject({ output: expect.stringContaining('"ok": true'), error: '' });
+  });
+
+  it('maps simple elicitation forms and types the answers', () => {
+    const mapped = mapElicitationForm({
+      type: 'object',
+      properties: {
+        workspace: { type: 'string', title: 'Workspace' },
+        count: { type: 'number' },
+        ok: { type: 'boolean' },
+        tone: { type: 'string', enum: ['warm', 'formal'], enumNames: ['Cálido', 'Formal'] },
+      },
+      required: ['workspace', 'ok'],
+    });
+    expect(mapped.ok).toBe(true);
+    if (!mapped.ok) return;
+    expect(mapped.questions[0].required).toBe(true);
+    expect(mapped.questions[1].required).toBe(false);
+    expect(contentFromAnswers(mapped.fields, [['acme'], ['3'], ['true'], ['Formal']])).toEqual({
+      ok: true, content: { workspace: 'acme', count: 3, ok: true, tone: 'formal' },
+    });
+    expect(mapElicitationForm({ type: 'object', properties: { tags: { type: 'array', items: { type: 'string' } } } }).ok).toBe(false);
   });
 });
 
@@ -172,5 +205,90 @@ describe('CodexChatAdapter against a fake app-server', () => {
 
     adapter.stop(session.id);
     expect(events.at(-1)).toMatchObject({ type: 'closed', reason: 'stopped' });
+  });
+
+  it('turns MCP URL elicitations into a permission card, opens http(s) on accept and declines on reject', async () => {
+    const opened: string[] = [];
+    adapter = fakeAdapter(events, dir, undefined, opened);
+    const { session } = await adapter.start({ workId: 'wrk_1', directory: dir, title: 't', label: 'Codex', accountId: null });
+    await adapter.send(session.id, 'elicit-url please');
+    await waitFor(() => events.some((e) => e.type === 'permission'));
+    const permission = events.find((e) => e.type === 'permission') as Extract<ChatEvent, { type: 'permission' }>;
+    expect(permission.request).toMatchObject({
+      permission: 'mcp-elicitation',
+      serverName: 'The-agentcy',
+      url: 'https://auth.example.test/elicit',
+      title: 'Sign in to continue',
+    });
+    await adapter.replyPermission(session.id, permission.request.id, 'once');
+    expect(opened).toEqual(['https://auth.example.test/elicit']);
+    await waitFor(() => events.some((e) => e.type === 'status' && e.status === 'idle'));
+    expect(adapter.listMessages(session.id).at(-1)?.parts[0]).toMatchObject({ text: 'elicitation accept' });
+
+    events.length = 0;
+    await adapter.send(session.id, 'elicit-url again');
+    await waitFor(() => events.some((e) => e.type === 'permission'));
+    const second = events.find((e) => e.type === 'permission') as Extract<ChatEvent, { type: 'permission' }>;
+    await adapter.replyPermission(session.id, second.request.id, 'reject');
+    await waitFor(() => events.some((e) => e.type === 'status' && e.status === 'idle'));
+    expect(adapter.listMessages(session.id).at(-1)?.parts[0]).toMatchObject({ text: 'elicitation decline' });
+  });
+
+  it('maps a simple MCP form elicitation to a question and types the content', async () => {
+    const { session } = await adapter.start({ workId: 'wrk_1', directory: dir, title: 't', label: 'Codex', accountId: null });
+    await adapter.send(session.id, 'elicit-form please');
+    await waitFor(() => events.some((e) => e.type === 'question'));
+    const question = events.find((e) => e.type === 'question') as Extract<ChatEvent, { type: 'question' }>;
+    expect(question.request.questions.map((q) => q.header)).toEqual(['Workspace', 'Count', 'Confirm', 'Tone']);
+    await adapter.replyQuestion(session.id, question.request.id, [['acme'], ['4'], ['true'], ['formal']]);
+    await waitFor(() => events.some((e) => e.type === 'status' && e.status === 'idle'));
+    expect(adapter.listMessages(session.id).at(-1)?.parts[0]).toMatchObject({
+      text: expect.stringContaining('elicitation accept'),
+    });
+    expect(adapter.listMessages(session.id).at(-1)?.parts[0]).toMatchObject({
+      text: expect.stringContaining('"workspace":"acme"'),
+    });
+  });
+
+  it('declines an unsupported elicitation schema with a visible notice', async () => {
+    const { session } = await adapter.start({ workId: 'wrk_1', directory: dir, title: 't', label: 'Codex', accountId: null });
+    await adapter.send(session.id, 'elicit-complex please');
+    await waitFor(() => events.some((e) => e.type === 'error'));
+    expect(events.find((e) => e.type === 'error')?.message).toMatch(/The-agentcy/);
+    await waitFor(() => events.some((e) => e.type === 'status' && e.status === 'idle'));
+    expect(adapter.listMessages(session.id).at(-1)?.parts[0]).toMatchObject({ text: 'elicitation decline' });
+  });
+
+  it('cancels a pending elicitation when the chat closes', async () => {
+    const { session } = await adapter.start({ workId: 'wrk_1', directory: dir, title: 't', label: 'Codex', accountId: null });
+    await adapter.send(session.id, 'elicit-url please');
+    await waitFor(() => events.some((e) => e.type === 'permission'));
+    adapter.stop(session.id);
+    expect(events.some((e) => e.type === 'closed')).toBe(true);
+  });
+
+  it('leaves a chat error when Codex asks for an unhandled method', async () => {
+    const { session } = await adapter.start({ workId: 'wrk_1', directory: dir, title: 't', label: 'Codex', accountId: null });
+    await adapter.send(session.id, 'mystery-method please');
+    await waitFor(() => events.some((e) => e.type === 'error'));
+    expect(events.find((e) => e.type === 'error')?.message).toMatch(/account\/chatgptAuthTokens\/refresh/);
+  });
+
+  it('shows MCP tool errors and text results', async () => {
+    const { session } = await adapter.start({ workId: 'wrk_1', directory: dir, title: 't', label: 'Codex', accountId: null });
+    await adapter.send(session.id, 'mcp-tool please');
+    await waitFor(() => events.some((e) => e.type === 'status' && e.status === 'idle'));
+    const tool = adapter.listMessages(session.id)[1].parts.find((p) => p.type === 'tool');
+    expect(tool).toMatchObject({ tool: 'The-agentcy/set_workspace_profile', error: 'profile locked', output: 'could not apply', status: 'error' });
+  });
+
+  it('starts MCP OAuth login and lists auth status', async () => {
+    const login = await adapter.startMcpOauthLogin(SYSTEM_ACCOUNT_ID, 'remoto');
+    expect(login.url).toBe('https://auth.example.test/mcp?server=remoto');
+    const status = await adapter.listMcpStatus(SYSTEM_ACCOUNT_ID);
+    expect(status).toEqual([
+      { name: 'remoto', authStatus: 'notLoggedIn' },
+      { name: 'engram', authStatus: 'unsupported' },
+    ]);
   });
 });

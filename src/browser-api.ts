@@ -1,16 +1,17 @@
-import type { AgentRole, Brand, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput } from '../shared/contracts';
+import { composeBrandContext } from '../shared/brandContext';
+import type { AgentRole, Brand, BrandContextProposal, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput } from '../shared/contracts';
 import { createAgentBus } from './agent-events';
 import { createChatStore } from './chat-store';
 
 const KEY = 'latte-preview-v1';
 const initialBrief = '# Una nueva forma de habitar.\n\n_Brief de lanzamiento · Casa Oliva_\n\n## 01 / Objetivo\nPresentar la nueva colección a una audiencia que valora el diseño y la vida cotidiana.\n\n## 02 / Audiencia\nPersonas que eligen menos objetos, con más intención.\n\n## 03 / Propuesta\nDiseño que acompaña tu manera de vivir.\n\n> Hipótesis de ejemplo: contrastar con entrevistas antes de dar por validada.\n\n## 04 / Próximos pasos\n- [ ] Incorporar entrevistas reales\n- [ ] Revisar la propuesta de valor\n- [ ] Definir el primer experimento';
-interface Store { brands: Brand[]; works: Work[]; revisions: Revision[]; decisions: Decision[]; documents?: WorkDocument[]; contents?: Record<string,string>; profiles?: AgentProfile[] }
+interface Store { brands: Brand[]; works: Work[]; revisions: Revision[]; decisions: Decision[]; brandContextProposals?: BrandContextProposal[]; documents?: WorkDocument[]; contents?: Record<string,string>; profiles?: AgentProfile[] }
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
 function read(): Store {
   const raw = localStorage.getItem(KEY);
   if (raw) return JSON.parse(raw);
-  return { brands: [{ id: 'demo', name: 'Casa Oliva · Ejemplo', context: 'Marca ficticia de objetos de diseño. Tono cálido, preciso y cercano. Este espacio contiene material de demostración, no investigación real.', createdAt: now(), archivedAt: null }], works: [{ id: 'demo-work', brandId: 'demo', title: 'Lanzamiento primavera', brief: initialBrief, folder: null, updatedAt: now() }], revisions: [], decisions: [] };
+  return { brands: [{ id: 'demo', name: 'Casa Oliva · Ejemplo', context: 'Marca ficticia de objetos de diseño. Tono cálido, preciso y cercano. Este espacio contiene material de demostración, no investigación real.', createdAt: now(), archivedAt: null }], works: [{ id: 'demo-work', brandId: 'demo', title: 'Lanzamiento primavera', brief: initialBrief, folder: null, updatedAt: now() }], revisions: [], decisions: [], brandContextProposals: [] };
 }
 function change<T>(fn: (store: Store) => T): T { const s = read(); const result = fn(s); localStorage.setItem(KEY, JSON.stringify(s)); return result; }
 /** The web preview tracks a single brief document per work; the real model lives on the desktop. */
@@ -62,6 +63,11 @@ export const browserAPI: LatteAPI = {
   appInfo: async () => ({ dataDir: '', engine: 'localStorage (vista previa)', engineReason: 'La vista web no usa SQLite', pack: null, packRoles: 0, version: 'web' }),
   featureFlags: async () => ({ generation: false, brandKits: false, learning: false }),
   listBrands: async () => read().brands.filter(b => !b.archivedAt),
+  getBrand: async brandId => {
+    const b = read().brands.find(x => x.id === brandId);
+    if (!b) throw new Error('Brand not found: ' + brandId);
+    return b;
+  },
   createBrand: async name => change(s => { const b: Brand = { id: id(), name, context: '', createdAt: now(), archivedAt: null }; s.brands.push(b); return b; }),
   updateBrand: async (brandId, context) => change(s => { const b = s.brands.find(b => b.id === brandId)!; b.context = context; return b; }),
   archiveBrand: async brandId => change(s => {
@@ -149,6 +155,35 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   approveDecision:async(decisionId,edited)=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='approved';if(edited)d.text=edited;d.decidedAt=now();return d;}),
   rejectDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='rejected';d.decidedAt=now();return d;}),
   archiveDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='archived';d.decidedAt=now();return d;}),
+  listBrandContextProposals: async brandId => {
+    const s = read();
+    const brand = s.brands.find(b => b.id === brandId);
+    return (s.brandContextProposals ?? []).filter(p => p.brandId === brandId).map(p => ({ ...p, stale: Boolean(brand && p.baseFingerprint && p.baseFingerprint !== brand.context) }));
+  },
+  approveBrandContextProposal: async (proposalId, edited, acceptStale = false) => change(s => {
+    s.brandContextProposals ??= [];
+    const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
+    const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw new Error('Brand not found: ' + p.brandId);
+    if (brand.archivedAt) throw new Error('Brand is archived: ' + brand.id);
+    if (p.status === 'approved') return p;
+    if (p.status !== 'pending') throw new Error('La propuesta ya no está pendiente');
+    if (edited != null) p.text = edited;
+    const composed = composeBrandContext(brand.context, p.text, p.mode);
+    if (composed.length > 60_000) throw new Error(`Brand context is ${composed.length - 60_000} characters over the 60000-character limit`);
+    if (!acceptStale && p.baseFingerprint && p.baseFingerprint !== brand.context) throw new Error('Brand context changed since this proposal');
+    p.status = 'approved'; p.decidedAt = now();
+    brand.context = composed;
+    return p;
+  }),
+  rejectBrandContextProposal: async proposalId => change(s => {
+    s.brandContextProposals ??= [];
+    const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
+    const brand = s.brands.find(b => b.id === p.brandId); if (brand?.archivedAt) throw new Error('Brand is archived: ' + p.brandId);
+    if (p.status === 'rejected') return p;
+    if (p.status !== 'pending') throw new Error('La propuesta ya no está pendiente');
+    p.status = 'rejected'; p.decidedAt = now(); return p;
+  }),
+  requestBrandContextDraft: unavailable,
   runtimeStatus: async () => ['claude', 'codex', 'opencode'].map(provider => ({ provider: provider as 'claude' | 'codex' | 'opencode', available: false, detail: 'Requiere escritorio' })),
   startAgent: unavailable, writeAgent: unavailable, resizeAgent: unavailable, stopAgent: unavailable,
   onAgentEvent: () => () => {},
@@ -164,7 +199,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   windowControl: () => {},
   onWindowState: () => () => {},
   listProviders: async () => [], connectProviderKey: unavailable, disconnectProvider: unavailable, startProviderOAuth: unavailable, completeProviderOAuth: unavailable,
-  listMcpServers: async () => [], addMcpServer: unavailable, removeMcpServer: unavailable,
+  listMcpServers: async () => [], addMcpServer: unavailable, removeMcpServer: unavailable, loginMcpServer: unavailable, authenticateClaudeMcp: unavailable,
   getPrimaryAgent: async () => null, setPrimaryAgent: unavailable, listAgentRuntimes: async () => [], addAgentAccount: unavailable, removeAgentAccount: unavailable, startAccountLogin: unavailable, logoutAccount: unavailable,
   // No CLI to ask in a browser tab: no catalog, and no pretending there is one.
   listAccountModels: async () => ({ source: 'suggested' as const, models: [], detail: 'Los modelos se consultan desde Latte Desktop, donde corren los runtimes.' }),

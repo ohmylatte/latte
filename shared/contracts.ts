@@ -164,8 +164,10 @@ export interface McpServer {
   transport: 'stdio' | 'http';
   /** Command line or URL, as configured. */
   target: string;
-  status: 'connected' | 'failed' | 'pending' | 'disabled' | 'configured';
+  status: 'connected' | 'failed' | 'pending' | 'disabled' | 'configured' | 'needsAuth';
   detail: string;
+  /** Codex `mcpServerStatus/list` auth, or Claude health text. */
+  needsAuth?: boolean;
 }
 export interface McpRuntimeTools {
   runtime: ChatRuntime;
@@ -257,6 +259,28 @@ export interface Decision {
   status: DecisionStatus; source: DecisionSource; clientRequestId: string | null; fingerprint: string; createdAt: string; decidedAt: string | null;
 }
 export interface DecisionProposalInput { statement: string; rationale: string; alternativesRejected?: string[]; evidenceRefs?: string[]; clientRequestId: string }
+export type BrandContextMode = 'replace' | 'append';
+export type BrandContextProposalStatus = 'pending' | 'approved' | 'rejected';
+export interface BrandContextProposal {
+  id: string;
+  brandId: string;
+  workId: string;
+  /** Who proposed it: same shape as a decision source. */
+  source: DecisionSource;
+  text: string;
+  rationale: string;
+  mode: BrandContextMode;
+  status: BrandContextProposalStatus;
+  fingerprint: string;
+  /** Huella de Brand.context al momento de proponer. */
+  baseFingerprint: string;
+  /** True when Brand.context no longer matches baseFingerprint. Filled when listing. */
+  stale?: boolean;
+  clientRequestId: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+export interface BrandContextProposalInput { text: string; rationale: string; mode: BrandContextMode; clientRequestId: string }
 export interface AgentEvent { sessionId: string; type: 'output' | 'exit' | 'error'; data: string }
 export interface AgentSession { id: string; provider: Provider; workId: string }
 export interface RuntimeStatus { provider: Provider; available: boolean; detail: string }
@@ -430,9 +454,18 @@ export interface AgentRuntimeInfo { runtime: 'claude' | 'codex'; installed: bool
 export type AccountLoginStart =
   | { mode: 'terminal'; sessionId: string; instructions: string }
   | { mode: 'browser'; url: string; instructions: string };
-export interface ChatPermission { id: string; permission: string; patterns: string[]; always: string[]; title: string }
+export interface ChatPermission {
+  id: string;
+  permission: string;
+  patterns: string[];
+  always: string[];
+  title: string;
+  /** MCP URL-mode elicitation; opened from main, never from the renderer. */
+  url?: string;
+  serverName?: string;
+}
 export interface ChatQuestionOption { label: string; description: string }
-export interface ChatQuestionItem { header: string; question: string; options: ChatQuestionOption[]; multiple: boolean; custom: boolean }
+export interface ChatQuestionItem { header: string; question: string; options: ChatQuestionOption[]; multiple: boolean; custom: boolean; required?: boolean }
 export interface ChatQuestion { id: string; questions: ChatQuestionItem[] }
 export type ChatStatus = 'idle' | 'busy' | 'retry';
 export type ChatEvent =
@@ -477,6 +510,7 @@ export interface LatteAPI {
   setContentLocale(locale: ContentLocale): Promise<ContentLocale>;
   appInfo(): Promise<AppInfo>;
   listBrands(): Promise<Brand[]>;
+  getBrand(brandId: string): Promise<Brand>;
   createBrand(name: string): Promise<Brand>;
   updateBrand(id: string, context: string): Promise<Brand>;
   archiveBrand(id: string): Promise<Brand>;
@@ -584,6 +618,10 @@ export interface LatteAPI {
   approveDecision(decisionId: string, editedStatement?: string | null): Promise<Decision>;
   rejectDecision(decisionId: string): Promise<Decision>;
   archiveDecision(decisionId: string): Promise<Decision>;
+  listBrandContextProposals(brandId: string): Promise<BrandContextProposal[]>;
+  approveBrandContextProposal(id: string, edited: string | null, acceptStale?: boolean): Promise<BrandContextProposal>;
+  rejectBrandContextProposal(id: string): Promise<BrandContextProposal>;
+  requestBrandContextDraft(workId: string): Promise<ChatSession>;
   runtimeStatus(): Promise<RuntimeStatus[]>;
   startAgent(workId: string, provider: Provider): Promise<AgentSession>;
   writeAgent(sessionId: string, data: string): Promise<void>;
@@ -654,6 +692,13 @@ export interface LatteAPI {
   listMcpServers(runtime?: ChatRuntime | null): Promise<McpRuntimeTools[]>;
   addMcpServer(runtime: 'claude' | 'codex', input: McpServerInput): Promise<void>;
   removeMcpServer(runtime: 'claude' | 'codex', name: string): Promise<void>;
+  /** Codex MCP OAuth through `mcpServer/oauth/login`. The URL is opened in the system browser. */
+  loginMcpServer(runtime: 'codex', name: string): Promise<AccountLoginStart>;
+  /**
+   * Interactive `claude` in this work's folder with the account's CLAUDE_CONFIG_DIR,
+   * so `/mcp` login tokens land where Latte's headless runs look.
+   */
+  authenticateClaudeMcp(workId: string, accountId: string | null): Promise<AccountLoginStart>;
   addAgentAccount(runtime: 'claude' | 'codex', label: string): Promise<AgentAccount>;
   removeAgentAccount(runtime: 'claude' | 'codex', accountId: string): Promise<void>;
   /** Starts the runtime's own login (browser OAuth). Claude runs inside an embedded terminal session; Codex returns a URL. */

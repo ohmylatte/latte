@@ -580,3 +580,9 @@ html,body,#root{height:100%;overflow:hidden}
 .knowledge-origin.current{color:var(--accent);font-weight:600}
 .doc-row[data-current-work='true'],.funnel-card[data-current-work='true']{border-color:#e0c8b6;background:#fbf4ec}
 .decision-card[data-current-work='true']{border-color:#e0c8b6}
+
+.context-diff{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;border:1px solid var(--line);border-radius:5px;overflow:auto;max-height:240px;margin:8px 0;background:#fffdf8}
+.context-diff-line{padding:1px 8px;white-space:pre-wrap}
+.context-diff-add{background:#e6f4ea}
+.context-diff-del{background:#fce8e6;text-decoration:line-through}
+.context-diff-same{color:var(--muted)}

@@ -9,6 +9,7 @@ import { SYSTEM_ACCOUNT_ID } from '../accounts';
 import { codexEffortForTier } from '../tiers';
 import { sessionFrom, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../types';
 import { CodexAppServer, isRecord } from './appServer';
+import { contentFromAnswers, errorMessage, isHttpUrl, mapElicitationForm, mcpToolOutput, type ElicitationFormField } from './elicitation';
 
 export interface CodexAdapterDeps {
   resolveExecutable: () => Promise<{ executable: string; version: string | null } | null>;
@@ -23,13 +24,16 @@ export interface CodexAdapterDeps {
   log?: (line: string) => void;
   requestTimeoutMs?: number;
   maxChats?: number;
+  /** Opens http(s) URLs in the system browser. Never called from the renderer. */
+  openExternal?: (url: string) => Promise<void>;
 }
 
 interface PendingRequest {
-  kind: 'command' | 'fileChange' | 'permissions' | 'question';
+  kind: 'command' | 'fileChange' | 'permissions' | 'question' | 'elicitation-url' | 'elicitation-form';
   respond: (result: unknown) => void;
   fail: (message: string) => void;
   params: Record<string, unknown>;
+  fields?: ElicitationFormField[];
 }
 
 interface LiveChat {
@@ -97,6 +101,40 @@ export class CodexChatAdapter implements RuntimeAdapter {
     const result = await server.request('account/login/start', { type: 'chatgpt' });
     if (!isRecord(result) || typeof result.authUrl !== 'string') throw new UnavailableError('Codex returned no login URL');
     return { mode: 'browser', url: result.authUrl, instructions: 'Iniciá sesión con tu cuenta de ChatGPT en el navegador. Cuando termine, volvé y tocá «Ya inicié sesión».' };
+  }
+
+  /**
+   * `mcpServer/oauth/login` returns `authorizationUrl`. An older Codex that
+   * does not know the method fails with a clear error instead of hanging.
+   */
+  async startMcpOauthLogin(accountId: string, name: string): Promise<{ url: string }> {
+    const server = await this.serverFor(accountId);
+    let result: unknown;
+    try {
+      result = await server.request('mcpServer/oauth/login', { name });
+    } catch (error) {
+      throw new UnavailableError(`Este Codex no pudo iniciar sesión en el servidor MCP «${name}»: ${describe(error)}`);
+    }
+    if (!isRecord(result) || typeof result.authorizationUrl !== 'string') throw new UnavailableError('Codex no devolvió una URL de login MCP');
+    if (!isHttpUrl(result.authorizationUrl)) throw new ValidationError('Codex devolvió una URL de login MCP que no es http(s)');
+    return { url: result.authorizationUrl };
+  }
+
+  async listMcpStatus(accountId: string): Promise<Array<{ name: string; authStatus: string }>> {
+    const server = await this.serverFor(accountId);
+    let result: unknown;
+    try {
+      result = await server.request('mcpServerStatus/list', { detail: 'toolsAndAuthOnly' });
+    } catch (error) {
+      throw new UnavailableError(`Este Codex no soporta mcpServerStatus/list: ${describe(error)}`);
+    }
+    const data = isRecord(result) && Array.isArray(result.data) ? result.data : [];
+    const out: Array<{ name: string; authStatus: string }> = [];
+    for (const entry of data) {
+      if (!isRecord(entry) || typeof entry.name !== 'string' || !entry.name) continue;
+      out.push({ name: entry.name, authStatus: typeof entry.authStatus === 'string' ? entry.authStatus : 'unknown' });
+    }
+    return out;
   }
 
   // Chats --------------------------------------------------------------------------
@@ -188,8 +226,15 @@ export class CodexChatAdapter implements RuntimeAdapter {
   async replyPermission(chatId: string, requestId: string, reply: PermissionReply): Promise<void> {
     const live = this.require(chatId);
     const pending = live.pending.get(requestId);
-    if (!pending || pending.kind === 'question') throw new NotFoundError('Permission request', requestId);
-    if (pending.kind === 'permissions') {
+    if (!pending || pending.kind === 'question' || pending.kind === 'elicitation-form') throw new NotFoundError('Permission request', requestId);
+    if (pending.kind === 'elicitation-url') {
+      if (reply === 'reject') pending.respond({ action: 'decline' });
+      else {
+        const url = typeof pending.params.url === 'string' ? pending.params.url : '';
+        if (isHttpUrl(url) && this.deps.openExternal) await this.deps.openExternal(url);
+        pending.respond({ action: 'accept' });
+      }
+    } else if (pending.kind === 'permissions') {
       if (reply === 'reject') pending.fail('The user declined this permission in Latte.');
       else pending.respond({ permissions: pending.params.permissions ?? {}, scope: reply === 'always' ? 'session' : 'turn' });
     } else {
@@ -202,8 +247,15 @@ export class CodexChatAdapter implements RuntimeAdapter {
   async replyQuestion(chatId: string, requestId: string, answers: string[][] | null): Promise<void> {
     const live = this.require(chatId);
     const pending = live.pending.get(requestId);
-    if (!pending || pending.kind !== 'question') throw new NotFoundError('Question', requestId);
-    if (answers === null) {
+    if (!pending || (pending.kind !== 'question' && pending.kind !== 'elicitation-form')) throw new NotFoundError('Question', requestId);
+    if (pending.kind === 'elicitation-form') {
+      if (answers === null) pending.respond({ action: 'decline' });
+      else {
+        const mapped = contentFromAnswers(pending.fields ?? [], answers);
+        if (!mapped.ok) throw new ValidationError(mapped.error);
+        pending.respond({ action: 'accept', content: mapped.content });
+      }
+    } else if (answers === null) {
       pending.fail('The user declined to answer in Latte.');
     } else {
       const questions = Array.isArray(pending.params.questions) ? pending.params.questions : [];
@@ -220,7 +272,7 @@ export class CodexChatAdapter implements RuntimeAdapter {
   stop(chatId: string): void {
     const live = this.chats.get(chatId);
     if (!live) return;
-    for (const pending of live.pending.values()) pending.fail('Chat closed in Latte');
+    this.settlePending(live, 'Chat closed in Latte');
     this.chats.delete(chatId);
     this.byThread.delete(live.threadId);
     this.deps.emit({ chatId, type: 'closed', reason: 'stopped' });
@@ -292,6 +344,7 @@ export class CodexChatAdapter implements RuntimeAdapter {
       server.serverRequests.add((method, params, respond, fail) => this.onServerRequest(method, params, respond, fail));
       server.onExit = (reason) => {
         for (const live of [...this.chats.values()].filter((c) => c.accountId === accountId)) {
+          this.settlePending(live, reason);
           if (live.busy) this.deps.emit({ chatId: live.chatId, type: 'error', message: reason });
           this.chats.delete(live.chatId);
           this.byThread.delete(live.threadId);
@@ -503,9 +556,76 @@ export class CodexChatAdapter implements RuntimeAdapter {
         });
         return true;
       }
+      case 'mcpServer/elicitation/request':
+        return this.onElicitation(live, requestId, params, respond, fail);
       default:
+        this.deps.emit({ chatId: live.chatId, type: 'error', message: `Codex pidió «${method}» y Latte no lo atiende.` });
         return false;
     }
+  }
+
+  private onElicitation(
+    live: LiveChat,
+    requestId: string,
+    params: Record<string, unknown>,
+    respond: (result: unknown) => void,
+    fail: (message: string) => void,
+  ): boolean {
+    const serverName = typeof params.serverName === 'string' ? params.serverName : 'MCP';
+    const message = typeof params.message === 'string' ? params.message : '';
+    if (params.mode === 'url') {
+      const url = typeof params.url === 'string' ? params.url : '';
+      if (!isHttpUrl(url)) {
+        this.deps.emit({ chatId: live.chatId, type: 'error', message: `El servidor MCP «${serverName}» pidió abrir una URL que no es http(s).` });
+        respond({ action: 'decline' });
+        return true;
+      }
+      live.pending.set(requestId, { kind: 'elicitation-url', respond, fail, params });
+      this.deps.emit({
+        chatId: live.chatId,
+        type: 'permission',
+        request: {
+          id: requestId,
+          permission: 'mcp-elicitation',
+          patterns: [url],
+          always: [],
+          title: message,
+          url,
+          serverName,
+        },
+      });
+      return true;
+    }
+    if (params.mode === 'form') {
+      const mapped = mapElicitationForm(params.requestedSchema);
+      if (!mapped.ok) {
+        this.deps.emit({
+          chatId: live.chatId,
+          type: 'error',
+          message: `El servidor MCP «${serverName}» pidió un formulario que Latte no puede mostrar (${mapped.reason}). ${message}`.trim(),
+        });
+        respond({ action: 'decline' });
+        return true;
+      }
+      live.pending.set(requestId, { kind: 'elicitation-form', respond, fail, params, fields: mapped.fields });
+      this.deps.emit({ chatId: live.chatId, type: 'question', request: { id: requestId, questions: mapped.questions } });
+      return true;
+    }
+    this.deps.emit({
+      chatId: live.chatId,
+      type: 'error',
+      message: `El servidor MCP «${serverName}» pidió una elicitation (modo ${String(params.mode ?? 'desconocido')}) que Latte no puede mostrar. ${message}`.trim(),
+    });
+    respond({ action: 'decline' });
+    return true;
+  }
+
+  private settlePending(live: LiveChat, reason: string): void {
+    for (const pending of live.pending.values()) {
+      if (pending.kind === 'elicitation-url' || pending.kind === 'elicitation-form') pending.respond({ action: 'cancel' });
+      else pending.fail(reason);
+    }
+    live.pending.clear();
   }
 
   private pathsOfFileChange(live: LiveChat, itemId: string): string[] {
@@ -602,18 +722,20 @@ export function partFromItem(item: Record<string, unknown>): ChatPart | null {
     }
     case 'commandExecution': {
       const status = mapStatus(item.status);
-      return { type: 'tool', id, tool: 'command', status, title: typeof item.command === 'string' ? item.command.slice(0, 160) : '', input: typeof item.command === 'string' ? item.command : '', output: clip(typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : ''), error: status === 'error' ? `exit code ${String(item.exitCode ?? '?')}` : '' };
+      const err = errorMessage(item.error);
+      return { type: 'tool', id, tool: 'command', status, title: typeof item.command === 'string' ? item.command.slice(0, 160) : '', input: typeof item.command === 'string' ? item.command : '', output: clip(typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : ''), error: status === 'error' ? (err || `exit code ${String(item.exitCode ?? '?')}`) : '' };
     }
     case 'fileChange': {
       const changes = Array.isArray(item.changes) ? item.changes.filter(isRecord) : [];
       const paths = changes.map((c) => String(c.path ?? '')).filter(Boolean);
       const diff = changes.map((c) => (typeof c.diff === 'string' ? c.diff : '')).join('\n');
       const status = mapStatus(item.status);
-      return { type: 'tool', id, tool: 'edit', status, title: paths.join(', ').slice(0, 200), input: clip(diff), output: '', error: status === 'error' ? 'patch failed' : '' };
+      const err = errorMessage(item.error);
+      return { type: 'tool', id, tool: 'edit', status, title: paths.join(', ').slice(0, 200), input: clip(diff), output: '', error: status === 'error' ? (err || 'patch failed') : '' };
     }
     case 'mcpToolCall': {
       const status = mapStatus(item.status);
-      return { type: 'tool', id, tool: `${String(item.server ?? 'mcp')}/${String(item.tool ?? 'tool')}`, status, title: '', input: stringify(item.arguments), output: clip(stringify(item.result)), error: typeof item.error === 'string' ? item.error : '' };
+      return { type: 'tool', id, tool: `${String(item.server ?? 'mcp')}/${String(item.tool ?? 'tool')}`, status, title: '', input: stringify(item.arguments), output: clip(mcpToolOutput(item.result)), error: errorMessage(item.error) };
     }
     case 'webSearch':
       return { type: 'tool', id, tool: 'web_search', status: 'completed', title: typeof item.query === 'string' ? item.query : '', input: '', output: clip(stringify(item.results)), error: '' };

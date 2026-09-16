@@ -57,8 +57,8 @@ describe.each(ENGINES)('generation schema on %s', (engine) => {
   });
 
   it('bumps SCHEMA_VERSION and creates generation tables', () => {
-    expect(SCHEMA_VERSION).toBe('9');
-    expect(repo.getMeta('schema_version')).toBe('9');
+    expect(SCHEMA_VERSION).toBe('10');
+    expect(repo.getMeta('schema_version')).toBe('10');
     const inserted = repo.insertGeneration(receipt());
     expect(inserted.contextHash).toMatch(/^[0-9a-f]{64}$/);
     expect(repo.getGeneration(inserted.id)?.workId).toBe('wrk_a');

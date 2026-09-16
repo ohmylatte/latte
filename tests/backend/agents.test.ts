@@ -150,6 +150,10 @@ describe('ClaudeChatAdapter against a fake Claude Code', () => {
     expect(messages[1].completed).toBe(true);
     expect(events.filter((e) => e.type === 'delta').length).toBeGreaterThanOrEqual(2);
     expect(events.some((e) => e.type === 'status' && e.status === 'busy')).toBe(true);
+    expect(adapter.mcpServersFromInit()).toEqual([
+      { name: 'The-agentcy', status: 'needs-auth' },
+      { name: 'efecto', status: 'connected' },
+    ]);
     await expect(adapter.send(session.id, 'x'.repeat(10))).resolves.toBeUndefined();
   });
 

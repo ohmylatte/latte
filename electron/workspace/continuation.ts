@@ -56,6 +56,7 @@ export interface ContinuationInput {
 
 const RUNTIME_NAME: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude Code', codex: 'Codex' };
 const DECISION_BLOCK = /```latte-decision\s*\r?\n[\s\S]*?```/g;
+const BRAND_CONTEXT_BLOCK = /```latte-brand-context\s*\r?\n[\s\S]*?```/g;
 const HEADING = /^#{1,6}\s/;
 const OBJECTIVE_HEADING = /^#{1,6}\s*(?:\d+\s*[./)-]?\s*)?(?:objetivos?|goals?|objectives?)\b/i;
 const OPEN_BOX = /^\s*[-*+]\s+\[ \]\s+(.+)$/;
@@ -175,6 +176,7 @@ function textOf(message: ChatMessage): string {
     .map((p) => p.text)
     .join('\n\n')
     .replace(DECISION_BLOCK, '')
+    .replace(BRAND_CONTEXT_BLOCK, '')
     .trim();
 }
 

@@ -69,7 +69,7 @@ describe('hand-over renderer', () => {
     const quotes = relevantMessages([
       message('m0', 'user', earlier),
       message('m1', 'user', 'Uno'),
-      message('m2', 'assistant', 'Dos\n```latte-decision\n{"statement":"x"}\n```'),
+      message('m2', 'assistant', 'Dos\n```latte-decision\n{"statement":"x"}\n```\n```latte-brand-context\n{"text":"oculto"}\n```'),
       message('m3', 'assistant', ''),
       message('m4', 'user', 'Tres'),
       message('m5', 'assistant', 'Cuatro'),

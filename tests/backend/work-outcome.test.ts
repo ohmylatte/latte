@@ -344,7 +344,7 @@ describe.each<DriverPreference>(['node:sqlite', 'sql.js'])('Outcome columns on a
       expect(repo.getWork('wrk_1')).toEqual({ id: 'wrk_1', brandId: 'brd_1', title: 'Uno', brief: '# Viejo', folder: null, expectedOutput: null, resultPath: null, updatedAt: '2026-01-02T00:00:00.000Z' });
       expect(repo.getMeta('schema_version')).toBe(SCHEMA_VERSION);
       // 9 adds brand_archives; outcome columns still add none of their own.
-      expect(SCHEMA_VERSION).toBe('9');
+      expect(SCHEMA_VERSION).toBe('10');
       // What an older build still does after this one ran: insert naming only the columns it knows.
       driver.run('INSERT INTO works(id, brand_id, title, brief, dir, updated_at) VALUES (?, ?, ?, ?, ?, ?)', ['wrk_2', 'brd_1', 'Dos', '', null, '2026-01-03T00:00:00.000Z']);
       expect(repo.getWork('wrk_2')).toMatchObject({ expectedOutput: null, resultPath: null });

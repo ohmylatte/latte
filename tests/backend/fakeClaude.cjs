@@ -68,7 +68,7 @@ rl.on('line', (line) => {
     const text = typeof msg.message?.content === 'string' ? msg.message.content : '';
     if (!initialised) {
       initialised = true;
-      out({ type: 'system', subtype: 'init', session_id: sessionId, model, permissionMode: 'default', tools: ['Write'], cwd: process.cwd() });
+      out({ type: 'system', subtype: 'init', session_id: sessionId, model, permissionMode: 'default', tools: ['Write'], cwd: process.cwd(), mcp_servers: [{ name: 'The-agentcy', status: 'needs-auth' }, { name: 'efecto', status: 'connected' }] });
     }
     out({ type: 'system', subtype: 'status', status: 'requesting', session_id: sessionId });
     if (/razonar/i.test(text)) {

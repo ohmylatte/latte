@@ -1,6 +1,7 @@
-import type { McpServer, McpRuntimeTools, ChatRuntime } from '../../shared/contracts';
+import type { AccountLoginStart, AgentSession, McpServer, McpRuntimeTools, ChatRuntime } from '../../shared/contracts';
 import type { CommandRunner } from '../runtime/commandRunner';
 import type { RuntimeDetector } from '../runtime/detect';
+import type { StartSessionInput } from '../runtime/terminalManager';
 import { UnavailableError, ValidationError } from '../core/errors';
 
 /**
@@ -22,6 +23,14 @@ export interface McpDeps {
   accountEnv: (runtime: 'claude' | 'codex', accountId: string | null) => Record<string, string>;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  /** Codex app-server methods; absent when this build has no Codex adapter. */
+  codex?: {
+    listMcpStatus(accountId: string): Promise<Array<{ name: string; authStatus: string }>>;
+    startMcpLogin(accountId: string, name: string): Promise<{ url: string }>;
+  };
+  /** Live Claude stream-json `system/init` mcp_servers, if a chat is open. */
+  claudeMcpFromInit?: () => Array<{ name: string; status: string }>;
+  startTerminal?: (input: StartSessionInput) => AgentSession;
 }
 
 const SERVER_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$/;
@@ -57,13 +66,25 @@ export class McpCatalog {
     if (runtime === 'codex') {
       const result = await this.deps.runner(executable, ['mcp', 'list', '--json'], { timeoutMs: this.timeout, env });
       if (result.error || result.timedOut) throw new UnavailableError(result.error ?? 'la consulta demoró demasiado');
-      return { runtime, installed: true, canEdit: true, detail: 'Configurados en tu Codex.', servers: parseCodex(result.stdout) };
+      const servers = parseCodex(result.stdout);
+      let detail = 'Configurados en tu Codex.';
+      if (this.deps.codex) {
+        try {
+          const statuses = await this.deps.codex.listMcpStatus('system');
+          applyCodexAuth(servers, statuses);
+        } catch (error) {
+          detail = describe(error);
+        }
+      }
+      return { runtime, installed: true, canEdit: true, detail, servers };
     }
     if (runtime === 'claude') {
       // This one health-checks every server, so it is slower and worth it.
       const result = await this.deps.runner(executable, ['mcp', 'list'], { timeoutMs: this.timeout, env });
       if (result.error || result.timedOut) throw new UnavailableError(result.error ?? 'la consulta demoró demasiado');
-      return { runtime, installed: true, canEdit: true, detail: 'Configurados en tu Claude Code, con estado real de conexión.', servers: parseClaude(result.stdout) };
+      const servers = parseClaude(result.stdout);
+      applyClaudeInit(servers, this.deps.claudeMcpFromInit?.() ?? []);
+      return { runtime, installed: true, canEdit: true, detail: 'Configurados en tu Claude Code, con estado real de conexión.', servers };
     }
     const result = await this.deps.runner(executable, ['mcp', 'list'], { timeoutMs: this.timeout, env });
     if (result.error || result.timedOut) throw new UnavailableError(result.error ?? 'la consulta demoró demasiado');
@@ -89,6 +110,37 @@ export class McpCatalog {
     const result = await this.deps.runner(executable, args, { timeoutMs: this.timeout, env: this.envFor(runtime) });
     if (result.error || result.timedOut) throw new UnavailableError(result.error ?? 'el comando demoró demasiado');
     if (result.code !== 0) throw new UnavailableError(firstLine(result.stderr || result.stdout) || 'el runtime rechazó la configuración');
+  }
+
+  async loginCodex(name: string): Promise<AccountLoginStart> {
+    if (!SERVER_NAME.test(name)) throw new ValidationError('Nombre inválido');
+    if (!this.deps.codex) throw new UnavailableError('Este build no incluye el adaptador de Codex');
+    const { url } = await this.deps.codex.startMcpLogin('system', name);
+    return {
+      mode: 'browser',
+      url,
+      instructions: 'Iniciá sesión en el servidor MCP en el navegador. Cuando termine, volvé y actualizá la lista.',
+    };
+  }
+
+  async authenticateClaude(cwd: string, accountId: string | null): Promise<AccountLoginStart> {
+    if (!this.deps.startTerminal) throw new UnavailableError('La terminal embebida no está disponible');
+    const executable = await this.executable('claude');
+    const extraEnv = this.deps.accountEnv('claude', accountId);
+    const session = this.deps.startTerminal({
+      workId: 'mcp-auth',
+      brandId: 'mcp-auth',
+      provider: 'claude',
+      executable,
+      args: [],
+      cwd,
+      extraEnv,
+    });
+    return {
+      mode: 'terminal',
+      sessionId: session.id,
+      instructions: 'En la terminal escribí /mcp, elegí el servidor, completá el login en el navegador y cerrá con /exit. El token queda en el perfil de esta cuenta.',
+    };
   }
 
   async remove(runtime: 'claude' | 'codex', name: string): Promise<void> {
@@ -186,12 +238,14 @@ export function parseClaude(stdout: string): McpServer[] {
     const split = rest.lastIndexOf(' - ');
     const target = (split === -1 ? rest : rest.slice(0, split)).trim();
     const stateText = split === -1 ? '' : rest.slice(split + 3).trim();
+    const status = statusFromClaude(stateText);
     servers.push({
       name,
       transport: /^https?:\/\//.test(target) ? 'http' : 'stdio',
       target,
-      status: statusFromClaude(stateText),
+      status,
       detail: cleanDetail(stateText),
+      needsAuth: status === 'needsAuth',
     });
   }
   return servers;
@@ -199,10 +253,47 @@ export function parseClaude(stdout: string): McpServer[] {
 
 function statusFromClaude(text: string): McpServer['status'] {
   const plain = text.toLowerCase();
+  if (plain.includes('needs authentication') || plain.includes('authentication')) return 'needsAuth';
   if (plain.includes('connected')) return 'connected';
   if (plain.includes('pending')) return 'pending';
   if (plain.includes('fail') || plain.includes('error')) return 'failed';
   return 'configured';
+}
+
+function applyCodexAuth(servers: McpServer[], statuses: Array<{ name: string; authStatus: string }>): void {
+  const byName = new Map(statuses.map((s) => [s.name, s.authStatus]));
+  for (const server of servers) {
+    const auth = byName.get(server.name);
+    if (!auth) continue;
+    server.needsAuth = auth === 'notLoggedIn';
+    if (auth === 'notLoggedIn') {
+      server.status = 'needsAuth';
+      if (!server.detail) server.detail = 'Requiere iniciar sesión';
+    }
+  }
+}
+
+function applyClaudeInit(servers: McpServer[], init: Array<{ name: string; status: string }>): void {
+  const byName = new Map(init.map((s) => [s.name, s.status]));
+  for (const server of servers) {
+    const status = byName.get(server.name);
+    if (!status) continue;
+    const mapped = mapClaudeInitStatus(status);
+    if (mapped === 'needsAuth') {
+      server.status = 'needsAuth';
+      server.needsAuth = true;
+    } else if (mapped) server.status = mapped;
+  }
+}
+
+function mapClaudeInitStatus(status: string): McpServer['status'] | null {
+  const plain = status.toLowerCase();
+  if (plain === 'needs-auth' || plain === 'needsauth') return 'needsAuth';
+  if (plain === 'connected') return 'connected';
+  if (plain === 'failed') return 'failed';
+  if (plain === 'pending') return 'pending';
+  if (plain === 'disabled') return 'disabled';
+  return null;
 }
 
 /** OpenCode prints a decorated tree; only the name, state and target matter. */

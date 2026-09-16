@@ -21,6 +21,9 @@ import type {
   ChatRuntimeStatus,
   ChatSession,
   ContinuationDraft,
+  BrandContextMode,
+  BrandContextProposal,
+  BrandContextProposalInput,
   Decision,
   DecisionAuthorityMode,
   DecisionProposalInput,
@@ -96,7 +99,9 @@ import { renderDocumentTemplate } from '../workspace/templates';
 import { openItems, renderContinuation } from '../workspace/continuation';
 import { DELIVERABLES_DIR, DeliverableFiles, deliverableName } from '../workspace/deliverables';
 import { documentFileName, fingerprintOf, type DocumentOnDisk, type WorkspaceFiles } from '../workspace/workspace';
-import { LIMITS, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
+import { BRAND_CONTEXT_DRAFT_PROMPT_EN, BRAND_CONTEXT_DRAFT_PROMPT_ES, brandContextFingerprint, requireBrandContextInput } from '../workspace/brandContextProtocol';
+import { composeBrandContext } from '../../shared/brandContext';
+import { LIMITS, requireCleanContext, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
 import { BrandingService } from '../branding/service';
 
 /** Stable content identity; request identity handles retries, this flags similar proposals without merging them. */
@@ -295,6 +300,10 @@ export class LatteService implements BackendApi {
     return this.deps.repo.listBrands();
   }
 
+  async getBrand(brandId: string): Promise<Brand> {
+    return this.deps.repo.getBrand(requireId(brandId, 'brandId'));
+  }
+
   async createBrand(name: string): Promise<Brand> {
     const cleanName = requireLabel(name, 'Brand name', LIMITS.name);
     const brand: Brand = { id: newId('brd'), name: cleanName, context: '', createdAt: this.clock(), archivedAt: null };
@@ -305,7 +314,7 @@ export class LatteService implements BackendApi {
 
   async updateBrand(id: string, context: string): Promise<Brand> {
     const brandId = requireId(id, 'brandId');
-    const cleanContext = requireText(context, 'Brand context', LIMITS.context, { allowEmpty: true });
+    const cleanContext = requireCleanContext(context, 'Brand context', { allowEmpty: true });
     return this.deps.repo.updateBrandContext(brandId, cleanContext);
   }
 
@@ -1070,13 +1079,13 @@ export class LatteService implements BackendApi {
     return decision;
   }
 
-  async getDecisionAuthority(workId:string):Promise<DecisionAuthorityMode> { const id=requireId(workId,'workId'); this.deps.repo.getWork(id); const raw=this.deps.repo.getMeta('decision_authority:'+id); return raw==='off'||raw==='auto-record'?raw:'suggest'; }
+  async getDecisionAuthority(workId:string):Promise<DecisionAuthorityMode> { const id=requireId(workId,'workId'); this.deps.repo.getWork(id); return this.readDecisionAuthority(id); }
   async setDecisionAuthority(workId:string,mode:DecisionAuthorityMode):Promise<DecisionAuthorityMode> { const id=requireId(workId,'workId'); this.deps.repo.getWork(id); if(mode!=='off'&&mode!=='suggest'&&mode!=='auto-record') throw new ValidationError('Invalid decision authority'); this.deps.repo.setMeta('decision_authority:'+id,mode); return mode; }
 
   /** Structured fallback used by every runtime. It never infers decisions from prose. */
   async proposeDecisionFromAgent(chatId:string,messageId:string,input:DecisionProposalInput):Promise<Decision|null> {
     const member=this.deps.repo.findMember(requireId(chatId,'chatId')); if(!member) throw new ValidationError('Unknown decision source');
-    const rawMode=this.deps.repo.getMeta('decision_authority:'+member.workId); const mode:DecisionAuthorityMode=rawMode==='off'||rawMode==='auto-record'?rawMode:'suggest'; if(mode==='off') return null;
+    const mode=this.readDecisionAuthority(member.workId); if(mode==='off') return null;
     const request=requireRequestId(input.clientRequestId); const existing=this.deps.repo.findDecisionRequest(member.workId,chatId,request); if(existing) return existing;
     const statement=requireText(input.statement,'Decision statement',LIMITS.decision).trim().normalize('NFC');
     const rationale=typeof input.rationale==='string'?input.rationale.trim().normalize('NFC').slice(0,LIMITS.decision):'';
@@ -1088,6 +1097,118 @@ export class LatteService implements BackendApi {
   async approveDecision(id:string,edited:string|null=null):Promise<Decision>{ const clean=edited==null?null:requireText(edited,'Decision',LIMITS.decision).trim().normalize('NFC'); return this.deps.repo.transitionDecision(requireId(id,'decisionId'),'approved',clean,this.clock()); }
   async rejectDecision(id:string):Promise<Decision>{ return this.deps.repo.transitionDecision(requireId(id,'decisionId'),'rejected',null,this.clock()); }
   async archiveDecision(id:string):Promise<Decision>{ return this.deps.repo.transitionDecision(requireId(id,'decisionId'),'archived',null,this.clock()); }
+
+  // Brand context proposals -------------------------------------------------
+
+  async listBrandContextProposals(brandId: string): Promise<BrandContextProposal[]> {
+    const brand = this.deps.repo.getBrand(requireId(brandId, 'brandId'));
+    const base = brandContextFingerprint(brand.context);
+    return this.deps.repo.listBrandContextProposals(brandId).map((p) => ({ ...p, stale: p.baseFingerprint !== base }));
+  }
+
+  async proposeBrandContextFromAgent(chatId: string, messageId: string, input: BrandContextProposalInput): Promise<BrandContextProposal | null> {
+    const member = this.deps.repo.findMember(requireId(chatId, 'chatId'));
+    if (!member) throw new ValidationError('Unknown brand context source');
+    const work = this.deps.repo.getWork(member.workId);
+    const brand = this.requireActiveBrand(work.brandId);
+    const authority = this.readDecisionAuthority(member.workId);
+    if (authority === 'off') return null;
+    const parsed = requireBrandContextInput(input);
+    const existing = this.deps.repo.findBrandContextRequest(brand.id, work.id, chatId, parsed.clientRequestId);
+    if (existing) return existing;
+    const fingerprint = brandContextFingerprint(parsed.text);
+    const pending = this.deps.repo.findPendingBrandContext(brand.id);
+    if (pending && pending.fingerprint === fingerprint) return pending;
+    this.assertComposedFits(brand.context, parsed.text, parsed.mode);
+    const now = this.clock();
+    const proposal: BrandContextProposal = {
+      id: newId('bcp'),
+      brandId: brand.id,
+      workId: work.id,
+      source: { chatId, messageId: requireRequestId(messageId), memberId: member.id, roleId: member.roleId, runtime: member.runtime },
+      text: parsed.text,
+      rationale: parsed.rationale,
+      mode: parsed.mode,
+      status: authority === 'auto-record' ? 'approved' : 'pending',
+      fingerprint,
+      baseFingerprint: brandContextFingerprint(brand.context),
+      clientRequestId: parsed.clientRequestId,
+      createdAt: now,
+      decidedAt: authority === 'auto-record' ? now : null,
+    };
+    const stored = this.deps.repo.transaction(() => {
+      if (pending) this.deps.repo.rejectPendingBrandContext(brand.id, now);
+      this.deps.repo.insertBrandContextProposal(proposal);
+      if (proposal.status === 'approved') this.applyApprovedContext(brand, proposal.text, proposal.mode);
+      return proposal;
+    });
+    return stored;
+  }
+
+  async approveBrandContextProposal(id: string, edited: string | null, acceptStale = false): Promise<BrandContextProposal> {
+    const proposalId = requireId(id, 'proposalId');
+    const before = this.deps.repo.getBrandContextProposal(proposalId);
+    const brand = this.requireActiveBrand(before.brandId);
+    if (before.status === 'approved') return before;
+    if (before.status !== 'pending') throw new LatteError('PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
+    const clean = edited == null ? null : requireCleanContext(edited, 'Brand context');
+    const text = clean ?? before.text;
+    this.assertComposedFits(brand.context, text, before.mode);
+    if (!acceptStale && before.baseFingerprint !== brandContextFingerprint(brand.context)) {
+      throw new LatteError('PROPOSAL_STALE', 'Brand context changed since this proposal');
+    }
+    return this.deps.repo.transaction(() => {
+      const current = this.deps.repo.getBrand(brand.id);
+      const next = this.deps.repo.transitionBrandContextProposal(proposalId, 'approved', clean, this.clock());
+      this.applyApprovedContext(current, next.text, next.mode);
+      return this.deps.repo.getBrandContextProposal(proposalId);
+    });
+  }
+
+  async rejectBrandContextProposal(id: string): Promise<BrandContextProposal> {
+    const proposalId = requireId(id, 'proposalId');
+    const before = this.deps.repo.getBrandContextProposal(proposalId);
+    this.requireActiveBrand(before.brandId);
+    if (before.status === 'rejected') return before;
+    if (before.status !== 'pending') throw new LatteError('PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
+    return this.deps.repo.transitionBrandContextProposal(proposalId, 'rejected', null, this.clock());
+  }
+
+  async requestBrandContextDraft(workId: string): Promise<ChatSession> {
+    const work = this.deps.repo.getWork(requireId(workId, 'workId'));
+    this.requireActiveBrand(work.brandId);
+    const team = this.deps.hub.listTeam(work.id);
+    const strategists = team.filter((m) => m.roleId === 'strategist' && m.status !== 'ended');
+    const available = strategists.find((m) => m.status !== 'working');
+    if (strategists.length > 0 && !available) {
+      throw new LatteError('MEMBER_BUSY', 'The strategist is already working on this work');
+    }
+    const session = available
+      ? await this.deps.hub.openMember(available.id, this.memberContext(work.id))
+      : await this.deps.hub.addMember({ ...this.memberContext(work.id), roleId: 'strategist' });
+    const locale = this.deps.repo.getMeta(`work_content_locale:${work.id}`) === 'en-US' ? 'en-US' : 'es-AR';
+    const prompt = locale === 'en-US' ? BRAND_CONTEXT_DRAFT_PROMPT_EN : BRAND_CONTEXT_DRAFT_PROMPT_ES;
+    await this.deps.hub.send(session.id, prompt);
+    return session;
+  }
+
+  private applyApprovedContext(brand: Brand, incoming: string, mode: BrandContextMode): Brand {
+    const next = this.assertComposedFits(brand.context, incoming, mode);
+    return this.deps.repo.updateBrandContext(brand.id, next);
+  }
+
+  private assertComposedFits(current: string, incoming: string, mode: BrandContextMode): string {
+    const next = composeBrandContext(current, incoming, mode);
+    if (next.length > LIMITS.context) {
+      throw new LatteError('CONTEXT_TOO_LONG', `Brand context is ${next.length - LIMITS.context} characters over the ${LIMITS.context}-character limit`);
+    }
+    return requireCleanContext(next, 'Brand context', { allowEmpty: true });
+  }
+
+  private readDecisionAuthority(workId: string): DecisionAuthorityMode {
+    const raw = this.deps.repo.getMeta('decision_authority:' + workId);
+    return raw === 'off' || raw === 'auto-record' ? raw : 'suggest';
+  }
 
   // Agents ------------------------------------------------------------------
 
@@ -1441,6 +1562,21 @@ export class LatteService implements BackendApi {
     await this.deps.mcp.remove(runtime, requireLabel(name, 'Server name', 64));
   }
 
+  async loginMcpServer(runtime: 'codex', name: string): Promise<AccountLoginStart> {
+    if (runtime !== 'codex') throw new TypeError('Unknown runtime');
+    if (!this.deps.mcp) throw new UnavailableError('MCP requiere la aplicación de escritorio');
+    const start = await this.deps.mcp.loginCodex(requireLabel(name, 'Server name', 64));
+    if (start.mode === 'browser' && /^https?:\/\//.test(start.url)) await this.deps.openExternal?.(start.url);
+    return start;
+  }
+
+  async authenticateClaudeMcp(workId: string, accountId: string | null): Promise<AccountLoginStart> {
+    if (!this.deps.mcp) throw new UnavailableError('MCP requiere la aplicación de escritorio');
+    const work = this.deps.repo.getWork(requireId(workId, 'workId'));
+    if (accountId !== null && !AccountStore.isValidId(accountId)) throw new TypeError('Invalid account id');
+    return this.deps.mcp.authenticateClaude(this.deps.files.workDir(work.brandId, work.id), accountId);
+  }
+
   async addAgentAccount(runtime: 'claude' | 'codex', label: string): Promise<AgentAccount> {
     if (!isAccountRuntime(runtime)) throw new TypeError('Unknown runtime');
     return this.deps.hub.addAccount(runtime, requireLabel(label, 'Account label', 80));
@@ -1678,7 +1814,7 @@ export class LatteService implements BackendApi {
     this.deps.files.ensureWork(brand.id, work.id, work.brief);
     const storedLocale = this.deps.repo.getMeta(`work_content_locale:${work.id}`);
     const outputLanguage = storedLocale === 'en-US' ? 'en-US' : 'es-AR';
-    const decisionAuthority=(this.deps.repo.getMeta('decision_authority:'+work.id) as DecisionAuthorityMode|null)??'suggest';
+    const decisionAuthority=this.readDecisionAuthority(work.id);
     const generation = this.generationEnabled() ? this.pinnedGenerationPointer(work.id) : null;
     const brandMemory = this.loadBrandMemory(brand, work);
     const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation, brandMemory });

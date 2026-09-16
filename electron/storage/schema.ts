@@ -1,4 +1,5 @@
 import { ARCHIVE_SCHEMA_SQL } from './archiveSchema';
+import { BRAND_CONTEXT_SCHEMA_SQL } from './brandContextSchema';
 import { BRANDING_SCHEMA_SQL } from './brandingSchema';
 import { GENERATION_SCHEMA_SQL } from './generationSchema';
 import { LEARNING_SCHEMA_SQL } from './learningSchema';
@@ -128,7 +129,7 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-` + GENERATION_SCHEMA_SQL + BRANDING_SCHEMA_SQL + LEARNING_SCHEMA_SQL + ARCHIVE_SCHEMA_SQL;
+` + GENERATION_SCHEMA_SQL + BRANDING_SCHEMA_SQL + LEARNING_SCHEMA_SQL + ARCHIVE_SCHEMA_SQL + BRAND_CONTEXT_SCHEMA_SQL;
 
 /**
  * Not bumped for works.expected_output / works.result_path (nor for
@@ -141,5 +142,6 @@ CREATE TABLE IF NOT EXISTS meta (
  * and an existing one, so the works table above stays exactly what schema 7
  * defined. Schema 8 adds generation receipts, brand-kit tables and learned-skill tables.
  * Schema 9 adds brand_archives (soft-delete, no ALTER on brands).
+ * Schema 10 adds brand_context_proposals (agent drafts of Brand.context).
  */
-export const SCHEMA_VERSION = '9';
+export const SCHEMA_VERSION = '10';

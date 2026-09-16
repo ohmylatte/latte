@@ -10,6 +10,7 @@ plugin:engram:engram: engram mcp --tools=agent - ✔ Connected
 efecto: npx -y @efectoapp/mcp - ✔ Connected
 acdp: C:\\Program Files\\nodejs\\node.exe C:\\Users\\x\\acdp-mcp.js - ✘ Failed to connect — CONNECTION_CLOSED: Connection closed
 remoto: https://mcp.sentry.dev/mcp - ✔ Connected
+sentry: https://mcp.sentry.dev/mcp - ! Needs authentication
 `;
 
 /** Captured from `codex mcp list --json`. */
@@ -40,7 +41,9 @@ describe('Reading what each runtime has configured', () => {
       ['efecto', 'connected', 'stdio'],
       ['acdp', 'failed', 'stdio'],
       ['remoto', 'connected', 'http'],
+      ['sentry', 'needsAuth', 'http'],
     ]);
+    expect(servers[4].needsAuth).toBe(true);
     expect(servers[1].target).toBe('npx -y @efectoapp/mcp');
     expect(servers[2].detail).toContain('CONNECTION_CLOSED');
     expect(parseClaude('')).toEqual([]);
@@ -149,6 +152,63 @@ describe('Adding a server through the runtime CLI', () => {
     expect(codex.servers).toHaveLength(3);
     // Asking for one must not have queried the slow one.
     expect(runner.calls.filter((c) => c.args[0] === 'mcp')).toHaveLength(1);
+  });
+
+  it('starts Codex MCP OAuth login and marks servers that need auth', async () => {
+    const catalog = new McpCatalog({
+      runner: fakeRunner((file, args) => {
+        if (file === 'where.exe' || file === 'which') return { code: 0, stdout: `C:\\bin\\${args[0]}.exe\n` };
+        if (args[0] === 'mcp' && args[2] === '--json') return { code: 0, stdout: CODEX_OUTPUT };
+        return { code: 0, stdout: '1.0\n' };
+      }),
+      detector: new RuntimeDetector({ runner: fakeRunner((file, args) => (file === 'where.exe' || file === 'which' ? { code: 0, stdout: `C:\\bin\\${args[0]}.exe\n` } : { code: 0, stdout: '1.0\n' })), terminalAvailability: () => ({ available: false, reason: 'test' }), platform: 'win32', env: {} }),
+      accountEnv: () => ({}),
+      env: {},
+      codex: {
+        listMcpStatus: async () => [{ name: 'remoto', authStatus: 'notLoggedIn' }, { name: 'engram', authStatus: 'unsupported' }],
+        startMcpLogin: async (accountId, name) => ({ url: `https://auth.example.test/mcp?account=${accountId}&name=${name}` }),
+      },
+    });
+    const listed = await catalog.listOne('codex');
+    expect(listed.servers.find((s) => s.name === 'remoto')).toMatchObject({ status: 'needsAuth', needsAuth: true });
+    const login = await catalog.loginCodex('remoto');
+    expect(login).toMatchObject({ mode: 'browser', url: 'https://auth.example.test/mcp?account=system&name=remoto' });
+  });
+
+  it('surfaces a clear error when Codex does not support MCP OAuth', async () => {
+    const catalog = new McpCatalog({
+      runner: fakeRunner(() => ({ code: 0, stdout: '' })),
+      detector: new RuntimeDetector({ runner: fakeRunner((file, args) => (file === 'where.exe' || file === 'which' ? { code: 0, stdout: `C:\\bin\\${args[0]}.exe\n` } : { code: 0, stdout: '1.0\n' })), terminalAvailability: () => ({ available: false, reason: 'test' }), platform: 'win32', env: {} }),
+      accountEnv: () => ({}),
+      env: {},
+      codex: {
+        listMcpStatus: async () => { throw new Error('Este Codex no soporta mcpServerStatus/list: unknown method'); },
+        startMcpLogin: async () => { throw new Error('Este Codex no pudo iniciar sesión en el servidor MCP «x»: unknown method'); },
+      },
+    });
+    await expect(catalog.loginCodex('x')).rejects.toThrow(/unknown method/i);
+  });
+
+  it('opens an embedded Claude terminal with the account profile env', async () => {
+    const started: Array<{ cwd: string; extraEnv?: Record<string, string>; args?: string[] }> = [];
+    const catalog = new McpCatalog({
+      runner: fakeRunner((file, args) => (file === 'where.exe' || file === 'which' ? { code: 0, stdout: 'C:\\bin\\claude.exe\n' } : { code: 0, stdout: '1.0\n' })),
+      detector: new RuntimeDetector({ runner: fakeRunner((file, args) => (file === 'where.exe' || file === 'which' ? { code: 0, stdout: `C:\\bin\\${args[0]}.exe\n` } : { code: 0, stdout: '1.0\n' })), terminalAvailability: () => ({ available: true, reason: '' }), platform: 'win32', env: {} }),
+      accountEnv: (_runtime, accountId): Record<string, string> => (accountId ? { CLAUDE_CONFIG_DIR: `C:\\profiles\\${accountId}` } : {}),
+      env: {},
+      startTerminal: (input) => {
+        started.push({ cwd: input.cwd, extraEnv: input.extraEnv, args: input.args });
+        return { id: 'ses_mcp', workId: input.workId, provider: 'claude' };
+      },
+    });
+    const login = await catalog.authenticateClaude('C:\\work\\folder', 'acc_0123456789abcdef');
+    expect(login).toMatchObject({ mode: 'terminal', sessionId: 'ses_mcp' });
+    expect(login.instructions).toMatch(/\/mcp/);
+    expect(started[0]).toEqual({
+      cwd: 'C:\\work\\folder',
+      extraEnv: { CLAUDE_CONFIG_DIR: 'C:\\profiles\\acc_0123456789abcdef' },
+      args: [],
+    });
   });
 
   it('asks the three runtimes at the same time, not one after the other', async () => {

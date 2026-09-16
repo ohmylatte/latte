@@ -1,8 +1,9 @@
 import { translate as t, type MessageKey } from './i18n';
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Check, LoaderCircle, Plug, Plus, RefreshCw, Trash2, X } from 'lucide-react';
-import type { ChatRuntime, McpRuntimeTools, McpServer } from '../shared/contracts';
+import { AlertTriangle, Check, LoaderCircle, LogIn, Plug, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import type { AccountLoginStart, ChatRuntime, McpRuntimeTools, McpServer } from '../shared/contracts';
 import { api } from './browser-api';
+import { TerminalPane } from './TerminalPane';
 
 const RUNTIME_NAME: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' };
 const STATUS_LABEL: Record<McpServer['status'], MessageKey> = {
@@ -11,6 +12,7 @@ const STATUS_LABEL: Record<McpServer['status'], MessageKey> = {
   pending: 'tools.status.pending',
   disabled: 'tools.status.disabled',
   configured: 'tools.status.configured',
+  needsAuth: 'tools.status.needsAuth',
 };
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -21,11 +23,12 @@ const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e)
  * each runtime's own configuration through its `mcp` command, so what you see
  * here is what that runtime will actually use, in Latte and outside it.
  */
-export function ToolsView({ onNotice, onError }: { onNotice: (text: string) => void; onError: (text: string) => void }) {
+export function ToolsView({ onNotice, onError, workId }: { onNotice: (text: string) => void; onError: (text: string) => void; workId?: string | null }) {
   const [runtimes, setRuntimes] = useState<McpRuntimeTools[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState<'claude' | 'codex' | null>(null);
+  const [login, setLogin] = useState<{ runtime: ChatRuntime; name: string; start: AccountLoginStart } | null>(null);
 
   /**
    * One query per runtime, all three at once, each card drawn as it answers.
@@ -60,7 +63,27 @@ export function ToolsView({ onNotice, onError }: { onNotice: (text: string) => v
       .finally(() => setBusy(false));
   };
 
-  return <ToolsViewContent runtimes={runtimes} loading={loading} busy={busy} adding={adding} onRefresh={() => void load()} onRemove={remove} onAdding={setAdding} onAdd={async (runtime, input) => {
+  const loginCodex = (name: string) => {
+    setBusy(true);
+    api.loginMcpServer('codex', name)
+      .then(start => { setLogin({ runtime: 'codex', name, start }); onNotice(t('tools.loginCodexInstructions', { name })); })
+      .catch(e => onError(displayError(e)))
+      .finally(() => setBusy(false));
+  };
+  const authenticateClaude = (name: string) => {
+    if (!workId) { onError(t('tools.needWork')); return; }
+    setBusy(true);
+    void api.getPrimaryAgent().then(primary => api.authenticateClaudeMcp(workId, primary?.runtime === 'claude' ? (primary.accountId ?? 'system') : 'system'))
+      .then(start => { setLogin({ runtime: 'claude', name, start }); onNotice(t('tools.authenticateClaudeInstructions')); })
+      .catch(e => onError(displayError(e)))
+      .finally(() => setBusy(false));
+  };
+
+  return <ToolsViewContent runtimes={runtimes} loading={loading} busy={busy} adding={adding} login={login} onError={onError} onRefresh={() => void load()} onRemove={remove} onAdding={setAdding} onLoginCodex={loginCodex} onAuthenticateClaude={authenticateClaude} onDismissLogin={() => {
+    if (login?.start.mode === 'terminal') void api.stopAgent(login.start.sessionId).catch(() => undefined);
+    setLogin(null);
+    void load();
+  }} onAdd={async (runtime, input) => {
     setBusy(true);
     try {
       await api.addMcpServer(runtime, input);
@@ -74,15 +97,20 @@ export function ToolsView({ onNotice, onError }: { onNotice: (text: string) => v
 type ServerInput = { name: string; transport: 'stdio' | 'http'; command: string; args: string[]; url: string; env: string[] };
 
 /** Presentational surface: rendering it never queries or configures a runtime. */
-export function ToolsViewContent({ runtimes, loading, busy, adding, onRefresh, onRemove, onAdding, onAdd }: {
+export function ToolsViewContent({ runtimes, loading, busy, adding, login, onRefresh, onRemove, onAdding, onAdd, onLoginCodex, onAuthenticateClaude, onDismissLogin, onError }: {
   runtimes: McpRuntimeTools[] | null;
   loading: boolean;
   busy: boolean;
   adding: 'claude' | 'codex' | null;
+  login?: { runtime: ChatRuntime; name: string; start: AccountLoginStart } | null;
+  onError?: (text: string) => void;
   onRefresh: () => void;
   onRemove: (runtime: 'claude' | 'codex', name: string) => void;
   onAdding: (runtime: 'claude' | 'codex' | null) => void;
   onAdd: (runtime: 'claude' | 'codex', input: ServerInput) => Promise<void>;
+  onLoginCodex?: (name: string) => void;
+  onAuthenticateClaude?: (name: string) => void;
+  onDismissLogin?: () => void;
 }) {
   return <section className="settings-section tools-view">
     <h2>{t('ui.auto.304')}</h2>
@@ -115,10 +143,19 @@ export function ToolsViewContent({ runtimes, loading, busy, adding, onRefresh, o
             {server.detail && server.status !== 'connected' && <small className="mcp-detail">{server.detail}</small>}
           </div>
           <span className="tag">{t(STATUS_LABEL[server.status])}</span>
+          {rt.runtime === 'codex' && (server.needsAuth || server.status === 'needsAuth') && onLoginCodex && <button className="subtle" disabled={busy} title={t('tools.loginHelp')} onClick={() => onLoginCodex(server.name)}><LogIn size={13} />{t('tools.login')}</button>}
+          {rt.runtime === 'claude' && (server.needsAuth || server.status === 'needsAuth' || server.status === 'failed') && onAuthenticateClaude && <button className="subtle" disabled={busy} title={t('tools.authenticateClaudeHelp')} onClick={() => onAuthenticateClaude(server.name)}><LogIn size={13} />{t('tools.authenticateClaude')}</button>}
           {rt.canEdit && <button className="icon-button" aria-label={t('tools.remove', { name: server.name })} title={t('tools.removeHelp')} disabled={busy} onClick={() => onRemove(rt.runtime as 'claude' | 'codex', server.name)}><Trash2 size={14} /></button>}
         </div>)}
       </div>}
       {rt.installed && rt.canEdit && adding !== rt.runtime && <button className="subtle" disabled={busy} onClick={() => onAdding(rt.runtime as 'claude' | 'codex')}><Plus size={13} />{t('ui.auto.311')}</button>}
+      {login && login.runtime === rt.runtime && <div className="chat-card login-card" role="group" aria-label={t('tools.login')}>
+        <div className="chat-card-title"><Plug size={15} />{login.name}</div>
+        <p>{login.start.instructions}</p>
+        {login.start.mode === 'browser' && <p><code>{login.start.url}</code></p>}
+        {login.start.mode === 'terminal' && <TerminalPane sessionId={login.start.sessionId} onError={onError ?? (() => undefined)} />}
+        <div className="chat-card-actions"><button onClick={() => onDismissLogin?.()}>{t('ui.auto.001')}</button></div>
+      </div>}
       {adding === rt.runtime && <AddServer runtime={rt.runtime as 'claude' | 'codex'} busy={busy} onCancel={() => onAdding(null)} onAdd={input => onAdd(rt.runtime as 'claude' | 'codex', input)} />}
       {rt.installed && !rt.canEdit && <p className="footnote"><AlertTriangle size={13} />  {t('ui.auto.312')} <code>opencode mcp add</code>  {t('ui.auto.313')}</p>}
     </div>)}

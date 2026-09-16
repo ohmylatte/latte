@@ -17,7 +17,7 @@ export type SettingsSection = 'agents' | 'profiles' | 'skills' | 'tools' | 'work
  * Opening or closing it never writes anything; the workspace state stays in
  * App and comes back untouched.
  */
-export function SettingsScreen({ onProfileDirtyChange, controls, section, onSection, onClose, onChanged, onNotice, onError, notice, error, onDismiss, terminal }: {
+export function SettingsScreen({ onProfileDirtyChange, controls, section, onSection, onClose, onChanged, onNotice, onError, notice, error, onDismiss, terminal, workId }: {
   /** Window controls: Settings is a full screen, so it needs them too. */
   controls: ReactNode;
   onProfileDirtyChange: (dirty:boolean)=>void;
@@ -32,6 +32,7 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
   onDismiss: () => void;
   /** The raw CLI console: an escape hatch, so it lives here and not in the work. */
   terminal?: ReactNode;
+  workId?: string | null;
 }) {
   const { t } = useI18n();
   const [profileDirty,setProfileDirty]=useState(false);
@@ -64,7 +65,7 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       </section>}
       {section === 'profiles' && <ProfilesView onChanged={onChanged} onError={onError} onNotice={onNotice} onDirtyChange={setProfileDirty} />}
       {section === t('ui.auto.390') && <SkillsView onNotice={onNotice} onError={onError} />}
-      {section === 'tools' && <ToolsView onNotice={onNotice} onError={onError} />}
+      {section === 'tools' && <ToolsView onNotice={onNotice} onError={onError} workId={workId} />}
       {section === 'workspace' && <WorkspaceSection onError={onError} />}
       {section === 'language' && <LanguageSection />}
     </main>

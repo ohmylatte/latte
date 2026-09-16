@@ -1,5 +1,7 @@
 import path from 'node:path';
 import type { AgentEvent, ChatEvent, DecisionProposalInput } from '../shared/contracts';
+import { extractFencedBlocks } from './core/fenced';
+import { brandContextProtocolBlocks } from './workspace/brandContextProtocol';
 import { AccountStore } from './agents/accounts';
 import { ClaudeChatAdapter } from './agents/claude/claudeAdapter';
 import { CodexChatAdapter } from './agents/codex/codexAdapter';
@@ -121,11 +123,20 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     // is persisted, so the hub replaces it before the interface sees it.
     if (event.type === 'usage') { forward(hub.recordUsage(event)); return; }
     if (event.type === 'message' && event.message.role === 'assistant' && event.message.completed) {
-      for (const proposal of decisionProtocolBlocks(event.message.parts.filter(p=>p.type==='text').map(p=>(p as {text:string}).text).join('\n'))) {
+      const assistantText = event.message.parts.filter(p=>p.type==='text').map(p=>(p as {text:string}).text).join('\n');
+      for (const proposal of decisionProtocolBlocks(assistantText)) {
         void service.proposeDecisionFromAgent(event.chatId,event.message.id,proposal).catch(error=>options.log?.(`[latte] decision proposal failed: ${error instanceof Error?error.message:String(error)}`));
       }
+      for (const proposal of brandContextProtocolBlocks(assistantText)) {
+        void service.proposeBrandContextFromAgent(event.chatId,event.message.id,proposal).catch(error=>{
+          const message = error instanceof Error ? error.message : String(error);
+          options.log?.(`[latte] brand context proposal failed: ${message}`);
+          forward({ chatId: event.chatId, type: 'error', message });
+        });
+      }
     }
-    if (event.type !== 'permission' || !service.autoApprovesChat(event.chatId)) { forward(event); return; }
+    // MCP URL elicitations are consent/login, not tool grants: auto mode must still show the card.
+    if (event.type !== 'permission' || event.request.url || !service.autoApprovesChat(event.chatId)) { forward(event); return; }
     void hub.replyPermission(event.chatId, event.request.id, 'once').catch((error: unknown) => {
       // The conversation may have ended between the request and the answer.
       options.log?.(`[latte] auto-approval failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -178,13 +189,25 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     env,
     platform,
     log: options.log,
+    openExternal: options.openExternal,
   });
   const packsDir = options.packsDir ?? path.resolve(__dirname, '..', 'packs');
   const pack = loadInstructionPack(packsDir, 'marketing-core');
   const roles = new RoleCatalog(pack, new ProfileStore(path.join(paths.root, 'agents')));
   const hub: AgentHub = new AgentHub({ opencode: chat, claude, codex, accounts, repo, detector, terminal, runner, roles, transcripts, promptDir: path.join(paths.root, 'prompts'), loginCwd: paths.root, env });
 
-  const mcp = new McpCatalog({ runner, detector, accountEnv: (runtime, accountId) => accounts.envFor(runtime, accountId), env });
+  const mcp = new McpCatalog({
+    runner,
+    detector,
+    accountEnv: (runtime, accountId) => accounts.envFor(runtime, accountId),
+    env,
+    codex: {
+      listMcpStatus: (accountId) => codex.listMcpStatus(accountId),
+      startMcpLogin: (accountId, name) => codex.startMcpOauthLogin(accountId, name),
+    },
+    claudeMcpFromInit: () => claude.mcpServersFromInit(),
+    startTerminal: (input) => terminal.start(input),
+  });
 
   const engram = new EngramClient({
     runner,
@@ -232,8 +255,12 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
 
 /** Explicit structured fallback shared by runtimes until their native SDKs can register an in-process Latte tool. */
 export function decisionProtocolBlocks(text:string):DecisionProposalInput[] {
-  const out:DecisionProposalInput[]=[]; const pattern=/```latte-decision\s*\r?\n([\s\S]*?)```/g;
-  for(const match of text.matchAll(pattern)){ try { const v:unknown=JSON.parse(match[1]); if(!v||typeof v!=='object') continue; const x=v as Record<string,unknown>; if(typeof x.statement!=='string'||typeof x.rationale!=='string'||typeof x.clientRequestId!=='string') continue; out.push({statement:x.statement,rationale:x.rationale,clientRequestId:x.clientRequestId,...(Array.isArray(x.alternativesRejected)?{alternativesRejected:x.alternativesRejected.filter((z):z is string=>typeof z==='string')}:{}),...(Array.isArray(x.evidenceRefs)?{evidenceRefs:x.evidenceRefs.filter((z):z is string=>typeof z==='string')}:{})}); } catch { /* malformed blocks are inert, never guessed */ } }
+  const out:DecisionProposalInput[]=[];
+  for (const body of extractFencedBlocks('latte-decision', text)) {
+    try {
+      const v:unknown=JSON.parse(body); if(!v||typeof v!=='object') continue; const x=v as Record<string,unknown>; if(typeof x.statement!=='string'||typeof x.rationale!=='string'||typeof x.clientRequestId!=='string') continue; out.push({statement:x.statement,rationale:x.rationale,clientRequestId:x.clientRequestId,...(Array.isArray(x.alternativesRejected)?{alternativesRejected:x.alternativesRejected.filter((z):z is string=>typeof z==='string')}:{}),...(Array.isArray(x.evidenceRefs)?{evidenceRefs:x.evidenceRefs.filter((z):z is string=>typeof z==='string')}:{})});
+    } catch { /* malformed blocks are inert, never guessed */ }
+  }
   return out;
 }
 
