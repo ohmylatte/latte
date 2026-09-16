@@ -1,5 +1,6 @@
 import { optionalRequire } from '../core/optionalRequire';
 import type { UpdaterEngine } from './controller';
+import type { UpdateUnsupportedKind } from '../../shared/contracts';
 
 /**
  * The slice of electron-updater's `autoUpdater` we use. Typed here instead of
@@ -37,6 +38,8 @@ export interface EngineOptions {
   enabled: boolean;
   /** Reason to report when `enabled` is false. */
   disabledReason: string;
+  /** Classification to preserve when `enabled` is false. */
+  unsupportedKind?: UpdateUnsupportedKind;
   /** Alpha channel: only when the user asked for it explicitly. */
   allowPrerelease?: boolean;
   log?: (line: string) => void;
@@ -46,8 +49,39 @@ export interface EngineResult {
   engine: UpdaterEngine | null;
   /** Empty when an engine was created; the honest reason otherwise. */
   reason: string;
+  unsupportedKind?: UpdateUnsupportedKind;
   /** Quits and installs. No-op when there is no engine. */
   quitAndInstall: () => void;
+}
+
+export interface UpdaterAvailabilityInput {
+  isPackaged: boolean;
+  devServerUrl: string | null;
+  platform: string;
+  appImage: string | undefined;
+}
+
+export interface UpdaterAvailability {
+  enabled: boolean;
+  reason: string;
+  unsupportedKind?: UpdateUnsupportedKind;
+}
+
+const SOURCE_UPDATER_REASON = 'Estás usando Latte desde el código fuente. Las actualizaciones automáticas vienen con el instalador.';
+
+/** Decides update support from explicit runtime facts, without Electron or I/O. */
+export function decideUpdaterAvailability(input: UpdaterAvailabilityInput): UpdaterAvailability {
+  if (!input.isPackaged || input.devServerUrl !== null) {
+    return { enabled: false, reason: SOURCE_UPDATER_REASON, unsupportedKind: 'source' };
+  }
+  if (input.platform === 'linux' && !input.appImage) {
+    return {
+      enabled: false,
+      unsupportedKind: 'manual-install',
+      reason: 'La instalación .deb no se actualiza automáticamente. Descargá la versión nueva y reinstalá Latte.',
+    };
+  }
+  return { enabled: true, reason: '' };
 }
 
 /**
@@ -60,19 +94,30 @@ export interface EngineResult {
  */
 export function createUpdaterEngine(options: EngineOptions): EngineResult {
   if (!options.enabled) {
-    return { engine: null, reason: options.disabledReason, quitAndInstall: () => {} };
+    return {
+      engine: null,
+      reason: options.disabledReason,
+      unsupportedKind: options.unsupportedKind ?? 'unavailable',
+      quitAndInstall: () => {},
+    };
   }
   const loaded = optionalRequire<ElectronUpdaterModule>('electron-updater');
   if (!loaded.ok) {
     return {
       engine: null,
       reason: `Esta compilación no incluye el actualizador (${loaded.error}). Descargá la nueva versión desde ohmylatte.app.`,
+      unsupportedKind: 'unavailable',
       quitAndInstall: () => {},
     };
   }
   const auto = loaded.module.autoUpdater;
   if (!auto || typeof auto.checkForUpdates !== 'function') {
-    return { engine: null, reason: 'electron-updater cargó pero no expone autoUpdater.', quitAndInstall: () => {} };
+    return {
+      engine: null,
+      reason: 'electron-updater cargó pero no expone autoUpdater.',
+      unsupportedKind: 'unavailable',
+      quitAndInstall: () => {},
+    };
   }
 
   auto.autoDownload = false;

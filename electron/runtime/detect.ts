@@ -42,6 +42,8 @@ export class RuntimeDetector {
   private readonly env: NodeJS.ProcessEnv;
   private readonly ttlMs: number;
   private cache = new Map<Provider, { at: number; value: ResolvedRuntime | null }>();
+  private inflight = new Map<Provider, Promise<ResolvedRuntime | null>>();
+  private generation = 0;
 
   constructor(private readonly deps: RuntimeDetectorDeps) {
     this.platform = deps.platform ?? process.platform;
@@ -50,7 +52,9 @@ export class RuntimeDetector {
   }
 
   invalidate(): void {
+    this.generation += 1;
     this.cache.clear();
+    this.inflight.clear();
   }
 
   async status(): Promise<RuntimeStatus[]> {
@@ -77,9 +81,20 @@ export class RuntimeDetector {
   async resolve(provider: Provider): Promise<ResolvedRuntime | null> {
     const cached = this.cache.get(provider);
     if (cached && Date.now() - cached.at < this.ttlMs) return cached.value;
-    const value = await this.detect(provider);
-    this.cache.set(provider, { at: Date.now(), value });
-    return value;
+    const existing = this.inflight.get(provider);
+    if (existing) return existing;
+
+    const generation = this.generation;
+    const pending = this.detect(provider)
+      .then((value) => {
+        if (this.generation === generation) this.cache.set(provider, { at: Date.now(), value });
+        return value;
+      })
+      .finally(() => {
+        if (this.inflight.get(provider) === pending) this.inflight.delete(provider);
+      });
+    this.inflight.set(provider, pending);
+    return pending;
   }
 
   private async detect(provider: Provider): Promise<ResolvedRuntime | null> {

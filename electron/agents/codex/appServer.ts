@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { killTree } from '../../opencode/server';
+import { killProcessTree, spawnInOwnProcessGroup } from '../../core/processTree';
 import { spawnSpecFor } from '../../runtime/commandRunner';
 
 export type JsonValue = unknown;
@@ -99,7 +99,7 @@ export class CodexAppServer {
     this.pending.clear();
     if (child) {
       try { child.stdin?.end(); } catch { /* ignore */ }
-      killTree(child, this.platform);
+      killProcessTree(child, this.platform);
     }
   }
 
@@ -144,7 +144,7 @@ export class CodexAppServer {
     const env = { ...this.options.env, CODEX_MANAGED_BY_NPM: '1' };
     let child: ChildProcess;
     try {
-      child = (this.options.spawnImpl ?? spawn)(spec.file, spec.args, { cwd: this.options.cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      child = spawnInOwnProcessGroup(this.options.spawnImpl ?? spawn, spec.file, spec.args, { cwd: this.options.cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }, this.platform);
     } catch (error) {
       throw new Error(`Could not start Codex: ${describe(error)}`);
     }

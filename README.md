@@ -7,13 +7,15 @@ Todo en tu máquina.
 
 ![Latte: documentos de un trabajo, equipo de roles y aviso de cambio externo](assets/latte-documents-1440x1000.png)
 
-> **Alpha para Windows y Linux.** Latte no trae los agentes ni una cuenta de IA. Usás la
-> tuya y la inferencia la paga tu proveedor. Lo que un agente escribe es una
-> propuesta hasta que la revisás.
+> **Windows x64 está soportado. El empaquetado para Linux x64 está en alpha.**
+> Fue verificado en Linux Mint 22.3 con X11; Wayland y otras distribuciones no fueron verificadas.
+> Latte no trae los agentes ni una cuenta de IA. Usás la tuya y la inferencia
+> la paga tu proveedor. Lo que un agente escribe es una propuesta hasta que la
+> revisás.
 >
-> En Linux el AppImage necesita `libfuse2t64` (`sudo apt install libfuse2t64`).
-> Guía completa en [`docs/RUN-linux.md`](docs/RUN-linux.md). El `.deb` no se
-> auto-actualiza: hay que reinstalarlo desde cada release.
+> En Linux x64 podés usar AppImage o `.deb`. La mayoría de los sistemas ejecuta
+> el AppImage sin preparación; si aparece un error de FUSE, seguí la solución de
+> [`docs/RUN-linux.md`](docs/RUN-linux.md). El `.deb` no necesita FUSE.
 
 ## Instalar
 
@@ -23,14 +25,19 @@ El instalador todavía no está firmado, así que Windows va a mostrar «Windows
 protegió tu PC»: **Más información → Ejecutar de todas formas**. Si preferís no
 hacerlo, corré Latte desde el código, más abajo.
 
+En Linux x64, descargá el AppImage o el `.deb` desde la
+[última release](https://github.com/ohmylatte/latte/releases/latest). macOS no
+tiene un artefacto soportado en esta alpha.
+
 Necesitás además al menos un agente instalado y autenticado por tu cuenta:
 [Claude Code](https://claude.com/claude-code),
 [Codex](https://developers.openai.com/codex/cli) u
 [OpenCode](https://opencode.ai). Latte los detecta solos.
 
-Desde ahí, Latte se actualiza solo: te avisa cuando hay una versión nueva, la
-descarga mientras seguís trabajando y se reinicia cuando vos lo decidís. Nunca
-sobre un documento sin guardar.
+El instalador de Windows y el AppImage avisan cuando hay una versión nueva; la
+descarga empieza cuando la aceptás y Latte se reinicia solo cuando vos lo
+decidís. Nunca lo hace sobre un documento sin guardar. El `.deb` no se
+auto-actualiza: descargá e instalá el nuevo paquete desde cada release.
 
 ## Desde el código
 
@@ -65,8 +72,10 @@ limpio del tag. El detalle está en [`docs/RELEASING.md`](docs/RELEASING.md).
 Latte permite **una sola instancia**: las dos compartirían la misma carpeta de
 datos. Si ya hay una ventana abierta, la nueva se cierra y te lo dice en la
 consola. Cerrá la que está abierta y volvé a intentar. Si no la encontrás,
-terminá `electron.exe` desde el Administrador de tareas
-(en Linux: `pgrep -af electron`).
+terminá `electron.exe` desde el Administrador de tareas. En Linux, tanto para
+la app empaquetada como desde el código fuente, ejecutá
+`pgrep -af 'Latte|latte'`, inspeccioná el resultado para identificar el PID
+exacto de Latte y recién entonces ejecutá `kill <PID>`.
 
 ### Herramientas de los agentes (MCP)
 
@@ -98,7 +107,7 @@ y el agente puede leerlo.
 
 | Requisito | Detalle |
 | --- | --- |
-| Sistema | Windows. macOS y Linux no están soportados |
+| Sistema | Windows x64 está soportado. El empaquetado para Linux x64 está en alpha: verificado en Linux Mint 22.3 con X11; Wayland y otras distribuciones no fueron verificadas. macOS no está soportado ni prometido para esta alpha |
 | Node.js | Solo para correrlo desde el código: 24 LTS (el proyecto usa `node:sqlite`, incorporado en Node 24) |
 | Agentes | Al menos uno instalado y con sesión iniciada: [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex/cli/) u [OpenCode](https://opencode.ai) |
 | Facturación | La inferencia la paga tu cuenta con tu proveedor. Latte no factura ni intermedia nada |
@@ -131,7 +140,7 @@ el navegador y **no ejecuta ningún agente**.
 ### Límites que conviene conocer
 
 - Es una alpha: esperá bordes ásperos y cambios de esquema entre versiones. La base se copia antes de cada migración, y una base escrita por una versión más nueva no se abre en una vieja.
-- **Windows.** macOS y Linux no están: las ramas POSIX existen en el código pero no se ejercitan.
+- **Plataformas de la alpha.** Windows x64 está soportado. El empaquetado para Linux x64 está en alpha: fue verificado en Linux Mint 22.3 con X11; Wayland y otras distribuciones no fueron verificadas. macOS no está soportado ni prometido; arm64 todavía no está verificado.
 - El instalador **no está firmado**, así que SmartScreen advierte hasta que el binario acumule reputación.
 - **No todo lo que hace un agente está aislado.** Latte le da al agente la carpeta del trabajo como contexto y las instrucciones lo dicen, pero un runtime puede escribir cualquier archivo al que tenga permiso. Las instrucciones no son un sandbox. Los permisos reales los aplica cada runtime, y Latte te muestra sus pedidos para que decidas.
 - Un guardado hecho **fuera** de Latte no se intercepta: reemplaza el archivo y Latte lo detecta después.
@@ -149,6 +158,28 @@ Latte is a local-first desktop workspace for marketers who direct AI agents.
 Brands, works, several tracked Markdown deliverables per work, immutable
 snapshots, a decision log, brand memory shared across works, optional Engram-backed persistent memory, and real agent sessions, all on
 your machine.
+
+> **Windows x64 is supported. Linux x64 packaging is alpha.** It has been
+> verified on Linux Mint 22.3 with X11; Wayland and other distributions are not yet verified.
+> Latte does not include an agent or an AI account; you bring your own, and your
+> provider bills inference. macOS is not supported or promised for this alpha.
+
+## Install
+
+On Windows x64, download and run
+**[Latte-Setup.exe](https://github.com/ohmylatte/latte/releases/latest/download/Latte-Setup.exe)**.
+It is not signed yet, so Windows SmartScreen may require **More info → Run
+anyway**.
+
+On Linux x64, download the AppImage or `.deb` from the
+[latest release](https://github.com/ohmylatte/latte/releases/latest). Most
+systems run the AppImage without extra setup; only if it reports a FUSE error,
+follow [`docs/RUN-linux.md`](docs/RUN-linux.md). The `.deb` does not require
+FUSE.
+
+The Windows installer and AppImage notify you about new versions, download only
+after you accept, and restart only when you choose. The `.deb` does not
+self-update; download and reinstall it from each release.
 
 - **Chat (default):** a native Latte chat on top of whichever runtime you picked as primary — Claude Code and Codex with your own subscription, or any API-key provider through [OpenCode](https://opencode.ai). One conversation per team member, inside that work's folder, streaming messages, tool calls, permission requests and questions into the UI. No fake replies: when a runtime, a provider or a balance is missing you see the real reason.
 - **Terminal (advanced):** a real PTY running your CLI (`claude`, `codex`, `opencode`) inside the work folder, with Latte-managed `CLAUDE.md` / `AGENTS.md` context files. Global tool configuration is never touched.
@@ -168,27 +199,31 @@ npm run build        # compiles the RENDERER to dist/ (Vite). The main process s
 npm start            # opens Latte against dist/, no dev server. Refuses with instructions if dist/ is missing
 ```
 
-Neither `build` nor `start` was executed in this release: they are configured,
-not validated. There is no packaging step and no installer.
+`build` and `start` are the source-checkout path; release packages use
+`build:desktop` and electron-builder. `pack:win` creates the Windows installer,
+and `pack:linux` creates the x64 AppImage and `.deb`.
 
 Other commands:
 
 | Command | What it does |
 | --- | --- |
-| `npm run build` | Compiles the renderer to `dist/` (renderer only; not validated in this release) |
+| `npm run build` | Compiles the renderer to `dist/` (renderer only; validated by the current CI workflow) |
 | `npm start` | Runs Latte against `dist/`; refuses with instructions when it is missing |
 | `npm run dev:web` | Vite only (browser preview with a localStorage backend, agents disabled) |
 | `npm run dev:electron` | Electron only, expects Vite on `http://127.0.0.1:5173` |
+| `npm run pack:win` | Builds the packaged main process and Windows x64 installer |
+| `npm run pack:linux` | Builds the packaged main process, Linux x64 AppImage and `.deb` |
 | `npm test` | Vitest: backend + frontend unit tests |
 | `npm run typecheck` / `typecheck:web` / `typecheck:all` | `tsc --noEmit` for `electron/**` and `src/**` |
 | `npm run probe:electron` | Prints what the Electron runtime supports (`node:sqlite`, node-pty, sql.js) |
 | `npm run smoke:desktop` | Runs the real app for 15 s, reports renderer console errors, exits |
 | `npm run smoke:opencode` | Bounded live check of the chat path against the installed OpenCode (one tiny prompt; `LATTE_SMOKE_NO_INFERENCE=1` for protocol only) |
 
-The main process is never bundled: `electron/main.cjs` registers `tsx/cjs`
-(esbuild transform, standalone binary, no Electron ABI involved) and requires
-`electron/main.ts`. The preload is plain CommonJS (`electron/preload.cjs`). The
-renderer is served by Vite in dev and read from `dist/` after `npm run build`.
+In development, `electron/main.cjs` registers `tsx/cjs` and requires
+`electron/main.ts`. Release packaging instead bundles the main process with
+esbuild into `dist-electron/main.cjs`. The preload is plain CommonJS
+(`electron/preload.cjs`). The renderer is served by Vite in dev and read from
+`dist/` after `npm run build`.
 
 Environment variables:
 
@@ -463,7 +498,7 @@ relaxed only for the Vite dev origin).
 | Check | Result |
 | --- | --- |
 | `npm run typecheck:all` | clean |
-| `npm test` | 202 tests pass (25 files: documents/conflicts, transcripts, storage on both engines, paths/atomic files, service flow, validation/isolation, terminal, detection, IPC, chat protocol and provider management against a fake OpenCode, Claude Code and Codex adapters against fakes, team roles/migration/personality/restart, funnel metadata and proposals, file-backed profiles, shipped skills, frontend preview and organizer)
+| `npm test` | Runs the current backend and frontend unit test suite; use this command for the current result rather than a fixed test count |
 | `npx vitest run --config docs/qa-vitest.config.ts` (integration QA harness) | 9/9 pass |
 | `node_modules/electron/dist/electron.exe docs/qa-desktop.cjs` (real sandboxed preload + IPC) | exit 0: bridge, snapshot, export, decisions, invalid ids rejected, no renderer errors |
 | `node docs/qa-stale-save.cjs` | `agentChangesRetained: true` — the reproduced data loss is fixed |
@@ -477,12 +512,13 @@ relaxed only for the Vite dev origin).
 
 ## Known limitations
 
-- Windows-first: paths, `.cmd` shims and `taskkill`-based process-tree cleanup
-  are exercised on Windows; POSIX branches exist but were not run here.
+- Windows x64 is supported. Linux x64 packaging is alpha: it has been verified on Linux Mint 22.3 with X11; Wayland and other distributions are not yet verified. macOS is not supported or promised, and arm64 is not verified yet.
 - The chat shows text, reasoning and tool calls; file attachments, subtasks
   and OpenCode's revert/fork features are not exposed.
 - Chat history lives in OpenCode's storage; Latte only keeps the session id.
   Deleting OpenCode data means the next start creates a fresh session.
-- No packaging/build pipeline yet by design (the user asked for none).
+- Windows and AppImage builds can update through the in-app updater after the
+  user accepts the download; `.deb` installs must be replaced manually from a
+  release.
 - Demo brand "Casa Oliva (demo)" is seeded once on an empty database; it is
   fictional and clearly labelled.

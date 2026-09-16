@@ -1,8 +1,8 @@
-# Packaging for Latte on Windows and macOS.
+# Packaging configuration for Latte on Windows, macOS, and Linux.
 #
-# Nothing in this file has been executed yet — no installer has been produced
-# and no release has been published. Treat every value as a proposal to verify
-# on the first real build (see docs/RELEASING.md).
+# Windows and Linux package builds are exercised by platform workflows and
+# documented local evidence; publishing stays draft and human-reviewed.
+# macOS config exists, but support is neither promised nor verified.
 appId: app.ohmylatte.latte
 productName: Latte
 directories:

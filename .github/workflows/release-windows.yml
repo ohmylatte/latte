@@ -75,6 +75,7 @@ jobs:
           path: |
             release/Latte-Setup.exe
             release/latest.yml
+            release/*.exe.blockmap
           retention-days: 14
 
       # Borrador, nunca publicada: nada llega a nadie hasta que una persona
@@ -86,10 +87,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="$GITHUB_REF_NAME"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag" release/Latte-Setup.exe release/latest.yml --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$tag" release/Latte-Setup.exe release/latest.yml \
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if ! gh release create "$tag" \
               --repo "$GITHUB_REPOSITORY" \
               --draft \
               --title "Latte ${tag#v}" \
@@ -98,4 +97,18 @@ jobs:
           Escribí las notas reales antes de publicar: qué cambió, qué necesita quien lo instala, y la advertencia de SmartScreen mientras el instalador siga sin firmar.
 
           **La release tiene que ser normal, no prerelease**: \`/releases/latest/download/\` ignora las prereleases y dejaría el botón de la landing apuntando a la versión anterior."
+            then
+              echo "::warning::No se pudo crear la release; puede haberla creado otro workflow."
+            fi
           fi
+          for attempt in {1..10}; do
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 10 ]; then
+              echo "::error::La release $tag no apareció después de 10 intentos."
+              exit 1
+            fi
+            sleep 2
+          done
+          gh release upload "$tag" release/Latte-Setup.exe release/latest.yml --repo "$GITHUB_REPOSITORY" --clobber

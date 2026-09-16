@@ -1,8 +1,9 @@
 # Publicar Latte
 
-> La versión de trabajo actual es **0.2.0**. Windows 0.1.0 sigue siendo la
-> última versión cuya instalación fue comprobada; macOS todavía depende de su
-> primera ejecución real en CI y no debe presentarse como verificado.
+> La versión de trabajo actual es la declarada en `package.json`. Windows 0.1.0
+> sigue siendo la última versión cuya instalación fue comprobada; macOS todavía
+> depende de su primera ejecución real en CI y no debe presentarse como
+> verificado.
 
 Cómo se arma el instalador de Windows, cómo se publica y cómo llega la
 actualización a quien ya tiene Latte instalado.
@@ -318,7 +319,7 @@ LATTE_SMOKE_EXIT_MS=12000 LATTE_DATA_DIR=<datos temporales> \
 Arranca, hace su chequeo de actualización y se cierra solo. La línea que
 importa es `[latte:smoke] renderer loaded=true consoleErrors=0`.
 
-Falta, y no lo demos por hecho:
+Estado de lo probado y lo pendiente (no demos por hecho lo que sigue abierto):
 
 - [ ] **Instalar con `Latte-Setup.exe`.** Lo que se probó es
       `release/win-unpacked/Latte.exe`, no el instalador corriendo: accesos
@@ -336,10 +337,12 @@ Falta, y no lo demos por hecho:
       base migrada por una versión distinta de la app.
 - [ ] **macOS.** El empaquetado y CI están diseñados, pero todavía deben correr
       en un runner macOS real y verificarse en Intel y Apple Silicon.
-- [ ] **Linux.** Diseñado y empaquetado desde el PR #14 (AppImage + deb x64,
-      `.github/workflows/release-linux.yml`, guía en `docs/RUN-linux.md`).
-      Falta instalar el `.deb`, probar Wayland y una actualización real con
-      `latest-linux.yml` publicado.
+- [x] **Linux x64.** El empaquetado y la publicación están diseñados y
+      verificados: CI construye AppImage y `.deb`, valida `latest-linux.yml` y
+      deja releases etiquetadas en borrador para revisión humana. El AppImage
+      se ejecutó de punta a punta en Linux Mint 22.3; falta instalar el `.deb`,
+      probar Wayland y una actualización real con `latest-linux.yml` publicado.
+      Ver [`RUN-linux.md`](RUN-linux.md).
 
 ---
 

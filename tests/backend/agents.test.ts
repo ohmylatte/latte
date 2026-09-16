@@ -132,6 +132,23 @@ describe('ClaudeChatAdapter against a fake Claude Code', () => {
     removeDir(dir);
   });
 
+  it.each([
+    ['linux', true],
+    ['win32', undefined],
+  ] as const)('owns a process group only on POSIX (%s)', async (platform, detached) => {
+    let options: Parameters<typeof spawn>[2];
+    adapter = fakeClaudeAdapter(events, {
+      platform,
+      spawnImpl: ((...args: Parameters<typeof spawn>) => {
+        options = args[2];
+        throw new Error('spawn captured');
+      }) as unknown as typeof spawn,
+    });
+
+    await expect(adapter.start({ workId: 'wrk_1', directory: dir, title: 't', label: 'Claude', accountId: null })).rejects.toThrow(/spawn captured/);
+    expect(options!.detached).toBe(detached);
+  });
+
   it('streams a reply, learns the session id and completes the turn', async () => {
     const seen: string[] = [];
     adapter = fakeClaudeAdapter(events, { onSessionId: (chatId, sid) => seen.push(`${chatId}:${sid}`) });

@@ -1,7 +1,8 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { killProcessTree, spawnInOwnProcessGroup } from '../core/processTree';
 import { spawnSpecFor } from '../runtime/commandRunner';
 import { scrubEnv } from '../runtime/terminalManager';
 
@@ -14,6 +15,8 @@ export interface OpenCodeServerOptions {
   platform?: NodeJS.Platform;
   startupTimeoutMs?: number;
   log?: (line: string) => void;
+  /** Injectable process launcher for bounded tests. */
+  spawnImpl?: typeof spawn;
 }
 
 export interface OpenCodeEndpoint {
@@ -35,23 +38,6 @@ export function resolveOpenCodeBinary(executable: string, platform: NodeJS.Platf
   if (ext !== '.cmd' && ext !== '.bat') return executable;
   const candidate = path.win32.join(path.win32.dirname(executable), 'node_modules', 'opencode-ai', 'bin', 'opencode.exe');
   return exists(candidate) ? candidate : executable;
-}
-
-/** Stops a child and everything it spawned (cmd shims, Bun workers). */
-export function killTree(child: ChildProcess, platform: NodeJS.Platform = process.platform): void {
-  if (child.exitCode !== null || child.pid === undefined) return;
-  if (platform === 'win32') {
-    try {
-      execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
-    } catch {
-      try { child.kill(); } catch { /* already gone */ }
-    }
-    return;
-  }
-  try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { return; } }
-  const timer = setTimeout(() => { try { process.kill(-(child.pid as number), 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } } }, 3_000);
-  if (typeof timer.unref === 'function') timer.unref();
-  child.once('exit', () => clearTimeout(timer));
 }
 
 /**
@@ -92,7 +78,7 @@ export class OpenCodeServer {
     const child = this.child;
     this.child = null;
     this.endpoint = null;
-    if (child) killTree(child, this.platform);
+    if (child) killProcessTree(child, this.platform);
   }
 
   private launch(): Promise<OpenCodeEndpoint> {
@@ -112,7 +98,7 @@ export class OpenCodeServer {
       let output = '';
       let child: ChildProcess;
       try {
-        child = spawn(spec.file, spec.args, { cwd: this.options.cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], ...(this.platform !== 'win32' ? { detached: true } : {}) });
+        child = spawnInOwnProcessGroup(this.options.spawnImpl ?? spawn, spec.file, spec.args, { cwd: this.options.cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }, this.platform);
       } catch (error) {
         reject(new Error(`Could not start OpenCode: ${error instanceof Error ? error.message : String(error)}`));
         return;

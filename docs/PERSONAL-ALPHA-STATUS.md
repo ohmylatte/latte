@@ -1,5 +1,10 @@
 # Latte · estado para la alpha personal (2026-09-06)
 
+> **Snapshot histórico del 2026-09-06.** Este documento conserva lo que estaba
+> verificado en ese corte; no describe el soporte ni la distribución actuales.
+> Para el estado vigente, consultá el [`README`](../README.md) y, en Linux,
+> [`RUN-linux.md`](RUN-linux.md).
+
 Qué está verificado, qué está configurado pero sin validar, y qué directamente
 no existe todavía. Este documento es para que nadie se lleve una sorpresa al
 clonar el repo.
@@ -25,7 +30,9 @@ modelo**. Los smokes que sí lo hacen (`smoke:opencode`, `smoke-claude.ts`,
 ## Comandos de la release
 
 - `npm ci` + `npm run dev` es el camino probado. No compila nada: Vite sirve el renderer y el proceso principal corre TypeScript por tsx.
-- `npm run build` compila **solo el renderer** a `dist/` con Vite. El proceso principal sigue en TypeScript en tiempo de ejecución. No hay bundling del backend, no hay empaquetado, no hay instalador ni binario firmado.
+- En ese corte, `npm run build` compilaba **solo el renderer** a `dist/` con
+  Vite y el proceso principal seguía en TypeScript en tiempo de ejecución. El
+  empaquetado y los instaladores todavía no formaban parte de esa entrega.
 - `npm start` abre Electron contra `dist/` sin servidor de desarrollo. Si falta `dist/index.html`, se niega e imprime qué correr.
 - **Ni `build` ni `start` con `dist/` presente fueron ejecutados en esta entrega.** Están configurados y revisados a mano (`base: './'` en Vite, `main.ts` carga `dist/index.html` cuando no hay `VITE_DEV_SERVER_URL`), pero la validación real queda pendiente. Lo único que sí probé es que `npm start` sin `dist/` falla bien.
 - Sin dependencias nuevas.
@@ -81,8 +88,12 @@ prueba, y anotar modelo, runtime y fecha.
 
 ## Limitaciones reales
 
-- **Alpha de una persona, probada en Windows 11.** Las ramas POSIX están escritas pero no ejercitadas en vivo.
-- **No hay instalador ni empaquetado.** Es distribución por código fuente.
+- **En este snapshot solo se había probado Windows 11.** Las ramas POSIX
+  estaban escritas, pero todavía no se habían ejercitado en vivo. Linux x64 se
+  validó y empaquetó después; ver [`RUN-linux.md`](RUN-linux.md).
+- **En este snapshot todavía no había instalador ni empaquetado.** La
+  distribución era por código fuente; esa limitación histórica ya no describe
+  la alpha actual.
 - **Las instrucciones no son un sandbox.** Latte le da al agente la carpeta del trabajo como contexto y se lo dice en el prompt, pero un runtime puede escribir cualquier archivo al que tenga permiso del sistema operativo. Quien aplica permisos de verdad es cada runtime; Latte muestra sus pedidos para que el humano decida. No se garantiza que toda acción de un agente esté contenida.
 - **Una escritura externa no identifica autor.** Queda registrada como `external`, nunca atribuida al rol activo.
 - **La detección de cambios externos es por sondeo cada 2,5 s**, no es tiempo real.
