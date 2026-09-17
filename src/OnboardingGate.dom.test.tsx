@@ -52,6 +52,10 @@ vi.mock('./browser-api', async (importOriginal) => {
       getOnboardingDraft: async () => (state.completeError ? null : state.draft),
       setOnboardingComplete: async (complete: boolean) => {
         if (state.completeWriteError) throw new Error('no se pudo guardar');
+        // The real write also drops the saved draft on disk. Without modelling
+        // that, a replayed walk would re-hydrate from a draft the flag write
+        // already cleared and the replay test would pass on a fiction.
+        state.draft = null;
         return actual.browserAPI.setOnboardingComplete(complete);
       },
       saveBrief: async (workId: string, brief: string, baseFingerprint?: string | null) => {
@@ -79,6 +83,18 @@ vi.mock('./browser-api', async (importOriginal) => {
 const mount = () => render(<I18nProvider><App /></I18nProvider>);
 const gateHeading = () => screen.findByRole('heading', { name: '¿En qué querés trabajar?' });
 const shell = (container: HTMLElement) => container.querySelector('.app-shell');
+
+/** Opens Ajustes from the shell's own sidebar; the gate never shows it. */
+const openSettings = async (container: HTMLElement) => {
+  await waitFor(() => expect(shell(container)).not.toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: 'Ajustes' }));
+};
+
+/** Ajustes → Espacio local, then the replay button that owns this regression. */
+const replayOnboarding = async () => {
+  fireEvent.click(screen.getByRole('button', { name: 'Espacio local' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Volver a ver el recorrido inicial' }));
+};
 
 /** Clicks a card by the visible text of its title. */
 const clickCard = (title: RegExp) => fireEvent.click(screen.getByRole('button', { name: title }));
@@ -150,6 +166,40 @@ describe('first-run onboarding gate', () => {
     const { container } = mount();
     await waitFor(() => expect(shell(container)).not.toBeNull());
     expect(screen.queryByRole('heading', { name: '¿En qué querés trabajar?' })).toBeNull();
+  });
+
+  it('replays the walk in front of Settings, starting at the entry question', async () => {
+    // A completed install: the shell is what the human is looking at.
+    state.complete = true;
+    const { container } = mount();
+    await openSettings(container);
+    await replayOnboarding();
+
+    // The walk is the surface that renders. Settings has to close with the
+    // click: it renders before the gate, so leaving it open would hide the walk
+    // behind the screen the button was clicked from.
+    await gateHeading();
+    expect(shell(container)).toBeNull();
+    expect(container.querySelector('.settings-shell')).toBeNull();
+    // And it opens at the first step, not a later one.
+    expect(screen.getByRole('heading', { name: '¿En qué querés trabajar?' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Esto es lo que entendí' })).toBeNull();
+  });
+
+  it('does not resume a stale saved draft when the walk is replayed', async () => {
+    // Completed, yet a draft parked on a later step survives: the flag write
+    // clears it on disk, but the draft App read at boot is still in memory.
+    state.complete = true;
+    state.draft = summaryDraft('## Objetivo\n\nPor definir\n');
+    const { container } = mount();
+    await openSettings(container);
+    await replayOnboarding();
+
+    // The gate must ignore the boot-time draft and open at the entry question,
+    // never at the summary the finished walk had left behind.
+    await gateHeading();
+    expect(screen.queryByRole('heading', { name: 'Esto es lo que entendí' })).toBeNull();
+    expect(screen.getByRole('button', { name: /Empezar libremente/ })).toBeDefined();
   });
 
   it('falls back to the workspace when the flag cannot be read, never a dead gate', async () => {
