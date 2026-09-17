@@ -248,7 +248,7 @@ export function DocumentsView(props: DocumentsViewProps) {
     try {
       const kind = action === 'propose' ? 'strategy' : 'research';
       const title = { analyze: t('funnel.doc.analyze'), propose: t('funnel.doc.proposal'), experiment: t('funnel.doc.experiment') }[action];
-      await api.createDocument(work.id, kind, title + ' · ' + STAGE_LABEL[stage]);
+      await api.createDocument(work.id, kind, title + ' · ' + t(STAGE_LABEL[stage]));
       await props.onDocumentsChanged();
       props.onNotice(t('ui.auto.138'));
     } catch (e) { props.onError(displayError(e)); }
@@ -292,7 +292,7 @@ export function DocumentsView(props: DocumentsViewProps) {
 
     {selected && selected.proposedFunnelStages.length > 0 && <div className="doc-banner proposal" role="status">
       <SlidersHorizontal size={14} />
-      <span>{t('ui.auto.154')} <strong>{selected.proposedFunnelStages.map(s => STAGE_LABEL[s]).join(' + ')}</strong>.</span>
+      <span>{t('ui.auto.154')} <strong>{selected.proposedFunnelStages.map(s => t(STAGE_LABEL[s])).join(' + ')}</strong>.</span>
       <button className="primary" disabled={props.busy} onClick={() => void api.applyFunnelProposal(selected.id).then(props.onDocumentsChanged).then(() => props.onNotice('Etapas aplicadas.')).catch(e => props.onError(displayError(e)))}>{t('ui.auto.378')}</button>
       <button disabled={props.busy} onClick={() => void api.dismissFunnelProposal(selected.id).then(props.onDocumentsChanged).catch(e => props.onError(displayError(e)))}>{t('ui.auto.379')}</button>
     </div>}

@@ -118,10 +118,10 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
 
   const modelHint = (a: AgentAccount): string => {
     const list = catalogs[accountModelKey(a)];
-    if (!list) return a.models.length > 0 ? 'Elegí uno de la lista o escribí cualquier ID que tu CLI acepte. Buscando el catálogo del runtime…' : 'Escribí un ID de modelo admitido por tu CLI y cuenta.';
-    if (list.source === 'catalog') return `${list.detail} Elegí uno o escribí otro ID: quien decide qué acepta es el runtime.`;
-    return `${list.detail} Son sugerencias, no un catálogo: podés escribir cualquier ID que tu CLI acepte.`;
+    if (!list) return a.models.length > 0 ? t('provider.model.loading') : t('provider.model.manual');
+    return t(list.source === 'catalog' ? 'provider.model.catalog' : 'provider.model.suggestions', { detail: list.detail });
   };
+
 
   if (!isDesktop) {
     return <div className="document-scroll"><div className="document-kicker">PROVEEDORES</div><h1>Tus modelos,<br />tus credenciales.</h1><p className="intro">{t('ui.auto.223')}</p></div>;

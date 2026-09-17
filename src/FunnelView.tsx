@@ -53,11 +53,11 @@ export function FunnelView({ documents, selectedId, states, checking, onRefresh,
       <FileText size={14} />
       <span>
         <strong>{d.title}{d.status === 'approved' && <ApprovalStamp size={16} className="row-stamp" />}</strong>
-        <small><span className={'doc-status doc-status-' + d.status}>{STATUS_LABEL[d.status]}</span> · {d.fileName}</small>
+        <small><span className={'doc-status doc-status-' + d.status}>{t(STATUS_LABEL[d.status])}</span> · {d.fileName}</small>
         <KnowledgeOrigin workId={d.workId} currentWorkId={currentWorkId} titles={workTitles} />
-        {d.proposedFunnelStages.length > 0 && <em className="proposed">{t('ui.auto.373')} {d.proposedFunnelStages.map(s => STAGE_LABEL[s]).join(' + ')}</em>}
+        {d.proposedFunnelStages.length > 0 && <em className="proposed">{t('ui.auto.373')} {d.proposedFunnelStages.map(s => t(STAGE_LABEL[s])).join(' + ')}</em>}
         {repeat && <em className="repeat-note">{t('funnel.sameFile')}</em>}
-        {reviewReasons(d, states[d.id]?.baseOutdated ?? false).map(reason => <em key={reason}>{reason}</em>)}
+        {reviewReasons(d, states[d.id]?.baseOutdated ?? false).map(reason => <em key={reason}>{t(reason)}</em>)}
       </span>
     </button>;
   };
@@ -78,15 +78,15 @@ export function FunnelView({ documents, selectedId, states, checking, onRefresh,
       <div className="funnel-cards">{groups.unclassified.map(d => card(d))}</div>
     </section>}
 
-    {STAGES.map((s, i) => groups[s].length > 0 && <section className={'funnel-block funnel-stage-' + i} key={s} data-stage={s} aria-label={STAGE_LABEL[s]}>
-      <h3><span>{String(i + 1).padStart(2, '0')} / {STAGE_LABEL[s]}</span><small>{groups[s].length}</small></h3>
+    {STAGES.map((s, i) => groups[s].length > 0 && <section className={'funnel-block funnel-stage-' + i} key={s} data-stage={s} aria-label={t(STAGE_LABEL[s])}>
+      <h3><span>{String(i + 1).padStart(2, '0')} / {t(STAGE_LABEL[s])}</span><small>{groups[s].length}</small></h3>
       <div className="funnel-cards">{groups[s].map(d => card(d, s))}</div>
     </section>)}
 
     {(empty.length > 0 || parked.length > 0) && <section className="funnel-gaps" aria-label={t('ui.auto.203')}>
       <h3>{t('ui.auto.204')} <small>{empty.length + parked.length}</small></h3>
       {empty.map(s => <div key={s} data-stage={s} className="funnel-gap">
-        <span className="funnel-gap-stage">{String(STAGES.indexOf(s) + 1).padStart(2, '0')} / {STAGE_LABEL[s]}</span>
+        <span className="funnel-gap-stage">{String(STAGES.indexOf(s) + 1).padStart(2, '0')} / {t(STAGE_LABEL[s])}</span>
         <span className="funnel-gap-empty">{t('funnel.emptyStage')}</span>
         <span className="funnel-gap-unattended">{t('funnel.unattended')}</span>
         <div className="funnel-gap-actions">
@@ -103,7 +103,7 @@ export function FunnelView({ documents, selectedId, states, checking, onRefresh,
         </div>}
       </div>)}
       {parked.map(s => <div key={s} data-stage={s} className="funnel-gap out-of-scope">
-        <span className="funnel-gap-stage">{String(STAGES.indexOf(s) + 1).padStart(2, '0')} / {STAGE_LABEL[s]}</span>
+        <span className="funnel-gap-stage">{String(STAGES.indexOf(s) + 1).padStart(2, '0')} / {t(STAGE_LABEL[s])}</span>
         <span className="funnel-gap-marked">{t('funnel.outOfScopeMarked')}</span>
         <button disabled={busy} onClick={() => onToggleOutOfScope(s)}>{t('funnel.outOfScopeUndo')}</button>
       </div>)}

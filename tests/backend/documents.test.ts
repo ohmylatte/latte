@@ -168,6 +168,23 @@ describe('Several tracked documents per work', () => {
     removeDir(dir);
   });
 
+  it('renders a new document in English when the work content locale is en-US', async () => {
+    const f = await fixture(); b = f.b;
+    await f.b.service.setContentLocale('en-US');
+    const englishWork = await f.b.service.createWork(f.brand.id, 'Launch');
+    const strategy = await f.b.service.createDocument(englishWork.id, 'strategy', 'Launch strategy');
+    expect(strategy.content).toContain('## Goal');
+    expect(strategy.content).toContain('Not defined yet');
+    expect(strategy.content).not.toContain('Objetivo');
+    expect(strategy.content).not.toContain('todavía');
+
+    // Locale is pinned per work at creation time: a later app-wide change does not retranslate it.
+    await f.b.service.setContentLocale('es-AR');
+    const stillEnglish = await f.b.service.createDocument(englishWork.id, 'calendar', 'Calendar');
+    expect(stillEnglish.content).toContain('## Calendar');
+    expect(stillEnglish.content).not.toContain('Calendario');
+  });
+
   it('picks safe file names and refuses foreign base documents', async () => {
     expect(documentFileName('strategy', [])).toBe('strategy.md');
     expect(documentFileName('strategy', ['strategy.md', 'strategy-2.md'])).toBe('strategy-3.md');

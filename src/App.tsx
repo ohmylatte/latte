@@ -724,7 +724,7 @@ export function App() {
   const selectMember = (memberId: string) => { if (work) setSelectedMembers(prev => ({ ...prev, [work.id]: memberId })); };
   const openSession = async (open: () => Promise<ChatSession>, workId: string) => {
     setStartingChat(true); setError('');
-    try { warnUnsaved(); const s = await open(); setChats(prev => ({ ...prev, [s.id]: s })); if (s.resumed) await chatStore.sync(s.id); setSelectedMembers(prev => ({ ...prev, [workId]: s.id })); await loadTeam(workId); setNotice(s.resumed ? `${s.roleName}: conversación reanudada` : t('ui.auto.341', { p0: s.roleName })); return s; }
+    try { warnUnsaved(); const s = await open(); setChats(prev => ({ ...prev, [s.id]: s })); if (s.resumed) await chatStore.sync(s.id); setSelectedMembers(prev => ({ ...prev, [workId]: s.id })); await loadTeam(workId); setNotice(s.resumed ? t('app.resumed', { name: s.roleName }) : t('ui.auto.341', { p0: s.roleName })); return s; }
     catch (e) { setError(displayError(e)); void refreshChatStatus(); throw e; }
     finally { setStartingChat(false); }
   };
@@ -826,7 +826,7 @@ export function App() {
     chatStore.seedUsage(result.member.id, result.member.usage);
     setChats(prev => ({ ...prev, [result.session!.id]: result.session! }));
     if (result.resumed) await chatStore.sync(result.session.id);
-    setNotice(result.resumed ? t('ui.auto.345', { p0: name }) : `Ahora usa ${name}. No se pudo retomar lo anterior: esta conversación empieza limpia.`);
+    setNotice(result.resumed ? t('ui.auto.345', { p0: name }) : t('app.runtimeChanged', { name }));
   });
   /**
    * Changes how hard one conversation works per answer. Same mechanics as

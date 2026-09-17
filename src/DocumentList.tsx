@@ -61,11 +61,11 @@ export function DocumentList({ documents, workId, currentWorkId, workTitles, sel
       <div>
         <select aria-label={t('ui.auto.119')} value={stage} onChange={e => setStage(e.target.value as typeof stage)}>
           <option value="all">{t('ui.auto.120')}</option>
-          {[...STAGES, 'unclassified' as const].map(s => <option key={s} value={s}>{STAGE_LABEL[s]}</option>)}
+          {[...STAGES, 'unclassified' as const].map(s => <option key={s} value={s}>{t(STAGE_LABEL[s])}</option>)}
         </select>
         <select aria-label="Filtrar por estado" value={status} onChange={e => setStatus(e.target.value as typeof status)}>
           <option value="all">{t('ui.auto.121')}</option>
-          {Object.entries(STATUS_LABEL).map(([s, label]) => <option key={s} value={s}>{label}</option>)}
+          {Object.entries(STATUS_LABEL).map(([s, label]) => <option key={s} value={s}>{t(label)}</option>)}
         </select>
       </div>
       <button className={'doc-list-review' + (onlyReview ? ' on' : '')} aria-pressed={onlyReview} onClick={() => setOnlyReview(v => !v)}>
@@ -81,10 +81,10 @@ export function DocumentList({ documents, workId, currentWorkId, workTitles, sel
         <FileText size={14} />
         <span>
           <strong>{d.title}{d.status === 'approved' && <ApprovalStamp size={16} className="row-stamp" />}</strong>
-          <small><span className={'doc-status doc-status-' + d.status}>{STATUS_LABEL[d.status]}</span> · {d.fileName}</small>
+          <small><span className={'doc-status doc-status-' + d.status}>{t(STATUS_LABEL[d.status])}</span> · {d.fileName}</small>
           <KnowledgeOrigin workId={d.workId} currentWorkId={currentWorkId} titles={workTitles} />
-          {d.proposedFunnelStages.length > 0 && <em className="proposed">{t('ui.auto.373')} {d.proposedFunnelStages.map(s => STAGE_LABEL[s]).join(' + ')}</em>}
-          {reviewReasons(d, outdated(d)).map(reason => <em key={reason}>{reason}</em>)}
+          {d.proposedFunnelStages.length > 0 && <em className="proposed">{t('ui.auto.373')} {d.proposedFunnelStages.map(s => t(STAGE_LABEL[s])).join(' + ')}</em>}
+          {reviewReasons(d, outdated(d)).map(reason => <em key={reason}>{t(reason)}</em>)}
           {failed.includes(d.id) && <em>{t('ui.auto.125')}</em>}
         </span>
       </button>)}

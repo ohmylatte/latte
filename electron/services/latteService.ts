@@ -773,7 +773,8 @@ export class LatteService implements BackendApi {
     }
     const fileName = documentFileName(kind, this.deps.repo.usedFileNames(work.id));
     const now = this.clock();
-    const content = renderDocumentTemplate(kind, cleanTitle, work.title, base ? base.title : null);
+    const locale = this.deps.repo.getMeta(`work_content_locale:${work.id}`) === 'en-US' ? 'en-US' : 'es-AR';
+    const content = renderDocumentTemplate(kind, cleanTitle, work.title, base ? base.title : null, locale);
     // A derived document pins the exact base version it started from.
     const pinned = base ? this.pinBaseVersion(base) : null;
     const record: DocumentRecord = {
