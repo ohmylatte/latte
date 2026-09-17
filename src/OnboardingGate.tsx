@@ -109,9 +109,12 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
 
   // The backend draft is authoritative: on a remount (e.g. returning from
   // Settings) it holds newer state than the boot-time prop, so re-hydrate once.
+  // Only while the state is still the one we mounted with: a read that resolves
+  // after the human already acted must not rewind their step or answers.
+  const mountedState = useRef(state);
   useEffect(() => {
     void api.getOnboardingDraft().then((draft) => {
-      if (draft) setState(initialState(draft));
+      if (draft) setState((prev) => (prev === mountedState.current ? initialState(draft) : prev));
     }).catch(() => undefined);
   }, []);
 

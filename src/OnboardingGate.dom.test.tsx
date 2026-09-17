@@ -32,6 +32,10 @@ const state = vi.hoisted(() => ({
   /** The folder picker was accepted but the link itself failed. */
   useFolderError: false,
   saveBrandContextCalls: [] as Array<{ brandId: string; text: string; fingerprint: string | null }>,
+  /** Draft reads so far: the first is App's boot read, the next is the gate's re-hydration. */
+  draftReads: 0,
+  /** When set, the gate's re-hydration read waits on it: the slow-disk race, on demand. */
+  holdRehydration: null as Promise<void> | null,
 }));
 
 // The preview API stays real (jsdom gives it localStorage); only the gate's own
@@ -49,7 +53,13 @@ vi.mock('./browser-api', async (importOriginal) => {
         if (state.completeError) throw new Error('onboarding flag unreadable');
         return state.complete;
       },
-      getOnboardingDraft: async () => (state.completeError ? null : state.draft),
+      getOnboardingDraft: async () => {
+        state.draftReads += 1;
+        // Snapshot before waiting: the late read returns what the disk held then.
+        const draft = state.completeError ? null : state.draft;
+        if (state.draftReads > 1 && state.holdRehydration) await state.holdRehydration;
+        return draft;
+      },
       setOnboardingComplete: async (complete: boolean) => {
         if (state.completeWriteError) throw new Error('no se pudo guardar');
         // The real write also drops the saved draft on disk. Without modelling
@@ -144,6 +154,8 @@ describe('first-run onboarding gate', () => {
     state.useFolderCalls = 0;
     state.useFolderError = false;
     state.saveBrandContextCalls = [];
+    state.draftReads = 0;
+    state.holdRehydration = null;
     localStorage.clear();
   });
 
@@ -309,6 +321,25 @@ describe('first-run onboarding gate', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Completar ahora' }));
     expect(await screen.findByRole('heading', { name: 'Campaña nueva' })).toBeDefined();
     expect(screen.getByPlaceholderText('¿Qué querés lograr?')).toBeDefined();
+  });
+
+  it('keeps the step the human chose when the draft re-hydration resolves late', async () => {
+    let release!: () => void;
+    state.holdRehydration = new Promise<void>((resolve) => { release = resolve; });
+    state.draft = summaryDraft('## Objetivo\n\nPor definir\n');
+    mount();
+    await screen.findByRole('heading', { name: 'Esto es lo que entendí' });
+
+    // The human acts BEFORE the gate's own draft read comes back...
+    fireEvent.click(screen.getByRole('button', { name: 'Completar ahora' }));
+    expect(await screen.findByRole('heading', { name: 'Campaña nueva' })).toBeDefined();
+
+    // ...and the stale read must not rewind them to the summary.
+    release();
+    await waitFor(() => expect(state.draftReads).toBe(2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByRole('heading', { name: 'Campaña nueva' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Esto es lo que entendí' })).toBeNull();
   });
 
   it('renders the summary brief instead of the raw Markdown symbols', async () => {
