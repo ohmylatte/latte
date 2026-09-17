@@ -277,7 +277,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   saveMemory: unavailable,
   exportWork: async workId => { const w = read().works.find(w => w.id === workId)!; const url = URL.createObjectURL(new Blob([w.brief], { type: 'text/markdown;charset=utf-8' })); const a = document.createElement('a'); a.href = url; a.download = w.title.replace(/[^\p{L}\p{N} -]/gu, '') + '.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); return a.download; },
   // Structured chat needs the local OpenCode runtime: honest unavailable state in the browser preview.
-  chatStatus: async () => ({ available: false, detail: 'El chat con agentes requiere Latte Desktop y OpenCode instalado.', version: null, models: [], defaultModel: null }),
+  chatStatus: async () => ({ available: false, detail: 'El chat con agentes necesita un motor de IA conectado. Esta vista previa no ejecuta agentes.', version: null, models: [], defaultModel: null }),
   startChat: unavailable, listChatMessages: async () => [], sendChat: unavailable, abortChat: unavailable, stopChat: unavailable,
   replyPermission: unavailable, replyQuestion: unavailable,
   onChatEvent: () => () => {},
@@ -288,7 +288,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   listMcpServers: async () => [], addMcpServer: unavailable, removeMcpServer: unavailable, loginMcpServer: unavailable, authenticateClaudeMcp: unavailable,
   getPrimaryAgent: async () => null, setPrimaryAgent: unavailable, listAgentRuntimes: async () => [], addAgentAccount: unavailable, removeAgentAccount: unavailable, startAccountLogin: unavailable, logoutAccount: unavailable,
   // No CLI to ask in a browser tab: no catalog, and no pretending there is one.
-  listAccountModels: async () => ({ source: 'suggested' as const, models: [], detail: 'Los modelos se consultan desde Latte Desktop, donde corren los runtimes.' }),
+  listAccountModels: async () => ({ source: 'suggested' as const, models: [], detail: 'Esta vista previa no puede consultar los modelos de tu cuenta.' }),
   // The team roster is real only on desktop; the preview shows the roles so the concept is visible.
   listRoles: async()=> (await browserAPI.listProfiles()).map(({id,name,initial,summary,builtin,tier})=>({id,name,initial,summary,builtin,tier})),
   listProfiles:async()=>[...builtinProfiles,...normalized().profiles],

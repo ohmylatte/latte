@@ -102,6 +102,20 @@ function chooseDemoBrand() {
   fireEvent.click(section.querySelector('button') as HTMLButtonElement);
 }
 
+/** A resumed draft parked on the summary step, as the walk can land there. */
+const summaryDraft = (brief: string, overrides: Partial<OnboardingDraft> = {}): OnboardingDraft => ({
+  step: 'prepare',
+  workTypeId: 'campaign-new',
+  answers: {},
+  assumptions: ['Sigo sin audiencia definida; la confirmamos después.'],
+  brandId: 'demo',
+  usedDemo: true,
+  linkFolderRequested: false,
+  recommendedRoleId: 'strategist',
+  brief,
+  ...overrides,
+});
+
 describe('first-run onboarding gate', () => {
   beforeEach(() => {
     state.complete = false;
@@ -245,6 +259,61 @@ describe('first-run onboarding gate', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Completar ahora' }));
     expect(await screen.findByRole('heading', { name: 'Campaña nueva' })).toBeDefined();
     expect(screen.getByPlaceholderText('¿Qué querés lograr?')).toBeDefined();
+  });
+
+  it('renders the summary brief instead of the raw Markdown symbols', async () => {
+    state.draft = summaryDraft('## Objetivo\n\nPor definir\n');
+    mount();
+    await screen.findByRole('heading', { name: 'Esto es lo que entendí' });
+
+    // A marketer reads a heading, not the "## Objetivo" they reported as code.
+    expect(await screen.findByRole('heading', { name: 'Objetivo' })).toBeDefined();
+    expect(screen.queryByText(/##/)).toBeNull();
+    // Editing is one click away, never in the way: no textarea until asked.
+    expect(screen.queryByLabelText('Lo que voy a usar')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Editar' })).toBeDefined();
+  });
+
+  it('reveals the plain editor on demand and shows the correction back in the rendered view', async () => {
+    state.draft = summaryDraft('## Objetivo\n\nPor definir\n');
+    mount();
+    await screen.findByRole('heading', { name: 'Esto es lo que entendí' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }));
+    const editor = await screen.findByLabelText('Lo que voy a usar') as HTMLTextAreaElement;
+    expect(editor.tagName).toBe('TEXTAREA');
+    // The editor holds the same value, not a copy.
+    expect(editor.value).toBe('## Objetivo\n\nPor definir\n');
+
+    fireEvent.change(editor, { target: { value: '## Objetivo\n\nLanzar la cosecha 2026\n' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ver resumen' }));
+    expect(await screen.findByRole('heading', { name: 'Objetivo' })).toBeDefined();
+    expect(screen.getByText('Lanzar la cosecha 2026')).toBeDefined();
+    expect(screen.queryByLabelText('Lo que voy a usar')).toBeNull();
+  });
+
+  it('renders a readable empty state when the walk has no brief yet', async () => {
+    // Free-form has no questions, so it reaches the summary with an empty brief.
+    state.draft = summaryDraft('', { workTypeId: 'free-form', recommendedRoleId: 'assistant' });
+    mount();
+    await screen.findByRole('heading', { name: 'Esto es lo que entendí' });
+    expect(screen.getByText('Todavía no hay texto. Usá Editar para escribirlo.')).toBeDefined();
+  });
+
+  it('sends the corrected brief to the created work', async () => {
+    // Free-form has no required questions, so the summary CTA is live.
+    state.draft = summaryDraft('## Objetivo\n\nPor definir\n', { workTypeId: 'free-form', recommendedRoleId: 'assistant' });
+    const { container } = mount();
+    await screen.findByRole('heading', { name: 'Esto es lo que entendí' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }));
+    fireEvent.change(await screen.findByLabelText('Lo que voy a usar'), { target: { value: '## Objetivo\n\nLanzar la cosecha 2026\n' } });
+    fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
+
+    await waitFor(() => expect(shell(container)).not.toBeNull());
+    // The edit is the brief that shipped, not the one the walk generated.
+    const stored = JSON.parse(localStorage.getItem('latte-preview-v1') ?? '{}') as { contents?: Record<string, string> };
+    expect(Object.values(stored.contents ?? {}).some((text) => text.includes('Lanzar la cosecha 2026'))).toBe(true);
   });
 
   it('reveals the optional brand-context field for a new brand and saves it exactly once when non-empty', async () => {

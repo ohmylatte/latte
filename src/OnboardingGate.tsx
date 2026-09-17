@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ArrowLeft, ArrowRight, ArrowUpRight, Check, ExternalLink, Folder, FolderOpen, LoaderCircle, LogIn, Plug, Plus, Settings2, Sparkles, X } from 'lucide-react';
 import type { AgentRole, AgentRuntimeInfo, Brand, ChatRuntimeStatus, OnboardingDraft, PrimaryAgent, ProviderInfo, ProviderOAuthStart } from '../shared/contracts';
 import { useI18n } from './i18n';
@@ -91,6 +93,13 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
   const [oauth, setOauth] = useState<{ providerId: string; methodIndex: number; start: ProviderOAuthStart } | null>(null);
   const [oauthCode, setOauthCode] = useState('');
   const [showProviders, setShowProviders] = useState(false);
+  /**
+   * Progressive disclosure on the summary: the brief is READ as a document by
+   * default, because a marketer reads "## Objetivo" as broken code, not as a
+   * heading. The plain editor is one click away and writes the same state, so
+   * a correction still reaches the created work's brief.
+   */
+  const [editingBrief, setEditingBrief] = useState(false);
 
   useEffect(() => {
     void api.listBrands().then(setBrands).catch((e) => setError(displayError(e)));
@@ -716,8 +725,14 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
               <h1>{t('onboarding.summaryTitle')}</h1>
               <p className="intro">{t('onboarding.summaryLead')}</p>
               <div className="onboarding-summary">
-                <label className="field-label">{t('onboarding.summary.brief')}</label>
-                <textarea value={state.brief} onChange={(e) => setState((prev) => ({ ...prev, brief: e.target.value }))} />
+                {/* The same row the role picker uses: label on the left, action on the right. */}
+                <div className="onboarding-role-row" style={{ marginTop: 0, marginBottom: 12 }}>
+                  <label className="field-label" htmlFor={editingBrief ? 'onboarding-brief' : undefined}>{t('onboarding.summary.brief')}</label>
+                  <button className="subtle" onClick={() => setEditingBrief((v) => !v)}>{editingBrief ? t('onboarding.summary.view') : t('onboarding.summary.edit')}</button>
+                </div>
+                {editingBrief
+                  ? <textarea id="onboarding-brief" value={state.brief} onChange={(e) => setState((prev) => ({ ...prev, brief: e.target.value }))} />
+                  : <article className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{state.brief || t('onboarding.summary.empty')}</ReactMarkdown></article>}
                 {state.assumptions.length > 0 && (
                   <ul className="onboarding-assumptions">
                     {state.assumptions.map((a, i) => <li key={i}>{a.text}</li>)}
