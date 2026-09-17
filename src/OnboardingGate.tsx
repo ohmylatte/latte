@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowLeft, ArrowRight, ArrowUpRight, Check, ExternalLink, Folder, FolderOpen, LoaderCircle, LogIn, Plug, Plus, Settings2, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, ExternalLink, Folder, FolderOpen, LogIn, Plug, Plus, Settings2, Sparkles, X } from 'lucide-react';
+import { Loading } from './brand-marks';
 import type { AgentRole, AgentRuntimeInfo, Brand, ChatRuntimeStatus, OnboardingDraft, PrimaryAgent, ProviderInfo, ProviderOAuthStart } from '../shared/contracts';
 import { useI18n } from './i18n';
 import { agentBus, api, isDesktop } from './browser-api';
@@ -486,7 +487,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
             // action it belongs to.
             <div role="alert" className="message error onboarding-message">
               <span>{t(retryAction === 'skip' ? 'onboarding.skipFailed' : 'onboarding.completionFailed')}{error ? ` — ${error}` : ''}</span>
-              <button className="primary" disabled={busy} onClick={() => void (retryAction === 'skip' ? skipOnboarding() : startWork())}>{busy ? <LoaderCircle className="spin" size={15} /> : <ArrowRight size={15} />}{t('continue.retry')}</button>
+              <button className="primary" disabled={busy} onClick={() => void (retryAction === 'skip' ? skipOnboarding() : startWork())}>{busy ? <Loading size={16} /> : <ArrowRight size={15} />}{t('continue.retry')}</button>
             </div>
           )}
           {notice && <div role="status" className="message onboarding-message"><span>{notice}</span><button aria-label={t('ui.auto.001')} onClick={() => setNotice('')}><X size={16} /></button></div>}
@@ -584,7 +585,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                   <h2>{t('onboarding.brand.create')}</h2>
                   <div className="onboarding-footer" style={{ marginTop: 0 }}>
                     <input value={brandName} onChange={(e) => setBrandName(e.target.value)} placeholder={t('onboarding.brand.createName')} style={{ flex: 1 }} />
-                    <button className="primary" disabled={!brandName.trim() || busy} onClick={() => void createBrand()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}{t('onboarding.continue')}</button>
+                    <button className="primary" disabled={!brandName.trim() || busy} onClick={() => void createBrand()}>{busy ? <Loading size={16} /> : <Plus size={15} />}{t('onboarding.continue')}</button>
                   </div>
                 </section>
                 {showBrandContext && (
@@ -624,7 +625,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
               <div className="onboarding-footer">
                 <button onClick={goBack}><ArrowLeft size={15} />{t('onboarding.back')}</button>
                 <span className="spacer" />
-                <button className="primary" disabled={!selectedBrand || busy} onClick={() => void continueFromBrand()}>{busy ? <LoaderCircle className="spin" size={15} /> : <ArrowRight size={15} />}{t('onboarding.continue')}</button>
+                <button className="primary" disabled={!selectedBrand || busy} onClick={() => void continueFromBrand()}>{busy ? <Loading size={16} /> : <ArrowRight size={15} />}{t('onboarding.continue')}</button>
               </div>
             </>
           )}
@@ -645,7 +646,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                       const busyHere = connecting === option.runtime;
                       return (
                         <button className="onboarding-card" key={option.runtime} disabled={Boolean(connecting)} onClick={() => void connectRuntime(option.runtime)}>
-                          <strong>{busyHere ? <LoaderCircle className="spin" size={14} /> : <LogIn size={14} />}{option.label}</strong>
+                          <strong>{busyHere ? <Loading size={16} /> : <LogIn size={14} />}{option.label}</strong>
                           <small>{busyHere ? t('onboarding.connect.connecting', { name: RUNTIME_LABEL[option.runtime] }) : loggedIn ? t('ui.auto.346') : installed ? t('onboarding.connect.primary') : t('onboarding.connect.notInstalled', { name: RUNTIME_LABEL[option.runtime] })}</small>
                         </button>
                       );
@@ -669,7 +670,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                         const oauthMethod = p.methods.some((m) => m.type === 'oauth');
                         return (
                           <button className="onboarding-card" key={p.id} disabled={Boolean(connecting) || !oauthMethod} onClick={() => void connectProvider(p)}>
-                            <strong>{connecting === 'provider:' + p.id ? <LoaderCircle className="spin" size={14} /> : <ExternalLink size={14} />}{p.name}</strong>
+                            <strong>{connecting === 'provider:' + p.id ? <Loading size={16} /> : <ExternalLink size={14} />}{p.name}</strong>
                             <small>{oauthMethod ? t('onboarding.connect.connect') : t('onboarding.connect.noOAuth')}</small>
                           </button>
                         );
@@ -759,7 +760,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                 <button onClick={goBack}><ArrowLeft size={15} />{t('onboarding.back')}</button>
                 <span className="spacer" />
                 <button className="primary" disabled={!canComplete || busy} onClick={() => void startWork()}>
-                  {busy ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{t('onboarding.startWork')}<ArrowUpRight size={15} />
+                  {busy ? <Loading size={16} /> : <Check size={15} />}{t('onboarding.startWork')}<ArrowUpRight size={15} />
                 </button>
               </div>
             </>

@@ -1,6 +1,7 @@
 import { translate as t, type MessageKey } from './i18n';
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Check, LoaderCircle, LogIn, Plug, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, LogIn, Plug, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { Loading } from './brand-marks';
 import type { AccountLoginStart, ChatRuntime, McpRuntimeTools, McpServer } from '../shared/contracts';
 import { api } from './browser-api';
 import { TerminalPane } from './TerminalPane';
@@ -120,11 +121,11 @@ export function ToolsViewContent({ runtimes, loading, busy, adding, login, onRef
     </p>
     <p className="footnote">{t('tools.authorization')}
     </p>
-    <button className="subtle" disabled={loading || busy} onClick={onRefresh}>{loading ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{t('ui.auto.306')}</button>
+    <button className="subtle" disabled={loading || busy} onClick={onRefresh}>{loading ? <Loading size={16} /> : <RefreshCw size={13} />}{t('ui.auto.306')}</button>
 
     {/* A blank wait reads as "no hay nada": name what is still pending. */}
     {loading && Object.entries(RUNTIME_NAME).filter(([key]) => !runtimes?.some(r => r.runtime === key)).map(([key, label]) => <div className="runtime-card pending" key={key}>
-      <div className="runtime-head"><strong>{label}</strong><small><LoaderCircle className="spin" size={12} />  {t('ui.auto.408')}</small></div>
+      <div className="runtime-head"><strong>{label}</strong><small><Loading size={16} />  {t('ui.auto.408')}</small></div>
     </div>)}
     {loading && <p className="footnote">{t('ui.auto.307')}</p>}
 
@@ -203,7 +204,7 @@ export function AddServer({ runtime, busy, onCancel, onAdd }: {
       <p className="footnote">{t('ui.auto.321')} <code>{runtime} mcp login {name || t('ui.auto.413')}</code>  {t('ui.auto.322')}</p>
     </>}
     <div className="chat-card-actions">
-      <button className="primary" disabled={busy || !ready} onClick={() => void onAdd({ name: name.trim(), transport, command: parts[0] ?? '', args: parts.slice(1), url: url.trim(), env })}>{busy ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}{t('ui.auto.261')}</button>
+      <button className="primary" disabled={busy || !ready} onClick={() => void onAdd({ name: name.trim(), transport, command: parts[0] ?? '', args: parts.slice(1), url: url.trim(), env })}>{busy ? <Loading size={16} /> : <Check size={14} />}{t('ui.auto.261')}</button>
       <button disabled={busy} onClick={onCancel}><X size={14} />{t('ui.auto.241')}</button>
     </div>
   </div>;

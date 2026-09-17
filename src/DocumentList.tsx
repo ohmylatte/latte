@@ -6,6 +6,7 @@ import { countNeedingReview, filterDocuments, needsReview, reviewReasons, STAGES
 import { Deliverables } from './Deliverables';
 import { FolderContents } from './FolderContents';
 import { KnowledgeOrigin } from './KnowledgeScope';
+import { ApprovalStamp } from './brand-marks';
 
 interface Untracked { fileName: string; title: string; funnelStages?: FunnelStage[] }
 
@@ -79,7 +80,7 @@ export function DocumentList({ documents, workId, currentWorkId, workTitles, sel
       {visible.map(d => <button key={d.id} data-document-id={d.id} data-origin-work={d.workId} data-current-work={d.workId === currentWorkId ? 'true' : 'false'} disabled={busy} className={'doc-row' + (selectedId === d.id ? ' selected' : '')} onClick={() => onSelect(d.id)} aria-label={t('ui.auto.124') + d.title} aria-current={selectedId === d.id}>
         <FileText size={14} />
         <span>
-          <strong>{d.title}</strong>
+          <strong>{d.title}{d.status === 'approved' && <ApprovalStamp size={16} className="row-stamp" />}</strong>
           <small><span className={'doc-status doc-status-' + d.status}>{STATUS_LABEL[d.status]}</span> · {d.fileName}</small>
           <KnowledgeOrigin workId={d.workId} currentWorkId={currentWorkId} titles={workTitles} />
           {d.proposedFunnelStages.length > 0 && <em className="proposed">{t('ui.auto.373')} {d.proposedFunnelStages.map(s => STAGE_LABEL[s]).join(' + ')}</em>}

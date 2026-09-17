@@ -2,7 +2,8 @@ import { currentLocale, translate as t } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AlertTriangle, Check, Download, FileText, History, Layers, LoaderCircle, Plus, RefreshCw, Save, SlidersHorizontal, X } from 'lucide-react';
+import { AlertTriangle, Check, Download, FileText, History, Layers, Plus, RefreshCw, Save, SlidersHorizontal, X } from 'lucide-react';
+import { ApprovalStamp, Loading, VersionRing } from './brand-marks';
 import type { DocumentContent, DocumentKind, FunnelStage, Revision, WorkDocument, Work } from '../shared/contracts';
 import { api } from './browser-api';
 import { STAGE_LABEL, countNeedingReview } from './document-organizer';
@@ -243,9 +244,9 @@ export function DocumentsView(props: DocumentsViewProps) {
     <div className="doc-pane">
     <OrientationStrip brandContextDefined={props.brandContextDefined} pendingDecisions={props.pendingDecisions} reviewDocuments={countNeedingReview(documents, states)} expectedOutput={work.expectedOutput ?? ''} checking={checking} />
     {selected && <div className="document-toolbar">
-      <span><FileText size={16} />{selected.title}<small>{kindLabel} · {editing?.dirty ? t('ui.auto.148') : selected.status === 'approved' ? 'Aprobado' : selected.status === 'review' ? t('ui.auto.149') : 'Borrador'}</small><KnowledgeOrigin workId={selected.workId} currentWorkId={props.currentWorkId} titles={props.workTitles} /></span>
+      <span><FileText size={16} />{selected.title}{selected.status === 'approved' && <span className="approval-badge" role="status"><ApprovalStamp size={34} className="approval-stamp" /><em>{t('approval.byYou')}</em></span>}<small>{kindLabel} · {editing?.dirty ? t('ui.auto.148') : selected.status === 'approved' ? 'Aprobado' : selected.status === 'review' ? t('ui.auto.149') : 'Borrador'}</small><KnowledgeOrigin workId={selected.workId} currentWorkId={props.currentWorkId} titles={props.workTitles} /></span>
       <div className="doc-actions">
-        <button className="primary" disabled={!editing?.dirty || saving || props.busy} onClick={() => void save()}>{saving ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}{t('ui.auto.150')}</button>
+        <button className="primary" disabled={!editing?.dirty || saving || props.busy} onClick={() => void save()}>{saving ? <Loading size={16} /> : <Save size={14} />}{t('ui.auto.150')}</button>
         <button disabled={props.busy || saving} onClick={() => setMode(mode === 'edit' ? 'read' : 'edit')}>{mode === 'edit' ? 'Leer' : 'Editar'}</button>
         <button aria-expanded={organizing} onClick={() => setOrganizing(o => !o)} disabled={props.busy}><SlidersHorizontal size={14} />{t('ui.auto.376')}</button>
         <button disabled={props.busy || saving} onClick={() => void snapshot()}><Layers size={14} />{t('ui.auto.151')}</button>
@@ -297,7 +298,7 @@ export function DocumentsView(props: DocumentsViewProps) {
 
     <div className="document-scroll">
       <div className="document-kicker" data-origin-work={selected?.workId ?? work.id}>{props.brandName} / {documentOriginTitle(selected?.workId, work.title, props.workTitles)}{selected ? ` / ${kindLabel}` : ''}</div>
-      {loading && !editing && <p className="footnote"><LoaderCircle className="spin" size={13} />  {t('ui.auto.168')}</p>}
+      {loading && !editing && <p className="footnote"><Loading size={16} />  {t('ui.auto.168')}</p>}
       {editing && mode === 'edit' && <textarea className="markdown-editor" aria-label={t('ui.auto.169')} value={editing.content} spellCheck={false} onChange={e => setEditing({ ...editing, content: e.target.value, dirty: true })} />}
       {editing && mode === 'read' && <article className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{editing.content || t('ui.auto.170')}</ReactMarkdown></article>}
     </div>
@@ -318,7 +319,7 @@ export function DocumentsView(props: DocumentsViewProps) {
         <div className="revision-layout">
           <div className="revision-list">
             {revisions.map((r, i) => <button key={r.id} className={pickedRevision?.id === r.id ? 'selected-revision' : ''} onClick={() => setPicked(r)}>
-              <History size={15} /><span>{t('ui.auto.173')} {revisions.length - i}<small>{date(r.createdAt)} · {r.source === 'external' ? 'cambio externo' : r.source === 'latte' ? 'referencia' : t('ui.auto.174')}</small></span>
+              <VersionRing filled={i === 0} drawing={i === 0} /><span><span className="revision-version">v{revisions.length - i} · {r.source === 'external' ? 'cambio externo' : r.source === 'latte' ? 'referencia' : t('ui.auto.174')}</span><small>{date(r.createdAt)}</small></span>
             </button>)}
             {!revisions.length && <p>{t('ui.auto.175')}</p>}
           </div>

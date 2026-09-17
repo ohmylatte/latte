@@ -8,6 +8,7 @@ import { useChatState } from './chat-store';
 import { canChangePermission } from './permission-ux';
 import { continuationModel, continuationOptions, type ContinuationTarget } from './provider-models';
 import { contextWeight, describeUsage, formatTokens, totalTokens } from './usage-format';
+import { Loading, roleColorVar, SteamWisp } from './brand-marks';
 
 /** A runtime the user can pick for a new member instead of the primary agent. */
 export interface RuntimeChoice { key: string; label: string; runtime: ChatRuntime; accountId: string | null }
@@ -233,7 +234,7 @@ export function WorkPermissions({ mode, busy, hasClaude, isDesktop, onChange }: 
     <summary>
       {mode === 'ask' ? <FolderLock size={13} /> : mode === 'folder' ? <FolderCheck size={13} /> : <Zap size={13} />}
       <span><strong>{permissionLabel(mode)}</strong>{mode === 'auto' && <small>{t('permission.auto.once')}</small>}</span>
-      {busy && <LoaderCircle className="spin" size={12} aria-label={t('permission.changing')} />}
+      {busy && <Loading size={16} label={t('permission.changing')} />}
     </summary>
     <div className="permission-modes" role="radiogroup" aria-label={t('permission.group')}>
       {(['ask', 'folder', 'auto'] as WorkPermissionMode[]).map(value => <button
@@ -255,7 +256,7 @@ export function WorkPermissions({ mode, busy, hasClaude, isDesktop, onChange }: 
   </details>;
 }
 
-function MemberTab({ member, chat, selected, busy, onSelect }: { member: TeamMember; chat: ChatSession | null; selected: boolean; busy: boolean; onSelect: () => void }) {
+export function MemberTab({ member, chat, selected, busy, onSelect }: { member: TeamMember; chat: ChatSession | null; selected: boolean; busy: boolean; onSelect: () => void }) {
   const state = useChatState(chatStore, chat ? chat.id : null);
   const live = Boolean(chat) && !state.closed;
   const status: TeamMemberStatus = live ? (state.status === 'idle' ? 'idle' : 'working') : member.status === 'ended' ? 'ended' : 'paused';
@@ -263,7 +264,9 @@ function MemberTab({ member, chat, selected, busy, onSelect }: { member: TeamMem
   return <button role="tab" aria-selected={selected} className={'team-tab status-' + status + (attention ? ' attention' : '')} disabled={busy} onClick={onSelect} title={member.roleName + ' · ' + RUNTIME_SHORT[member.runtime] + ' · ' + statusLabel(status, attention)}>
     <span className="team-avatar" data-role={member.roleId} aria-hidden="true">{member.initial}</span>
     <span className="team-tab-name">{member.roleName}</span>
-    <i className="team-tab-dot" aria-hidden="true" />
+    {status === 'working' && !attention
+      ? <SteamWisp className="team-steam" style={{ color: roleColorVar(member.roleId) }} />
+      : <i className="team-tab-dot" aria-hidden="true" />}
     <span className="visually-hidden">{statusLabel(status, attention)}</span>
   </button>;
 }
@@ -271,7 +274,7 @@ function MemberTab({ member, chat, selected, busy, onSelect }: { member: TeamMem
 function statusLabel(status: TeamMemberStatus, attention: boolean) {
   if (attention) return <><i className="busy-dot" />Te necesita</>;
   switch (status) {
-    case 'working': return <><LoaderCircle className="spin" size={12} />{t('ui.auto.403')}</>;
+    case 'working': return <><Loading size={16} />{t('ui.auto.403')}</>;
     case 'idle': return <><i className="live-dot" />{t('ui.auto.404')}</>;
     case 'ended': return <>{t('ui.auto.285')}<CircleCheck size={13} /></>;
     default: return <>En pausa<Pause size={12} /></>;
@@ -285,7 +288,7 @@ function ResumeCard({ member, origin, busy, isDesktop, onOpen, onRestart, onRemo
     <span className="team-avatar large" data-role={member.roleId} aria-hidden="true">{member.initial}</span>
     <h3>{member.roleName}<br /><small>{member.label}</small>{origin && <small>{t('continue.from', { role: origin.roleName })}</small>}</h3>
     <p>{member.status === 'ended' ? t('ui.auto.286') : t('ui.auto.287')}</p>
-    <button className="primary" disabled={busy || opening} onClick={() => void open()}>{opening ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}{opening ? 'Abriendo…' : member.status === 'ended' ? t('ui.auto.288') : t('ui.auto.289')}</button>
+    <button className="primary" disabled={busy || opening} onClick={() => void open()}>{opening ? <Loading size={16} /> : <Play size={15} />}{opening ? 'Abriendo…' : member.status === 'ended' ? t('ui.auto.288') : t('ui.auto.289')}</button>
     {/* A paused or finished member is where an exhausted account usually leaves you: continuing elsewhere belongs right here. */}
     <button className="subtle" title={t('continue.actionHelp')} disabled={busy || opening || !isDesktop} onClick={onContinue}><Forward size={13} />{t('continue.action')}</button>
     <button className="subtle" disabled={busy || opening} onClick={() => { if (window.confirm(t('ui.auto.401', { p0: member.roleName, p1: member.roleName }))) void onRestart(); }}><MessageSquarePlus size={13} />{t('ui.auto.272')}</button>
@@ -331,7 +334,7 @@ function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady,
     </select>
     {choice === 'primary' && <small className="runtime-detail">{checking ? t('ui.auto.296') : primaryDetail}</small>}
     <div className="chat-card-actions">
-      <button className="primary" disabled={busy || opening || checking || !ready || !isDesktop} onClick={() => void add()}>{opening || checking ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}{opening ? 'Abriendo…' : checking ? 'Buscando agentes…' : t('ui.auto.297')}</button>
+      <button className="primary" disabled={busy || opening || checking || !ready || !isDesktop} onClick={() => void add()}>{opening || checking ? <Loading size={16} /> : <Plus size={15} />}{opening ? 'Abriendo…' : checking ? 'Buscando agentes…' : t('ui.auto.297')}</button>
       {isDesktop && !checking && <button className="subtle" onClick={onProviders}><Plug size={13} />{primaryReady ? t('ui.auto.298') : t('ui.auto.299')}</button>}
       {isDesktop && !checking && !primaryReady && <button className="subtle" onClick={onRecheck}>Volver a comprobar</button>}
     </div>
@@ -454,7 +457,7 @@ function ContinueDialog({ source, roles, choices, primaryLabel, primaryReady, pr
         <p className="footnote">{t('continue.help')}</p>
         {failure && <div className="chat-error" role="alert"><CircleAlert size={14} /><span>{failure}</span></div>}
         <div className="chat-card-actions">
-          <button className="primary" disabled={!ready} onClick={() => void submit()}>{opening ? <LoaderCircle className="spin" size={15} /> : <Forward size={15} />}{opening ? t('continue.opening') : t('continue.submit')}</button>
+          <button className="primary" disabled={!ready} onClick={() => void submit()}>{opening ? <Loading size={16} /> : <Forward size={15} />}{opening ? t('continue.opening') : t('continue.submit')}</button>
           <button disabled={opening} onClick={close}>{t('continue.cancel')}</button>
           {edited && <button className="subtle" disabled={opening} onClick={() => { if (window.confirm(t('continue.resetConfirm'))) setText(draft ?? ''); }}>{t('continue.reset')}</button>}
         </div>
