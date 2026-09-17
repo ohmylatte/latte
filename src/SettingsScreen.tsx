@@ -91,7 +91,7 @@ function WorkspaceSection({ onError, onReopenOnboarding }: { onError: (text: str
       <div><dt>{t('settings.dataFolder')}</dt><dd><code>{info?.dataDir ?? (isDesktop ? t('settings.loading') : t('settings.webStorage'))}</code></dd></div>
       <div><dt>{t('settings.database')}</dt><dd>{info ? t('ui.auto.391', { p0: info.engine, p1: info.engineReason ? ` · ${info.engineReason}` : '' }) : '—'}</dd></div>
       <div><dt>{t('settings.pack')}</dt><dd>{info?.pack ?? '—'}{info && info.packRoles > 0 ? ` · ${t('common.roles',{count:info.packRoles})}` : ''}</dd></div>
-      <div><dt>{t('settings.version')}</dt><dd>{info ? `Latte ${info.version} · ALPHA` : '—'}</dd></div>
+      <div><dt>{t('settings.version')}</dt><dd>{info ? `Latte ${info.version}` : '—'}</dd></div>
     </dl>
     {onReopenOnboarding && <div style={{ marginTop: 20 }}><button onClick={onReopenOnboarding}><Sparkles size={14} />{t('settings.reopenOnboarding')}</button></div>}
     <p className="footnote"><Info size={13} /> {t('settings.filesHelp')}</p>

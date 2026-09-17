@@ -465,7 +465,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
   return (
     <div className="onboarding-shell">
       <header className="onboarding-topbar">
-        <div className="onboarding-brand"><span className="logo-mark" aria-hidden="true" />Latte<span className="alpha">ALPHA</span></div>
+        <div className="onboarding-brand"><span className="logo-mark" aria-hidden="true" />Latte</div>
         <div className="onboarding-steps" aria-label={t('onboarding.stepOf', { current: stepIndex + 1, total: STEP_ORDER.length })}>
           {STEP_ORDER.map((step, i) => (
             <span key={step} className={'step' + (i <= stepIndex ? ' active' : '')}>{t(`onboarding.step.${step}` as const)}</span>

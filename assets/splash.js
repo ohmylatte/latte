@@ -75,7 +75,7 @@
       if (stage === 'ready') c.fillStyle = GREEN;
       text(c, COPY[stage], W / 2, 530, `600 15px ${MONO}`);
       c.fillStyle = INK; c.globalAlpha = 0.6;
-      text(c, 'OH MY LATTE · ALPHA', 28, 574, `600 12px ${MONO}`, 'left');
+      text(c, 'OH MY LATTE', 28, 574, `600 12px ${MONO}`, 'left');
     }, { boil, grainAmt: 0.3 });
     if (VERSION) P.ink(ctx, RUST, (c) => text(c, VERSION, W - 28, 574, `600 12px ${MONO}`, 'right'), { boil, grainAmt: 0.3 });
   }
