@@ -23,7 +23,7 @@ files:
   - assets/splash.html
   - assets/splash.js
   - assets/brand/print-kit.js
-  - src/fonts/dm-serif-display.ttf
+  - src/fonts/instrument-serif-italic.ttf
   - package.json
 # Production dependencies are collected by electron-builder itself; development
 # dependencies (tsx, vite, electron-builder) never travel.
