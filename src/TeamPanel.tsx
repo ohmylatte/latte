@@ -13,6 +13,13 @@ import { Loading, roleColorVar, SteamWisp } from './brand-marks';
 /** A runtime the user can pick for a new member instead of the primary agent. */
 export interface RuntimeChoice { key: string; label: string; runtime: ChatRuntime; accountId: string | null }
 
+/**
+ * How dense the interface is. `simple` hides the inline technical controls
+ * (model, effort, runtime tooltip, active-context footnote); `advanced` shows
+ * them. Owned here because TeamPanel is where the gating happens.
+ */
+export type LatteMode = 'simple' | 'advanced';
+
 export interface TeamPanelProps {
   work: Work | null;
   team: TeamMember[];
@@ -34,6 +41,8 @@ export interface TeamPanelProps {
   choices: RuntimeChoice[];
   busy: boolean;
   isDesktop: boolean;
+  /** How dense the team panel is: `simple` hides the inline technical controls. */
+  mode: LatteMode;
   onSelect: (memberId: string) => void;
   onAdd: (roleId: string, options: TeamMemberOptions | null) => Promise<void>;
   onOpen: (memberId: string) => Promise<void>;
@@ -76,7 +85,7 @@ const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claud
  * store) and persisted for the rest (paused / finished).
  */
 export function TeamPanel(props: TeamPanelProps) {
-  const { work, team, chats, selectedId, roles, busy, isDesktop } = props;
+  const { work, team, chats, selectedId, roles, busy, isDesktop, mode } = props;
   const [adding, setAdding] = useState(false);
   // Member whose work is being handed over; the dialog stays tied to it.
   const [continuing, setContinuing] = useState<string | null>(null);
@@ -103,15 +112,17 @@ export function TeamPanel(props: TeamPanelProps) {
     {work && team.length > 0 && <>
       <div className="team-tabs" role="tablist" aria-label={t('ui.auto.268')}>
         <div className="team-tab-strip">
-          {team.map(member => <MemberTab key={member.id} member={member} chat={chats[member.id] ?? null} selected={member.id === selectedId} busy={busy} onSelect={() => props.onSelect(member.id)} />)}
+          {team.map(member => <MemberTab key={member.id} member={member} chat={chats[member.id] ?? null} selected={member.id === selectedId} busy={busy} mode={mode} onSelect={() => props.onSelect(member.id)} />)}
         </div>
         {activity && <span className={'team-activity' + (activity.needsAttention ? ' attention' : '')} role="status" title={activity.detail}>{activity.label}</span>}
         {workTotal > 0 && <span className="team-usage-total" title={t('usage.help')}>{t('usage.workTotal', { tokens: formatTokens(workTotal, currentLocale()) })}</span>}
         <button className="team-tab-add" aria-label={t('ui.auto.269')} title={t('ui.auto.269')} disabled={busy || !isDesktop} onClick={() => setAdding(true)}><UserPlus size={15} /></button>
         <button className="team-tab-add" aria-label="Proveedores de IA" title="Agentes y proveedores" onClick={props.onProviders}><Settings2 size={15} /></button>
         {selected && <div className="team-tab-actions">
-          <ModelPicker member={selected} busy={busy} onModel={props.onModel} />
-          <TierPicker tier={selected.tier} busy={busy} compact onChange={tier => props.onTier(selected.id, tier)} />
+          {mode === 'advanced' && <>
+            <ModelPicker member={selected} busy={busy} onModel={props.onModel} />
+            <TierPicker tier={selected.tier} busy={busy} compact onChange={tier => props.onTier(selected.id, tier)} />
+          </>}
           <button className="icon-button" aria-label={t('continue.action')} title={t('continue.actionHelp')} disabled={busy || !isDesktop} onClick={() => setContinuing(selected.id)}><Forward size={13} /></button>
           {selectedLive && <button className="icon-button" aria-label={t('ui.auto.087')} title={t('ui.auto.270')} disabled={busy} onClick={() => void props.onPause(selected.id)}><Pause size={13} /></button>}
           {selectedStatus !== 'ended' && <button className="icon-button" aria-label="Marcar como finalizado" title={t('ui.auto.271')} disabled={busy} onClick={() => void props.onFinish(selected.id)}><CircleCheck size={13} /></button>}
@@ -256,12 +267,14 @@ export function WorkPermissions({ mode, busy, hasClaude, isDesktop, onChange }: 
   </details>;
 }
 
-export function MemberTab({ member, chat, selected, busy, onSelect }: { member: TeamMember; chat: ChatSession | null; selected: boolean; busy: boolean; onSelect: () => void }) {
+export function MemberTab({ member, chat, selected, busy, mode = 'simple', onSelect }: { member: TeamMember; chat: ChatSession | null; selected: boolean; busy: boolean; mode?: LatteMode; onSelect: () => void }) {
   const state = useChatState(chatStore, chat ? chat.id : null);
   const live = Boolean(chat) && !state.closed;
   const status: TeamMemberStatus = live ? (state.status === 'idle' ? 'idle' : 'working') : member.status === 'ended' ? 'ended' : 'paused';
   const attention = live && (state.permissions.length > 0 || state.questions.length > 0);
-  return <button role="tab" aria-selected={selected} className={'team-tab status-' + status + (attention ? ' attention' : '')} disabled={busy} onClick={onSelect} title={member.roleName + ' · ' + RUNTIME_SHORT[member.runtime] + ' · ' + statusLabel(status, attention)}>
+  // The runtime is a technical detail the simple mode keeps out of the tooltip.
+  const title = member.roleName + (mode === 'advanced' ? ' · ' + RUNTIME_SHORT[member.runtime] : '') + ' · ' + statusLabel(status, attention);
+  return <button role="tab" aria-selected={selected} className={'team-tab status-' + status + (attention ? ' attention' : '')} disabled={busy} onClick={onSelect} title={title}>
     <span className="team-avatar" data-role={member.roleId} aria-hidden="true">{member.initial}</span>
     <span className="team-tab-name">{member.roleName}</span>
     {status === 'working' && !attention
@@ -297,7 +310,7 @@ function ResumeCard({ member, origin, busy, isDesktop, onOpen, onRestart, onRemo
 }
 
 function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady, checking, busy, isDesktop, canCancel, onCancel, onAdd, onProviders, onRecheck }: { roles: AgentRole[]; choices: RuntimeChoice[]; primaryLabel: string; primaryDetail: string; primaryReady: boolean; checking: boolean; busy: boolean; isDesktop: boolean; canCancel: boolean; onCancel: () => void; onAdd: (roleId: string, options: TeamMemberOptions | null) => Promise<void>; onProviders: () => void; onRecheck: () => void }) {
-  const [roleId, setRoleId] = useState(roles[0]?.id ?? 'assistant');
+  const [roleId, setRoleId] = useState('assistant');
   const [choice, setChoice] = useState('primary');
   const [opening, setOpening] = useState(false);
   // Follows the picked role's own default effort; picking another role resets it,
