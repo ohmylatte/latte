@@ -997,8 +997,18 @@ export function currentLocale(): UiLocale { return activeLocale; }
 
 interface I18nValue { locale: UiLocale; contentLocale: ContentLocale; t: (key: MessageKey, params?: Params) => string; setLocale: (v: UiLocale) => Promise<void>; setContentLocale: (v: ContentLocale) => Promise<void> }
 const I18nContext = createContext<I18nValue | null>(null);
+/**
+ * The locale for the FIRST paint, before the stored preference is read. The
+ * desktop preload writes it into `<html lang>` from the main process, so an
+ * English install never flashes Spanish on the way in. Anywhere else (the web
+ * preview, jsdom, the dev server) `index.html` says `es`, which is the default.
+ */
+function bootLocale(): UiLocale {
+  return document.documentElement.lang.toLowerCase().startsWith('en') ? 'en-US' : 'es-AR';
+}
+
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<UiLocale>('es-AR');
+  const [locale, setLocaleState] = useState<UiLocale>(bootLocale);
   const [contentLocale, setContentLocaleState] = useState<ContentLocale>('es-AR');
   useEffect(() => { void Promise.all([api.getUiLocale(), api.getContentLocale()]).then(([ui, content]) => { setLocaleState(ui); setContentLocaleState(content); }); }, []);
   useEffect(() => { document.documentElement.lang = locale; }, [locale]);
