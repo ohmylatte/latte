@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { OnboardingDraft } from '../shared/contracts';
 
 const data = new Map<string, string>();
 vi.stubGlobal('localStorage', { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => data.set(key, value) });
@@ -117,6 +118,41 @@ describe('explicit browser preview', () => {
     const after = await api.brandContextStatus(b.id);
     expect(after.pending).toBeNull();
     expect(after.revisions.map(r => r.source)).toEqual(['restore', 'clear', 'human']);
+  });
+  it('round-trips the onboarding-complete flag through the preview store', async () => {
+    expect(await api.getOnboardingComplete()).toBe(false);
+    expect(await api.setOnboardingComplete(true)).toBe(true);
+    expect(await api.getOnboardingComplete()).toBe(true);
+    // Persists across a fresh read, not just in memory.
+    expect(await api.getOnboardingComplete()).toBe(true);
+    await api.setOnboardingComplete(false);
+    expect(await api.getOnboardingComplete()).toBe(false);
+  });
+
+  it('round-trips the onboarding draft and clears it on completion', async () => {
+    expect(await api.getOnboardingDraft()).toBeNull();
+    const draft: OnboardingDraft = {
+      step: 'connect',
+      workTypeId: 'copy-pieces',
+      answers: { objetivo: 'Anunciar', canal: 'instagram' },
+      assumptions: ['Sigo sin promesa definida; la confirmamos después.'],
+      brandId: 'demo',
+      usedDemo: true,
+      linkFolderRequested: false,
+      recommendedRoleId: 'sales-copywriter',
+      brief: '## Objetivo\n\nAnunciar\n',
+    };
+    await api.setOnboardingDraft(draft);
+    expect(await api.getOnboardingDraft()).toEqual(draft);
+    // A fresh read still sees it (persisted across read()).
+    expect(await api.getOnboardingDraft()).toEqual(draft);
+    // Completing clears it, mirroring the desktop meta store.
+    await api.setOnboardingComplete(true);
+    expect(await api.getOnboardingDraft()).toBeNull();
+    // And an explicit clear works on its own.
+    await api.setOnboardingDraft(draft);
+    await api.clearOnboardingDraft();
+    expect(await api.getOnboardingDraft()).toBeNull();
   });
   it('does not pretend to run an agent or memory server', async () => {
     expect((await api.runtimeStatus()).every(r => !r.available)).toBe(true);

@@ -64,7 +64,9 @@ import type {
   WorkPatch,
   PrepareGenerationOutcome,
   WorkBrandChoiceInput,
+  OnboardingDraft,
 } from '../../shared/contracts';
+import { isOnboardingDraft } from '../../shared/contracts';
 import {
   type BrandContextPort,
   type SkillRef,
@@ -292,6 +294,48 @@ export class LatteService implements BackendApi {
     if (locale !== 'es-AR' && locale !== 'en-US') throw new TypeError('Invalid content locale');
     this.deps.repo.setMeta('content_locale', locale);
     return locale;
+  }
+
+  /** First-run gate flag, stored in `meta` like the locale settings (no migration). */
+  async getOnboardingComplete(): Promise<boolean> {
+    return this.deps.repo.getMeta('onboarding_complete') === '1';
+  }
+
+  async setOnboardingComplete(complete: boolean): Promise<boolean> {
+    if (typeof complete !== 'boolean') throw new TypeError('Invalid onboarding flag');
+    this.deps.repo.setMeta('onboarding_complete', complete ? '1' : '0');
+    // The mid-flow draft only means something while onboarding is incomplete:
+    // completing, skipping and replaying all start the next walk fresh.
+    this.deps.repo.setMeta('onboarding_draft', '');
+    return complete;
+  }
+
+  /**
+   * Mid-flow progress, so a walk abandoned part-way resumes at the same step.
+   * Null when there is nothing saved, when it cannot be read, or when the
+   * terminal flag is already set (a stale draft never resurfaces).
+   */
+  async getOnboardingDraft(): Promise<OnboardingDraft | null> {
+    if (this.deps.repo.getMeta('onboarding_complete') === '1') return null;
+    const raw = this.deps.repo.getMeta('onboarding_draft');
+    if (!raw) return null;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return isOnboardingDraft(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async setOnboardingDraft(draft: OnboardingDraft): Promise<void> {
+    if (!isOnboardingDraft(draft)) throw new TypeError('Invalid onboarding draft');
+    // A draft saved after completion must not resurrect a finished walk.
+    if (this.deps.repo.getMeta('onboarding_complete') === '1') return;
+    this.deps.repo.setMeta('onboarding_draft', JSON.stringify(draft));
+  }
+
+  async clearOnboardingDraft(): Promise<void> {
+    this.deps.repo.setMeta('onboarding_draft', '');
   }
 
   /** Read-only facts for the Settings screen. No secrets, no credentials. */

@@ -5,10 +5,11 @@ import remarkGfm from 'remark-gfm';
 import { AlertTriangle, Check, Download, FileText, History, Layers, LoaderCircle, Plus, RefreshCw, Save, SlidersHorizontal, X } from 'lucide-react';
 import type { DocumentContent, DocumentKind, FunnelStage, Revision, WorkDocument, Work } from '../shared/contracts';
 import { api } from './browser-api';
-import { STAGE_LABEL } from './document-organizer';
+import { STAGE_LABEL, countNeedingReview } from './document-organizer';
 import { DocumentList } from './DocumentList';
 import { FunnelView } from './FunnelView';
 import { useDocumentStates } from './document-states';
+import { OrientationStrip } from './OrientationStrip';
 import { DocumentMetadata, hasMetadataDrafts } from './DocumentMetadata';
 import { documentDrafts } from './document-drafts';
 import { WorkOutcome, hasOutcomeDrafts, isWorkBrief } from './WorkOutcome';
@@ -56,6 +57,10 @@ export interface DocumentsViewProps {
   currentWorkId: string | null;
   workTitles: Record<string, string>;
   showWorkDelta: boolean;
+  /** `brand.context.trim().length > 0`: the brand's context, already loaded by App. */
+  brandContextDefined: boolean;
+  /** Decisions with status 'pending' in the current knowledge scope. */
+  pendingDecisions: number;
 }
 
 /**
@@ -236,6 +241,7 @@ export function DocumentsView(props: DocumentsViewProps) {
       ? <FunnelView documents={documents} selectedId={selected?.id ?? null} states={states} checking={checking} onRefresh={refreshStates} onSelect={id => { if (!saving) { props.onSelect(id); props.onView('brief'); } }} busy={props.busy} currentWorkId={props.currentWorkId} workTitles={props.workTitles} />
       : <><DocumentList documents={documents} workId={work.id} currentWorkId={work.id} workTitles={props.workTitles} selectedId={selected?.id ?? null} states={states} failed={failed} checking={checking} onRefresh={refreshStates} onSelect={id => { if (!saving) props.onSelect(id); }} onCreate={props.onCreate} onUseFolder={props.onUseFolder} folder={linked} untracked={props.untracked} onTrack={props.onTrack} busy={props.busy || saving} suggestion={suggestion} showWorkDelta={props.showWorkDelta} onImported={names => { void props.onDocumentsChanged(); props.onNotice(names.length === 1 ? t('ui.auto.374', { p0: names[0] }) : t('ui.auto.375', { p0: names.length })); }} />
     <div className="doc-pane">
+    <OrientationStrip brandContextDefined={props.brandContextDefined} pendingDecisions={props.pendingDecisions} reviewDocuments={countNeedingReview(documents, states)} expectedOutput={work.expectedOutput ?? ''} checking={checking} />
     {selected && <div className="document-toolbar">
       <span><FileText size={16} />{selected.title}<small>{kindLabel} · {editing?.dirty ? t('ui.auto.148') : selected.status === 'approved' ? 'Aprobado' : selected.status === 'review' ? t('ui.auto.149') : 'Borrador'}</small><KnowledgeOrigin workId={selected.workId} currentWorkId={props.currentWorkId} titles={props.workTitles} /></span>
       <div className="doc-actions">

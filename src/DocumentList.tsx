@@ -2,7 +2,7 @@ import { translate as t } from './i18n';
 import { useEffect, useState } from 'react';
 import { FileText, FolderOpen, Plus, RefreshCw, Search } from 'lucide-react';
 import type { DocumentState, DocumentStatus, FunnelStage, WorkDocument } from '../shared/contracts';
-import { filterDocuments, reviewReasons, STAGES, STAGE_LABEL, STATUS_LABEL } from './document-organizer';
+import { countNeedingReview, filterDocuments, needsReview, reviewReasons, STAGES, STAGE_LABEL, STATUS_LABEL } from './document-organizer';
 import { Deliverables } from './Deliverables';
 import { FolderContents } from './FolderContents';
 import { KnowledgeOrigin } from './KnowledgeScope';
@@ -44,10 +44,10 @@ export function DocumentList({ documents, workId, currentWorkId, workTitles, sel
   const [onlyReview, setOnlyReview] = useState(false);
   useEffect(() => { setQuery(''); setStage('all'); setStatus('all'); setOnlyReview(false); }, [workId]);
 
-  const needsReview = (d: WorkDocument) => reviewReasons(d, states[d.id]?.baseOutdated ?? false);
-  const reviewCount = documents.filter(d => needsReview(d).length).length;
+  const outdated = (d: WorkDocument) => states[d.id]?.baseOutdated ?? false;
+  const reviewCount = countNeedingReview(documents, states);
   const filtered = filterDocuments(documents, { query, stage, status });
-  const visible = onlyReview ? filtered.filter(d => needsReview(d).length) : filtered;
+  const visible = onlyReview ? filtered.filter(d => needsReview(d, outdated(d))) : filtered;
 
   return <aside className="doc-list" aria-label={t('ui.auto.117')}>
     <header>
@@ -83,7 +83,7 @@ export function DocumentList({ documents, workId, currentWorkId, workTitles, sel
           <small>{STATUS_LABEL[d.status]} · {d.fileName}</small>
           <KnowledgeOrigin workId={d.workId} currentWorkId={currentWorkId} titles={workTitles} />
           {d.proposedFunnelStages.length > 0 && <em className="proposed">{t('ui.auto.373')} {d.proposedFunnelStages.map(s => STAGE_LABEL[s]).join(' + ')}</em>}
-          {needsReview(d).map(reason => <em key={reason}>{reason}</em>)}
+          {reviewReasons(d, outdated(d)).map(reason => <em key={reason}>{reason}</em>)}
           {failed.includes(d.id) && <em>{t('ui.auto.125')}</em>}
         </span>
       </button>)}
@@ -96,7 +96,7 @@ export function DocumentList({ documents, workId, currentWorkId, workTitles, sel
 
     {suggestion && <div className="doc-suggestion">
       <span><strong>{suggestion.label}</strong> {suggestion.hint}</span>
-      <button onClick={onCreate} disabled={busy}><Plus size={13} />{t('ui.auto.083')}</button>
+      <button onClick={onCreate} disabled={busy}><Plus size={13} />{t('ui.auto.118')}</button>
     </div>}
 
     <footer className="doc-list-footer">

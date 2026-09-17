@@ -62,6 +62,10 @@ vi.mock('./browser-api', async (importOriginal) => {
     isDesktop: false,
     api: {
       ...actual.browserAPI,
+      // These tests describe the workspace of a returning user: the first-run
+      // gate has already been completed, so the shell mounts directly.
+      getOnboardingComplete: async () => true,
+      getOnboardingDraft: async () => null,
       listBrandContextProposals: async (brandId: string) => [{ ...superseded, brandId }, { ...pending, brandId }],
       brandContextStatus: async (brandId: string) => ({
         ...(await actual.browserAPI.brandContextStatus(brandId)),
@@ -76,6 +80,7 @@ const mount = () => render(<I18nProvider><App /></I18nProvider>);
 
 /** Every view has to render a region of its own; an empty workspace is the bug. */
 const REGION: Record<(typeof VIEWS)[number], string> = {
+  home: '.home-view',
   brief: '.document-scroll',
   funnel: '.funnel-view',
   context: '.context-editor',
@@ -84,6 +89,7 @@ const REGION: Record<(typeof VIEWS)[number], string> = {
 };
 
 const CONTROL: Record<(typeof VIEWS)[number], RegExp> = {
+  home: /^Inicio/,
   brief: /^Documentos/,
   funnel: /^Embudo/,
   context: /^Contexto/,
@@ -144,11 +150,17 @@ describe('Contexto view', () => {
     const main = () => container.querySelector('main') as HTMLElement;
     // Wait for the work to be listed, or `brief` shows its empty state instead.
     await screen.findByRole('button', { name: 'Lanzamiento primavera' });
-    // A selected work opens in conversation focus, which hides the whole
-    // workspace (`aria-hidden` + `inert`). "Revisar" is the human's way back in.
+    // A returning user lands on Inicio; the way into a work is its own row in
+    // the "Continuar" card (the topbar's in-work modes are not on Inicio). That
+    // opens the work in conversation focus, which hides the whole workspace
+    // (`aria-hidden` + `inert`). "Revisar", now in-work chrome, is the human's
+    // way back to the document pane.
+    fireEvent.click(container.querySelector('.home-continue .home-row') as HTMLButtonElement);
     fireEvent.click(screen.getByRole('button', { name: 'Revisar' }));
 
-    for (const view of VIEWS) {
+    // `home` is visited LAST: on Inicio the in-work tabs are hidden, so
+    // `/^Documentos/` is unreachable mid-loop and `getByRole` would throw.
+    for (const view of [...VIEWS.filter((v) => v !== 'home'), 'home' as const]) {
       fireEvent.click(screen.getByRole('button', { name: CONTROL[view] }));
       expect(main().querySelector(REGION[view]), `${view} rendered an empty workspace`).not.toBeNull();
     }

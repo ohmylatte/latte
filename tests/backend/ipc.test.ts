@@ -61,6 +61,16 @@ describe('IPC surface', () => {
     expect(API_ARITY.brandContextStatus).toBe(1);
     expect(API_ARITY.listBrandContextRevisions).toBe(1);
     expect(API_ARITY.restoreBrandContextRevision).toBe(3);
+    expect(API_METHODS).toContain('getOnboardingComplete');
+    expect(API_METHODS).toContain('setOnboardingComplete');
+    expect(API_METHODS).toContain('getOnboardingDraft');
+    expect(API_METHODS).toContain('setOnboardingDraft');
+    expect(API_METHODS).toContain('clearOnboardingDraft');
+    expect(API_ARITY.getOnboardingComplete).toBe(0);
+    expect(API_ARITY.setOnboardingComplete).toBe(1);
+    expect(API_ARITY.getOnboardingDraft).toBe(0);
+    expect(API_ARITY.setOnboardingDraft).toBe(1);
+    expect(API_ARITY.clearOnboardingDraft).toBe(0);
   });
 
   it('preload never exposes a generic invoke or Node globals', () => {
