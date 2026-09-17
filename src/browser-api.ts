@@ -11,8 +11,12 @@ const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
 function read(): Store {
   const raw = localStorage.getItem(KEY);
-  if (raw) return JSON.parse(raw);
-  return { brands: [{ id: 'demo', name: 'Casa Oliva · Ejemplo', context: 'Marca ficticia de objetos de diseño. Tono cálido, preciso y cercano. Este espacio contiene material de demostración, no investigación real.', createdAt: now(), archivedAt: null }], works: [{ id: 'demo-work', brandId: 'demo', title: 'Lanzamiento primavera', brief: initialBrief, folder: null, updatedAt: now() }], revisions: [], decisions: [], brandContextProposals: [] };
+  const store: Store = raw
+    ? JSON.parse(raw)
+    : { brands: [{ id: 'demo', name: 'Casa Oliva · Ejemplo', context: 'Marca ficticia de objetos de diseño. Tono cálido, preciso y cercano. Este espacio contiene material de demostración, no investigación real.', createdAt: now(), archivedAt: null }], works: [{ id: 'demo-work', brandId: 'demo', title: 'Lanzamiento primavera', brief: initialBrief, folder: null, updatedAt: now() }], revisions: [], decisions: [], brandContextProposals: [] };
+  // A work written before out-of-scope stages existed reads as "nothing parked".
+  store.works = (store.works ?? []).map((w) => ({ ...w, outOfScopeStages: w.outOfScopeStages ?? [] }));
+  return store;
 }
 function change<T>(fn: (store: Store) => T): T { const s = read(); const result = fn(s); localStorage.setItem(KEY, JSON.stringify(s)); return result; }
 /**
@@ -122,7 +126,7 @@ export const browserAPI: LatteAPI = {
   createWork: async (brandId, title) => change(s => {
     const brand = s.brands.find(b => b.id === brandId); if (!brand) throw new Error('Brand not found: ' + brandId);
     if (brand.archivedAt) throw new Error('Brand is archived: ' + brandId);
-    const english = localStorage.getItem('latte-content-locale') === 'en-US'; const headings = english ? '\n\n## Goal\n\n## Context\n\n## Next steps\n' : '\n\n## Objetivo\n\n## Contexto\n\n## Próximos pasos\n'; const w: Work = { id: id(), brandId, title, brief: '# ' + title + headings, folder: null, updatedAt: now() }; s.works.push(w); return w;
+    const english = localStorage.getItem('latte-content-locale') === 'en-US'; const headings = english ? '\n\n## Goal\n\n## Context\n\n## Next steps\n' : '\n\n## Objetivo\n\n## Contexto\n\n## Próximos pasos\n'; const w: Work = { id: id(), brandId, title, brief: '# ' + title + headings, folder: null, outOfScopeStages: [], updatedAt: now() }; s.works.push(w); return w;
   }),
   // The expected output is real here; a linked result is not: the preview has
   // no Deliverables folder, so it refuses the link instead of faking a file.
@@ -163,6 +167,15 @@ export const browserAPI: LatteAPI = {
    if(patch.status!==undefined&&!['draft','review','approved'].includes(patch.status))throw new Error('Estado inválido');
    if(patch.funnelStages!==undefined&&(!Array.isArray(patch.funnelStages)||patch.funnelStages.length>4||patch.funnelStages.some(x=>!['discovery','consideration','conversion','retention'].includes(x))))throw new Error('Etapa inválida');
    if(patch.title!==undefined)d.title=patch.title.trim();if(patch.status!==undefined)d.status=patch.status;if(patch.funnelStages!==undefined)d.funnelStages=[...new Set(patch.funnelStages)];d.updatedAt=now();return d;
+  }),
+  toggleOutOfScopeStage: async (workId, stage) => change(s => {
+    const w = s.works.find(w => w.id === workId);
+    if (!w) throw new Error('Trabajo no encontrado');
+    if (!['discovery', 'consideration', 'conversion', 'retention'].includes(stage)) throw new Error('Etapa inválida');
+    const current = w.outOfScopeStages ?? [];
+    w.outOfScopeStages = current.includes(stage) ? current.filter(x => x !== stage) : [...current, stage];
+    w.updatedAt = now();
+    return w;
   }),
   snapshotDocument: async documentId=>mutate(s=>revision(s,documentId,contentFrom(s,documentId).content)),
   listDocumentRevisions: async documentId=>read().revisions.filter(r=>r.documentId===documentId).reverse(),
