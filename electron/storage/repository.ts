@@ -15,7 +15,7 @@ import { SCHEMA_SQL, SCHEMA_VERSION } from './schema';
 import { brandContextFingerprint } from '../workspace/brandContextProtocol';
 
 interface BrandRow extends SqlRow { id: string; name: string; context: string; created_at: string; archived_at: string | null }
-interface WorkRow extends SqlRow { id: string; brand_id: string; title: string; brief: string; dir: string | null; expected_output: string | null; result_path: string | null; updated_at: string }
+interface WorkRow extends SqlRow { id: string; brand_id: string; title: string; brief: string; dir: string | null; expected_output: string | null; result_path: string | null; out_of_scope_stages: string; updated_at: string }
 interface RevisionRow extends SqlRow { id: string; work_id: string; document_id: string | null; source: string; content: string; created_at: string }
 interface DecisionRow extends SqlRow { id: string; work_id: string; text: string; created_at: string }
 interface DecisionProposalRow extends SqlRow { id:string; work_id:string; statement:string; rationale:string; alternatives:string; evidence:string; status:string; source_chat_id:string|null; source_message_id:string|null; source_member_id:string|null; source_role_id:string|null; source_runtime:string|null; client_request_id:string; fingerprint:string; created_at:string; decided_at:string|null }
@@ -79,7 +79,7 @@ export interface TeamMemberRecord {
 
 const BRAND_SELECT = 'SELECT b.id, b.name, b.context, b.created_at, a.archived_at FROM brands b LEFT JOIN brand_archives a ON a.brand_id = b.id';
 const toBrand = (r: BrandRow): Brand => ({ id: r.id, name: r.name, context: r.context, createdAt: r.created_at, archivedAt: r.archived_at ?? null });
-const toWork = (r: WorkRow): Work => ({ id: r.id, brandId: r.brand_id, title: r.title, brief: r.brief, folder: r.dir ?? null, expectedOutput: r.expected_output ?? null, resultPath: r.result_path ?? null, updatedAt: r.updated_at });
+const toWork = (r: WorkRow): Work => ({ id: r.id, brandId: r.brand_id, title: r.title, brief: r.brief, folder: r.dir ?? null, expectedOutput: r.expected_output ?? null, resultPath: r.result_path ?? null, outOfScopeStages: parseStages(r.out_of_scope_stages), updatedAt: r.updated_at });
 const toRevision = (r: RevisionRow): Revision => ({
   id: r.id,
   workId: r.work_id,
@@ -257,6 +257,11 @@ export class LatteRepository {
     // set"; not in SCHEMA_SQL, so new and existing databases take this path.
     if (workColumns.length > 0 && !workColumns.includes('expected_output')) this.db.run('ALTER TABLE works ADD COLUMN expected_output TEXT');
     if (workColumns.length > 0 && !workColumns.includes('result_path')) this.db.run('ALTER TABLE works ADD COLUMN result_path TEXT');
+    // Out-of-scope stages: a JSON array of funnel stages the human parked for
+    // this work. Defaulted like funnel_stages, ignored by older builds (they
+    // name their columns on insert), and added by migrate() so new and existing
+    // databases take the same path — no schema version of its own.
+    if (workColumns.length > 0 && !workColumns.includes('out_of_scope_stages')) this.db.run("ALTER TABLE works ADD COLUMN out_of_scope_stages TEXT NOT NULL DEFAULT '[]'");
     const revisionColumns = this.db.all<{ name: string }>("SELECT name FROM pragma_table_info('revisions')").map((c) => c.name);
     if (revisionColumns.length > 0 && !revisionColumns.includes('document_id')) this.db.run('ALTER TABLE revisions ADD COLUMN document_id TEXT');
     if (revisionColumns.length > 0 && !revisionColumns.includes('source')) this.db.run("ALTER TABLE revisions ADD COLUMN source TEXT NOT NULL DEFAULT 'human'");
@@ -388,8 +393,8 @@ export class LatteRepository {
   }
 
   insertWork(work: Work): Work {
-    this.db.run('INSERT INTO works(id, brand_id, title, brief, dir, expected_output, result_path, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
-      work.id, work.brandId, work.title, work.brief, work.folder ?? null, work.expectedOutput ?? null, work.resultPath ?? null, work.updatedAt,
+    this.db.run('INSERT INTO works(id, brand_id, title, brief, dir, expected_output, result_path, out_of_scope_stages, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+      work.id, work.brandId, work.title, work.brief, work.folder ?? null, work.expectedOutput ?? null, work.resultPath ?? null, JSON.stringify(work.outOfScopeStages ?? []), work.updatedAt,
     ]);
     return work;
   }
@@ -398,6 +403,13 @@ export class LatteRepository {
   setWorkOutcome(id: string, expectedOutput: string | null, resultPath: string | null, updatedAt: string): Work {
     this.getWork(id);
     this.db.run('UPDATE works SET expected_output = ?, result_path = ?, updated_at = ? WHERE id = ?', [expectedOutput, resultPath, updatedAt, id]);
+    return this.getWork(id);
+  }
+
+  /** Which funnel stages the human marked out of scope for this work. Validation lives in the service. */
+  setWorkOutOfScopeStages(id: string, stages: FunnelStage[], updatedAt: string): Work {
+    this.getWork(id);
+    this.db.run('UPDATE works SET out_of_scope_stages = ?, updated_at = ? WHERE id = ?', [JSON.stringify([...new Set(stages)]), updatedAt, id]);
     return this.getWork(id);
   }
 
