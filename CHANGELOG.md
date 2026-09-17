@@ -28,10 +28,20 @@ Nueve features que reorganizan la experiencia cotidiana:
 
 Onboarding marketer-first: entrás con una necesidad de negocio, Latte arma el trabajo, recomienda el rol y te lleva a un primer resultado útil sin jerga técnica (runtime, CLI, MCP, Markdown quedan en «Configuración avanzada»).
 
+### Idioma
+
+- **El idioma de contenido sigue al de la interfaz.** Antes caía a español sin mirar nada, así que una instalación en inglés mostraba la interfaz en inglés y generaba los documentos en español. Se siembra en el primer arranque desde el idioma ya elegido; una instalación que actualiza conserva la elección que hizo la persona.
+- **El primer render ya nace en el idioma correcto.** La interfaz arrancaba en español y cambiaba un tick después, cuando llegaba la preferencia: una instalación en inglés parpadeaba en español en cada arranque.
+- **Los diálogos del sistema hablan un solo idioma.** Actualizar, cerrar con cambios sin guardar, abrir HTML externo y «no pude abrir tus datos» mezclaban título traducido con botones en español. El diálogo de datos ilegibles corre con la base cerrada, así que ahora usa el idioma del sistema en vez de asumir español.
+
+### Correcciones
+
+- **El recorrido inicial ya no rebota.** Al volver a un paso anterior desde el resumen, la lectura del borrador guardado podía resolver después del click y devolver a la persona al resumen, con la respuesta obligatoria todavía vacía.
+
 ### Plataformas
 
 - **Windows x64**: soportado — el único con ejecutable publicado.
-- **Linux x64** y **macOS**: **no hay un ejecutable probado.** Los paquetes de Linux se publican en *alpha* (verificado en Linux Mint 22.3 con X11, no en Wayland ni otras distribuciones); macOS no tiene artefacto. La vía soportada es correr desde el código.
+- **Linux x64** y **macOS**: **no hay un ejecutable probado.** Los paquetes de Linux se publican en *alpha* (verificado en Linux Mint 22.3 con X11, no en Wayland ni otras distribuciones); macOS no publica artefacto: el workflow exige un build firmado y notarizado, que todavía no está configurado. La vía soportada es correr desde el código.
 - El instalador de Windows todavía **no está firmado**.
 
 ### Requisitos

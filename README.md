@@ -43,6 +43,24 @@ El instalador de Windows avisa cuando hay una versión nueva; la descarga empiez
 cuando la aceptás y Latte se reinicia solo cuando vos lo decidís. Nunca lo hace
 sobre un documento sin guardar.
 
+### Idioma
+
+En el primer arranque Latte elige su idioma una sola vez: **inglés si tu sistema
+está en inglés, español (Argentina) en cualquier otro caso.** De ahí en más manda
+tu elección, no el sistema: si después cambiás el idioma del sistema operativo,
+Latte sigue en el que vos dejaste.
+
+En **Ajustes → Idioma** hay dos preferencias separadas, a propósito:
+
+| Preferencia | Qué cambia |
+| --- | --- |
+| Idioma de la interfaz | Los textos de Latte y sus diálogos del sistema (actualizar, cerrar con cambios sin guardar, abrir HTML externo) |
+| Idioma de contenido nuevo | El idioma en que se generan proyectos y documentos nuevos |
+
+El idioma de contenido **solo afecta lo nuevo**. Latte nunca reescribe un
+proyecto que ya existe, ni traduce lo que ya escribiste: cada trabajo recuerda
+el idioma con el que nació.
+
 ## Desde el código
 
 Corré Latte desde el código en **cualquier entorno** (Windows, Linux o macOS)
@@ -116,7 +134,7 @@ y el agente puede leerlo.
 
 | Requisito | Detalle |
 | --- | --- |
-| Sistema | Windows x64 está soportado. El empaquetado para Linux x64 está en alpha: verificado en Linux Mint 22.3 con X11; Wayland y otras distribuciones no fueron verificadas. macOS no está soportado ni prometido para esta alpha |
+| Sistema | Windows x64 está soportado. El empaquetado para Linux x64 está en alpha: verificado en Linux Mint 22.3 con X11; Wayland y otras distribuciones no fueron verificadas. macOS no publica artefacto: un release firmado y notarizado todavía no está configurado |
 | Node.js | Solo para correrlo desde el código: 24 LTS (el proyecto usa `node:sqlite`, incorporado en Node 24) |
 | Agentes | Al menos uno instalado y con sesión iniciada: [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex/cli/) u [OpenCode](https://opencode.ai) |
 | Facturación | La inferencia la paga tu cuenta con tu proveedor. Latte no factura ni intermedia nada |
@@ -149,7 +167,7 @@ el navegador y **no ejecuta ningún agente**.
 ### Límites que conviene conocer
 
 - Latte 1.0.0 es la primera versión estable del producto. El empaquetado de plataformas sigue su propio ciclo: Windows x64 está soportado, Linux x64 sigue en empaquetado *alpha* y macOS no está soportado. La base se copia antes de cada migración, y una base escrita por una versión más nueva no se abre en una vieja.
-- **Plataformas de la alpha.** Windows x64 está soportado. El empaquetado para Linux x64 está en alpha: fue verificado en Linux Mint 22.3 con X11; Wayland y otras distribuciones no fueron verificadas. macOS no está soportado ni prometido; arm64 todavía no está verificado.
+- **Plataformas de 1.0.0.** Windows x64 está soportado. El empaquetado para Linux x64 está en alpha: fue verificado en Linux Mint 22.3 con X11; Wayland y otras distribuciones no fueron verificadas. macOS no está soportado ni prometido; arm64 todavía no está verificado.
 - El instalador **no está firmado**, así que SmartScreen advierte hasta que el binario acumule reputación.
 - **No todo lo que hace un agente está aislado.** Latte le da al agente la carpeta del trabajo como contexto y las instrucciones lo dicen, pero un runtime puede escribir cualquier archivo al que tenga permiso. Las instrucciones no son un sandbox. Los permisos reales los aplica cada runtime, y Latte te muestra sus pedidos para que decidas.
 - Un guardado hecho **fuera** de Latte no se intercepta: reemplaza el archivo y Latte lo detecta después.
@@ -171,7 +189,7 @@ your machine.
 > **Windows x64 is supported. Linux x64 packaging is alpha.** It has been
 > verified on Linux Mint 22.3 with X11; Wayland and other distributions are not yet verified.
 > Latte does not include an agent or an AI account; you bring your own, and your
-> provider bills inference. macOS is not supported or promised for this alpha.
+> provider bills inference. macOS publishes no artifact: a signed and notarized release is not set up yet.
 
 ## Install
 
@@ -194,6 +212,24 @@ Claude Code, Codex or OpenCode. Latte detects them for you.
 
 The Windows installer notifies you about new versions, downloads only after you
 accept, and restarts only when you choose.
+
+### Language
+
+On its first launch Latte picks its language once: **English if your system is in
+English, Spanish (Argentina) otherwise.** From then on your choice wins, not the
+system's: changing your operating system's language later leaves Latte where you
+left it.
+
+**Settings → Language** keeps two preferences apart, on purpose:
+
+| Preference | What it changes |
+| --- | --- |
+| Interface language | Latte's own text and its system dialogs (update, closing with unsaved changes, opening external HTML) |
+| Language for new content | The language new projects and documents are generated in |
+
+The content language **only affects what is new**. Latte never rewrites an
+existing project, and never translates what you already wrote: every piece of
+work remembers the language it was born in.
 
 - **Chat (default):** a native Latte chat on top of whichever runtime you picked as primary — Claude Code and Codex with your own subscription, or any API-key provider through [OpenCode](https://opencode.ai). One conversation per team member, inside that work's folder, streaming messages, tool calls, permission requests and questions into the UI. No fake replies: when a runtime, a provider or a balance is missing you see the real reason.
 - **Terminal (advanced):** a real PTY running your CLI (`claude`, `codex`, `opencode`) inside the work folder, with Latte-managed `CLAUDE.md` / `AGENTS.md` context files. Global tool configuration is never touched.
