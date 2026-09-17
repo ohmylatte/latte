@@ -70,7 +70,7 @@ describe('Work outcome: expected output and linked result', () => {
     const [listed] = await b.service.listWorks(brand.id);
     // The pointer stays; its absence is read from the folder, not kept as a state.
     expect(listed.resultPath).toBe('propuesta.pdf');
-    expect(Object.keys(listed).sort()).toEqual(['brandId', 'brief', 'expectedOutput', 'folder', 'id', 'resultPath', 'title', 'updatedAt']);
+    expect(Object.keys(listed).sort()).toEqual(['brandId', 'brief', 'expectedOutput', 'folder', 'id', 'outOfScopeStages', 'resultPath', 'title', 'updatedAt']);
     expect((await b.service.listDeliverables(work.id)).files).toEqual([]);
     // Saving the expected output alone does not re-validate an untouched link.
     expect((await b.service.updateWork(work.id, { expectedOutput: 'Propuesta en PDF, v2' })).resultPath).toBe('propuesta.pdf');
@@ -341,7 +341,7 @@ describe.each<DriverPreference>(['node:sqlite', 'sql.js'])('Outcome columns on a
     try {
       repo.migrate();
       repo.migrate();
-      expect(repo.getWork('wrk_1')).toEqual({ id: 'wrk_1', brandId: 'brd_1', title: 'Uno', brief: '# Viejo', folder: null, expectedOutput: null, resultPath: null, updatedAt: '2026-01-02T00:00:00.000Z' });
+      expect(repo.getWork('wrk_1')).toEqual({ id: 'wrk_1', brandId: 'brd_1', title: 'Uno', brief: '# Viejo', folder: null, expectedOutput: null, resultPath: null, outOfScopeStages: [], updatedAt: '2026-01-02T00:00:00.000Z' });
       expect(repo.getMeta('schema_version')).toBe(SCHEMA_VERSION);
       // 9 adds brand_archives; outcome columns still add none of their own.
       expect(SCHEMA_VERSION).toBe('11');
