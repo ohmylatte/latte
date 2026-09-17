@@ -81,6 +81,7 @@ const mount = () => render(<I18nProvider><App /></I18nProvider>);
 /** Every view has to render a region of its own; an empty workspace is the bug. */
 const REGION: Record<(typeof VIEWS)[number], string> = {
   home: '.home-view',
+  resumen: '.resumen-view',
   brief: '.document-scroll',
   funnel: '.funnel-view',
   context: '.context-editor',
@@ -90,6 +91,7 @@ const REGION: Record<(typeof VIEWS)[number], string> = {
 
 const CONTROL: Record<(typeof VIEWS)[number], RegExp> = {
   home: /^Inicio/,
+  resumen: /^Resumen/,
   brief: /^Documentos/,
   funnel: /^Embudo/,
   context: /^Contexto/,

@@ -19,6 +19,7 @@ import { ALL_BRAND_SCOPE, inKnowledgeScope, selectWorkBrief, workBrief, workTitl
 import { KnowledgeOrigin, KnowledgeScopeFilter } from './KnowledgeScope';
 import { ContextView } from './ContextView';
 import { HomeView } from './HomeView';
+import { ResumenView } from './ResumenView';
 import { useDocumentStates } from './document-states';
 import { OnboardingGate, type OnboardingResult } from './OnboardingGate';
 import { contextSaveNotice } from './context-view';
@@ -36,7 +37,7 @@ import { confirmFolderLink } from './folder-link';
  * surface, reachable before any work is open. Opening a work still opens the
  * work (`selectWork`), so the two destinations never blur.
  */
-export const VIEWS = ['home', 'brief', 'funnel', 'context', 'memory', 'decisions'] as const;
+export const VIEWS = ['home', 'resumen', 'brief', 'funnel', 'context', 'memory', 'decisions'] as const;
 type View = (typeof VIEWS)[number];
 type Modal = 'brand' | 'work' | 'document' | null;
 const date = (value: string) => new Date(value).toLocaleString(currentLocale(), { dateStyle: 'short', timeStyle: 'short' });
@@ -235,10 +236,10 @@ export function App() {
   // no new call, and the badge names no agent (the roster is per-work).
   const liveWorkIds = (contextStatus?.works ?? []).filter((entry) => entry.live).map((entry) => entry.id);
   const pendingContextProposals = contextStatus?.pending ? 1 : 0;
-  // ONE review sweep for Inicio, owned here and gated on the view. `home` and
-  // `brief` never mount together — one `view` selects one `<main>` branch — so
-  // exactly one sweep is ever active and the sweep can never double.
-  const { states: homeStates, checking: homeChecking } = useDocumentStates(brand?.id ?? '', documents, view === 'home' && Boolean(brand));
+  // ONE review sweep for Inicio and Resumen, owned here and gated on the view.
+  // `home` and `resumen` never mount together — one `view` selects one `<main>`
+  // branch — so exactly one sweep is ever active and the sweep can never double.
+  const { states: homeStates, checking: homeChecking } = useDocumentStates(brand?.id ?? '', documents, (view === 'home' || view === 'resumen') && Boolean(brand));
   // Who is writing to which file right now, straight from each runtime's own
   // tool reports. A write that did not come through a tool is never attributed.
   const documentFileNames = documents.map(d => d.fileName);
@@ -822,18 +823,19 @@ export function App() {
       <div className="nav-label">{t('ui.auto.034')}</div>
       <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button></nav>
       <div className="sidebar-rule" /><div className="nav-label">TRABAJOS <span>{works.length.toString().padStart(2, '0')}</span></div>
-      <nav className="work-nav">{works.map(w => <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'decisions') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{(workHasLiveChat(w.id) || sessions[w.id]) && <i className={sessions[w.id] && endedSessions.has(sessions[w.id].id) && !workHasLiveChat(w.id) ? 'ended-dot' : 'live-dot'} />}</button>)}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
+      <nav className="work-nav">{works.map(w => <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'decisions' || view === 'resumen') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{(workHasLiveChat(w.id) || sessions[w.id]) && <i className={sessions[w.id] && endedSessions.has(sessions[w.id].id) && !workHasLiveChat(w.id) ? 'ended-dot' : 'live-dot'} />}</button>)}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
       <div className="sidebar-bottom"><button disabled={!brand || transitioning} title={t('ui.auto.038')} onClick={() => { setName(''); setModal('work'); }}><Plus size={20} />{t('ui.auto.038')}</button><div className="sidebar-rule" /><nav><button onClick={() => setSettings('agents')} title={t('ui.auto.348')}><Settings2 size={17} />{t('ui.auto.348')}</button></nav><div className="profile"><span className="avatar">G</span><div>Tu estudio<small>{t('ui.auto.039')}</small></div></div></div>
     </aside>
     <header className="topbar"><div className="breadcrumb">{brand?.name ?? 'Bienvenido a Latte'}<span>/</span><strong>{work?.title ?? 'Tu espacio de marketing'}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
     <main className="workspace" aria-hidden={focusChat} inert={focusChat}>
       {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} />}
+      {view === 'resumen' && <ResumenView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} formatDate={date} onOpenBrief={() => setView('brief')} />}
       {/* The tabs and the knowledge-scope filter are in-work chrome: on Inicio
           they would read as "a work with no tab selected". */}
-      {view !== 'home' && <><div className="tabs"><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><div className="tab-spacer" /></div>
+      {view !== 'home' && <><div className="tabs"><button className={view === 'resumen' ? 'selected' : ''} onClick={() => setView('resumen')}>{t('resumen.tab')}</button><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><div className="tab-spacer" /></div>
       {(view === 'brief' || view === 'funnel' || view === 'decisions') && brand && <KnowledgeScopeFilter works={works} currentWorkId={work?.id ?? null} value={knowledgeScope} onChange={setKnowledgeScope} />}</>}
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}
-      {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={setView} work={work} brandName={brand?.name ?? ''} documents={visibleDocuments} selectedId={selectedDocId} onSelect={id => brand && setSelectedDoc(prev => ({ ...prev, [brand.id]: id }))} onDocumentsChanged={async () => { if (brand) await loadKnowledge(brand.id, work?.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} currentWorkId={work?.id ?? null} workTitles={titlesByWork} showWorkDelta={showWorkDelta} brandContextDefined={Boolean(brand?.context.trim())} pendingDecisions={visibleDecisions.filter(d => d.status === 'pending').length} />}
+      {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={setView} work={work} brandName={brand?.name ?? ''} documents={visibleDocuments} selectedId={selectedDocId} onSelect={id => brand && setSelectedDoc(prev => ({ ...prev, [brand.id]: id }))} onDocumentsChanged={async () => { if (brand) await loadKnowledge(brand.id, work?.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} currentWorkId={work?.id ?? null} workTitles={titlesByWork} showWorkDelta={showWorkDelta} />}
       {view === 'context' && brand && <ContextView
         brand={brand}
         proposals={contextProposals}

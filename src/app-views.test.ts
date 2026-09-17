@@ -35,7 +35,7 @@ describe('workspace views', () => {
   it('enumerates every workspace view in one list', () => {
     // `home` is first on purpose: it is the landing of a returning user, and the
     // list order is what the render-branch guard below walks.
-    expect(listed).toEqual(['home', 'brief', 'funnel', 'context', 'memory', 'decisions']);
+    expect(listed).toEqual(['home', 'resumen', 'brief', 'funnel', 'context', 'memory', 'decisions']);
   });
 
   it('renders a branch for each of them inside <main>', () => {
