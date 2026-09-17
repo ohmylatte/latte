@@ -22,8 +22,19 @@ export interface Splash {
   close(): void;
 }
 
-const MIN_VISIBLE_MS = 1200;
+/**
+ * The intro of `assets/splash.js` lasts `INTRO_S` (1.6s): the cup draws on, the
+ * coffee fills, the L bounces into the foam and the three wisps rise. Holding
+ * for less than that cut the animation off mid-pour — it read as a blank paper
+ * rectangle that blinked. The tail is what lets the finished cup be seen at all.
+ * Keep this above the intro of that file, or the drawing is wasted work.
+ */
+const INTRO_MS = 1600;
+const TAIL_MS = 350;
+const MIN_VISIBLE_MS = INTRO_MS + TAIL_MS;
 const READY_HOLD_MS = 300;
+/** Last resort if the page never reports a painted frame. */
+const PAINT_WAIT_MS = 1200;
 
 const disabled: Splash = {
   stage: () => {},
@@ -64,12 +75,27 @@ export function openSplash(options: { icon: string; locale: 'es' | 'en'; version
     void win.webContents.executeJavaScript(`window.latteSplash && window.latteSplash(${JSON.stringify(stage)})`).catch(() => {});
   };
 
-  win.once('ready-to-show', () => {
-    if (!alive()) return;
+  /**
+   * Shows the window once, and starts the minimum-visible clock from THAT
+   * moment. `ready-to-show` fires before the canvas has drawn anything, so
+   * showing there put an empty paper rectangle on screen and spent the hold
+   * on a blank frame instead of on the cup.
+   */
+  const reveal = () => {
+    if (!alive() || shownAt !== 0) return;
     win.show();
     shownAt = Date.now();
+  };
+  win.webContents.on('did-finish-load', () => {
+    send(current);
+    // Two frames: the first schedules the draw, the second has it painted.
+    void win.webContents
+      .executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))')
+      .then(reveal, reveal);
   });
-  win.webContents.on('did-finish-load', () => send(current));
+  // A page that never reports a frame must not swallow the splash entirely.
+  const paintTimer = setTimeout(reveal, PAINT_WAIT_MS);
+  win.once('closed', () => clearTimeout(paintTimer));
   void win.loadFile(path.join(__dirname, '..', 'assets', 'splash.html'), { query: { lang: options.locale, v: options.version } });
 
   return {

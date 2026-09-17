@@ -60,7 +60,7 @@ export function UpdateBanner() {
       .finally(() => setBusy(false));
   };
   const later = () => setDismissed(key(state));
-  const version = state.version ? `versión ${state.version}` : 'una nueva versión';
+  const version = state.version ? t('update.version', { version: state.version }) : t('update.newVersion');
 
   return <section className={'update-toast' + (state.phase === 'ready' ? ' ready' : '')} role="status" aria-live="polite">
     <div className="update-toast-head">
@@ -68,7 +68,7 @@ export function UpdateBanner() {
         state.phase === 'ready' ? t('ui.auto.326')
           : state.phase === 'downloading' ? t('ui.auto.414', { p0: version })
             : state.phase === 'error' ? t('ui.auto.327')
-              : `Hay una nueva versión de Latte disponible`
+              : t('update.available')
       }</strong>
       <button className="icon-button" aria-label={t('ui.auto.328')} title={t('ui.auto.328')} onClick={later}><X size={15} /></button>
     </div>

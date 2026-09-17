@@ -66,7 +66,7 @@ export function FolderContents({ workId, untracked, onTrack, onImported, busy }:
         <h4>Markdown que Latte puede seguir <small>{untracked.length}</small></h4>
         {untracked.map(f => <div key={f.fileName} className="folder-row">
           <FilePlus size={14} />
-          <span>{f.fileName}{f.funnelStages?.length ? <em>{f.funnelStages.map(s => STAGE_LABEL[s]).join(' + ')}</em> : null}</span>
+          <span>{f.fileName}{f.funnelStages?.length ? <em>{f.funnelStages.map(s => t(STAGE_LABEL[s])).join(' + ')}</em> : null}</span>
           <button disabled={busy} onClick={() => void onTrack(f.fileName)}>{t('ui.auto.357')}</button>
         </div>)}
       </div>}

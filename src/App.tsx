@@ -122,9 +122,11 @@ export function App() {
   const [brandEpoch, setBrandEpoch] = useState(0);
   // Review retains its resizable split; conversation focus leaves that width untouched.
   const [agentWidth, setAgentWidth] = useState<number>(readAgentWidth), [dragging, setDragging] = useState(false);
+  /** The open brand, readable from an async callback that outlived its render. */
+  const openBrandId = useRef<string | null>(null);
+  useEffect(() => { openBrandId.current = brand?.id ?? null; }, [brand?.id]);
   const [layout, setLayout] = useState<'conversation' | 'review'>('conversation');
   const focusChat = Boolean(work) && layout === 'conversation' && view === 'brief';
-  useEffect(() => { setLayout('conversation'); }, [work?.id]);
   const persistWidth = (value: number) => { try { localStorage.setItem(AGENT_WIDTH_KEY, String(value)); } catch { /* per-viewer convenience only */ } };
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault(); setDragging(true);
@@ -254,11 +256,13 @@ export function App() {
     if (!session) continue;
     for (const file of files) editors[file] = { roleId: session.roleId, roleName: session.roleName };
   }
-  const loadFolderDelta = (workId: string) => {
+  // `stillWanted` lets a caller that can be superseded (the effect on the open
+  // work) drop a listing that arrived after the work changed.
+  const loadFolderDelta = (workId: string, stillWanted: () => boolean = () => true) => {
     // An agent can create a file but cannot register it: Latte finds it and offers to adopt it.
-    void api.listUntrackedFiles(workId).then(setUntracked).catch(() => setUntracked([]));
+    void api.listUntrackedFiles(workId).then(list => { if (stillWanted()) setUntracked(list); }).catch(() => { if (stillWanted()) setUntracked([]); });
     // An agent can ask for a colleague the same way: by leaving a file.
-    void api.listHandoffs(workId).then(setHandoffs).catch(() => setHandoffs([]));
+    void api.listHandoffs(workId).then(list => { if (stillWanted()) setHandoffs(list); }).catch(() => { if (stillWanted()) setHandoffs([]); });
   };
   const loadKnowledge = async (brandId: string, workId?: string | null) => {
     const [docs, listed] = await Promise.all([api.listBrandDocuments(brandId), api.listBrandDecisions(brandId)]);
@@ -314,10 +318,21 @@ export function App() {
     setDecisions(await api.listBrandDecisions(work.brandId));
     setDecision('');
   });
-  const approveDecision = (id: string) => { if (!brand) return; void api.approveDecision(id, null).then(() => api.listBrandDecisions(brand.id)).then(setDecisions); };
-  const editApproveDecision = (id: string, edited: string) => { if (!brand) return; void api.approveDecision(id, edited).then(() => api.listBrandDecisions(brand.id)).then(setDecisions); };
-  const rejectDecision = (id: string) => { if (!brand) return; void api.rejectDecision(id).then(() => api.listBrandDecisions(brand.id)).then(setDecisions); };
-  const archiveDecision = (id: string) => { if (!brand) return; void api.archiveDecision(id).then(() => api.listBrandDecisions(brand.id)).then(setDecisions); };
+  /**
+   * Re-reads the decisions of the brand the action was taken in, and applies
+   * them only if that brand is still the open one. These four actions do not
+   * go through `run()`, so nothing marks the app busy and a brand switch right
+   * after a click is free: without this, the list of the brand just left would
+   * land on the new one, and the next approval would act on the wrong brand.
+   */
+  const refreshDecisionsOf = async (brandId: string) => {
+    const listed = await api.listBrandDecisions(brandId);
+    if (brandId === openBrandId.current) setDecisions(listed);
+  };
+  const approveDecision = (id: string) => { if (!brand) return; const owner = brand.id; void api.approveDecision(id, null).then(() => refreshDecisionsOf(owner)).catch(e => setError(displayError(e))); };
+  const editApproveDecision = (id: string, edited: string) => { if (!brand) return; const owner = brand.id; void api.approveDecision(id, edited).then(() => refreshDecisionsOf(owner)).catch(e => setError(displayError(e))); };
+  const rejectDecision = (id: string) => { if (!brand) return; const owner = brand.id; void api.rejectDecision(id).then(() => refreshDecisionsOf(owner)).catch(e => setError(displayError(e))); };
+  const archiveDecision = (id: string) => { if (!brand) return; const owner = brand.id; void api.archiveDecision(id).then(() => refreshDecisionsOf(owner)).catch(e => setError(displayError(e))); };
   // True until the first detection answers. The runtimes are found by running
   // their CLIs, which costs seconds: an empty list means "not asked yet", and
   // the UI has to say that instead of offering nothing.
@@ -344,7 +359,17 @@ export function App() {
     ...(chatRuntime?.available ? [{ key: 'opencode', label: `OpenCode · ${chatRuntime.defaultModel ?? 'modelo por defecto'}`, runtime: 'opencode' as const, accountId: null }] : []),
   ].filter(c => !(c.runtime === primaryRuntime && (c.runtime === 'opencode' || c.accountId === (primary?.accountId ?? 'system'))));
   useEffect(() => { void Promise.all([api.listBrands(), api.listArchivedBrands()]).then(([list, archived]) => { setBrands(list); setArchivedBrands(archived); if (list[0]) { setBrand(list[0]); setContext(list[0].context); } }).catch(e => setError(displayError(e))); void api.runtimeStatus().then(setRuntimes).catch(e => setError(displayError(e))); void api.listRoles().then(setRoles).catch(e => setError(displayError(e))); void api.appInfo().then(setAppInfo).catch(e => setError(displayError(e))); void refreshChatStatus(); void Promise.all([api.getOnboardingComplete(), api.getOnboardingDraft().catch(() => null)]).then(([complete, draft]) => { setOnboardingDraft(draft); setOnboarding(complete ? 'complete' : 'incomplete'); }).catch(() => setOnboarding('complete')); }, []);
-  useEffect(() => { if (!work) { setTeam([]); setPermissions('ask'); setDecisionAuthority('suggest'); return; } void loadTeam(work.id).catch(e => setError(displayError(e))); void api.getWorkPermissions(work.id).then(setPermissions).catch(() => setPermissions('ask')); void api.getDecisionAuthority(work.id).then(setDecisionAuthority).catch(()=>setDecisionAuthority('suggest')); }, [work?.id]);
+  // The team read is generation-guarded; the two reads beside it were not, so a
+  // fast switch between works could land the PREVIOUS work's permissions on
+  // this one — and that value decides whether an agent writes without asking.
+  useEffect(() => {
+    if (!work) { setTeam([]); setPermissions('ask'); setDecisionAuthority('suggest'); return; }
+    let active = true;
+    void loadTeam(work.id).catch(e => setError(displayError(e)));
+    void api.getWorkPermissions(work.id).then(value => { if (active) setPermissions(value); }).catch(() => { if (active) setPermissions('ask'); });
+    void api.getDecisionAuthority(work.id).then(value => { if (active) setDecisionAuthority(value); }).catch(() => { if (active) setDecisionAuthority('suggest'); });
+    return () => { active = false; };
+  }, [work?.id]);
   useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setKnowledgeScope(ALL_BRAND_SCOPE); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); const preferred = list.find(w => w.id === pendingWorkRef.current) ?? list[0] ?? null; pendingWorkRef.current = null; setWork(preferred); }).catch(e => setError(displayError(e))); }, [brand?.id, brandEpoch]);
   useEffect(() => {
     if (!brand) { setDocuments([]); setDecisions([]); return; }
@@ -354,7 +379,15 @@ export function App() {
     }).catch(e => { if (active) setError(displayError(e)); });
     return () => { active = false; };
   }, [brand?.id, works.map(w => w.id).join(',')]);
-  useEffect(() => { if (!work) { setUntracked([]); setHandoffs([]); return; } loadFolderDelta(work.id); }, [work?.id]);
+  // Same guard as the documents effect below: a slower listing from the work
+  // just left would otherwise offer its untracked files and its handoffs here,
+  // and accepting one would act on the wrong work's folder.
+  useEffect(() => {
+    if (!work) { setUntracked([]); setHandoffs([]); return; }
+    let active = true;
+    loadFolderDelta(work.id, () => active);
+    return () => { active = false; };
+  }, [work?.id]);
   useEffect(() => {
     if (!brand || !work) { selectionWorkRef.current = null; return; }
     if (selectionWorkRef.current === work.id) return;
@@ -422,11 +455,15 @@ export function App() {
    * call site keeps opening the conversation; Inicio passes `decisions` when the
    * row it activated was a pending decision.
    */
-  const selectWork = (w: Work, target: 'brief' | 'decisions' = 'brief') => {
+  const selectWork = (w: Work, target: 'brief' | 'decisions' = 'brief', as: 'conversation' | 'review' = 'conversation') => {
     if (!guard()) return;
     setWork(w);
     setContext(brand?.context ?? '');
     setView(target);
+    // Entering a work states its layout here, once. An effect on `work.id`
+    // used to reset it after the fact, so any caller that asked for the
+    // document (Inicio's review queue) was overwritten into the chat.
+    setLayout(as);
     if (brand) setSelectedDoc((prev) => selectWorkBrief(prev, brand.id, w.id, documents));
   };
   // Inicio's rows are ids, because the surface renders rows and the shell owns
@@ -439,7 +476,8 @@ export function App() {
     const owner = works.find((w) => w.id === document.workId);
     // `selectWork` goes first: it lands on the work's brief and resets the
     // selected document, so the explicit selection has to be the last write.
-    if (owner) selectWork(owner);
+    // A row in the review queue asks for the DOCUMENT, so it opens in review.
+    if (owner) selectWork(owner, 'brief', 'review');
     if (brand) setSelectedDoc((prev) => ({ ...prev, [brand.id]: document.id }));
   };
   const openNewWork = () => { setName(''); setModal('work'); };
@@ -638,7 +676,7 @@ export function App() {
   };
   const onWorkUpdated = (updated: Work) => { setWork(updated); setWorks(prev => prev.map(x => x.id === updated.id ? updated : x)); };
   const openMemory = () => { setView('memory'); if (!brand) return; const n = ++memoryGeneration.current; setMemory('Recuperando memoria…'); void api.readMemory(brand.id).then(r => { if (n !== memoryGeneration.current) return; setMemory(r.text); setMemoryAvailable(r.available); }).catch(e => setError(displayError(e))); };
-  const create = () => run(async () => { if (!name.trim()) return; if (!guard()) return; if (modal === 'brand') { const b = await api.createBrand(name.trim()); setBrands(prev => [...prev, b]); setBrand(b); setContext(b.context); } else if (brand) { const w = await api.createWork(brand.id, name.trim()); setWorks(prev => [...prev, w]); setWork(w); setContext(brand.context); } setView('brief'); setModal(null); setName(''); });
+  const create = () => run(async () => { if (!name.trim()) return; if (!guard()) return; if (modal === 'brand') { const b = await api.createBrand(name.trim()); setBrands(prev => [...prev, b]); setBrand(b); setContext(b.context); } else if (brand) { const w = await api.createWork(brand.id, name.trim()); setWorks(prev => [...prev, w]); setWork(w); setLayout('conversation'); setContext(brand.context); } setView('brief'); setModal(null); setName(''); });
   const createDocument = async (kind: DocumentKind, title: string, baseDocumentId: string | null) => {
     if (!work) return;
     await run(async () => {
@@ -686,7 +724,7 @@ export function App() {
   const selectMember = (memberId: string) => { if (work) setSelectedMembers(prev => ({ ...prev, [work.id]: memberId })); };
   const openSession = async (open: () => Promise<ChatSession>, workId: string) => {
     setStartingChat(true); setError('');
-    try { warnUnsaved(); const s = await open(); setChats(prev => ({ ...prev, [s.id]: s })); if (s.resumed) await chatStore.sync(s.id); setSelectedMembers(prev => ({ ...prev, [workId]: s.id })); await loadTeam(workId); setNotice(s.resumed ? `${s.roleName}: conversación reanudada` : t('ui.auto.341', { p0: s.roleName })); return s; }
+    try { warnUnsaved(); const s = await open(); setChats(prev => ({ ...prev, [s.id]: s })); if (s.resumed) await chatStore.sync(s.id); setSelectedMembers(prev => ({ ...prev, [workId]: s.id })); await loadTeam(workId); setNotice(s.resumed ? t('app.resumed', { name: s.roleName }) : t('ui.auto.341', { p0: s.roleName })); return s; }
     catch (e) { setError(displayError(e)); void refreshChatStatus(); throw e; }
     finally { setStartingChat(false); }
   };
@@ -788,7 +826,7 @@ export function App() {
     chatStore.seedUsage(result.member.id, result.member.usage);
     setChats(prev => ({ ...prev, [result.session!.id]: result.session! }));
     if (result.resumed) await chatStore.sync(result.session.id);
-    setNotice(result.resumed ? t('ui.auto.345', { p0: name }) : `Ahora usa ${name}. No se pudo retomar lo anterior: esta conversación empieza limpia.`);
+    setNotice(result.resumed ? t('ui.auto.345', { p0: name }) : t('app.runtimeChanged', { name }));
   });
   /**
    * Changes how hard one conversation works per answer. Same mechanics as
@@ -844,22 +882,22 @@ export function App() {
       <div className="nav-label">{t('ui.auto.034')}</div>
       <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button></nav>
       <div className="sidebar-rule" /><div className="nav-label">TRABAJOS <span>{works.length.toString().padStart(2, '0')}</span></div>
-      <nav className="work-nav">{works.map(w => <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'decisions' || view === 'resumen' || view === 'trabajo' || view === 'evidencia' || view === 'resultados') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{(workHasLiveChat(w.id) || sessions[w.id]) && <i className={sessions[w.id] && endedSessions.has(sessions[w.id].id) && !workHasLiveChat(w.id) ? 'ended-dot' : 'live-dot'} />}</button>)}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
+      <nav className="work-nav">{works.map(w => <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'funnel' || view === 'decisions' || view === 'resumen' || view === 'trabajo' || view === 'evidencia' || view === 'resultados') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{(workHasLiveChat(w.id) || sessions[w.id]) && <i className={sessions[w.id] && endedSessions.has(sessions[w.id].id) && !workHasLiveChat(w.id) ? 'ended-dot' : 'live-dot'} />}</button>)}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
       <div className="sidebar-bottom"><button disabled={!brand || transitioning} title={t('ui.auto.038')} onClick={() => { setName(''); setModal('work'); }}><Plus size={20} />{t('ui.auto.038')}</button><div className="sidebar-rule" /><nav><button onClick={() => setSettings('agents')} title={t('ui.auto.348')}><Settings2 size={17} />{t('ui.auto.348')}</button></nav><div className="profile"><span className="avatar">G</span><div>Tu estudio<small>{t('ui.auto.039')}</small></div></div></div>
     </aside>
     <header className="topbar"><div className="breadcrumb">{brand?.name ?? 'Bienvenido a Latte'}<span>/</span><strong>{work?.title ?? 'Tu espacio de marketing'}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
     <main className="workspace" aria-hidden={focusChat} inert={focusChat}>
       {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} />}
-      {view === 'resumen' && <ResumenView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} formatDate={date} onOpenBrief={() => setView('brief')} />}
-      {view === 'trabajo' && <TrabajoView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} handoffs={handoffs} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} mode={mode} formatDate={date} onOpenChat={() => { setLayout('conversation'); setView('brief'); }} />}
-      {view === 'evidencia' && <EvidenciaView work={work} workId={work?.id ?? ''} documents={documents} decisions={decisions} untracked={untracked} states={homeStates} checking={homeChecking} formatDate={date} onTrack={trackFile} onImported={() => loadKnowledge(work?.brandId ?? '', work?.id)} busy={busy} />}
-      {view === 'resultados' && <ResultadosView work={work} decisions={decisions} formatDate={date} />}
       {/* The tabs and the knowledge-scope filter are in-work chrome: on Inicio
           they would read as "a work with no tab selected". */}
       {view !== 'home' && <><div className="tabs"><button className={view === 'resumen' ? 'selected' : ''} onClick={() => setView('resumen')}>{t('resumen.tab')}</button><button className={view === 'trabajo' ? 'selected' : ''} onClick={() => setView('trabajo')}>{t('trabajo.tab')}</button><button className={view === 'evidencia' ? 'selected' : ''} onClick={() => setView('evidencia')}>{t('evidencia.tab')}</button><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><button className={view === 'resultados' ? 'selected' : ''} onClick={() => setView('resultados')}>{t('resultados.tab')}</button><div className="tab-spacer" /></div>
       {(view === 'brief' || view === 'funnel' || view === 'decisions') && brand && <KnowledgeScopeFilter works={works} currentWorkId={work?.id ?? null} value={knowledgeScope} onChange={setKnowledgeScope} />}</>}
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}
-      {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={setView} work={work} brandName={brand?.name ?? ''} documents={visibleDocuments} selectedId={selectedDocId} onSelect={id => brand && setSelectedDoc(prev => ({ ...prev, [brand.id]: id }))} onDocumentsChanged={async () => { if (brand) await loadKnowledge(brand.id, work?.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} currentWorkId={work?.id ?? null} workTitles={titlesByWork} showWorkDelta={showWorkDelta} />}
+      {view === 'resumen' && <ResumenView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} formatDate={date} onOpenBrief={() => { setLayout('review'); setView('brief'); }} />}
+      {view === 'trabajo' && <TrabajoView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} handoffs={handoffs} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} mode={mode} formatDate={date} onOpenChat={() => { setLayout('conversation'); setView('brief'); }} />}
+      {view === 'evidencia' && <EvidenciaView work={work} workId={work?.id ?? ''} documents={documents} decisions={decisions} untracked={untracked} states={homeStates} checking={homeChecking} formatDate={date} onTrack={trackFile} onImported={() => loadKnowledge(work?.brandId ?? '', work?.id)} busy={busy} />}
+      {view === 'resultados' && <ResultadosView work={work} decisions={decisions} formatDate={date} />}
+      {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={(next) => { if (next === 'brief') setLayout('review'); setView(next); }} work={work} brandName={brand?.name ?? ''} documents={visibleDocuments} selectedId={selectedDocId} onSelect={id => brand && setSelectedDoc(prev => ({ ...prev, [brand.id]: id }))} onDocumentsChanged={async () => { if (brand) await loadKnowledge(brand.id, work?.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} currentWorkId={work?.id ?? null} workTitles={titlesByWork} showWorkDelta={showWorkDelta} />}
       {view === 'context' && brand && <ContextView
         brand={brand}
         proposals={contextProposals}

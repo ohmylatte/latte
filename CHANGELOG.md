@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.1.0 — 2026-09-17
+
+Primera versión de la familia 1.x. Es una release de correcciones: nada nuevo que aprender, varias cosas que dejan de estar mal. La mayoría se encontró revisando el producto antes de publicarlo, no después de que alguien se tropezara.
+
+### Navegación
+
+- **La barra de pestañas ya no se muda.** Estando en Documentos, Embudo o Decisiones aparecía arriba; en Resumen, Trabajo, Evidencia o Resultados caía al pie del contenido. La barra con la que navegás un trabajo era lo único que no se quedaba quieto.
+- **Los links a un documento abren el documento.** «Abrir el brief» en el Resumen, una fila de «pendientes de revisión» en Inicio y elegir una pieza en el Embudo llevaban a la conversación, con el documento detrás de una pantalla inerte. Había que tocar «Revisar» a mano para ver lo que se había pedido.
+- La barra lateral no marcaba el trabajo abierto mientras mirabas el Embudo.
+
+### Lo que un agente tiene permitido
+
+- **El modo de permisos ya no se cruza entre trabajos.** Cambiando rápido de un trabajo a otro, la respuesta del anterior podía llegar tarde y pisar la del actual: un trabajo que pide permiso antes de cada acción podía mostrarse como automático. Ese valor decide si un agente escribe sin preguntar, así que era el peor lugar posible para una carrera.
+- Los archivos sueltos para adoptar y los traspasos entre roles también podían quedar mostrando los del trabajo anterior.
+- Aprobar, editar, rechazar o archivar una decisión ahora refresca la lista de la marca en la que actuaste, no de la que quedó abierta después.
+
+### Documentos
+
+- **Un guardado lento ya no puede mezclar dos documentos.** Si la escritura resolvía después de que abrieras otro documento, el texto y la huella del primero aterrizaban en el editor del segundo. Con un guardado más, ese texto terminaba en el archivo equivocado.
+
+### Idioma
+
+- **Los documentos nuevos se generan en el idioma de contenido del trabajo.** Las plantillas (estrategia, calendario, investigación, piezas, nota) salían siempre en español, incluso con la interfaz en inglés. El idioma queda fijado por trabajo: cambiar la preferencia después no retraduce lo ya escrito.
+- **Las etapas del recorrido y los estados de documento se traducen.** «Consideración», «En revisión» y compañía estaban escritas a mano en seis pantallas.
+- **Acentos arruinados en el diccionario.** Veinte textos decían `versi?n`, `conversaci?n` o `?siempre?` en vez de las palabras completas. Estuvo escondido porque las pantallas que mostraban esa copia tenían su propia versión bien escrita al lado; cablearlas al diccionario habría puesto el error en pantalla. Hay un test que ahora lo impide.
+- El aviso de versión nueva, los mensajes de conversación reanudada y las ayudas de modelo ya salen del diccionario en los dos idiomas.
+
+### El arranque
+
+- **El splash duraba menos que su propia animación.** Se mostraba 1200 ms cuando el dibujo de la taza necesita 1600 ms, y además aparecía antes de que el lienzo dibujara nada: lo que se veía era un rectángulo de papel en blanco que pestañeaba. Ahora aparece recién con el primer cuadro pintado y se queda hasta que la taza termina.
+
+### Por dentro
+
+- La app empaquetada solo navega a su propio documento, en vez de aceptar cualquier `file:`.
+- Se quitó un mapa de etiquetas en español que ya no usaba nadie: código muerto con texto sin traducir es una trampa para el próximo que lo importe.
+
+### Plataformas
+
+Sin cambios: Windows x64 soportado, Linux x64 en empaquetado *alpha*, macOS sin artefacto hasta que haya firma y notarización.
+
 ## 1.0.0 — 2026-09-17
 
 Latte deja de ser un editor con chat y pasa a ser un **espacio de trabajo operativo de marketing**. Es la primera versión estable del producto: marca nueva, activación guiada y un workspace reorganizado alrededor de cómo trabajás vos, no de cómo está construido por dentro. Se quitó la etiqueta «ALPHA» de la interfaz.

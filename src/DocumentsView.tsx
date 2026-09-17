@@ -153,9 +153,14 @@ export function DocumentsView(props: DocumentsViewProps) {
 
   const save = async () => {
     if (!selected || !editing || saving) return;
+    // The same token the load path uses: selecting another document bumps it,
+    // so a write that resolves after that stops here instead of putting this
+    // document's text and fingerprint into the editor of another one.
+    const token = loadToken.current;
     setSaving(true);
     try {
       const outcome = await api.saveDocument(selected.id, editing.content, editing.fingerprint);
+      if (token !== loadToken.current) return;
       if (outcome.status === 'conflict') {
         setConflict({ mine: editing.content, disk: outcome.disk.content, diskFingerprint: outcome.disk.fingerprint, revisionId: outcome.keptRevision.id });
         setExternal(null);
@@ -177,9 +182,11 @@ export function DocumentsView(props: DocumentsViewProps) {
 
   const keepMine = async () => {
     if (!selected || !conflict) return;
+    const token = loadToken.current;
     setSaving(true);
     try {
       const outcome = await api.saveDocument(selected.id, conflict.mine, conflict.diskFingerprint);
+      if (token !== loadToken.current) return;
       if (outcome.status === 'saved') {
         setEditing({ content: conflict.mine, fingerprint: outcome.fingerprint, dirty: false });
         setConflict(null);
@@ -191,10 +198,12 @@ export function DocumentsView(props: DocumentsViewProps) {
 
   const keepDisk = async () => {
     if (!selected || !conflict) return;
+    const token = loadToken.current;
     setSaving(true);
     try {
       // The human's text is archived before it leaves the editor: both variants survive.
       await api.keepDraftAsVersion(selected.id, conflict.mine);
+      if (token !== loadToken.current) return;
       setEditing({ content: conflict.disk, fingerprint: conflict.diskFingerprint, dirty: false });
       setConflict(null);
       props.onNotice(t('ui.auto.141'));
@@ -239,7 +248,7 @@ export function DocumentsView(props: DocumentsViewProps) {
     try {
       const kind = action === 'propose' ? 'strategy' : 'research';
       const title = { analyze: t('funnel.doc.analyze'), propose: t('funnel.doc.proposal'), experiment: t('funnel.doc.experiment') }[action];
-      await api.createDocument(work.id, kind, title + ' · ' + STAGE_LABEL[stage]);
+      await api.createDocument(work.id, kind, title + ' · ' + t(STAGE_LABEL[stage]));
       await props.onDocumentsChanged();
       props.onNotice(t('ui.auto.138'));
     } catch (e) { props.onError(displayError(e)); }
@@ -283,7 +292,7 @@ export function DocumentsView(props: DocumentsViewProps) {
 
     {selected && selected.proposedFunnelStages.length > 0 && <div className="doc-banner proposal" role="status">
       <SlidersHorizontal size={14} />
-      <span>{t('ui.auto.154')} <strong>{selected.proposedFunnelStages.map(s => STAGE_LABEL[s]).join(' + ')}</strong>.</span>
+      <span>{t('ui.auto.154')} <strong>{selected.proposedFunnelStages.map(s => t(STAGE_LABEL[s])).join(' + ')}</strong>.</span>
       <button className="primary" disabled={props.busy} onClick={() => void api.applyFunnelProposal(selected.id).then(props.onDocumentsChanged).then(() => props.onNotice('Etapas aplicadas.')).catch(e => props.onError(displayError(e)))}>{t('ui.auto.378')}</button>
       <button disabled={props.busy} onClick={() => void api.dismissFunnelProposal(selected.id).then(props.onDocumentsChanged).catch(e => props.onError(displayError(e)))}>{t('ui.auto.379')}</button>
     </div>}

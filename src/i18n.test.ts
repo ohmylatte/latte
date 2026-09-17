@@ -100,3 +100,35 @@ describe('i18n catalogs', () => {
     }
   });
 });
+
+describe('i18n encoding', () => {
+  /**
+   * Four Spanish entries shipped with their accents replaced by a literal `?`
+   * (`versi?n`, `conversaci?n`, `?siempre?`), and nobody saw it for months
+   * because the components that showed that copy had their own hardcoded,
+   * correctly written duplicate. Wiring them to the dictionary would have put
+   * the mangled text on screen. A dictionary is the single source of the words
+   * a person reads, so a mangled character in it is a shipped typo.
+   */
+  it('has no accent mangled into a question mark or a replacement character', async () => {
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined });
+    const { catalogs } = await import('./i18n');
+    const { generatedEn, generatedEs } = await import('./i18n-generated');
+
+    const mangled: string[] = [];
+    const scan = (label: string, entries: Record<string, string>) => {
+      for (const [key, value] of Object.entries(entries)) {
+        // A `?` glued to a letter is an accent that did not survive a save;
+        // U+FFFD is the same wound from the other direction.
+        if (/\?[\p{Ll}\p{Lu}]/u.test(value) || value.includes('�')) mangled.push(`${label} ${key}: ${value}`);
+      }
+    };
+    scan('es-AR', catalogs['es-AR']);
+    scan('en-US', catalogs['en-US']);
+    scan('generated es-AR', generatedEs as unknown as Record<string, string>);
+    scan('generated en-US', generatedEn as unknown as Record<string, string>);
+
+    expect(mangled).toEqual([]);
+  });
+});

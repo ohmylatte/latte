@@ -167,7 +167,7 @@ el navegador y **no ejecuta ningún agente**.
 ### Límites que conviene conocer
 
 - Latte 1.0.0 es la primera versión estable del producto. El empaquetado de plataformas sigue su propio ciclo: Windows x64 está soportado, Linux x64 sigue en empaquetado *alpha* y macOS no está soportado. La base se copia antes de cada migración, y una base escrita por una versión más nueva no se abre en una vieja.
-- **Plataformas de 1.0.0.** Windows x64 está soportado. El empaquetado para Linux x64 está en alpha: fue verificado en Linux Mint 22.3 con X11; Wayland y otras distribuciones no fueron verificadas. macOS no está soportado ni prometido; arm64 todavía no está verificado.
+- **Plataformas.** Windows x64 está soportado. El empaquetado para Linux x64 está en alpha: fue verificado en Linux Mint 22.3 con X11; Wayland y otras distribuciones no fueron verificadas. macOS no está soportado ni prometido; arm64 todavía no está verificado.
 - El instalador **no está firmado**, así que SmartScreen advierte hasta que el binario acumule reputación.
 - **No todo lo que hace un agente está aislado.** Latte le da al agente la carpeta del trabajo como contexto y las instrucciones lo dicen, pero un runtime puede escribir cualquier archivo al que tenga permiso. Las instrucciones no son un sandbox. Los permisos reales los aplica cada runtime, y Latte te muestra sus pedidos para que decidas.
 - Un guardado hecho **fuera** de Latte no se intercepta: reemplaza el archivo y Latte lo detecta después.
