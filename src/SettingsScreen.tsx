@@ -17,7 +17,7 @@ export type SettingsSection = 'agents' | 'profiles' | 'skills' | 'tools' | 'work
  * Opening or closing it never writes anything; the workspace state stays in
  * App and comes back untouched.
  */
-export function SettingsScreen({ onProfileDirtyChange, controls, section, onSection, onClose, onChanged, onNotice, onError, notice, error, onDismiss, terminal, workId }: {
+export function SettingsScreen({ onProfileDirtyChange, controls, section, onSection, onClose, onChanged, onNotice, onError, notice, error, onDismiss, terminal, workId, onReopenOnboarding }: {
   /** Window controls: Settings is a full screen, so it needs them too. */
   controls: ReactNode;
   onProfileDirtyChange: (dirty:boolean)=>void;
@@ -33,6 +33,8 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
   /** The raw CLI console: an escape hatch, so it lives here and not in the work. */
   terminal?: ReactNode;
   workId?: string | null;
+  /** Re-opens the first-run onboarding after it was completed. */
+  onReopenOnboarding?: () => void;
 }) {
   const { t } = useI18n();
   const [profileDirty,setProfileDirty]=useState(false);
@@ -66,13 +68,13 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       {section === 'profiles' && <ProfilesView onChanged={onChanged} onError={onError} onNotice={onNotice} onDirtyChange={setProfileDirty} />}
       {section === t('ui.auto.390') && <SkillsView onNotice={onNotice} onError={onError} />}
       {section === 'tools' && <ToolsView onNotice={onNotice} onError={onError} workId={workId} />}
-      {section === 'workspace' && <WorkspaceSection onError={onError} />}
+      {section === 'workspace' && <WorkspaceSection onError={onError} onReopenOnboarding={onReopenOnboarding} />}
       {section === 'language' && <LanguageSection />}
     </main>
   </div>;
 }
 
-function WorkspaceSection({ onError }: { onError: (text: string) => void }) {
+function WorkspaceSection({ onError, onReopenOnboarding }: { onError: (text: string) => void; onReopenOnboarding?: () => void }) {
   const { t } = useI18n();
   const [info, setInfo] = useState<AppInfo | null>(null);
   useEffect(() => { void api.appInfo().then(setInfo).catch(e => onError(e instanceof Error ? e.message : String(e))); }, []);
@@ -85,6 +87,7 @@ function WorkspaceSection({ onError }: { onError: (text: string) => void }) {
       <div><dt>{t('settings.pack')}</dt><dd>{info?.pack ?? '—'}{info && info.packRoles > 0 ? ` · ${t('common.roles',{count:info.packRoles})}` : ''}</dd></div>
       <div><dt>{t('settings.version')}</dt><dd>{info ? `Latte ${info.version} · ALPHA` : '—'}</dd></div>
     </dl>
+    {onReopenOnboarding && <div style={{ marginTop: 20 }}><button onClick={onReopenOnboarding}><Sparkles size={14} />{t('settings.reopenOnboarding')}</button></div>}
     <p className="footnote"><Info size={13} /> {t('settings.filesHelp')}</p>
   </section>;
 }

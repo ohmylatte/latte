@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createBackend } from '../../electron/bootstrap';
 import { MANAGED_MARKER, renderInstructions } from '../../electron/workspace/instructions';
 import { fakeRunner, makeBackend, type TestBackend } from './helpers';
+import type { OnboardingDraft } from '../../shared/contracts';
 
 function workDirOf(b: TestBackend, brandId: string, workId: string): string {
   return path.join(b.dir, 'brands', brandId, 'works', workId);
@@ -30,6 +31,47 @@ describe('LatteService persistence flow', () => {
     await b.service.setContentLocale('es-AR');
     await b.service.updateBrand(brand.id, 'Changed');
     expect(fs.readFileSync(path.join(workDirOf(b, brand.id, work.id), 'AGENTS.md'), 'utf8')).toContain('English (United States)');
+  });
+
+  it('persists the onboarding-complete flag in meta and validates its type', async () => {
+    expect(await b.service.getOnboardingComplete()).toBe(false);
+    expect(await b.service.setOnboardingComplete(true)).toBe(true);
+    expect(await b.service.getOnboardingComplete()).toBe(true);
+    await b.service.setOnboardingComplete(false);
+    expect(await b.service.getOnboardingComplete()).toBe(false);
+    await expect(b.service.setOnboardingComplete('yes' as never)).rejects.toThrow(/onboarding/i);
+  });
+
+  it('round-trips the onboarding draft and clears it when the terminal flag flips', async () => {
+    expect(await b.service.getOnboardingDraft()).toBeNull();
+    const draft: OnboardingDraft = {
+      step: 'brand',
+      workTypeId: 'campaign-new',
+      answers: { objetivo: 'Vender', canales: ['instagram', 'email'] },
+      assumptions: ['Sigo sin audiencia definida; la confirmamos después.'],
+      brandId: null,
+      usedDemo: false,
+      linkFolderRequested: true,
+      recommendedRoleId: 'strategist',
+      brief: '## Objetivo\n\nVender\n',
+    };
+    await b.service.setOnboardingDraft(draft);
+    expect(await b.service.getOnboardingDraft()).toEqual(draft);
+
+    // Completing (terminal flag set) clears the draft so a later replay starts fresh.
+    await b.service.setOnboardingComplete(true);
+    expect(await b.service.getOnboardingDraft()).toBeNull();
+  });
+
+  it('rejects a malformed onboarding draft and returns null for corrupt storage', async () => {
+    await expect(b.service.setOnboardingDraft({ step: 'nope' } as never)).rejects.toThrow(/onboarding draft/i);
+    await expect(b.service.setOnboardingDraft('garbage' as never)).rejects.toThrow(/onboarding draft/i);
+    // A corrupt value already in storage must not break the reader.
+    b.repo.setMeta('onboarding_draft', '{not json');
+    expect(await b.service.getOnboardingDraft()).toBeNull();
+    // A valid JSON blob that is not a draft is also refused.
+    b.repo.setMeta('onboarding_draft', JSON.stringify({ step: 'intent' }));
+    expect(await b.service.getOnboardingDraft()).toBeNull();
   });
 
   it('reports the running app version through appInfo', async () => {

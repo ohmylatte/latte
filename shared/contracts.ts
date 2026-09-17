@@ -1,6 +1,50 @@
 export type Provider = 'claude' | 'codex' | 'opencode';
 export type UiLocale = 'es-AR' | 'en-US';
 export type ContentLocale = UiLocale;
+
+// --- First-run onboarding -----------------------------------------------------
+
+export const ONBOARDING_STEP_VALUES = ['intent', 'context', 'brand', 'connect', 'prepare'] as const;
+export type OnboardingStep = (typeof ONBOARDING_STEP_VALUES)[number];
+
+/**
+ * Mid-flow onboarding progress, persisted so a person who abandons the walk
+ * resumes at the same step with their answers intact. `assumptions` are
+ * already-localized phrases. Stored as JSON under the `onboarding_draft` meta
+ * key; cleared the moment the terminal `onboarding_complete` flag flips.
+ */
+export interface OnboardingDraft {
+  step: OnboardingStep;
+  workTypeId: string | null;
+  answers: Record<string, string | string[]>;
+  assumptions: string[];
+  brandId: string | null;
+  usedDemo: boolean;
+  /** Records the intent to link an existing folder (honoured at the start CTA). */
+  linkFolderRequested: boolean;
+  recommendedRoleId: string;
+  brief: string;
+}
+
+/** True when a value has the shape of a persisted onboarding draft. */
+export function isOnboardingDraft(value: unknown): value is OnboardingDraft {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const d = value as Record<string, unknown>;
+  if (typeof d.step !== 'string' || !(ONBOARDING_STEP_VALUES as readonly string[]).includes(d.step)) return false;
+  if (d.workTypeId !== null && typeof d.workTypeId !== 'string') return false;
+  if (typeof d.answers !== 'object' || d.answers === null || Array.isArray(d.answers)) return false;
+  for (const v of Object.values(d.answers as Record<string, unknown>)) {
+    if (typeof v !== 'string' && !(Array.isArray(v) && v.every((x) => typeof x === 'string'))) return false;
+  }
+  if (!Array.isArray(d.assumptions) || d.assumptions.some((a) => typeof a !== 'string')) return false;
+  if (d.brandId !== null && typeof d.brandId !== 'string') return false;
+  if (typeof d.usedDemo !== 'boolean') return false;
+  if (typeof d.linkFolderRequested !== 'boolean') return false;
+  if (typeof d.recommendedRoleId !== 'string') return false;
+  if (typeof d.brief !== 'string') return false;
+  return true;
+}
+
 export interface Brand { id: string; name: string; context: string; createdAt: string; archivedAt: string | null }
 export interface Work {
   id: string;
@@ -582,6 +626,13 @@ export interface LatteAPI {
   setUiLocale(locale: UiLocale): Promise<UiLocale>;
   getContentLocale(): Promise<ContentLocale>;
   setContentLocale(locale: ContentLocale): Promise<ContentLocale>;
+  /** Whether the first-run onboarding has been completed. Authoritative: the gate shows iff this is false/unset. */
+  getOnboardingComplete(): Promise<boolean>;
+  setOnboardingComplete(complete: boolean): Promise<boolean>;
+  /** Mid-flow draft so a walk abandoned part-way resumes at the same step. Null when unset or already completed. */
+  getOnboardingDraft(): Promise<OnboardingDraft | null>;
+  setOnboardingDraft(draft: OnboardingDraft): Promise<void>;
+  clearOnboardingDraft(): Promise<void>;
   appInfo(): Promise<AppInfo>;
   listBrands(): Promise<Brand[]>;
   getBrand(brandId: string): Promise<Brand>;

@@ -1,11 +1,12 @@
 import { composeBrandContext } from '../shared/brandContext';
-import type { AgentRole, Brand, BrandContextProposal, BrandContextRevision, BrandContextStatus, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput } from '../shared/contracts';
+import type { AgentRole, Brand, BrandContextProposal, BrandContextRevision, BrandContextStatus, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput, OnboardingDraft } from '../shared/contracts';
+import { isOnboardingDraft } from '../shared/contracts';
 import { createAgentBus } from './agent-events';
 import { createChatStore } from './chat-store';
 
 const KEY = 'latte-preview-v1';
 const initialBrief = '# Una nueva forma de habitar.\n\n_Brief de lanzamiento · Casa Oliva_\n\n## 01 / Objetivo\nPresentar la nueva colección a una audiencia que valora el diseño y la vida cotidiana.\n\n## 02 / Audiencia\nPersonas que eligen menos objetos, con más intención.\n\n## 03 / Propuesta\nDiseño que acompaña tu manera de vivir.\n\n> Hipótesis de ejemplo: contrastar con entrevistas antes de dar por validada.\n\n## 04 / Próximos pasos\n- [ ] Incorporar entrevistas reales\n- [ ] Revisar la propuesta de valor\n- [ ] Definir el primer experimento';
-interface Store { brands: Brand[]; works: Work[]; revisions: Revision[]; decisions: Decision[]; brandContextProposals?: BrandContextProposal[]; brandContextRevisions?: BrandContextRevision[]; documents?: WorkDocument[]; contents?: Record<string,string>; profiles?: AgentProfile[] }
+interface Store { brands: Brand[]; works: Work[]; revisions: Revision[]; decisions: Decision[]; brandContextProposals?: BrandContextProposal[]; brandContextRevisions?: BrandContextRevision[]; documents?: WorkDocument[]; contents?: Record<string,string>; profiles?: AgentProfile[]; onboardingComplete?: boolean; onboardingDraft?: string }
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
 function read(): Store {
@@ -80,6 +81,22 @@ export const browserAPI: LatteAPI = {
   setUiLocale: async locale => { localStorage.setItem('latte-ui-locale', locale); return locale; },
   getContentLocale: async () => localStorage.getItem('latte-content-locale') === 'en-US' ? 'en-US' : 'es-AR',
   setContentLocale: async locale => { localStorage.setItem('latte-content-locale', locale); return locale; },
+  getOnboardingComplete: async () => read().onboardingComplete ?? false,
+  setOnboardingComplete: async complete => change(s => { s.onboardingComplete = Boolean(complete); s.onboardingDraft = undefined; return s.onboardingComplete; }),
+  getOnboardingDraft: async () => {
+    if (read().onboardingComplete) return null;
+    const raw = read().onboardingDraft;
+    if (!raw) return null;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return isOnboardingDraft(parsed) ? parsed : null;
+    } catch { return null; }
+  },
+  setOnboardingDraft: async (draft: OnboardingDraft) => {
+    if (!isOnboardingDraft(draft)) throw new TypeError('Invalid onboarding draft');
+    change(s => { if (!s.onboardingComplete) s.onboardingDraft = JSON.stringify(draft); });
+  },
+  clearOnboardingDraft: async () => change(s => { s.onboardingDraft = undefined; }),
   appInfo: async () => ({ dataDir: '', engine: 'localStorage (vista previa)', engineReason: 'La vista web no usa SQLite', pack: null, packRoles: 0, version: 'web' }),
   featureFlags: async () => ({ generation: false, brandKits: false, learning: false }),
   listBrands: async () => read().brands.filter(b => !b.archivedAt),
@@ -260,7 +277,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   saveMemory: unavailable,
   exportWork: async workId => { const w = read().works.find(w => w.id === workId)!; const url = URL.createObjectURL(new Blob([w.brief], { type: 'text/markdown;charset=utf-8' })); const a = document.createElement('a'); a.href = url; a.download = w.title.replace(/[^\p{L}\p{N} -]/gu, '') + '.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); return a.download; },
   // Structured chat needs the local OpenCode runtime: honest unavailable state in the browser preview.
-  chatStatus: async () => ({ available: false, detail: 'El chat con agentes requiere Latte Desktop y OpenCode instalado.', version: null, models: [], defaultModel: null }),
+  chatStatus: async () => ({ available: false, detail: 'El chat con agentes necesita un motor de IA conectado. Esta vista previa no ejecuta agentes.', version: null, models: [], defaultModel: null }),
   startChat: unavailable, listChatMessages: async () => [], sendChat: unavailable, abortChat: unavailable, stopChat: unavailable,
   replyPermission: unavailable, replyQuestion: unavailable,
   onChatEvent: () => () => {},
@@ -271,7 +288,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   listMcpServers: async () => [], addMcpServer: unavailable, removeMcpServer: unavailable, loginMcpServer: unavailable, authenticateClaudeMcp: unavailable,
   getPrimaryAgent: async () => null, setPrimaryAgent: unavailable, listAgentRuntimes: async () => [], addAgentAccount: unavailable, removeAgentAccount: unavailable, startAccountLogin: unavailable, logoutAccount: unavailable,
   // No CLI to ask in a browser tab: no catalog, and no pretending there is one.
-  listAccountModels: async () => ({ source: 'suggested' as const, models: [], detail: 'Los modelos se consultan desde Latte Desktop, donde corren los runtimes.' }),
+  listAccountModels: async () => ({ source: 'suggested' as const, models: [], detail: 'Esta vista previa no puede consultar los modelos de tu cuenta.' }),
   // The team roster is real only on desktop; the preview shows the roles so the concept is visible.
   listRoles: async()=> (await browserAPI.listProfiles()).map(({id,name,initial,summary,builtin,tier})=>({id,name,initial,summary,builtin,tier})),
   listProfiles:async()=>[...builtinProfiles,...normalized().profiles],

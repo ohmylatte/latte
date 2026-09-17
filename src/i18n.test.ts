@@ -32,4 +32,16 @@ describe('i18n catalogs', () => {
       expect(catalogs['en-US'][key as keyof typeof catalogs['en-US']], `en-US ${key}`).toBeTruthy();
     }
   });
+
+  it('resolves every onboarding key in both locales', async () => {
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined });
+    const { catalogs } = await import('./i18n');
+    const keys = Object.keys(catalogs['es-AR']).filter((k) => k.startsWith('onboarding.') || k.startsWith('work.') || k.startsWith('question.') || k.startsWith('assumption.'));
+    expect(keys.length).toBeGreaterThan(100);
+    for (const key of keys) {
+      expect(catalogs['es-AR'][key as keyof typeof catalogs['es-AR']], `es-AR ${key}`).toBeTruthy();
+      expect(catalogs['en-US'][key as keyof typeof catalogs['en-US']], `en-US ${key}`).toBeTruthy();
+    }
+  });
 });
