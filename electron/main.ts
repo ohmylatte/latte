@@ -24,7 +24,17 @@ import { mainMessage } from './i18n';
 
 installProcessStreamErrorGuards(process.stdout, process.stderr);
 
-const uiLocale = () => backend?.repo.getMeta('ui_locale') === 'en-US' ? 'en-US' as const : 'es-AR' as const;
+/** English only when the system says so; every other locale reads es-AR. */
+const osLocale = () => app.getLocale().toLowerCase().startsWith('en') ? 'en-US' as const : 'es-AR' as const;
+/**
+ * The stored preference, or the system locale while there is no data to read
+ * it from. Without that fallback the one dialog that runs with the backend
+ * closed — the failure to open the workspace — would always speak Spanish.
+ */
+const uiLocale = () => {
+  const stored = backend?.repo.getMeta('ui_locale');
+  return stored === 'en-US' ? 'en-US' as const : stored === 'es-AR' ? 'es-AR' as const : osLocale();
+};
 const mt = (key: Parameters<typeof mainMessage>[1], params?: Record<string,string|number>) => mainMessage(uiLocale(), key, params);
 
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL ?? null;
@@ -75,7 +85,7 @@ if (!app.requestSingleInstanceLock()) {
 
 async function start(): Promise<void> {
   await app.whenReady();
-  splash = openSplash({ icon: APP_ICON, locale: app.getLocale().toLowerCase().startsWith('en') ? 'en' : 'es', version: app.getVersion() });
+  splash = openSplash({ icon: APP_ICON, locale: osLocale() === 'en-US' ? 'en' : 'es', version: app.getVersion() });
 
   const binPath = ensureUserBinPath(process.env, process.platform);
   if (binPath.added.length > 0) {
@@ -96,7 +106,7 @@ async function start(): Promise<void> {
       revealPath: async (target) => { const error = await shell.openPath(target); if (error) throw new Error(error); },
       revealFile: async (target) => { shell.showItemInFolder(target); },
       confirmHtml: async (fileName) => {
-        const options = { type: 'warning' as const, title: 'Abrir HTML externo', message: `¿Abrir ${fileName}?`, detail: 'El HTML puede ejecutar scripts y conectarse a Internet. Se abrirá en la aplicación externa predeterminada, no dentro de Latte. Abrilo solo si confiás en su contenido.', buttons: ['Cancelar', 'Abrir'], defaultId: 0, cancelId: 0, noLink: true };
+        const options = { type: 'warning' as const, title: mt('htmlTitle'), message: mt('htmlMessage', { fileName }), detail: mt('htmlDetail'), buttons: [mt('cancel'), mt('open')], defaultId: 0, cancelId: 0, noLink: true };
         const result = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
         return result.response === 1;
       },
@@ -106,7 +116,14 @@ async function start(): Promise<void> {
     // Persist the first automatic choice. From then on the explicit preference
     // always wins over an operating-system locale change.
     if (backend.repo.getMeta('ui_locale') === null) {
-      backend.repo.setMeta('ui_locale', app.getLocale().toLowerCase().startsWith('en') ? 'en-US' : 'es-AR');
+      backend.repo.setMeta('ui_locale', osLocale());
+    }
+    // The content locale had no first choice at all: it fell back to es-AR, so
+    // an English install wrote Spanish documents under an English interface.
+    // It follows the UI locale already stored, which on an upgrade is the
+    // choice the person made, and on a fresh install is the one just seeded.
+    if (backend.repo.getMeta('content_locale') === null) {
+      backend.repo.setMeta('content_locale', backend.repo.getMeta('ui_locale') === 'en-US' ? 'en-US' : 'es-AR');
     }
   } catch (error) {
     // Opening the data is the one failure that must not end in a blank window:
@@ -226,19 +243,17 @@ function setupUpdates(): void {
  */
 function confirmInstall(activity: UpdateActivity, version: string): boolean {
   const live = [
-    activity.chats > 0 ? `${activity.chats} ${activity.chats === 1 ? 'conversación' : 'conversaciones'}` : null,
+    activity.chats > 0 ? mt(activity.chats === 1 ? 'conversationOne' : 'conversationMany', { count: activity.chats }) : null,
     activity.terminals > 0 ? mt(activity.terminals === 1 ? 'terminalOne' : 'terminalMany', { count: activity.terminals }) : null,
   ].filter((part): part is string => part !== null).join(mt('and'));
   return ask({
     type: 'question',
-    buttons: ['Reiniciar e instalar', 'Más tarde'],
+    buttons: [mt('restart'), mt('later')],
     defaultId: 1,
     cancelId: 1,
     title: mt('updateTitle', { version }),
-    message: 'Guardá tus documentos antes de continuar.',
-    detail: live
-      ? `Latte se cierra para instalar la actualización. Se detienen ${live} en curso. Tus documentos guardados, tus versiones y tus decisiones no se tocan.`
-      : 'Latte se cierra para instalar la actualización. Tus documentos guardados, tus versiones y tus decisiones no se tocan.',
+    message: mt('saveDocuments'),
+    detail: live ? mt('updateLive', { live }) : mt('updateIdle'),
     noLink: true,
   });
 }
@@ -251,8 +266,8 @@ function confirmDiscardUnsaved(): boolean {
     defaultId: 1,
     cancelId: 1,
     title: mt('unsavedTitle'),
-    message: 'Tenés cambios sin guardar en un documento.',
-    detail: 'Si cerrás ahora, se pierden. Las conversaciones abiertas y las versiones ya guardadas no se ven afectadas.',
+    message: mt('unsavedMessage'),
+    detail: mt('unsavedDetail'),
     noLink: true,
   });
 }
@@ -279,10 +294,8 @@ function reportStartFailure(error: unknown): void {
   const incompatible = error instanceof IncompatibleSchemaError;
   console.error(`[latte] no se pudo abrir el espacio de trabajo: ${errorMessage(error)}`);
   dialog.showErrorBox(
-    incompatible ? 'Tus datos son de una versión más nueva de Latte' : 'Latte no pudo abrir tus datos',
-    incompatible
-      ? `${errorMessage(error)}\n\nNo se abrió ni se modificó nada. Instalá la versión más reciente de Latte y volvé a intentar.`
-      : `${errorMessage(error)}\n\nTus datos siguen en disco, tal como estaban.`,
+    mt(incompatible ? 'newerTitle' : 'openFailedTitle'),
+    mt(incompatible ? 'newerDetail' : 'diskDetail', { error: errorMessage(error) }),
   );
   quitting = true;
   app.quit();
@@ -314,6 +327,10 @@ function createWindow(): void {
       webSecurity: true,
       allowRunningInsecureContent: false,
       spellcheck: false,
+      // The locale the renderer must paint with, available synchronously in the
+      // preload. Reading it over IPC is one tick too late: the first paint
+      // would be Spanish for an English install, on every single launch.
+      additionalArguments: [`--latte-boot-locale=${uiLocale()}`],
     },
   });
   mainWindow = win;

@@ -210,3 +210,15 @@ api.onUpdateState = (callback) => {
 };
 
 contextBridge.exposeInMainWorld('latte', Object.freeze(api));
+
+// The boot locale travels as an argument, not as a second exposed world: the
+// renderer reads it off `<html lang>`, which is where a locale belongs anyway.
+// `getUiLocale()` still decides afterwards; this only saves the first paint
+// from being Spanish on an English install.
+const bootLocaleArg = process.argv.find((arg) => arg.startsWith('--latte-boot-locale='));
+if (bootLocaleArg) {
+  const bootLocale = bootLocaleArg.slice('--latte-boot-locale='.length);
+  if (bootLocale === 'en-US' || bootLocale === 'es-AR') {
+    window.addEventListener('DOMContentLoaded', () => { document.documentElement.lang = bootLocale; });
+  }
+}
