@@ -571,7 +571,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                     </div>
                   </section>
                 )}
-                <section className="onboarding-group">
+                <section className="onboarding-group onboarding-group-wide">
                   <h2>{t('onboarding.brand.create')}</h2>
                   <div className="onboarding-footer" style={{ marginTop: 0 }}>
                     <input value={brandName} onChange={(e) => setBrandName(e.target.value)} placeholder={t('onboarding.brand.createName')} style={{ flex: 1 }} />
@@ -579,7 +579,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                   </div>
                 </section>
                 {showBrandContext && (
-                  <section className="onboarding-group">
+                  <section className="onboarding-group onboarding-group-wide">
                     <h2>{t('onboarding.brand.context')}</h2>
                     <div className="onboarding-context-field">
                       <label className="field-label" htmlFor="onboarding-brand-context">{t('onboarding.brand.context')}</label>
@@ -625,7 +625,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
               <h1>{t('onboarding.connect.title')}</h1>
               <p className="intro">{runtimes.length === 0 && providers.length === 0 ? t('onboarding.connect.unavailable') : t('onboarding.connect.demoAvailable')}</p>
               <div className="onboarding-groups">
-                <section className="onboarding-group">
+                <section className="onboarding-group onboarding-group-full">
                   <div className="onboarding-cards">
                     {([
                       { runtime: 'claude' as const, label: t('onboarding.connect.claude') },
@@ -653,7 +653,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                 </section>
 
                 {showProviders && providers.some((p) => !p.connected) && (
-                  <section className="onboarding-group">
+                  <section className="onboarding-group onboarding-group-full">
                     <h2>{t('onboarding.connect.other')}</h2>
                     <div className="onboarding-cards">
                       {providers.filter((p) => !p.connected).map((p) => {
@@ -670,7 +670,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                 )}
 
                 {login && (
-                  <section className="onboarding-group">
+                  <section className="onboarding-group onboarding-group-full">
                     <h2>{login.ended ? t('onboarding.connect.loginDone') : t('onboarding.connect.connecting', { name: RUNTIME_LABEL[login.runtime] })}</h2>
                     <p className="intro">{login.instructions}</p>
                     {login.url && <p><a href={login.url} target="_blank" rel="noreferrer">{login.url} <ExternalLink size={12} /></a></p>}
@@ -683,7 +683,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                 )}
 
                 {oauth && (
-                  <section className="onboarding-group">
+                  <section className="onboarding-group onboarding-group-full">
                     <h2>{t('onboarding.connect.connecting', { name: providers.find((p) => p.id === oauth.providerId)?.name ?? oauth.providerId })}</h2>
                     <p className="intro">{oauth.start.instructions || t('onboarding.connect.demoAvailable')}</p>
                     {oauth.start.url && <p><a href={oauth.start.url} target="_blank" rel="noreferrer">{t('onboarding.connect.connect')} <ExternalLink size={12} /></a></p>}
