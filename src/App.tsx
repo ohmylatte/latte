@@ -431,7 +431,12 @@ export function App() {
       }).catch(e => setError(displayError(e)));
     }
   };
-  const reopenOnboarding = () => { void api.setOnboardingComplete(false).then(() => setOnboarding('incomplete')).catch(e => setError(displayError(e))); };
+  // Reopening the walk has to close Settings with it: the Settings branch renders
+  // before the gate, so leaving it open would hide the walk behind the screen the
+  // button was clicked from, and the click would look like it did nothing. The
+  // draft held here is the one read at boot; the flag write clears it on disk, so
+  // it has to be dropped too or the fresh walk resumes a finished one.
+  const reopenOnboarding = () => { void api.setOnboardingComplete(false).then(() => { setOnboardingDraft(null); setSettings(null); setOnboarding('incomplete'); }).catch(e => setError(displayError(e))); };
   /**
    * A brand-context write landed. The report is what makes it honest: when a
    * work has a live session, the write does not reach it, and the notice says
