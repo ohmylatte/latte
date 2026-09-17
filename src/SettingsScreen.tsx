@@ -1,6 +1,6 @@
 import { translate as t } from './i18n';
 import { useEffect, useState, type ReactNode } from 'react';
-import { ArrowLeft, HardDrive, Info, Plug, Sparkles, Wrench } from 'lucide-react';
+import { ArrowLeft, HardDrive, Info, Plug, SlidersHorizontal, Sparkles, Wrench } from 'lucide-react';
 import type { AppInfo } from '../shared/contracts';
 import { api, isDesktop } from './browser-api';
 import { ProvidersView } from './ProvidersView';
@@ -8,8 +8,9 @@ import { ProfilesView } from './ProfilesView';
 import { SkillsView } from './SkillsView';
 import { ToolsView } from './ToolsView';
 import { useI18n } from './i18n';
+import type { LatteMode } from './TeamPanel';
 
-export type SettingsSection = 'agents' | 'profiles' | 'skills' | 'tools' | 'workspace' | 'language';
+export type SettingsSection = 'agents' | 'profiles' | 'skills' | 'tools' | 'workspace' | 'language' | 'advanced';
 
 /**
  * Settings is its own screen, not a document view: no work breadcrumb, no
@@ -17,7 +18,7 @@ export type SettingsSection = 'agents' | 'profiles' | 'skills' | 'tools' | 'work
  * Opening or closing it never writes anything; the workspace state stays in
  * App and comes back untouched.
  */
-export function SettingsScreen({ onProfileDirtyChange, controls, section, onSection, onClose, onChanged, onNotice, onError, notice, error, onDismiss, terminal, workId, onReopenOnboarding }: {
+export function SettingsScreen({ onProfileDirtyChange, controls, section, onSection, onClose, onChanged, onNotice, onError, notice, error, onDismiss, terminal, workId, onReopenOnboarding, mode, onModeChange }: {
   /** Window controls: Settings is a full screen, so it needs them too. */
   controls: ReactNode;
   onProfileDirtyChange: (dirty:boolean)=>void;
@@ -35,6 +36,9 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
   workId?: string | null;
   /** Re-opens the first-run onboarding after it was completed. */
   onReopenOnboarding?: () => void;
+  /** Interface density: `simple` hides the inline technical controls. */
+  mode: LatteMode;
+  onModeChange: (mode: LatteMode) => void;
 }) {
   const { t } = useI18n();
   const [profileDirty,setProfileDirty]=useState(false);
@@ -56,6 +60,7 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       <button className={section === 'tools' ? 'selected' : ''} onClick={() => navigate('tools')}><Wrench size={16} />{t('settings.tools')}</button>
       <button className={section === 'workspace' ? 'selected' : ''} onClick={() => navigate('workspace')}><HardDrive size={16} />{t('settings.workspace')}</button>
       <button className={section === 'language' ? 'selected' : ''} onClick={() => navigate('language')}><Info size={16} />{t('settings.language')}</button>
+      <button className={section === 'advanced' ? 'selected' : ''} onClick={() => navigate('advanced')}><SlidersHorizontal size={16} />{t('settings.advanced')}</button>
     </nav>
     <main className="settings-main">
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('settings.dismiss')} onClick={onDismiss}>×</button></div>}
@@ -70,6 +75,7 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       {section === 'tools' && <ToolsView onNotice={onNotice} onError={onError} workId={workId} />}
       {section === 'workspace' && <WorkspaceSection onError={onError} onReopenOnboarding={onReopenOnboarding} />}
       {section === 'language' && <LanguageSection />}
+      {section === 'advanced' && <ModeSection mode={mode} onModeChange={onModeChange} />}
     </main>
   </div>;
 }
@@ -101,5 +107,22 @@ function LanguageSection() {
       <label>{t('settings.contentLanguage')}<select value={contentLocale} onChange={e => void setContentLocale(e.target.value as 'es-AR'|'en-US')}><option value="es-AR">{t('settings.spanish')}</option><option value="en-US">{t('settings.english')}</option></select></label>
     </div>
     <p className="footnote">{t('settings.languageHelp')}</p>
+  </section>;
+}
+
+/**
+ * The one place to switch interface density. It is a display preference, not a
+ * workspace view, so it lives in Ajustes and never as an inline toggle in the
+ * team panel: the compact controls disappear there but permissions never do.
+ */
+function ModeSection({ mode, onModeChange }: { mode: LatteMode; onModeChange: (mode: LatteMode) => void }) {
+  const { t } = useI18n();
+  return <section className="settings-section">
+    <h2>{t('settings.advanced')}</h2>
+    <p className="settings-lead">{t('settings.advancedLead')}</p>
+    <div className="settings-facts">
+      <label>{t('settings.modeLabel')}<select value={mode} onChange={e => onModeChange(e.target.value as LatteMode)}><option value="simple">{t('settings.modeSimple')}</option><option value="advanced">{t('settings.modeAdvanced')}</option></select></label>
+    </div>
+    <p className="footnote">{t('settings.modeHelp')}</p>
   </section>;
 }
