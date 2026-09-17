@@ -12,7 +12,7 @@ import { hasOutcomeDrafts } from './WorkOutcome';
 import { documentDrafts } from './document-drafts';
 import { useActiveEdits } from './chat-store';
 import { SettingsScreen, type SettingsSection } from './SettingsScreen';
-import { TeamPanel, type RuntimeChoice } from './TeamPanel';
+import { TeamPanel, type LatteMode, type RuntimeChoice } from './TeamPanel';
 import { TerminalPane } from './TerminalPane';
 import { UpdateBanner } from './UpdateBanner';
 import { ALL_BRAND_SCOPE, inKnowledgeScope, selectWorkBrief, workBrief, workTitles, type KnowledgeScope } from './brand-knowledge';
@@ -75,6 +75,10 @@ export function App() {
   // Collapsed to a rail: every label hides, every icon and its tooltip stay.
   const [railed, setRailed] = useState(() => { try { return localStorage.getItem('latte:rail') === '1'; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem('latte:rail', railed ? '1' : '0'); } catch { /* private window */ } }, [railed]);
+  // Interface density: `simple` hides the inline technical controls, `advanced`
+  // shows them. Persisted the same way as the rail, and toggled only in Ajustes.
+  const [mode, setMode] = useState<LatteMode>(() => { try { return localStorage.getItem('latte:mode') === 'advanced' ? 'advanced' : 'simple'; } catch { return 'simple'; } });
+  useEffect(() => { try { localStorage.setItem('latte:mode', mode); } catch { /* private window */ } }, [mode]);
   // Documents of the current work: the editor lives in DocumentsView, App only tracks which one is open.
   const [documents, setDocuments] = useState<WorkDocument[]>([]), [selectedDoc, setSelectedDoc] = useState<Record<string, string>>({});
   const [documentDirty, setDocumentDirty] = useState(false);
@@ -804,7 +808,7 @@ export function App() {
         {session ? <><div className="session-heading"><span><i className={sessionEnded ? 'ended-dot' : 'live-dot'} />{session.provider} · {sessionWork?.title ?? t('ui.auto.017')}</span><button aria-label={t('ui.auto.018')} title={t('ui.auto.018')} onClick={() => run(async () => { await api.stopAgent(session.id); setSession(null); })}><Square size={13} /></button></div><form className="prompt-form" onSubmit={e => { e.preventDefault(); if (!prompt.trim() || sessionEnded) return; void run(async () => { await api.writeAgent(session.id, prompt + '\r'); setPrompt(''); }); }}><textarea aria-label={t('ui.auto.019')} placeholder={t('ui.auto.020')} value={prompt} onChange={e => setPrompt(e.target.value)} /><div><small>{sessionEnded ? t('ui.auto.021') : t('ui.auto.022')}</small><button className="primary icon-button" disabled={!prompt.trim() || busy || sessionEnded} aria-label={t('ui.auto.023')}><ArrowUpRight size={18} /></button></div></form></> : <div className="agent-idle"><div className="agent-symbol"><TerminalSquare size={27} /></div><h3>{t('ui.auto.024')}<br />{t('ui.auto.025')}</h3><p>{t('ui.auto.026')}</p><button className="primary" disabled={!work || starting || !runtimes.find(r => r.provider === provider)?.available} onClick={start}>{starting ? <Loading size={16} /> : <Plus size={15} />}{starting ? t('ui.auto.347') : t('ui.auto.027')}</button>{!isDesktop && <small className="preview-note">{t('ui.auto.028')}</small>}</div>}</>}
   </section>;
 
-  if (settings) return <><SettingsScreen workId={work?.id ?? null} terminal={terminalConsole} onProfileDirtyChange={setProfileDirty} controls={isDesktop ? <WindowControls /> : null} section={settings} onSection={setSettings} onClose={() => { setSettings(null); setError(''); setNotice(''); }} onChanged={() => { void refreshChatStatus(); void api.listRoles().then(setRoles).catch(e=>setError(displayError(e))); }} onNotice={setNotice} onError={setError} notice={notice} error={error} onDismiss={() => { setError(''); setNotice(''); }} onReopenOnboarding={reopenOnboarding} /><UpdateBanner /></>;
+  if (settings) return <><SettingsScreen workId={work?.id ?? null} terminal={terminalConsole} onProfileDirtyChange={setProfileDirty} controls={isDesktop ? <WindowControls /> : null} section={settings} onSection={setSettings} onClose={() => { setSettings(null); setError(''); setNotice(''); }} onChanged={() => { void refreshChatStatus(); void api.listRoles().then(setRoles).catch(e=>setError(displayError(e))); }} onNotice={setNotice} onError={setError} notice={notice} error={error} onDismiss={() => { setError(''); setNotice(''); }} onReopenOnboarding={reopenOnboarding} mode={mode} onModeChange={setMode} /><UpdateBanner /></>;
   // Order matters: settings first, so the gate's "Configuración avanzada" wins
   // and closing Settings returns to the walk with its draft re-hydrated.
   if (onboarding === 'incomplete') return <><OnboardingGate controls={isDesktop ? <WindowControls /> : null} onComplete={finishOnboarding} onSkip={skipOnboarding} initialDraft={onboardingDraft} onAdvanced={() => setSettings('agents')} /><UpdateBanner /></>;
@@ -860,14 +864,14 @@ export function App() {
       <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
     </main>
     <aside className="agent-panel">{focusChat && (error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}<button type="button" className={'panel-resizer' + (dragging ? ' dragging' : '')} aria-label={t('ui.auto.066')} title={t('ui.auto.067')} onPointerDown={startResize} />
-      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} />
+      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} />
       <details className="active-context">
         <summary><Bookmark size={12} />{t('ui.auto.035')}<span>{[brand?.context ? 'marca' : null, work ? 'trabajo' : null, decisions.length ? `${decisions.length} decisiones` : null].filter(Boolean).join(' · ') || t('ui.auto.068')}</span></summary>
         <div className="active-context-body">
           <span><FileText size={13} />{brand?.context ? t('ui.auto.069') : t('ui.auto.070')}</span>
           <span><Folder size={13} />{work?.title ?? t('ui.auto.071')}</span>
           <span><Bookmark size={13} />{decisions.length}  {t('ui.auto.353')}</span>
-          <p className="agent-footnote" title={runtimeName}>{t('ui.auto.072')} {t('ui.auto.073')}</p>
+          {mode === 'advanced' && <p className="agent-footnote" title={runtimeName}>{t('ui.auto.072')} {t('ui.auto.073')}</p>}
         </div>
       </details>
     </aside>

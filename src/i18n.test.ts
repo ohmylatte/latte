@@ -44,4 +44,15 @@ describe('i18n catalogs', () => {
       expect(catalogs['en-US'][key as keyof typeof catalogs['en-US']], `en-US ${key}`).toBeTruthy();
     }
   });
+
+  it('exposes the mode settings keys in both locales', async () => {
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined });
+    const { catalogs } = await import('./i18n');
+    const keys = ['settings.advanced', 'settings.advancedLead', 'settings.modeLabel', 'settings.modeSimple', 'settings.modeAdvanced', 'settings.modeHelp'];
+    for (const key of keys) {
+      expect(catalogs['es-AR'][key as keyof typeof catalogs['es-AR']], `es-AR ${key}`).toBeTruthy();
+      expect(catalogs['en-US'][key as keyof typeof catalogs['en-US']], `en-US ${key}`).toBeTruthy();
+    }
+  });
 });
