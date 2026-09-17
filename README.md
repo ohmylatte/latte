@@ -19,27 +19,34 @@ Todo en tu máquina.
 
 ## Instalar
 
+### Windows x64 (soportado)
+
 Descargá **[Latte-Setup.exe](https://github.com/ohmylatte/latte/releases/latest/download/Latte-Setup.exe)** y ejecutalo.
 
 El instalador todavía no está firmado, así que Windows va a mostrar «Windows
-protegió tu PC»: **Más información → Ejecutar de todas formas**. Si preferís no
-hacerlo, corré Latte desde el código, más abajo.
+protegió tu PC»: **Más información → Ejecutar de todas formas**.
 
-En Linux x64, descargá el AppImage o el `.deb` desde la
-[última release](https://github.com/ohmylatte/latte/releases/latest). macOS no
-tiene un artefacto soportado en esta alpha.
+### Linux y macOS
+
+**No hay un ejecutable probado para Linux ni para macOS.** Los paquetes de Linux
+que se publican en cada release están en estado *alpha*: se verificaron en Linux
+Mint 22.3 con X11, no en Wayland ni en otras distribuciones. macOS no tiene
+artefacto. La forma soportada de correr Latte en Linux o en macOS es **desde el
+código** (ver abajo).
 
 Necesitás además al menos un agente instalado y autenticado por tu cuenta:
 [Claude Code](https://claude.com/claude-code),
 [Codex](https://developers.openai.com/codex/cli) u
 [OpenCode](https://opencode.ai). Latte los detecta solos.
 
-El instalador de Windows y el AppImage avisan cuando hay una versión nueva; la
-descarga empieza cuando la aceptás y Latte se reinicia solo cuando vos lo
-decidís. Nunca lo hace sobre un documento sin guardar. El `.deb` no se
-auto-actualiza: descargá e instalá el nuevo paquete desde cada release.
+El instalador de Windows avisa cuando hay una versión nueva; la descarga empieza
+cuando la aceptás y Latte se reinicia solo cuando vos lo decidís. Nunca lo hace
+sobre un documento sin guardar.
 
 ## Desde el código
+
+Corré Latte desde el código en **cualquier entorno** (Windows, Linux o macOS)
+con Node.js 24 LTS instalado:
 
 ```bash
 git clone https://github.com/ohmylatte/latte.git
@@ -49,7 +56,9 @@ npm run dev
 ```
 
 `npm run dev` levanta Vite y Electron sin compilar nada. Es el camino de
-desarrollo y el más ejercitado.
+desarrollo, el más ejercitado y la forma soportada de correr Latte en Linux y
+macOS. Necesitás al menos un agente instalado y autenticado (Claude Code, Codex
+u OpenCode).
 
 ### Opcional: renderer compilado
 
@@ -120,11 +129,11 @@ el navegador y **no ejecuta ningún agente**.
 
 - **Conversar y revisar, separados.** Un trabajo abre en su conversación, a ancho completo. «Revisar» trae los documentos al lado. Las dos vistas son los mismos paneles montados, así que un borrador a medio escribir sobrevive al cambio.
 - **Conversaciones por rol.** Cada trabajo tiene un equipo: el Asistente neutral más roles opcionales (Estrategia, Investigación, Análisis, Paid Media, Revisión). Cada miembro es una conversación propia con su runtime y su cuenta.
-- **Instrucciones de marketing por defecto.** Toda conversación, incluida la neutral, recibe el comportamiento de marketing del pack `marketing-core`: objetivo, audiencia, oferta, etapa del embudo, baseline y restricciones antes de recomendar; hecho contra hipótesis; marca aprobada contra propuesta; experimentos con guardrail y cadencia de revisión.
+- **Instrucciones de marketing por defecto.** Toda conversación, incluida la neutral, recibe el comportamiento de marketing del pack `marketing-core`: objetivo, audiencia, oferta, etapa del recorrido, baseline y restricciones antes de recomendar; hecho contra hipótesis; marca aprobada contra propuesta; experimentos con guardrail y cadencia de revisión.
 - **Memoria de marca entre trabajos.** Una entrega nueva hereda automáticamente el contexto de marca, las decisiones aprobadas y copias locales acotadas de documentos Markdown relevantes de entregas anteriores. Cada dato conserva su trabajo de origen; no se mezcla otra marca ni se confunde ese conocimiento con el delta actual.
 - **Varios entregables por trabajo.** Encargo, estrategia, calendario, investigación y piezas, cada uno con su archivo Markdown, sus versiones y su exportación.
-- **La lista al costado, el documento a pantalla completa.** Buscar, filtrar y la cola de revisión viven en una columna angosta; el documento se queda con el alto entero. Arriba: Documentos, Embudo y Decisiones.
-- **Embudo de campaña.** Cada documento puede estar en varias etapas a la vez —descubrimiento, consideración, conversión, retención— o en ninguna. La clasificación es virtual: no mueve ni renombra un solo archivo. Una etapa vacía se muestra como hallazgo, porque es la parte del recorrido que nadie está atendiendo.
+- **La lista al costado, el documento a pantalla completa.** Buscar, filtrar y la cola de revisión viven en una columna angosta; el documento se queda con el alto entero. Arriba: Resumen, Trabajo, Evidencia, Documentos, Embudo, Decisiones y Resultados.
+- **Etapas del recorrido.** Cada documento puede estar en varias etapas a la vez —descubrimiento, consideración, conversión, retención— o en ninguna. La clasificación es virtual: no mueve ni renombra un solo archivo. Una etapa vacía se muestra como hallazgo y propone acciones —analizar, preparar, asociar, experimentar o marcar fuera de alcance—, porque es la parte del recorrido que nadie está atendiendo.
 - **El agente propone la etapa, vos la aplicás.** Un agente no puede llamar a Latte, solo escribir archivos. Así que propone con un bloque `funnel: conversion, retention` al principio del markdown. Latte lo saca del archivo apenas lo ve —no llega al editor, ni a una versión, ni a una exportación— y lo deja pendiente hasta que aprietes Aplicar o Descartar.
 - **Ves toda la carpeta, no solo lo que Latte sigue.** Los `.docx`, los PDF y las subcarpetas del cliente aparecen listados. Tu agente los lee; pedirte que confíes en una carpeta que no podés inspeccionar sería otra cosa.
 - **Entregables para personas, en `entregables/`.** Lo que recibe el cliente —PDF, DOCX, XLSX, presentaciones, imágenes, HTML— lo deja tu agente en esa carpeta del trabajo y Latte lo lista con formato, tamaño y fecha, con tres acciones explícitas: abrir, mostrar en la carpeta y guardar una copia. Latte no los versiona, no los edita y no convierte un formato en otro: renombrar un Markdown a `.pdf` no es una conversión. El HTML pregunta antes de abrirse, afuera de Latte, porque puede ejecutar scripts.
@@ -139,7 +148,7 @@ el navegador y **no ejecuta ningún agente**.
 
 ### Límites que conviene conocer
 
-- Es una alpha: esperá bordes ásperos y cambios de esquema entre versiones. La base se copia antes de cada migración, y una base escrita por una versión más nueva no se abre en una vieja.
+- Latte 1.0.0 es la primera versión estable del producto. El empaquetado de plataformas sigue su propio ciclo: Windows x64 está soportado, Linux x64 sigue en empaquetado *alpha* y macOS no está soportado. La base se copia antes de cada migración, y una base escrita por una versión más nueva no se abre en una vieja.
 - **Plataformas de la alpha.** Windows x64 está soportado. El empaquetado para Linux x64 está en alpha: fue verificado en Linux Mint 22.3 con X11; Wayland y otras distribuciones no fueron verificadas. macOS no está soportado ni prometido; arm64 todavía no está verificado.
 - El instalador **no está firmado**, así que SmartScreen advierte hasta que el binario acumule reputación.
 - **No todo lo que hace un agente está aislado.** Latte le da al agente la carpeta del trabajo como contexto y las instrucciones lo dicen, pero un runtime puede escribir cualquier archivo al que tenga permiso. Las instrucciones no son un sandbox. Los permisos reales los aplica cada runtime, y Latte te muestra sus pedidos para que decidas.
@@ -166,20 +175,25 @@ your machine.
 
 ## Install
 
+### Windows x64 (supported)
+
 On Windows x64, download and run
 **[Latte-Setup.exe](https://github.com/ohmylatte/latte/releases/latest/download/Latte-Setup.exe)**.
 It is not signed yet, so Windows SmartScreen may require **More info → Run
 anyway**.
 
-On Linux x64, download the AppImage or `.deb` from the
-[latest release](https://github.com/ohmylatte/latte/releases/latest). Most
-systems run the AppImage without extra setup; only if it reports a FUSE error,
-follow [`docs/RUN-linux.md`](docs/RUN-linux.md). The `.deb` does not require
-FUSE.
+### Linux and macOS
 
-The Windows installer and AppImage notify you about new versions, download only
-after you accept, and restart only when you choose. The `.deb` does not
-self-update; download and reinstall it from each release.
+**There is no verified executable for Linux or macOS.** The Linux packages
+published in each release are in *alpha*: verified on Linux Mint 22.3 with X11,
+not on Wayland or other distributions. macOS has no artifact. The supported way
+to run Latte on Linux or macOS is **from source** (see "Run it" below).
+
+You also need at least one agent installed and signed in with your own account:
+Claude Code, Codex or OpenCode. Latte detects them for you.
+
+The Windows installer notifies you about new versions, downloads only after you
+accept, and restarts only when you choose.
 
 - **Chat (default):** a native Latte chat on top of whichever runtime you picked as primary — Claude Code and Codex with your own subscription, or any API-key provider through [OpenCode](https://opencode.ai). One conversation per team member, inside that work's folder, streaming messages, tool calls, permission requests and questions into the UI. No fake replies: when a runtime, a provider or a balance is missing you see the real reason.
 - **Terminal (advanced):** a real PTY running your CLI (`claude`, `codex`, `opencode`) inside the work folder, with Latte-managed `CLAUDE.md` / `AGENTS.md` context files. Global tool configuration is never touched.
@@ -187,10 +201,18 @@ self-update; download and reinstall it from each release.
 
 ## Run it
 
+Run Latte from source on **any environment** (Windows, Linux or macOS) with
+Node.js 24 LTS installed:
+
 ```bash
+git clone https://github.com/ohmylatte/latte.git
+cd latte
 npm ci               # one lockfile; node-pty ships an N-API prebuild, no rebuild
 npm run dev          # Vite dev server in-process + Electron (main runs from TypeScript through tsx)
 ```
+
+`npm run dev` is the development path, the most exercised one, and the supported
+way to run Latte on Linux and macOS.
 
 Optional, renderer only:
 
@@ -396,10 +418,10 @@ member's id is its chat id, so pausing and resuming keep the same identity;
 members are persisted in `team_members` (schema v3) and older
 `chat_sessions` rows migrate into Asistente members.
 
-### Funnel, and what an agent may propose
+### Journey stages, and what an agent may propose
 
-A document can sit in several funnel stages at once (`discovery`,
-`consideration`, `conversion`, `retention`) or in none. The classification is
+A document can sit in several journey stages at once (`discovery`,
+`consideration`, `conversion`, `retention`) or in none. The stages are
 virtual: `funnel_stages` is an additive column, and no file is moved or
 renamed. The instruction file lists each deliverable's stages plus a coverage
 block, so an empty stage is visible as the finding it is rather than buried in

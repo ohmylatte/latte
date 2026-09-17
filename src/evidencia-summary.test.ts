@@ -166,6 +166,14 @@ describe('the derived metadata', () => {
     expect(summary.periodo).toEqual({ from: '2026-01-01T00:00:00.000Z', to: '2026-01-09T00:00:00.000Z' });
   });
 
+  it('keeps an equal created/updated período as a single matching pair', () => {
+    const summary = evidenciaSummary(input({
+      documents: [doc({ createdAt: '2026-01-07T00:00:00.000Z', updatedAt: '2026-01-07T00:00:00.000Z' })],
+    }));
+    expect(summary.periodo.from).toBe('2026-01-07T00:00:00.000Z');
+    expect(summary.periodo.to).toBe(summary.periodo.from);
+  });
+
   it('reports "sin fuentes" only when no source document exists', () => {
     // Only a brief (encargo): not a source → "sin fuentes".
     expect(evidenciaSummary(input({ documents: [doc({ kind: 'brief' })] })).limitaciones).toEqual(['evidencia.limitacion.sinFuentes']);

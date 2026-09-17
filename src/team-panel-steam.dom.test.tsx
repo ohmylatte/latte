@@ -34,8 +34,8 @@ const member = {
 
 const chat = { id: 'c1' } as unknown;
 
-const renderTab = () =>
-  render(<MemberTab member={member as never} chat={chat as never} selected={false} busy={false} onSelect={() => {}} />);
+const renderTab = (mode: 'simple' | 'advanced' = 'simple') =>
+  render(<MemberTab member={member as never} chat={chat as never} selected={false} busy={false} mode={mode} onSelect={() => {}} />);
 
 beforeEach(() => {
   mocks.state = { ...baseState };
@@ -61,5 +61,21 @@ describe('M3 — working role shows steam, not a dot', () => {
     const { container } = renderTab();
     expect(container.querySelector('.team-steam')).toBeNull();
     expect(container.querySelector('.team-tab-dot')).not.toBeNull();
+  });
+});
+
+describe('F3 — the runtime stays out of the simple tooltip', () => {
+  it('keeps the runtime name out of the tooltip in simple mode', () => {
+    mocks.state = { ...baseState, status: 'working', closed: false };
+    const { container } = renderTab('simple');
+    const title = container.querySelector('.team-tab')?.getAttribute('title') ?? '';
+    expect(title).not.toContain('OpenCode');
+  });
+
+  it('names the runtime in the tooltip in advanced mode', () => {
+    mocks.state = { ...baseState, status: 'working', closed: false };
+    const { container } = renderTab('advanced');
+    const title = container.querySelector('.team-tab')?.getAttribute('title') ?? '';
+    expect(title).toContain('OpenCode');
   });
 });

@@ -136,6 +136,16 @@ describe('the Evidencia, in both interface languages', () => {
     expect(html).toContain('Sin fuentes: no hay documentos que respalden estos resultados');
   });
 
+  it('collapses an equal created/updated período to a single date', () => {
+    const equal = renderMarkup('es-AR', { documents: [doc({ createdAt: '2026-01-07T00:00:00.000Z', updatedAt: '2026-01-07T00:00:00.000Z' })] });
+    expect(equal).toContain('Período');
+    expect(equal).not.toContain('→');
+
+    const ranged = renderMarkup('es-AR', { documents: [doc({ createdAt: '2026-01-07T00:00:00.000Z', updatedAt: '2026-01-09T00:00:00.000Z' })] });
+    expect(ranged).toContain('Período');
+    expect(ranged).toContain('→');
+  });
+
   it('leaves no literal copy in the component: every word a human reads comes from a key', () => {
     const source = readFileSync(resolve('src/EvidenciaView.tsx'), 'utf8');
     expect(source).not.toMatch(/\b(?:aria-label|title|placeholder)="/);

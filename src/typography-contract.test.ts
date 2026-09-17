@@ -22,7 +22,7 @@ import { describe, expect, it } from 'vitest';
  * and the daily lists, and the assertion becomes honest in two pieces:
  *
  *   A8 — the SCOPED floor. Every Pass 3a surface resolves to >= 12px in EVERY
- *        block (base + media), except a 4-entry allowlist capped at 11px. Global
+ *        block (base + media), except a 2-entry allowlist capped at 11px. Global
  *        in-blocks, which is what makes the `@media(max-width:*)` shrinks
  *        visible — A7 is base-only on purpose.
  *   A9 — the DEBT RATCHET. The *total* sub-12px declaration count must stay at
@@ -84,9 +84,9 @@ const ROW_PADDING_BUDGET: Record<string, number> = {
 };
 
 /**
- * Pass 3a surfaces — every selector the floor raise touched, plus the 4-entry
+ * Pass 3a surfaces — every selector the floor raise touched, plus the 2-entry
  * micro allowlist. A8 asserts these resolve to >= 12px in EVERY block, so the
- * `@media(max-width:*)` shrinks (`.alpha` 7px @850, `.statusbar` 8px @850,
+ * `@media(max-width:*)` shrinks (`.statusbar` 8px @850,
  * `.sidebar button` 11px @850, `.breadcrumb` 11px @1100) are all visible.
  */
 const FLOOR_SELECTORS = new Set([
@@ -135,22 +135,18 @@ const FLOOR_SELECTORS = new Set([
   // the 17px lede both earlier passes skipped (it passed the 22px ratchet)
   '.markdown>p:first-of-type',
   // the micro allowlist — see MICRO_ALLOWLIST
-  '.alpha',
   '.status-version',
-  '.onboarding-brand .alpha',
   '.team-tab .team-avatar',
 ]);
 
 /**
  * The ONLY sub-12px type Pass 3a leaves behind, at 11px and NEVER 9px, each with
  * a one-line reason. Brief 02 L260 puts the secondary minimum at 12px, so this is
- * a declared deviation, not a default. Capped at 4 entries so the list cannot
+ * a declared deviation, not a default. Capped at 2 entries so the list cannot
  * silently grow into the tautology Pass 2's FLOOR-INVARIANT note warned about.
  */
 const MICRO_ALLOWLIST: Record<string, number> = {
-  '.alpha': 11, // "ALPHA" badge; the 20px wordmark sits immediately next to it
-  '.onboarding-brand .alpha': 11, // the same badge on the gate, next to an 18px wordmark
-  '.status-version': 11, // "0.5.4 · ALPHA" build stamp in the status bar
+  '.status-version': 11, // "1.0.0" build stamp in the status bar
   '.team-tab .team-avatar': 11, // single-glyph avatar; the full name is adjacent at 12px
 };
 
@@ -633,12 +629,12 @@ describe('typography contract (Pass 3a — the type floor)', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('A8 — the micro allowlist is capped at 4 entries and never drops below 11px', () => {
+  it('A8 — the micro allowlist is capped at 2 entries and never drops below 11px', () => {
     // Brief 02 L260 puts the secondary minimum at 12px, so 11px is a declared
     // deviation with a per-selector reason — not a default. The cap is what stops
     // the list from growing back into the tautology this file used to warn about.
     const entries = Object.entries(MICRO_ALLOWLIST);
-    expect(entries.length).toBeLessThanOrEqual(4);
+    expect(entries.length).toBeLessThanOrEqual(2);
     expect(entries.filter(([, px]) => px < 11).map(([selector, px]) => `${selector} => ${px}px`)).toEqual([]);
   });
 

@@ -83,6 +83,55 @@ describe('default role recommendation', () => {
     const checked = container.querySelector('.role-card[aria-checked="true"]');
     expect(checked?.querySelector('[data-role]')?.getAttribute('data-role')).toBe('assistant');
   });
+
+  it('respects a manually picked role: pre-selecting assistant does not revert it', () => {
+    const { container } = render(<TeamPanel {...panelProps('simple')} team={[]} chats={{}} selectedId={null} />);
+    const checkedRole = () => container.querySelector('.role-card[aria-checked="true"] [data-role]')?.getAttribute('data-role');
+    expect(checkedRole()).toBe('assistant');
+    const strategist = container.querySelector('.role-card [data-role="strategist"]')?.closest('button')!;
+    fireEvent.click(strategist);
+    expect(checkedRole()).toBe('strategist');
+  });
+});
+
+describe('the add-member affordance', () => {
+  it('labels the button "Personalizar equipo" in Spanish', () => {
+    const { container } = renderPanel('simple');
+    expect(container.querySelector('.team-tab-add')?.getAttribute('aria-label')).toBe('Personalizar equipo');
+    expect(container.querySelector('.team-tab-add')?.getAttribute('title')).toBe('Personalizar equipo');
+  });
+
+  it('labels the button "Personalize team" in English', async () => {
+    localStorage.setItem('latte-ui-locale', 'en-US');
+    const { container } = render(<I18nProvider><TeamPanel {...panelProps('simple')} /></I18nProvider>);
+    await waitFor(() => {
+      expect(container.querySelector('.team-tab-add')?.getAttribute('aria-label')).toBe('Personalize team');
+    });
+  });
+});
+
+describe('the terminal permission line is never gated by mode', () => {
+  beforeEach(() => localStorage.clear());
+
+  const openAgents = async (container: HTMLElement) => {
+    await screen.findByRole('button', { name: 'Lanzamiento primavera' });
+    fireEvent.click(screen.getByTitle('Ajustes'));
+    await screen.findByText(/Iniciá una sesión con tu CLI/);
+    return container;
+  };
+
+  it('shows the permission line in simple mode', async () => {
+    const { container } = render(<I18nProvider><App /></I18nProvider>);
+    await openAgents(container);
+    expect(container.querySelector('.terminal-console')?.textContent).toContain('Iniciá una sesión con tu CLI instalado');
+  });
+
+  it('shows the permission line in advanced mode', async () => {
+    localStorage.setItem('latte:mode', 'advanced');
+    const { container } = render(<I18nProvider><App /></I18nProvider>);
+    await openAgents(container);
+    expect(container.querySelector('.terminal-console')?.textContent).toContain('Iniciá una sesión con tu CLI instalado');
+  });
 });
 
 describe('Latte mode persistence and active-context footnote (App)', () => {
