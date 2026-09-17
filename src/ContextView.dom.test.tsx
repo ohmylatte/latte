@@ -89,6 +89,7 @@ const REGION: Record<(typeof VIEWS)[number], string> = {
   context: '.context-editor',
   memory: '.document-scroll',
   decisions: '.document-scroll',
+  resultados: '.resultados-view',
 };
 
 const CONTROL: Record<(typeof VIEWS)[number], RegExp> = {
@@ -101,6 +102,7 @@ const CONTROL: Record<(typeof VIEWS)[number], RegExp> = {
   context: /^Contexto/,
   memory: /^Memoria/,
   decisions: /^Decisiones/,
+  resultados: /^Resultados/,
 };
 
 describe('Contexto view', () => {
