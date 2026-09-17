@@ -8,6 +8,7 @@ import { useChatState } from './chat-store';
 import { canChangePermission } from './permission-ux';
 import { continuationModel, continuationOptions, type ContinuationTarget } from './provider-models';
 import { contextWeight, describeUsage, formatTokens, totalTokens } from './usage-format';
+import { roleColorVar, SteamWisp } from './brand-marks';
 
 /** A runtime the user can pick for a new member instead of the primary agent. */
 export interface RuntimeChoice { key: string; label: string; runtime: ChatRuntime; accountId: string | null }
@@ -255,7 +256,7 @@ export function WorkPermissions({ mode, busy, hasClaude, isDesktop, onChange }: 
   </details>;
 }
 
-function MemberTab({ member, chat, selected, busy, onSelect }: { member: TeamMember; chat: ChatSession | null; selected: boolean; busy: boolean; onSelect: () => void }) {
+export function MemberTab({ member, chat, selected, busy, onSelect }: { member: TeamMember; chat: ChatSession | null; selected: boolean; busy: boolean; onSelect: () => void }) {
   const state = useChatState(chatStore, chat ? chat.id : null);
   const live = Boolean(chat) && !state.closed;
   const status: TeamMemberStatus = live ? (state.status === 'idle' ? 'idle' : 'working') : member.status === 'ended' ? 'ended' : 'paused';
@@ -263,7 +264,9 @@ function MemberTab({ member, chat, selected, busy, onSelect }: { member: TeamMem
   return <button role="tab" aria-selected={selected} className={'team-tab status-' + status + (attention ? ' attention' : '')} disabled={busy} onClick={onSelect} title={member.roleName + ' · ' + RUNTIME_SHORT[member.runtime] + ' · ' + statusLabel(status, attention)}>
     <span className="team-avatar" data-role={member.roleId} aria-hidden="true">{member.initial}</span>
     <span className="team-tab-name">{member.roleName}</span>
-    <i className="team-tab-dot" aria-hidden="true" />
+    {status === 'working' && !attention
+      ? <SteamWisp className="team-steam" style={{ color: roleColorVar(member.roleId) }} />
+      : <i className="team-tab-dot" aria-hidden="true" />}
     <span className="visually-hidden">{statusLabel(status, attention)}</span>
   </button>;
 }
