@@ -45,7 +45,7 @@ export const CYCLE_PHASES: readonly CyclePhase[] = [
 /** Everything the Resumen needs, already reduced to what it decides on. */
 export interface ResumenInput {
   brandName: string;
-  work: Pick<Work, 'title' | 'brief' | 'folder' | 'expectedOutput' | 'resultPath'>;
+  work: Pick<Work, 'id' | 'title' | 'brief' | 'folder' | 'expectedOutput' | 'resultPath'>;
   documents: readonly WorkDocument[];
   states: Readonly<Record<string, DocumentState>>;
   checking: boolean;
@@ -111,8 +111,13 @@ export function resumenEstado(input: ResumenEstadoInput): ResumenEstado {
 
 /** The whole summary, ready to render. The ladder is reused, never re-derived. */
 export function resumenSummary(input: ResumenInput): ResumenSummary {
-  const pendingDecisions = input.decisions.filter((decision) => decision.status === 'pending');
-  const reviewDocuments = input.documents.filter((document) => needsReview(document, input.states[document.id]?.baseOutdated ?? false)).length;
+  // Scope to THIS work: the Resumen is a per-work summary, so a multi-work
+  // brand must never leak another work's documents or decisions into the
+  // counts and rows the surface renders.
+  const workDocuments = input.documents.filter((document) => document.workId === input.work.id);
+  const workDecisions = input.decisions.filter((decision) => decision.workId === input.work.id);
+  const pendingDecisions = workDecisions.filter((decision) => decision.status === 'pending');
+  const reviewDocuments = workDocuments.filter((document) => needsReview(document, input.states[document.id]?.baseOutdated ?? false)).length;
   const ladder = orientationSummary({
     brandContextDefined: input.brandContextDefined,
     pendingDecisions: pendingDecisions.length,

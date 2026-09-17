@@ -12,7 +12,8 @@ import { EMPTY_USAGE, type Decision, type DocumentState, type TeamMember, type W
  * No DOM, no window: this module only decides, `ResumenView` only renders.
  */
 
-const work = (patch: Partial<Pick<Work, 'title' | 'brief' | 'folder' | 'expectedOutput' | 'resultPath'>> = {}): Pick<Work, 'title' | 'brief' | 'folder' | 'expectedOutput' | 'resultPath'> => ({
+const work = (patch: Partial<Pick<Work, 'id' | 'title' | 'brief' | 'folder' | 'expectedOutput' | 'resultPath'>> = {}): Pick<Work, 'id' | 'title' | 'brief' | 'folder' | 'expectedOutput' | 'resultPath'> => ({
+  id: 'w1',
   title: 'Lanzamiento',
   brief: 'Lanzar la campaña de primavera.',
   folder: 'C:\\casa-oliva\\primavera',
@@ -165,6 +166,22 @@ describe('the summary the Resumen renders', () => {
       ],
     }));
     expect(summary.pendingDecisions).toEqual([{ id: 'd1', text: 'Elegimos X', createdAt: '' }]);
+  });
+
+  it('scopes documents and decisions to the current work, not the whole brand', () => {
+    const summary = resumenSummary(input({
+      documents: [
+        doc({ id: 'a', workId: 'w1', status: 'review' }),
+        doc({ id: 'b', workId: 'w1', status: 'draft' }),
+        doc({ id: 'c', workId: 'w2', status: 'review' }), // another work — must NOT count
+      ],
+      decisions: [
+        decision({ id: 'd1', workId: 'w1', text: 'De este trabajo' }),
+        decision({ id: 'd2', workId: 'w2', text: 'De otro trabajo' }), // must NOT appear
+      ],
+    }));
+    expect(summary.reviewDocuments).toBe(1);
+    expect(summary.pendingDecisions).toEqual([{ id: 'd1', text: 'De este trabajo', createdAt: '' }]);
   });
 
   it('derives estado actual and names it with its key', () => {
