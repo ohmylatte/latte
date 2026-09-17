@@ -65,6 +65,24 @@ export function SteamWisp({ className, style }: { className?: string; style?: CS
   );
 }
 
+/**
+ * The loading cup: the rim stays put while the coffee (rust) fills the
+ * paper-deep interior in a 2.6s loop. Replaces the spinner for waits over
+ * ~400ms. `label` is announced to assistive tech and hidden visually.
+ */
+export function Loading({ size = 16, label }: { size?: number; label?: string }) {
+  return (
+    <span className="loading-cup" role="status" aria-label={label}>
+      <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="45" fill="var(--paper-deep)" />
+        <circle className="loading-cup-coffee" cx="50" cy="50" r="45" fill="var(--rust)" />
+        <circle cx="50" cy="50" r="45" fill="none" stroke="var(--ink)" strokeWidth="4" />
+      </svg>
+      {label && <span className="visually-hidden">{label}</span>}
+    </span>
+  );
+}
+
 const ROLE_COLORS = new Set(['assistant', 'strategist', 'researcher', 'analyst', 'reviewer']);
 
 /** The role colour token for a role id, falling back to the default role. */

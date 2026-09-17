@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
-import { CupFromAbove, LMark, roleColorVar, SteamWisp } from './brand-marks';
+import { CupFromAbove, LMark, Loading, roleColorVar, SteamWisp } from './brand-marks';
 
 describe('brand marks', () => {
   it('SteamWisp draws a single stroked path', () => {
@@ -36,5 +36,13 @@ describe('brand marks', () => {
     expect(roleColorVar('strategist')).toBe('var(--role-strategist)');
     expect(roleColorVar('reviewer')).toBe('var(--role-reviewer)');
     expect(roleColorVar('some-unknown-role')).toBe('var(--role-default)');
+  });
+
+  it('Loading announces itself and fills the cup', () => {
+    const { container } = render(<Loading size={32} label="Abriendo el trabajo" />);
+    const status = container.querySelector('[role="status"]');
+    expect(status).not.toBeNull();
+    expect(status!.getAttribute('aria-label')).toBe('Abriendo el trabajo');
+    expect(container.querySelector('.loading-cup-coffee')).not.toBeNull();
   });
 });

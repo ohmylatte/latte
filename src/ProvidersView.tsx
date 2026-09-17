@@ -1,6 +1,7 @@
 import { translate as t } from './i18n';
 import { useEffect, useState } from 'react';
-import { Check, ExternalLink, KeyRound, LoaderCircle, LogIn, LogOut, Plug, Plus, Star, Trash2, Unplug } from 'lucide-react';
+import { Check, ExternalLink, KeyRound, LogIn, LogOut, Plug, Plus, Star, Trash2, Unplug } from 'lucide-react';
+import { Loading } from './brand-marks';
 import type { AgentAccount, AgentModel, AgentModelList, AgentRuntimeInfo, PrimaryAgent, ProviderInfo, ProviderOAuthStart } from '../shared/contracts';
 import { agentBus, api, isDesktop } from './browser-api';
 import { TerminalPane } from './TerminalPane';
@@ -141,7 +142,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
 
     <section className="providers-section">
       <div className="field-label">{t('ui.auto.228')}</div>
-      {loading && !runtimes && <p className="footnote"><LoaderCircle className="spin" size={13} />  {t('ui.auto.229')}</p>}
+      {loading && !runtimes && <p className="footnote"><Loading size={16} />  {t('ui.auto.229')}</p>}
       {runtimes?.map(rt => <div className="runtime-card" key={rt.runtime}>
         <div className="runtime-head"><strong>{RUNTIME_NAME[rt.runtime]}</strong><small>{rt.detail}</small></div>
         {rt.installed && <div className="provider-list">
@@ -191,7 +192,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
 
     <section className="providers-section">
       <div className="field-label">{t('ui.auto.246')} {providers ? `· ${connected.length} conectados` : ''}</div>
-      {loading && !providers && <p className="footnote"><LoaderCircle className="spin" size={13} />  {t('ui.auto.247')}</p>}
+      {loading && !providers && <p className="footnote"><Loading size={16} />  {t('ui.auto.247')}</p>}
       {providers && connected.length === 0 && <p className="footnote">{t('ui.auto.248')}</p>}
       <div className="provider-list">
         {connected.map(p => {
@@ -228,7 +229,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
           <p><a href={oauth.start.url} target="_blank" rel="noreferrer">{t('ui.auto.239')} <ExternalLink size={12} /></a></p>
           {oauth.start.method === 'code' && <input aria-label={t('ui.auto.257')} placeholder={t('ui.auto.258')} value={code} onChange={e => setCode(e.target.value)} />}
           <div className="chat-card-actions">
-            <button className="primary" disabled={busy || (oauth.start.method === 'code' && !code.trim())} onClick={() => run(async () => { await api.completeProviderOAuth(oauth.providerId, oauth.methodIndex, oauth.start.method === 'code' ? code : null); setOauth(null); }, 'Sesión iniciada con el proveedor')}>{busy ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}{oauth.start.method === 'code' ? t('ui.auto.259') : t('ui.auto.240')}</button>
+            <button className="primary" disabled={busy || (oauth.start.method === 'code' && !code.trim())} onClick={() => run(async () => { await api.completeProviderOAuth(oauth.providerId, oauth.methodIndex, oauth.start.method === 'code' ? code : null); setOauth(null); }, 'Sesión iniciada con el proveedor')}>{busy ? <Loading size={16} /> : <Check size={14} />}{oauth.start.method === 'code' ? t('ui.auto.259') : t('ui.auto.240')}</button>
             <button disabled={busy} onClick={() => setOauth(null)}>{t('ui.auto.241')}</button>
           </div>
         </div>}
@@ -236,7 +237,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
           <label className="field-label" htmlFor="provider-key">{oauthMethods.length ? t('ui.auto.260') : 'API KEY'}</label>
           <div className="provider-key-row">
             <input id="provider-key" type="password" autoComplete="off" spellCheck={false} placeholder={`API key de ${current.name}`} value={apiKey} onChange={e => setApiKey(e.target.value)} />
-            <button className="primary" disabled={busy || !apiKey.trim()}>{busy ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}{t('ui.auto.261')}</button>
+            <button className="primary" disabled={busy || !apiKey.trim()}>{busy ? <Loading size={16} /> : <KeyRound size={14} />}{t('ui.auto.261')}</button>
           </div>
           <p className="footnote">{t('ui.auto.262')}</p>
         </form>

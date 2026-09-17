@@ -1,6 +1,7 @@
 import { translate as t } from './i18n';
 import { useEffect, useState } from 'react';
-import { Download, LoaderCircle, RefreshCw, X } from 'lucide-react';
+import { Download, RefreshCw, X } from 'lucide-react';
+import { Loading } from './brand-marks';
 import type { UpdateState } from '../shared/contracts';
 import { api } from './browser-api';
 
@@ -82,9 +83,9 @@ export function UpdateBanner() {
     {blocked && <p className="update-blocked" role="alert">{blocked}</p>}
 
     <div className="update-actions">
-      {state.phase === 'available' && <button className="primary" disabled={busy} onClick={download}>{busy ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}{t('ui.auto.334')}</button>}
-      {state.phase === 'ready' && <button className="primary" disabled={busy} onClick={install}>{busy ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{t('ui.auto.415')}</button>}
-      {state.phase === 'error' && <button disabled={busy} onClick={download}>{busy ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{t('ui.auto.372')}</button>}
+      {state.phase === 'available' && <button className="primary" disabled={busy} onClick={download}>{busy ? <Loading size={16} /> : <Download size={15} />}{t('ui.auto.334')}</button>}
+      {state.phase === 'ready' && <button className="primary" disabled={busy} onClick={install}>{busy ? <Loading size={16} /> : <RefreshCw size={15} />}{t('ui.auto.415')}</button>}
+      {state.phase === 'error' && <button disabled={busy} onClick={download}>{busy ? <Loading size={16} /> : <RefreshCw size={15} />}{t('ui.auto.372')}</button>}
       {state.phase !== 'downloading' && <button className="subtle" onClick={later}>{t('ui.auto.335')}</button>}
     </div>
   </section>;
