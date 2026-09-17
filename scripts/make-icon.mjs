@@ -1,8 +1,17 @@
-// Draws the Latte mark into PNG files, with no image dependency: the shape is
-// the same polygon the UI uses for `.logo-mark`, rasterised by hand and
-// compressed with Node's own zlib.
+// Draws the small, flat sizes of the Latte mark and assembles the Windows .ico, with no
+// image dependency: rasterised by hand and compressed with Node's own zlib.
 //
-// Usage: node scripts/make-icon.mjs
+// The mark prints differently by size, the way a real print would:
+// - print (256px and up): made by scripts/make-print-icons.cjs with the canonical icon of
+//   assets/brand/print-kit.js (grain, halftone, steam). Run it first; this script reads its 256.
+// - steam (48–128px): flat inks plus the three wisps of steam.
+// - flat (below 48px): the L alone. Taskbar, tabs, favicon. Texture there is only noise.
+//
+// Geometry and colours match the kit's printedIcon: corner radius 96/520, L inset 0.22,
+// the same steam curve and width. Windows picks one image per size from the .ico, so each
+// size is drawn on its own instead of downscaling the printed 256.
+//
+// Usage: npm run assets:icons (prints the large sizes, then runs this)
 import { deflateSync } from 'node:zlib';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,11 +19,23 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-/** The wordmark's L, as fractions of the box: same polygon as the CSS clip-path. */
+/** The wordmark's L, as fractions of the box: same polygon as the CSS clip-path and the kit's L. */
 const MARK = [[0, 0.28], [0.33, 0], [0.33, 0.72], [1, 0.72], [0.72, 1], [0, 1]];
-const BACKGROUND = [40, 37, 31];      // --dark
-const GRADIENT_TOP = [217, 134, 89];  // #d98659
-const GRADIENT_BOTTOM = [174, 76, 45]; // #ae4c2d
+const INSET = 0.22;
+const RADIUS = 96 / 520;
+const BACKGROUND = [41, 42, 36];     // #292a24, the kit's ink
+const MARK_COLOR = [170, 78, 49];    // #aa4e31, the brand rust
+const CREAM = [233, 196, 170];       // #e9c4aa, steam
+
+/** Three wisps of steam rise from the foot of the L, one per agent: the kit's curve at time 0.8. */
+const STEAM_WIDTH = 13 / 520;
+const STEAM = [0, 1, 2].map((i) => Array.from({ length: 25 }, (_, step) => {
+  const u = step / 24;
+  return [(280 + 50 * i + Math.sin(u * 6 + 0.8 * 1.3 + i * 1.1) * 12 * u) / 520, (294 - 190 * u) / 520];
+}));
+
+const clamp = (value) => Math.max(0, Math.min(1, value));
+const mix = (a, b, t) => a.map((c, i) => c + (b[i] - c) * t);
 
 function insidePolygon(polygon, x, y) {
   let inside = false;
@@ -26,17 +47,32 @@ function insidePolygon(polygon, x, y) {
   return inside;
 }
 
-/** 4x supersampling: the diagonals of the mark need it or they look ragged. */
-function coverage(polygon, px, py, size, inset) {
-  let hits = 0;
+function distanceToSegment(x, y, [ax, ay], [bx, by]) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const t = clamp(((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy));
+  return Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
+}
+
+function inSteam(x, y) {
+  if (x < 0.5 || x > 0.79 || y < 0.17 || y > 0.6) return false;
+  return STEAM.some((wisp) => wisp.some((point, i) => i > 0 && distanceToSegment(x, y, wisp[i - 1], point) <= STEAM_WIDTH / 2));
+}
+
+/** 4x supersampled coverage of the L and the steam, for one pixel. */
+function sample(px, py, size, steam) {
+  let mark = 0, wisps = 0;
   for (let sy = 0; sy < 4; sy += 1) {
     for (let sx = 0; sx < 4; sx += 1) {
-      const x = ((px + (sx + 0.5) / 4) / size - inset) / (1 - 2 * inset);
-      const y = ((py + (sy + 0.5) / 4) / size - inset) / (1 - 2 * inset);
-      if (x >= 0 && x <= 1 && y >= 0 && y <= 1 && insidePolygon(polygon, x, y)) hits += 1;
+      const x = (px + (sx + 0.5) / 4) / size;
+      const y = (py + (sy + 0.5) / 4) / size;
+      const mx = (x - INSET) / (1 - 2 * INSET);
+      const my = (y - INSET) / (1 - 2 * INSET);
+      if (mx >= 0 && mx <= 1 && my >= 0 && my <= 1 && insidePolygon(MARK, mx, my)) mark += 1;
+      if (steam && inSteam(x, y)) wisps += 1;
     }
   }
-  return hits / 16;
+  return { mark: mark / 16, steam: wisps / 16 };
 }
 
 function roundedCorner(px, py, size, radius) {
@@ -47,29 +83,27 @@ function roundedCorner(px, py, size, radius) {
   if (!outside) return 1;
   const [cx, cy] = corners.find(([ax, ay]) => Math.abs(x - ax) < radius && Math.abs(y - ay) < radius) ?? [];
   if (cx === undefined) return 1;
-  const distance = Math.hypot(x - cx, y - cy);
-  return Math.max(0, Math.min(1, radius - distance + 0.5));
+  return clamp(radius - Math.hypot(x - cx, y - cy) + 0.5);
 }
 
+const styleFor = (size) => (size >= 256 ? 'print' : size >= 48 ? 'steam' : 'flat');
+
 function renderIcon(size, { transparent = false } = {}) {
-  const radius = Math.round(size * 0.22);
-  const inset = 0.22;
+  const steamOn = !transparent && styleFor(size) === 'steam';
+  const radius = size * RADIUS;
   const rows = [];
   for (let y = 0; y < size; y += 1) {
     const row = Buffer.alloc(1 + size * 4);
     row[0] = 0; // filter: none
     for (let x = 0; x < size; x += 1) {
-      const mark = coverage(MARK, x, y, size, inset);
-      const t = y / size;
-      const markColor = GRADIENT_TOP.map((c, i) => Math.round(c + (GRADIENT_BOTTOM[i] - c) * t));
-      const base = transparent ? markColor : BACKGROUND;
+      const { mark, steam } = sample(x, y, size, steamOn);
+      const rgb = mix(mix(transparent ? MARK_COLOR : BACKGROUND, MARK_COLOR, mark), CREAM, steam);
       const alphaBase = transparent ? 0 : 255;
-      const rgb = base.map((c, i) => Math.round(c + (markColor[i] - c) * mark));
-      const alpha = Math.round((alphaBase + (255 - alphaBase) * mark) * roundedCorner(x, y, size, radius));
+      const alpha = Math.round((alphaBase + (255 - alphaBase) * Math.max(mark, steam)) * roundedCorner(x, y, size, radius));
       const at = 1 + x * 4;
-      row[at] = rgb[0];
-      row[at + 1] = rgb[1];
-      row[at + 2] = rgb[2];
+      row[at] = Math.round(rgb[0]);
+      row[at + 1] = Math.round(rgb[1]);
+      row[at + 2] = Math.round(rgb[2]);
       row[at + 3] = alpha;
     }
     rows.push(row);
@@ -115,15 +149,44 @@ function png(size, raw) {
   ]);
 }
 
-const targets = [
-  ['assets/icon-512.png', 512, {}],
-  ['assets/icon-256.png', 256, {}],
-  ['assets/icon-64.png', 64, {}],
-  ['assets/favicon.png', 64, { transparent: true }],
-];
-for (const [file, size, options] of targets) {
+/** An .ico is a 6-byte header, a 16-byte entry per image, then the images; PNG entries are valid since Vista. */
+function ico(images) {
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2); // type: icon
+  header.writeUInt16LE(images.length, 4);
+  let offset = 6 + 16 * images.length;
+  const entries = images.map(([size, data]) => {
+    const entry = Buffer.alloc(16);
+    entry[0] = size >= 256 ? 0 : size; // 0 means 256
+    entry[1] = size >= 256 ? 0 : size;
+    entry.writeUInt16LE(1, 4);  // colour planes
+    entry.writeUInt16LE(32, 6); // bits per pixel
+    entry.writeUInt32LE(data.length, 8);
+    entry.writeUInt32LE(offset, 12);
+    offset += data.length;
+    return entry;
+  });
+  return Buffer.concat([header, ...entries, ...images.map(([, data]) => data)]);
+}
+
+function write(file, data, note) {
   const target = path.join(root, file);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, renderIcon(size, options));
-  console.log(`${file}  ${size}x${size}  ${fs.statSync(target).size} bytes`);
+  fs.writeFileSync(target, data);
+  console.log(`${file}  ${note}  ${data.length} bytes`);
 }
+
+const printed256 = path.join(root, 'assets', 'icon-256.png');
+if (!fs.existsSync(printed256)) {
+  console.error('assets/icon-256.png is missing: run scripts/make-print-icons.cjs first.');
+  process.exit(1);
+}
+
+write('assets/icon-64.png', renderIcon(64), '64x64 steam');
+write('assets/favicon.png', renderIcon(64, { transparent: true }), '64x64 flat');
+
+const icoSizes = [16, 24, 32, 48, 64, 128];
+const layers = icoSizes.map((size) => [size, renderIcon(size)]);
+layers.push([256, fs.readFileSync(printed256)]);
+write('assets/icon.ico', ico(layers), [...icoSizes, 256].map((size) => `${size}:${styleFor(size)}`).join(' '));

@@ -13,34 +13,52 @@ const path = require('node:path');
 
 const raiz = path.resolve(__dirname, '..');
 const ANCHO = 164, ALTO = 314;
+/** Resolución de impresión de la lámina respecto de su tamaño final. */
+const IMPRESION = 4;
 app.commandLine.appendSwitch('disable-gpu');
 // Escala 1 exacta: sin esto la captura sale al 125% en una pantalla al 125%.
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
 
 const { pathToFileURL } = require('node:url');
 const fuente = (archivo) => pathToFileURL(path.join(raiz, 'src', 'fonts', archivo)).href;
+const kit = pathToFileURL(path.join(raiz, 'assets', 'brand', 'print-kit.js')).href;
+// La lámina impresa de la marca: papel con fibras, tintas planas con grano y un leve
+// corrimiento entre tintas, la misma estética de las animaciones de ohmylatte.app.
+// El canvas pinta el papel y la taza con el kit de impresión; el texto va en HTML para que quede nítido.
 const html = `<!doctype html><meta charset="utf-8"><style>
   @font-face { font-family: 'Serif'; src: url('${fuente('dm-serif-display.ttf')}'); }
   @font-face { font-family: 'Sans'; src: url('${fuente('dm-sans.ttf')}'); }
   html, body { margin: 0; width: ${ANCHO}px; height: ${ALTO}px; overflow: hidden; }
-  body {
-    background: linear-gradient(168deg, #2f2921 0%, #241f19 62%, #1d1915 100%);
-    color: #f4efe6; font-family: 'Sans', sans-serif;
-    display: flex; flex-direction: column; justify-content: space-between;
-    padding: 26px 22px; box-sizing: border-box;
-  }
-  .marca { width: 34px; height: 39px; background: linear-gradient(135deg, #d98659, #ae4c2d);
-    clip-path: polygon(0 28%, 33% 0, 33% 72%, 100% 72%, 72% 100%, 0 100%); }
-  h1 { font-family: 'Serif', serif; font-weight: 400; font-size: 27px;
-    line-height: 1.1; letter-spacing: -.7px; margin: 16px 0 0; }
-  h1 em { display: block; font-style: italic; color: #d98659; }
-  .pie { font-size: 9.5px; line-height: 1.7; color: #9c9184; letter-spacing: .3px; }
-  .pie strong { display: block; color: #cfc6b8; font-weight: 500; letter-spacing: 1.6px; font-size: 8.5px; margin-bottom: 3px; }
-  .linea { width: 34px; height: 2px; background: #ae4c2d; margin-bottom: 10px; }
+  body { position: relative; background: #f6f3ed; color: #292a24; font-family: 'Sans', sans-serif; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .texto { position: absolute; inset: 0; padding: 20px 20px 0; box-sizing: border-box;
+    display: flex; flex-direction: column; gap: 12px; }
+  h1 { font-family: 'Serif', serif; font-weight: 400; font-size: 25px; line-height: 1.02; letter-spacing: -.5px; margin: 0; }
+  h1 em { display: block; font-style: italic; color: #aa4e31; }
+  .pie { font-size: 9.5px; line-height: 1.65; color: #4b4a42; letter-spacing: .2px; }
+  .pie strong { display: block; color: #292a24; font-weight: 500; letter-spacing: 1.6px; font-size: 8px; margin-bottom: 4px; }
+  .linea { width: 30px; height: 2px; background: #aa4e31; margin-bottom: 9px; }
 </style>
 <body>
-  <div><div class="marca"></div><h1>Tu marketing,<em>en su lugar.</em></h1></div>
-  <div class="pie"><div class="linea"></div><strong>OH MY LATTE · ALPHA</strong>Marcas, trabajos y agentes.<br>Todo en tu máquina.</div>
+  <canvas id="lamina" width="${ANCHO * IMPRESION}" height="${ALTO * IMPRESION}"></canvas>
+  <div class="texto">
+    <h1>Tu marketing,<em>en su lugar.</em></h1>
+    <div class="pie"><div class="linea"></div><strong>OH MY LATTE · ALPHA</strong>Marcas, trabajos y agentes.<br>Todo en tu máquina.</div>
+  </div>
+  <script src="${kit}"></script>
+  <script>
+    // La taza es la marca canónica de assets/brand/print-kit.js, la misma de la web y del
+    // splash: acá sólo se encuadra, asomando por el borde inferior. El ícono ya está en la
+    // barra de título del instalador, así que la lámina no lo repite.
+    const K = window.LattePrint;
+    const c = document.getElementById('lamina').getContext('2d');
+    // Se imprime a IMPRESION× y el navegador lo reduce, como en la web: el grano y la trama
+    // quedan finos. Dibujado a 164 px, cada grano ocupa un píxel entero y tapa la trama.
+    const P = K.makePress(${ANCHO * IMPRESION}, ${ALTO * IMPRESION}, 20260916, ${ANCHO});
+    c.drawImage(P.paper, 0, 0);
+    K.cupFromAbove(c, P, 84, ${ALTO} - 22, 58);
+    window.lista = true;
+  </script>
 </body>`;
 
 /** BMP de 24 bits: filas de abajo hacia arriba y padeadas a múltiplo de 4. */
