@@ -26,8 +26,9 @@ const kit = pathToFileURL(path.join(raiz, 'assets', 'brand', 'print-kit.js')).hr
 // corrimiento entre tintas, la misma estética de las animaciones de ohmylatte.app.
 // El canvas pinta el papel y la taza con el kit de impresión; el texto va en HTML para que quede nítido.
 const html = `<!doctype html><meta charset="utf-8"><style>
-  @font-face { font-family: 'Serif'; src: url('${fuente('dm-serif-display.ttf')}'); }
-  @font-face { font-family: 'Sans'; src: url('${fuente('dm-sans.ttf')}'); }
+  @font-face { font-family: 'Serif'; src: url('${fuente('instrument-serif.ttf')}'); }
+  @font-face { font-family: 'Serif'; src: url('${fuente('instrument-serif-italic.ttf')}'); font-style: italic; }
+  @font-face { font-family: 'Sans'; src: url('${fuente('inter-tight.ttf')}'); }
   html, body { margin: 0; width: ${ANCHO}px; height: ${ALTO}px; overflow: hidden; }
   body { position: relative; background: #f6f3ed; color: #292a24; font-family: 'Sans', sans-serif; }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; }

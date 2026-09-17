@@ -80,7 +80,7 @@ export function DocumentList({ documents, workId, currentWorkId, workTitles, sel
         <FileText size={14} />
         <span>
           <strong>{d.title}</strong>
-          <small>{STATUS_LABEL[d.status]} · {d.fileName}</small>
+          <small><span className={'doc-status doc-status-' + d.status}>{STATUS_LABEL[d.status]}</span> · {d.fileName}</small>
           <KnowledgeOrigin workId={d.workId} currentWorkId={currentWorkId} titles={workTitles} />
           {d.proposedFunnelStages.length > 0 && <em className="proposed">{t('ui.auto.373')} {d.proposedFunnelStages.map(s => STAGE_LABEL[s]).join(' + ')}</em>}
           {reviewReasons(d, outdated(d)).map(reason => <em key={reason}>{reason}</em>)}
