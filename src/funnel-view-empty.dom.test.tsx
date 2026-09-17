@@ -57,4 +57,12 @@ describe('M5 — empty funnel stage', () => {
     expect(container.querySelectorAll('.funnel-card.repeat')).toHaveLength(1);
     expect(getAllByText('mismo archivo ↔')).toHaveLength(1);
   });
+
+  it('shows the approval stamp only on approved documents', () => {
+    const { container } = renderFunnel([
+      doc({ id: 'a', title: 'Aprobado', status: 'approved', funnelStages: ['discovery'] }),
+      doc({ id: 'b', title: 'Borrador', status: 'draft', funnelStages: ['consideration'] }),
+    ]);
+    expect(container.querySelectorAll('.row-stamp')).toHaveLength(1);
+  });
 });

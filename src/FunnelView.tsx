@@ -3,6 +3,7 @@ import { FileText, RefreshCw } from 'lucide-react';
 import type { DocumentState, FunnelStage, WorkDocument } from '../shared/contracts';
 import { groupByStage, reviewReasons, STAGES, STAGE_LABEL, STATUS_LABEL } from './document-organizer';
 import { KnowledgeOrigin } from './KnowledgeScope';
+import { ApprovalStamp } from './brand-marks';
 
 /**
  * The campaign by funnel stage, on its own screen.
@@ -35,7 +36,7 @@ export function FunnelView({ documents, selectedId, states, checking, onRefresh,
     return <button key={d.id} data-document-id={d.id} data-origin-work={d.workId} data-current-work={d.workId === currentWorkId ? 'true' : 'false'} disabled={busy} className={'funnel-card' + (repeat ? ' repeat' : '') + (selectedId === d.id ? ' selected' : '')} onClick={() => onSelect(d.id)} aria-label={t('ui.auto.124') + d.title}>
       <FileText size={14} />
       <span>
-        <strong>{d.title}</strong>
+        <strong>{d.title}{d.status === 'approved' && <ApprovalStamp size={16} className="row-stamp" />}</strong>
         <small><span className={'doc-status doc-status-' + d.status}>{STATUS_LABEL[d.status]}</span> · {d.fileName}</small>
         <KnowledgeOrigin workId={d.workId} currentWorkId={currentWorkId} titles={workTitles} />
         {d.proposedFunnelStages.length > 0 && <em className="proposed">{t('ui.auto.373')} {d.proposedFunnelStages.map(s => STAGE_LABEL[s]).join(' + ')}</em>}

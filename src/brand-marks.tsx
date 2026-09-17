@@ -83,6 +83,29 @@ export function Loading({ size = 16, label }: { size?: number; label?: string })
   );
 }
 
+/** A version ring: 14px, 2px rust border. `filled` marks the current version. */
+export function VersionRing({ filled = false, drawing = false }: { filled?: boolean; drawing?: boolean }) {
+  return (
+    <svg className={'version-ring' + (filled ? ' filled' : '') + (drawing ? ' drawing' : '')} width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="6" fill={filled ? 'var(--rust)' : 'none'} stroke="var(--rust)" strokeWidth="2" />
+    </svg>
+  );
+}
+
+/**
+ * The approval stamp: the cup from above (ink rim, rust coffee) with the L in
+ * foam. It pops in (0→1 with a short bounce) when a document is approved.
+ */
+export function ApprovalStamp({ size = 34, className }: { size?: number; className?: string }) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="45" fill="none" stroke="var(--ink)" strokeWidth="4" />
+      <circle cx="50" cy="50" r="41" fill="var(--rust)" />
+      <polygon points={L_PTS} fill="var(--foam)" transform="translate(50 50) scale(0.4) translate(-128 -128)" />
+    </svg>
+  );
+}
+
 const ROLE_COLORS = new Set(['assistant', 'strategist', 'researcher', 'analyst', 'reviewer']);
 
 /** The role colour token for a role id, falling back to the default role. */

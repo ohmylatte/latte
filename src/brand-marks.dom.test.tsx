@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
-import { CupFromAbove, LMark, Loading, roleColorVar, SteamWisp } from './brand-marks';
+import { ApprovalStamp, CupFromAbove, LMark, Loading, roleColorVar, SteamWisp, VersionRing } from './brand-marks';
 
 describe('brand marks', () => {
   it('SteamWisp draws a single stroked path', () => {
@@ -44,5 +44,27 @@ describe('brand marks', () => {
     expect(status).not.toBeNull();
     expect(status!.getAttribute('aria-label')).toBe('Abriendo el trabajo');
     expect(container.querySelector('.loading-cup-coffee')).not.toBeNull();
+  });
+
+  it('ApprovalStamp draws the rim, the coffee and the L in foam', () => {
+    const { container } = render(<ApprovalStamp size={34} className="approval-stamp" />);
+    const svg = container.querySelector('svg.approval-stamp');
+    expect(svg).not.toBeNull();
+    expect(svg!.querySelectorAll('circle')).toHaveLength(2);
+    const poly = svg!.querySelector('polygon');
+    expect(poly).not.toBeNull();
+    expect(poly!.getAttribute('fill')).toBe('var(--foam)');
+  });
+
+  it('VersionRing fills the current version and dims the previous', () => {
+    const { container } = render(<>
+      <VersionRing filled={false} />
+      <VersionRing filled={true} />
+    </>);
+    const rings = [...container.querySelectorAll('.version-ring')];
+    expect(rings).toHaveLength(2);
+    expect(rings[0].getAttribute('class')).toContain('version-ring');
+    expect(rings[0].getAttribute('class')).not.toContain('filled');
+    expect(rings[1].getAttribute('class')).toContain('filled');
   });
 });
