@@ -146,6 +146,7 @@ export function seedDemoIfEmpty(repo: LatteRepository, files: WorkspaceFiles, pa
     title: 'Lanzamiento Cosecha 2026',
     brief: DEMO_DOCUMENT,
     folder: null,
+    outOfScopeStages: [],
     updatedAt: createdAt,
   };
 
