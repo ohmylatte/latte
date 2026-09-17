@@ -30,9 +30,8 @@ Onboarding marketer-first: entrás con una necesidad de negocio, Latte arma el t
 
 ### Plataformas
 
-- **Windows x64**: soportado.
-- **Linux x64**: empaquetado en *alpha* (AppImage / `.deb`), verificado en Linux Mint 22.3 con X11.
-- **macOS**: sin soporte.
+- **Windows x64**: soportado — el único con ejecutable publicado.
+- **Linux x64** y **macOS**: **no hay un ejecutable probado.** Los paquetes de Linux se publican en *alpha* (verificado en Linux Mint 22.3 con X11, no en Wayland ni otras distribuciones); macOS no tiene artefacto. La vía soportada es correr desde el código.
 - El instalador de Windows todavía **no está firmado**.
 
 ### Requisitos

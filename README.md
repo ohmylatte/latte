@@ -19,27 +19,34 @@ Todo en tu máquina.
 
 ## Instalar
 
+### Windows x64 (soportado)
+
 Descargá **[Latte-Setup.exe](https://github.com/ohmylatte/latte/releases/latest/download/Latte-Setup.exe)** y ejecutalo.
 
 El instalador todavía no está firmado, así que Windows va a mostrar «Windows
-protegió tu PC»: **Más información → Ejecutar de todas formas**. Si preferís no
-hacerlo, corré Latte desde el código, más abajo.
+protegió tu PC»: **Más información → Ejecutar de todas formas**.
 
-En Linux x64, descargá el AppImage o el `.deb` desde la
-[última release](https://github.com/ohmylatte/latte/releases/latest). macOS no
-tiene un artefacto soportado en esta alpha.
+### Linux y macOS
+
+**No hay un ejecutable probado para Linux ni para macOS.** Los paquetes de Linux
+que se publican en cada release están en estado *alpha*: se verificaron en Linux
+Mint 22.3 con X11, no en Wayland ni en otras distribuciones. macOS no tiene
+artefacto. La forma soportada de correr Latte en Linux o en macOS es **desde el
+código** (ver abajo).
 
 Necesitás además al menos un agente instalado y autenticado por tu cuenta:
 [Claude Code](https://claude.com/claude-code),
 [Codex](https://developers.openai.com/codex/cli) u
 [OpenCode](https://opencode.ai). Latte los detecta solos.
 
-El instalador de Windows y el AppImage avisan cuando hay una versión nueva; la
-descarga empieza cuando la aceptás y Latte se reinicia solo cuando vos lo
-decidís. Nunca lo hace sobre un documento sin guardar. El `.deb` no se
-auto-actualiza: descargá e instalá el nuevo paquete desde cada release.
+El instalador de Windows avisa cuando hay una versión nueva; la descarga empieza
+cuando la aceptás y Latte se reinicia solo cuando vos lo decidís. Nunca lo hace
+sobre un documento sin guardar.
 
 ## Desde el código
+
+Corré Latte desde el código en **cualquier entorno** (Windows, Linux o macOS)
+con Node.js 24 LTS instalado:
 
 ```bash
 git clone https://github.com/ohmylatte/latte.git
@@ -49,7 +56,9 @@ npm run dev
 ```
 
 `npm run dev` levanta Vite y Electron sin compilar nada. Es el camino de
-desarrollo y el más ejercitado.
+desarrollo, el más ejercitado y la forma soportada de correr Latte en Linux y
+macOS. Necesitás al menos un agente instalado y autenticado (Claude Code, Codex
+u OpenCode).
 
 ### Opcional: renderer compilado
 
@@ -166,20 +175,25 @@ your machine.
 
 ## Install
 
+### Windows x64 (supported)
+
 On Windows x64, download and run
 **[Latte-Setup.exe](https://github.com/ohmylatte/latte/releases/latest/download/Latte-Setup.exe)**.
 It is not signed yet, so Windows SmartScreen may require **More info → Run
 anyway**.
 
-On Linux x64, download the AppImage or `.deb` from the
-[latest release](https://github.com/ohmylatte/latte/releases/latest). Most
-systems run the AppImage without extra setup; only if it reports a FUSE error,
-follow [`docs/RUN-linux.md`](docs/RUN-linux.md). The `.deb` does not require
-FUSE.
+### Linux and macOS
 
-The Windows installer and AppImage notify you about new versions, download only
-after you accept, and restart only when you choose. The `.deb` does not
-self-update; download and reinstall it from each release.
+**There is no verified executable for Linux or macOS.** The Linux packages
+published in each release are in *alpha*: verified on Linux Mint 22.3 with X11,
+not on Wayland or other distributions. macOS has no artifact. The supported way
+to run Latte on Linux or macOS is **from source** (see "Run it" below).
+
+You also need at least one agent installed and signed in with your own account:
+Claude Code, Codex or OpenCode. Latte detects them for you.
+
+The Windows installer notifies you about new versions, downloads only after you
+accept, and restarts only when you choose.
 
 - **Chat (default):** a native Latte chat on top of whichever runtime you picked as primary — Claude Code and Codex with your own subscription, or any API-key provider through [OpenCode](https://opencode.ai). One conversation per team member, inside that work's folder, streaming messages, tool calls, permission requests and questions into the UI. No fake replies: when a runtime, a provider or a balance is missing you see the real reason.
 - **Terminal (advanced):** a real PTY running your CLI (`claude`, `codex`, `opencode`) inside the work folder, with Latte-managed `CLAUDE.md` / `AGENTS.md` context files. Global tool configuration is never touched.
@@ -187,10 +201,18 @@ self-update; download and reinstall it from each release.
 
 ## Run it
 
+Run Latte from source on **any environment** (Windows, Linux or macOS) with
+Node.js 24 LTS installed:
+
 ```bash
+git clone https://github.com/ohmylatte/latte.git
+cd latte
 npm ci               # one lockfile; node-pty ships an N-API prebuild, no rebuild
 npm run dev          # Vite dev server in-process + Electron (main runs from TypeScript through tsx)
 ```
+
+`npm run dev` is the development path, the most exercised one, and the supported
+way to run Latte on Linux and macOS.
 
 Optional, renderer only:
 
