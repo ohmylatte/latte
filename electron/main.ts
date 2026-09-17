@@ -19,6 +19,7 @@ import { UpdateController, type UpdateActivity } from './updater/controller';
 import { createUpdaterEngine, decideUpdaterAvailability } from './updater/engine';
 import { attachCloseGuard, attachQuitGuard, type CloseGuardHandle } from './windowClose';
 import { registerIpc } from './ipc/register';
+import { openSplash, type Splash } from './splash';
 import { mainMessage } from './i18n';
 
 installProcessStreamErrorGuards(process.stdout, process.stderr);
@@ -30,12 +31,16 @@ const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL ?? null;
 /** Last state reported by the renderer; only affects the close confirmation. */
 let hasUnsavedWork = false;
 const PRELOAD = path.join(__dirname, 'preload.cjs');
-const APP_ICON = path.join(__dirname, '..', 'assets', 'icon-256.png');
+// Windows shows the window icon at taskbar size, so it takes the .ico with a clean small L;
+// elsewhere the printed 256 PNG.
+const APP_ICON = path.join(__dirname, '..', 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon-256.png');
 /** First check once the app has settled, then a quiet one every few hours. */
 const FIRST_CHECK_MS = 25_000;
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 let mainWindow: BrowserWindow | null = null;
+/** The launch splash, until the first main window is ready. */
+let splash: Splash | null = null;
 let backend: Backend | null = null;
 let unregisterIpc: (() => void) | null = null;
 let updates: UpdateController | null = null;
@@ -70,6 +75,7 @@ if (!app.requestSingleInstanceLock()) {
 
 async function start(): Promise<void> {
   await app.whenReady();
+  splash = openSplash({ icon: APP_ICON, locale: app.getLocale().toLowerCase().startsWith('en') ? 'en' : 'es', version: app.getVersion() });
 
   const binPath = ensureUserBinPath(process.env, process.platform);
   if (binPath.added.length > 0) {
@@ -105,6 +111,8 @@ async function start(): Promise<void> {
   } catch (error) {
     // Opening the data is the one failure that must not end in a blank window:
     // it usually means the database belongs to a newer Latte.
+    splash?.close();
+    splash = null;
     reportStartFailure(error);
     return;
   }
@@ -138,6 +146,7 @@ async function start(): Promise<void> {
     else if (action === 'close') mainWindow.close();
   });
   setupUpdates();
+  splash?.stage('interface');
   createWindow();
   armSmokeExit();
 
@@ -309,7 +318,13 @@ function createWindow(): void {
   });
   mainWindow = win;
 
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    const reveal = () => { if (!win.isDestroyed()) win.show(); };
+    // Only the first window of a launch follows the splash; macOS re-activation opens directly.
+    if (splash) splash.finish(reveal);
+    else reveal();
+    splash = null;
+  });
   const sendState = () => {
     if (!win.isDestroyed()) win.webContents.send('latte:window-state', { maximized: win.isMaximized() });
   };

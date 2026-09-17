@@ -16,6 +16,7 @@
     "build": "vite build",
     "build:main": "node scripts/build-electron.mjs",
     "assets:installer": "electron scripts/make-installer-sidebar.cjs",
+    "assets:icons": "electron scripts/make-print-icons.cjs && node scripts/make-icon.mjs",
     "build:desktop": "npm run build && npm run build:main",
     "pack:win": "npm run build:desktop && electron-builder --win --publish never",
     "pack:mac": "npm run build:desktop && electron-builder --mac --x64 --arm64 --publish never",

@@ -18,6 +18,12 @@ files:
   - dist-electron/**
   - packs/**
   - assets/icon-*.png
+  - assets/icon.ico
+  # The launch splash (electron/splash.ts) and the one font it prints with.
+  - assets/splash.html
+  - assets/splash.js
+  - assets/brand/print-kit.js
+  - src/fonts/dm-serif-display.ttf
   - package.json
 # Production dependencies are collected by electron-builder itself; development
 # dependencies (tsx, vite, electron-builder) never travel.
@@ -78,8 +84,9 @@ win:
     - target: nsis
       arch:
         - x64
-  # electron-builder converts this PNG to the .ico the installer needs.
-  icon: assets/icon-512.png
+  # One drawing per size (scripts/make-icon.mjs): the printed mark at 256, a clean L
+  # at taskbar sizes. Converting the 512 PNG would blur its grain into the small icons.
+  icon: assets/icon.ico
   artifactName: Latte-Setup.exe
 
 nsis:
