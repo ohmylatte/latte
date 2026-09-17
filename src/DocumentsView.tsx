@@ -232,9 +232,37 @@ export function DocumentsView(props: DocumentsViewProps) {
     : !documents.some(d => d.kind === 'calendar')
       ? { label: 'Un paso habitual:', hint: 'un calendario derivado de la estrategia, con fecha, canal, mensaje y CTA.' }
       : null;
+
+  // The funnel gap actions, wired to the APIs DocumentsView already holds.
+  const onCreateAction = async (stage: FunnelStage, action: 'analyze' | 'propose' | 'experiment') => {
+    if (!work) return;
+    try {
+      const kind = action === 'propose' ? 'strategy' : 'research';
+      const title = { analyze: t('funnel.doc.analyze'), propose: t('funnel.doc.proposal'), experiment: t('funnel.doc.experiment') }[action];
+      await api.createDocument(work.id, kind, title + ' · ' + STAGE_LABEL[stage]);
+      await props.onDocumentsChanged();
+      props.onNotice(t('ui.auto.138'));
+    } catch (e) { props.onError(displayError(e)); }
+  };
+  const onAssociate = async (documentId: string, stage: FunnelStage) => {
+    const doc = documents.find(d => d.id === documentId);
+    if (!doc) return;
+    try {
+      await api.updateDocument(documentId, { funnelStages: [...doc.funnelStages, stage] });
+      await props.onDocumentsChanged();
+    } catch (e) { props.onError(displayError(e)); }
+  };
+  const onToggleOutOfScope = async (stage: FunnelStage) => {
+    if (!work) return;
+    try {
+      // The toggle returns the updated work; App mirrors it through onWorkUpdated.
+      props.onWorkUpdated(await api.toggleOutOfScopeStage(work.id, stage));
+    } catch (e) { props.onError(displayError(e)); }
+  };
+
   return <div className={'documents' + (funnel ? ' funnel-mode' : '')}>
     {funnel
-      ? <FunnelView documents={documents} selectedId={selected?.id ?? null} states={states} checking={checking} onRefresh={refreshStates} onSelect={id => { if (!saving) { props.onSelect(id); props.onView('brief'); } }} busy={props.busy} currentWorkId={props.currentWorkId} workTitles={props.workTitles} />
+      ? <FunnelView documents={documents} selectedId={selected?.id ?? null} states={states} checking={checking} onRefresh={refreshStates} onSelect={id => { if (!saving) { props.onSelect(id); props.onView('brief'); } }} busy={props.busy} currentWorkId={props.currentWorkId} workTitles={props.workTitles} outOfScopeStages={work.outOfScopeStages ?? []} onCreateAction={onCreateAction} onAssociate={onAssociate} onToggleOutOfScope={onToggleOutOfScope} />
       : <><DocumentList documents={documents} workId={work.id} currentWorkId={work.id} workTitles={props.workTitles} selectedId={selected?.id ?? null} states={states} failed={failed} checking={checking} onRefresh={refreshStates} onSelect={id => { if (!saving) props.onSelect(id); }} onCreate={props.onCreate} onUseFolder={props.onUseFolder} folder={linked} untracked={props.untracked} onTrack={props.onTrack} busy={props.busy || saving} suggestion={suggestion} showWorkDelta={props.showWorkDelta} onImported={names => { void props.onDocumentsChanged(); props.onNotice(names.length === 1 ? t('ui.auto.374', { p0: names[0] }) : t('ui.auto.375', { p0: names.length })); }} />
     <div className="doc-pane">
     {selected && <div className="document-toolbar">
