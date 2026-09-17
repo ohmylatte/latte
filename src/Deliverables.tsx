@@ -1,5 +1,5 @@
 import { currentLocale, translate as t } from './i18n';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Copy, ExternalLink, FolderOpen, Package, RefreshCw } from 'lucide-react';
 import type { DeliverableListing } from '../shared/contracts';
 import { api, isDesktop } from './browser-api';
@@ -20,7 +20,7 @@ const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 102
  * Opening is always the human's decision, and HTML asks again before opening
  * because it can run scripts.
  */
-export function Deliverables({ workId }: { workId: string }) {
+export function Deliverables({ workId, onListing }: { workId: string; onListing?: (listing: DeliverableListing | null) => void }) {
   const [open, setOpen] = useState(false);
   const [listing, setListing] = useState<DeliverableListing | null>(null);
   const [error, setError] = useState('');
@@ -28,6 +28,12 @@ export function Deliverables({ workId }: { workId: string }) {
   const [busy, setBusy] = useState('');
   const [refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
+  // The listing is reported up through `onListing` so a parent that also needs
+  // it (Resultados, to flag the linked documento) reads the SAME readdir instead
+  // of issuing a second one. Kept in a ref so the fetch effect never re-runs on
+  // a fresh callback identity.
+  const onListingRef = useRef(onListing);
+  useEffect(() => { onListingRef.current = onListing; });
 
   // One readdir, so the count is honest even while the panel is closed.
   useEffect(() => {
@@ -35,8 +41,8 @@ export function Deliverables({ workId }: { workId: string }) {
     setLoading(true);
     setError('');
     api.listDeliverables(workId)
-      .then(result => { if (live) setListing(result); })
-      .catch(e => { if (live) setError(e instanceof Error ? e.message : String(e)); })
+      .then(result => { if (live) setListing(result); onListingRef.current?.(result); })
+      .catch(e => { if (live) setError(e instanceof Error ? e.message : String(e)); onListingRef.current?.(null); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [workId, refresh]);

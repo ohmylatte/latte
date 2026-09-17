@@ -1,9 +1,9 @@
 import { translate as t } from './i18n';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Deliverables } from './Deliverables';
 import { NON_DERIVED_RESULTADOS, RESULTADO_TYPE_KEYS, resultadosSummary } from './resultados-summary';
 import type { DeliverableListing, Decision, Work } from '../shared/contracts';
-import { api, isDesktop } from './browser-api';
+import { isDesktop } from './browser-api';
 
 /**
  * Resultados: the in-work surface answering "¿qué entregó este trabajo?".
@@ -17,9 +17,10 @@ import { api, isDesktop } from './browser-api';
  *
  * The linked `documento` is a pointer into `entregables/`, so whether it is
  * still there is read from the folder (the `Deliverables` listing), never
- * stored: the view fetches that listing only to flag the link as present or
- * missing, on the desktop where a folder exists. On the web preview there is
- * no folder to read, so the link renders unflagged.
+ * stored. The listing is not fetched a second time here: `Deliverables` reports
+ * its own readdir up through `onListing`, so this view flags the link from the
+ * very same read that renders the panel. On the web preview there is no folder
+ * to read, so the link renders unflagged.
  */
 
 export interface ResultadosViewProps {
@@ -30,18 +31,9 @@ export interface ResultadosViewProps {
 }
 
 export function ResultadosView(props: ResultadosViewProps) {
-  const workId = props.work?.id ?? '';
-  // The Deliverables listing, read once so the linked documento can be flagged
-  // as present or missing. Existence is read from the folder, never stored.
+  // The Deliverables panel's own listing, reported up so the linked documento
+  // can be flagged present/missing without a second readdir.
   const [listing, setListing] = useState<DeliverableListing | null>(null);
-  useEffect(() => {
-    if (!isDesktop || !workId) return;
-    let live = true;
-    api.listDeliverables(workId)
-      .then((result) => { if (live) setListing(result); })
-      .catch(() => { if (live) setListing(null); });
-    return () => { live = false; };
-  }, [workId]);
 
   if (!props.work) {
     return <section className="resultados-view" role="region" aria-label={t('resultados.region')} />;
@@ -49,8 +41,8 @@ export function ResultadosView(props: ResultadosViewProps) {
   const summary = resultadosSummary({ work: props.work, decisions: props.decisions });
 
   const linked = summary.documento?.resultPath ?? null;
-  const linkedPresent = Boolean(linked && listing && listing.files.some((file) => file.fileName === linked));
-  const linkedMissing = Boolean(linked && listing && !linkedPresent);
+  const linkedPresent = Boolean(isDesktop && linked && listing && listing.files.some((file) => file.fileName === linked));
+  const linkedMissing = Boolean(isDesktop && linked && listing && !linkedPresent);
   const documentoState = linked ? (linkedMissing ? 'missing' : linkedPresent ? 'present' : 'unverified') : null;
 
   return <section className="resultados-view" role="region" aria-label={t('resultados.region')}>
@@ -72,7 +64,7 @@ export function ResultadosView(props: ResultadosViewProps) {
 
       <section className="resultados-group" data-tag="entregable">
         <h2>{t('resultados.entregable')}</h2>
-        <Deliverables workId={props.work.id} />
+        <Deliverables workId={props.work.id} onListing={setListing} />
       </section>
 
       <section className="resultados-group" data-tag="decision">
