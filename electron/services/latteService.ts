@@ -550,7 +550,7 @@ export class LatteService implements BackendApi {
     const cleanTitle = requireLabel(title, 'Work title', LIMITS.title);
     const brand = this.requireActiveBrand(id);
     const initialDocument = `# ${cleanTitle}\n\n`;
-    const work: Work = { id: newId('wrk'), brandId: id, title: cleanTitle, brief: initialDocument, folder: null, updatedAt: this.clock() };
+    const work: Work = { id: newId('wrk'), brandId: id, title: cleanTitle, brief: initialDocument, folder: null, outOfScopeStages: [], updatedAt: this.clock() };
     this.deps.repo.insertWork(work);
     this.deps.repo.setMeta(`work_content_locale:${work.id}`, await this.getContentLocale());
     this.deps.repo.insertDocument({
@@ -732,6 +732,21 @@ export class LatteService implements BackendApi {
   async dismissFunnelProposal(documentId: string): Promise<WorkDocument> {
     const record = this.deps.repo.getDocument(requireId(documentId, 'documentId'));
     return this.describeDocument(this.deps.repo.updateDocument(record.id, { proposedFunnelStages: [], updatedAt: this.clock() }));
+  }
+
+  /**
+   * Marks or unmarks a funnel stage as out of scope for this work. Reversible:
+   * toggling a marked stage removes it. Only a valid funnel stage is accepted
+   * (the same list updateDocument uses); the work is read from disk first so a
+   * stale copy is never persisted over a newer one.
+   */
+  async toggleOutOfScopeStage(workId: string, stage: FunnelStage): Promise<Work> {
+    const id = requireId(workId, 'workId');
+    if (!['discovery', 'consideration', 'conversion', 'retention'].includes(stage)) throw new TypeError('Invalid funnel stage');
+    const work = this.syncFromDisk(this.deps.repo.getWork(id));
+    const current = work.outOfScopeStages ?? [];
+    const next = current.includes(stage) ? current.filter((s) => s !== stage) : [...current, stage];
+    return this.deps.repo.setWorkOutOfScopeStages(id, next, this.clock());
   }
 
   async readDocument(documentId: string): Promise<DocumentContent> {

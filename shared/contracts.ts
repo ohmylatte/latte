@@ -69,6 +69,12 @@ export interface Work {
    * read from that folder, never stored.
    */
   resultPath?: string | null;
+  /**
+   * Stages the human marked "out of scope" for this work. They stay visible in
+   * the funnel but muted, and unmarking restores them. Only empty stages can be
+   * out of scope (a stage with documents is never hidden). Defaults to [].
+   */
+  outOfScopeStages?: FunnelStage[];
   updatedAt: string;
 }
 /** The outcome of a work, the only part edited through `updateWork`. Omitted = unchanged; null or '' = cleared. */
@@ -715,6 +721,8 @@ export interface LatteAPI {
   applyFunnelProposal(documentId: string): Promise<WorkDocument>;
   /** Drops the proposal and leaves the stages as they were. */
   dismissFunnelProposal(documentId: string): Promise<WorkDocument>;
+  /** Toggles a funnel stage into/out of this work's out-of-scope set. Returns the updated work. */
+  toggleOutOfScopeStage(workId: string, stage: FunnelStage): Promise<Work>;
   /** How much this work's team may do without asking. */
   getWorkPermissions(workId: string): Promise<WorkPermissionMode>;
   setWorkPermissions(workId: string, mode: WorkPermissionMode): Promise<WorkPermissionMode>;

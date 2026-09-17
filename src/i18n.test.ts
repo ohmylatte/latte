@@ -83,4 +83,20 @@ describe('i18n catalogs', () => {
       expect(catalogs['en-US'][key as keyof typeof catalogs['en-US']], `en-US ${key}`).toBeTruthy();
     }
   });
+
+  it('exposes every funnel action and out-of-scope key in both locales', async () => {
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined });
+    const { catalogs } = await import('./i18n');
+    const keys = Object.keys(catalogs['es-AR']).filter((k) => k.startsWith('funnel.'));
+    expect(keys).toContain('funnel.analyze');
+    expect(keys).toContain('funnel.outOfScope');
+    expect(keys).toContain('funnel.outOfScopeUndo');
+    expect(keys).toContain('funnel.associateEmpty');
+    expect(keys.filter((k) => k.startsWith('funnel.doc.')).length).toBeGreaterThan(0);
+    for (const key of keys) {
+      expect(catalogs['es-AR'][key as keyof typeof catalogs['es-AR']], `es-AR ${key}`).toBeTruthy();
+      expect(catalogs['en-US'][key as keyof typeof catalogs['en-US']], `en-US ${key}`).toBeTruthy();
+    }
+  });
 });

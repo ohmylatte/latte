@@ -132,15 +132,16 @@ CREATE TABLE IF NOT EXISTS meta (
 ` + GENERATION_SCHEMA_SQL + BRANDING_SCHEMA_SQL + LEARNING_SCHEMA_SQL + ARCHIVE_SCHEMA_SQL + BRAND_CONTEXT_SCHEMA_SQL;
 
 /**
- * Not bumped for works.expected_output / works.result_path (nor for
- * team_members.continued_from, tier and usage_json) on purpose: columns an
- * older build simply ignores, because every insert names its columns and the
- * two new ones are nullable or defaulted. A bump would make that older build
- * refuse the database as "newer" (see isNewerSchema), which is the opposite of
- * backward compatible.
- * The outcome columns are added by migrate(), the same path for a new database
- * and an existing one, so the works table above stays exactly what schema 7
- * defined. Schema 8 adds generation receipts, brand-kit tables and learned-skill tables.
+ * Not bumped for works.expected_output / works.result_path / works.out_of_scope_stages
+ * (nor for team_members.continued_from, tier and usage_json) on purpose:
+ * columns an older build simply ignores, because every insert names its columns
+ * and the new ones are nullable or defaulted. A bump would make that older
+ * build refuse the database as "newer" (see isNewerSchema), which is the
+ * opposite of backward compatible.
+ * The outcome and out-of-scope columns are added by migrate(), the same path
+ * for a new database and an existing one, so the works table above stays
+ * exactly what schema 7 defined. Schema 8 adds generation receipts, brand-kit
+ * tables and learned-skill tables.
  * Schema 9 adds brand_archives (soft-delete, no ALTER on brands).
  * Schema 10 adds brand_context_proposals (agent drafts of Brand.context).
  * Schema 11 adds brand_context_revisions (the immutable history of Brand.context).

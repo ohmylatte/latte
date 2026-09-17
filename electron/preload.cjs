@@ -69,6 +69,7 @@ const METHODS = [
   'promoteSkillCandidate',
   'applyFunnelProposal',
   'dismissFunnelProposal',
+  'toggleOutOfScopeStage',
   'getWorkPermissions',
   'setWorkPermissions',
   'trackFile',
