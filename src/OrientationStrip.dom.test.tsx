@@ -34,11 +34,22 @@ const mount = () => render(<I18nProvider><App /></I18nProvider>);
 const strip = (container: HTMLElement) => container.querySelector<HTMLElement>('.orientation-strip');
 const pane = (container: HTMLElement) => container.querySelector<HTMLElement>('.doc-pane');
 const tab = (container: HTMLElement, label: RegExp) => [...container.querySelectorAll<HTMLButtonElement>('.tabs button')].find(b => label.test(b.textContent ?? ''));
+/**
+ * A returning user lands on Inicio, not inside a work. The way in is the work's
+ * own row in the "Continuar" card — the topbar's in-work modes are not on a
+ * global surface, so "Revisar" is no longer reachable from here. The row opens
+ * the work in conversation focus, which is the layout the strip has to be found
+ * in anyway.
+ */
+const enterWork = async (container: HTMLElement) => {
+  await screen.findByRole('button', { name: 'Lanzamiento primavera' });
+  fireEvent.click(container.querySelector('.home-continue .home-row') as HTMLButtonElement);
+};
 
 describe('the orientation strip in the workspace', () => {
   it('mounts above the toolbar, as the first child of the document pane', async () => {
     const { container } = mount();
-    await screen.findByRole('button', { name: 'Lanzamiento primavera' });
+    await enterWork(container);
 
     const region = await waitFor(() => {
       const found = strip(container);
@@ -60,7 +71,7 @@ describe('the orientation strip in the workspace', () => {
     await api.createDocument('demo-work', 'note', 'Nota de prueba', null);
 
     const { container } = mount();
-    await screen.findByRole('button', { name: 'Lanzamiento primavera' });
+    await enterWork(container);
     await waitFor(() => expect(container.querySelectorAll('.doc-row').length).toBeGreaterThan(1));
 
     const rows = [...container.querySelectorAll<HTMLElement>('.doc-row')];
@@ -74,7 +85,7 @@ describe('the orientation strip in the workspace', () => {
 
   it('is not rendered in the funnel, where the document pane is not', async () => {
     const { container } = mount();
-    await screen.findByRole('button', { name: 'Lanzamiento primavera' });
+    await enterWork(container);
     await waitFor(() => expect(strip(container)).not.toBeNull());
 
     fireEvent.click(tab(container, /^Embudo/) as HTMLButtonElement);

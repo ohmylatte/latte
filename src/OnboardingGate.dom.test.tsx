@@ -558,7 +558,7 @@ describe('first-run onboarding gate', () => {
   });
 
   it('keeps the gate a pre-shell branch: no new workspace view was added', () => {
-    expect([...VIEWS]).toEqual(['brief', 'funnel', 'context', 'memory', 'decisions']);
+    expect([...VIEWS]).toEqual(['home', 'brief', 'funnel', 'context', 'memory', 'decisions']);
     expect((VIEWS as readonly string[])).not.toContain('onboarding');
   });
 });

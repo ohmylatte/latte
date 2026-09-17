@@ -1,4 +1,3 @@
-import { translate as t } from './i18n';
 import type { DocumentState, DocumentStatus, FunnelStage, WorkDocument } from '../shared/contracts';
 export const STAGES: FunnelStage[] = ['discovery','consideration','conversion','retention'];
 export const STAGE_LABEL: Record<FunnelStage | 'unclassified', string> = {discovery:'Descubrimiento',consideration:'Consideración',conversion:'Conversión',retention:'Retención',unclassified:'Sin clasificar'};

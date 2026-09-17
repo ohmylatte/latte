@@ -381,6 +381,18 @@ const es = {
   'onboarding.advancedLead': 'El control técnico completo (runtimes, modelos, MCP) sigue disponible en Ajustes de agentes.',
   'onboarding.openSettings': 'Abrir Ajustes de agentes',
   'settings.reopenOnboarding': 'Volver a ver el recorrido inicial',
+  // --- Inicio: la superficie de atención, antes de abrir un trabajo ---------
+  'home.nav': 'Inicio',
+  'home.region': 'Inicio',
+  'home.continue.title': 'Continuar donde lo dejaste',
+  'home.continue.live': 'Con actividad',
+  'home.decisions.title': 'Decisiones pendientes',
+  'home.decisions.proposal': 'Propuesta de contexto de marca',
+  'home.review.title': 'Para revisar',
+  'home.next.start': 'Elegí o creá una marca para empezar',
+  'home.next.context': 'Revisar la propuesta de contexto de marca',
+  'home.next.live': 'Seguir el trabajo que tiene actividad',
+  'home.next.works': 'Crear el primer trabajo',
   ...generatedEs,
 } as const;
 
@@ -745,6 +757,18 @@ const en: Record<MessageKey, string> = {
   'onboarding.advancedLead': 'Full technical control (runtimes, models, MCP) remains available in agent Settings.',
   'onboarding.openSettings': 'Open agent Settings',
   'settings.reopenOnboarding': 'Replay the onboarding',
+  // --- Inicio: the attention surface, before any work is open ---------------
+  'home.nav': 'Home',
+  'home.region': 'Home',
+  'home.continue.title': 'Continue where you left off',
+  'home.continue.live': 'Active',
+  'home.decisions.title': 'Pending decisions',
+  'home.decisions.proposal': 'Brand context proposal',
+  'home.review.title': 'To review',
+  'home.next.start': 'Choose or create a brand to start',
+  'home.next.context': 'Review the brand context proposal',
+  'home.next.live': 'Follow up on the work with activity',
+  'home.next.works': 'Create the first work',
   ...generatedEn,
 };
 export const catalogs: Record<UiLocale, Record<MessageKey, string>> = { 'es-AR': es, 'en-US': en };

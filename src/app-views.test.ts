@@ -33,7 +33,9 @@ const main = mainStart >= 0 && mainEnd > mainStart ? app.slice(mainStart, mainEn
 
 describe('workspace views', () => {
   it('enumerates every workspace view in one list', () => {
-    expect(listed).toEqual(['brief', 'funnel', 'context', 'memory', 'decisions']);
+    // `home` is first on purpose: it is the landing of a returning user, and the
+    // list order is what the render-branch guard below walks.
+    expect(listed).toEqual(['home', 'brief', 'funnel', 'context', 'memory', 'decisions']);
   });
 
   it('renders a branch for each of them inside <main>', () => {

@@ -2,7 +2,7 @@ import { currentLocale, translate as t } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, LoaderCircle, MessageSquare, Minus, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, X } from 'lucide-react';
+import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, Home, LoaderCircle, MessageSquare, Minus, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, X } from 'lucide-react';
 import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, AppInfo, OnboardingDraft } from '../shared/contracts';
 import { api, chatStore, isDesktop } from './browser-api';
 import { DocumentsView, NewDocumentDialog } from './DocumentsView';
@@ -17,6 +17,8 @@ import { UpdateBanner } from './UpdateBanner';
 import { ALL_BRAND_SCOPE, inKnowledgeScope, selectWorkBrief, workBrief, workTitles, type KnowledgeScope } from './brand-knowledge';
 import { KnowledgeOrigin, KnowledgeScopeFilter } from './KnowledgeScope';
 import { ContextView } from './ContextView';
+import { HomeView } from './HomeView';
+import { useDocumentStates } from './document-states';
 import { OnboardingGate, type OnboardingResult } from './OnboardingGate';
 import { contextSaveNotice } from './context-view';
 import { applyFetchedBrand } from './brand-context-sync';
@@ -28,8 +30,12 @@ import { confirmFolderLink } from './folder-link';
  * It is a runtime list on purpose: a view that is added here but has no render
  * branch in `<main>` shows an empty workspace, and a render test that walks the
  * list catches it. Deriving the type from the list keeps the two in step.
+ *
+ * `home` is first because it is where the product starts: it is the attention
+ * surface, reachable before any work is open. Opening a work still opens the
+ * work (`selectWork`), so the two destinations never blur.
  */
-export const VIEWS = ['brief', 'funnel', 'context', 'memory', 'decisions'] as const;
+export const VIEWS = ['home', 'brief', 'funnel', 'context', 'memory', 'decisions'] as const;
 type View = (typeof VIEWS)[number];
 type Modal = 'brand' | 'work' | 'document' | null;
 const date = (value: string) => new Date(value).toLocaleString(currentLocale(), { dateStyle: 'short', timeStyle: 'short' });
@@ -61,7 +67,9 @@ export function App() {
   const [showArchived, setShowArchived] = useState(false);
   const [works, setWorks] = useState<Work[]>([]), [work, setWork] = useState<Work | null>(null);
   const [context, setContext] = useState('');
-  const [view, setView] = useState<View>('brief');
+  // A returning user lands on Inicio; a just-onboarded one is landed by
+  // `finishOnboarding`, which keeps the conversation the walk just opened.
+  const [view, setView] = useState<View>('home');
   // Collapsed to a rail: every label hides, every icon and its tooltip stay.
   const [railed, setRailed] = useState(() => { try { return localStorage.getItem('latte:rail') === '1'; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem('latte:rail', railed ? '1' : '0'); } catch { /* private window */ } }, [railed]);
@@ -218,6 +226,14 @@ export function App() {
   const visibleDocuments = inKnowledgeScope(documents, knowledgeScope);
   const visibleDecisions = inKnowledgeScope(decisions, knowledgeScope);
   const showWorkDelta = knowledgeScope === ALL_BRAND_SCOPE || knowledgeScope === (work?.id ?? '');
+  // Inicio's two live facts, both read from the status the shell already loads:
+  // no new call, and the badge names no agent (the roster is per-work).
+  const liveWorkIds = (contextStatus?.works ?? []).filter((entry) => entry.live).map((entry) => entry.id);
+  const pendingContextProposals = contextStatus?.pending ? 1 : 0;
+  // ONE review sweep for Inicio, owned here and gated on the view. `home` and
+  // `brief` never mount together — one `view` selects one `<main>` branch — so
+  // exactly one sweep is ever active and the sweep can never double.
+  const { states: homeStates, checking: homeChecking } = useDocumentStates(brand?.id ?? '', documents, view === 'home' && Boolean(brand));
   // Who is writing to which file right now, straight from each runtime's own
   // tool reports. A write that did not come through a tool is never attributed.
   const documentFileNames = documents.map(d => d.fileName);
@@ -373,14 +389,34 @@ export function App() {
     const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy) setModal(null); if (e.key !== 'Tab') return; const list = controls(); const first = list[0], last = list[list.length - 1]; if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); } };
     document.addEventListener('keydown', key); return () => { document.removeEventListener('keydown', key); previous?.focus(); };
   }, [modal, busy]);
-  const selectBrand = (b: Brand) => { if (!guard()) return; setBrand(b); setContext(b.context); setView('brief'); setMemory(''); setMemoryAvailable(false); memoryGeneration.current++; };
-  const selectWork = (w: Work) => {
+  const selectBrand = (b: Brand) => { if (!guard()) return; setBrand(b); setContext(b.context); setView('home'); setMemory(''); setMemoryAvailable(false); memoryGeneration.current++; };
+  /**
+   * Opens a work. The target defaults to the work's brief, so every existing
+   * call site keeps opening the conversation; Inicio passes `decisions` when the
+   * row it activated was a pending decision.
+   */
+  const selectWork = (w: Work, target: 'brief' | 'decisions' = 'brief') => {
     if (!guard()) return;
     setWork(w);
     setContext(brand?.context ?? '');
-    setView('brief');
+    setView(target);
     if (brand) setSelectedDoc((prev) => selectWorkBrief(prev, brand.id, w.id, documents));
   };
+  // Inicio's rows are ids, because the surface renders rows and the shell owns
+  // the resolution: a row whose work is gone does nothing instead of crashing.
+  const openWork = (workId: string) => { const target = works.find((w) => w.id === workId); if (target) selectWork(target); };
+  const openWorkDecisions = (workId: string) => { const target = works.find((w) => w.id === workId); if (target) selectWork(target, 'decisions'); };
+  const openDocument = (documentId: string) => {
+    const document = documents.find((d) => d.id === documentId);
+    if (!document) return;
+    const owner = works.find((w) => w.id === document.workId);
+    // `selectWork` goes first: it lands on the work's brief and resets the
+    // selected document, so the explicit selection has to be the last write.
+    if (owner) selectWork(owner);
+    if (brand) setSelectedDoc((prev) => ({ ...prev, [brand.id]: document.id }));
+  };
+  const openNewWork = () => { setName(''); setModal('work'); };
+  const openAddBrand = () => { setName(''); setModal('brand'); };
   // First-run gate actions: skip sets the flag and keeps the returning-user path
   // intact; completion re-bootstraps and pre-selects the recommended role.
   //
@@ -413,6 +449,11 @@ export function App() {
     const brand = list.find(b => b.id === result.brandId) ?? list[0] ?? null;
     pendingWorkRef.current = result.workId;
     if (brand) selectBrand(brand);
+    // The walk just opened a role conversation. A returning user starts on
+    // Inicio; a just-onboarded one lands where the walk left them, so the
+    // validated onboarding landing is preserved instead of being re-decided.
+    setLayout('conversation');
+    setView('brief');
     // The extra bump re-reads the works even when the brand was already the
     // selected one (choosing the demo), which changes no id at all.
     setBrandEpoch(n => n + 1);
@@ -772,16 +813,20 @@ export function App() {
       <button className="subtle sidebar-add" disabled={transitioning} onClick={() => { setName(''); setModal('brand'); }}><Plus size={14} />  {t('ui.auto.033')}</button>
       <button type="button" className="subtle sidebar-add" onClick={() => setShowArchived(v => !v)} aria-expanded={showArchived}>{t('brand.archivedToggle')}{archivedBrands.length ? ` (${archivedBrands.length})` : ''}</button>
       {showArchived && <div className="archived-brands">{archivedBrands.length === 0 ? <p className="sidebar-hint">{t('brand.noneArchived')}</p> : archivedBrands.map(b => <div key={b.id} className="archived-brand-row"><span title={b.name}>{b.name}</span><button type="button" className="subtle" disabled={busy} onClick={() => run(() => restoreArchivedBrand(b.id))}>{t('brand.restore')}</button></div>)}</div>}
+      <nav><button type="button" title={t('home.nav')} className={view === 'home' ? 'nav-active' : ''} onClick={() => setView('home')}><Home size={18} />{t('home.nav')}</button></nav>
       <div className="nav-label">{t('ui.auto.034')}</div>
       <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button></nav>
       <div className="sidebar-rule" /><div className="nav-label">TRABAJOS <span>{works.length.toString().padStart(2, '0')}</span></div>
       <nav className="work-nav">{works.map(w => <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'decisions') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{(workHasLiveChat(w.id) || sessions[w.id]) && <i className={sessions[w.id] && endedSessions.has(sessions[w.id].id) && !workHasLiveChat(w.id) ? 'ended-dot' : 'live-dot'} />}</button>)}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
       <div className="sidebar-bottom"><button disabled={!brand || transitioning} title={t('ui.auto.038')} onClick={() => { setName(''); setModal('work'); }}><Plus size={20} />{t('ui.auto.038')}</button><div className="sidebar-rule" /><nav><button onClick={() => setSettings('agents')} title={t('ui.auto.348')}><Settings2 size={17} />{t('ui.auto.348')}</button></nav><div className="profile"><span className="avatar">G</span><div>Tu estudio<small>{t('ui.auto.039')}</small></div></div></div>
     </aside>
-    <header className="topbar"><div className="breadcrumb">{brand?.name ?? 'Bienvenido a Latte'}<span>/</span><strong>{work?.title ?? 'Tu espacio de marketing'}</strong></div>{work && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
+    <header className="topbar"><div className="breadcrumb">{brand?.name ?? 'Bienvenido a Latte'}<span>/</span><strong>{work?.title ?? 'Tu espacio de marketing'}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
     <main className="workspace" aria-hidden={focusChat} inert={focusChat}>
-      <div className="tabs"><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><div className="tab-spacer" /></div>
-      {(view === 'brief' || view === 'funnel' || view === 'decisions') && brand && <KnowledgeScopeFilter works={works} currentWorkId={work?.id ?? null} value={knowledgeScope} onChange={setKnowledgeScope} />}
+      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} />}
+      {/* The tabs and the knowledge-scope filter are in-work chrome: on Inicio
+          they would read as "a work with no tab selected". */}
+      {view !== 'home' && <><div className="tabs"><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><div className="tab-spacer" /></div>
+      {(view === 'brief' || view === 'funnel' || view === 'decisions') && brand && <KnowledgeScopeFilter works={works} currentWorkId={work?.id ?? null} value={knowledgeScope} onChange={setKnowledgeScope} />}</>}
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}
       {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={setView} work={work} brandName={brand?.name ?? ''} documents={visibleDocuments} selectedId={selectedDocId} onSelect={id => brand && setSelectedDoc(prev => ({ ...prev, [brand.id]: id }))} onDocumentsChanged={async () => { if (brand) await loadKnowledge(brand.id, work?.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} currentWorkId={work?.id ?? null} workTitles={titlesByWork} showWorkDelta={showWorkDelta} brandContextDefined={Boolean(brand?.context.trim())} pendingDecisions={visibleDecisions.filter(d => d.status === 'pending').length} />}
       {view === 'context' && brand && <ContextView
