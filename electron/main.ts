@@ -471,7 +471,13 @@ function isAllowedDocument(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (DEV_SERVER_URL) return parsed.origin === new URL(DEV_SERVER_URL).origin;
-    return parsed.protocol === 'file:';
+    // The packaged app has exactly ONE document: its own index.html. Allowing
+    // any `file:` was enough while nothing could produce such a link, but the
+    // preload re-attaches on every navigation, so a future markdown renderer
+    // or a raw anchor would hand `window.latte` to whatever page it reached.
+    if (parsed.protocol !== 'file:') return false;
+    return path.resolve(decodeURIComponent(parsed.pathname).replace(/^\/(?=[a-zA-Z]:)/, ''))
+      === path.resolve(app.getAppPath(), 'dist', 'index.html');
   } catch {
     return false;
   }

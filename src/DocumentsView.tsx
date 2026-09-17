@@ -153,9 +153,14 @@ export function DocumentsView(props: DocumentsViewProps) {
 
   const save = async () => {
     if (!selected || !editing || saving) return;
+    // The same token the load path uses: selecting another document bumps it,
+    // so a write that resolves after that stops here instead of putting this
+    // document's text and fingerprint into the editor of another one.
+    const token = loadToken.current;
     setSaving(true);
     try {
       const outcome = await api.saveDocument(selected.id, editing.content, editing.fingerprint);
+      if (token !== loadToken.current) return;
       if (outcome.status === 'conflict') {
         setConflict({ mine: editing.content, disk: outcome.disk.content, diskFingerprint: outcome.disk.fingerprint, revisionId: outcome.keptRevision.id });
         setExternal(null);
@@ -177,9 +182,11 @@ export function DocumentsView(props: DocumentsViewProps) {
 
   const keepMine = async () => {
     if (!selected || !conflict) return;
+    const token = loadToken.current;
     setSaving(true);
     try {
       const outcome = await api.saveDocument(selected.id, conflict.mine, conflict.diskFingerprint);
+      if (token !== loadToken.current) return;
       if (outcome.status === 'saved') {
         setEditing({ content: conflict.mine, fingerprint: outcome.fingerprint, dirty: false });
         setConflict(null);
@@ -191,10 +198,12 @@ export function DocumentsView(props: DocumentsViewProps) {
 
   const keepDisk = async () => {
     if (!selected || !conflict) return;
+    const token = loadToken.current;
     setSaving(true);
     try {
       // The human's text is archived before it leaves the editor: both variants survive.
       await api.keepDraftAsVersion(selected.id, conflict.mine);
+      if (token !== loadToken.current) return;
       setEditing({ content: conflict.disk, fingerprint: conflict.diskFingerprint, dirty: false });
       setConflict(null);
       props.onNotice(t('ui.auto.141'));
