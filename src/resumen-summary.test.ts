@@ -164,7 +164,7 @@ describe('the summary the Resumen renders', () => {
         decision({ id: 'd3', status: 'rejected', text: 'Descartado' }),
       ],
     }));
-    expect(summary.pendingDecisions).toEqual([{ id: 'd1', text: 'Elegimos X' }]);
+    expect(summary.pendingDecisions).toEqual([{ id: 'd1', text: 'Elegimos X', createdAt: '' }]);
   });
 
   it('derives estado actual and names it with its key', () => {

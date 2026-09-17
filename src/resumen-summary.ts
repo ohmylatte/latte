@@ -67,6 +67,7 @@ export interface ResumenEstadoInput {
 export interface ResumenDecisionRow {
   id: string;
   text: string;
+  createdAt: string;
 }
 
 export interface ResumenSummary {
@@ -139,7 +140,7 @@ export function resumenSummary(input: ResumenInput): ResumenSummary {
     stepParams: ladder.stepParams,
     brandStateKey: ladder.brandStateKey,
     reviewDocuments: ladder.reviewDocuments,
-    pendingDecisions: pendingDecisions.map((decision) => ({ id: decision.id, text: decision.text })),
+    pendingDecisions: pendingDecisions.map((decision) => ({ id: decision.id, text: decision.text, createdAt: decision.createdAt })),
     cycle: CYCLE_PHASES,
   };
 }
