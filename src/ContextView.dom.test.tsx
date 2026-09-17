@@ -82,6 +82,8 @@ const mount = () => render(<I18nProvider><App /></I18nProvider>);
 const REGION: Record<(typeof VIEWS)[number], string> = {
   home: '.home-view',
   resumen: '.resumen-view',
+  trabajo: '.trabajo-view',
+  evidencia: '.evidencia-view',
   brief: '.document-scroll',
   funnel: '.funnel-view',
   context: '.context-editor',
@@ -92,6 +94,8 @@ const REGION: Record<(typeof VIEWS)[number], string> = {
 const CONTROL: Record<(typeof VIEWS)[number], RegExp> = {
   home: /^Inicio/,
   resumen: /^Resumen/,
+  trabajo: /^Trabajo/,
+  evidencia: /^Evidencia/,
   brief: /^Documentos/,
   funnel: /^Embudo/,
   context: /^Contexto/,

@@ -45,6 +45,18 @@ describe('i18n catalogs', () => {
     }
   });
 
+  it('exposes every trabajo/evidencia key in both locales', async () => {
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined });
+    const { catalogs } = await import('./i18n');
+    const keys = Object.keys(catalogs['es-AR']).filter((k) => k.startsWith('trabajo.') || k.startsWith('evidencia.'));
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) {
+      expect(catalogs['es-AR'][key as keyof typeof catalogs['es-AR']], `es-AR ${key}`).toBeTruthy();
+      expect(catalogs['en-US'][key as keyof typeof catalogs['en-US']], `en-US ${key}`).toBeTruthy();
+    }
+  });
+
   it('exposes the mode settings keys in both locales', async () => {
     vi.stubGlobal('window', {});
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined });
