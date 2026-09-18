@@ -248,3 +248,93 @@ describe('CodexChatAdapter: re-keying by account+mcpFingerprint (Phase 5)', () =
     await waitFor(() => !fs.existsSync(pidDir) || fs.readdirSync(pidDir).filter((f) => f.endsWith('.pid')).length === 0);
   });
 });
+
+// --- task 6.39 (regression): countCoordinatedServers() must count ONLY `http`
+// (latte_coordination) entries, never `stdio` (latte_memory) ones. Since
+// slice 6-C, engram ships to every Codex member by default, so a memory-only
+// member's fingerprint is non-empty too, and the Phase-5 safety net
+// (unmodified) mistakes it for coordinated: the count inflates, AND -- worse
+// -- when the (falsely tripped) ceiling degrades a member it drops the WHOLE
+// `mcpServers` array, stripping memory a member was correctly granted.
+// Bug: latte/codex-adapter-ceiling-check-stale-after-engram-by-default.
+describe('CodexChatAdapter: coordination ceiling counts only http entries, degrade drops only coordination (task 6.39)', () => {
+  let events: ChatEvent[];
+  let adapter: CodexChatAdapter;
+  let dir: string;
+
+  beforeEach(() => {
+    events = [];
+    dir = makeTempDir();
+  });
+
+  afterEach(() => {
+    adapter?.shutdown();
+    removeDir(dir);
+  });
+
+  function memServer(brand: string): AdapterMcpServer[] {
+    return [{ kind: 'stdio', name: 'latte_memory', command: '/usr/bin/engram', args: ['mcp', '--tools=agent', `--project=latte-${brand}`] }];
+  }
+
+  it('a memory-only member is never counted toward the coordination ceiling and keeps its latte_memory entry once MAX_COORDINATED_CODEX_PROCESSES coordinated members are already live', async () => {
+    const spawned: Array<{ args: string[]; env: Record<string, string | undefined> }> = [];
+    adapter = makeAdapter(events, dir, spawned, { maxChats: MAX_COORDINATED_CODEX_PROCESSES + 4 });
+
+    // MAX_COORDINATED_CODEX_PROCESSES genuinely coordinated members: the ceiling is now legitimately full.
+    for (let i = 0; i < MAX_COORDINATED_CODEX_PROCESSES; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await adapter.start({
+        workId: 'wrk_1', chatId: `mem_coord_${i}`, roleId: 'copywriter', roleName: 'Copywriter',
+        directory: dir, title: 't', label: 'Codex', accountId: SYSTEM_ACCOUNT_ID,
+        mcpServers: coordServer(`tok_${i}`),
+      });
+    }
+    expect(spawned).toHaveLength(MAX_COORDINATED_CODEX_PROCESSES);
+
+    // A purely memory-only member (no coordination entry at all) arrives next.
+    // The coordination ceiling must not even look at it -- it gets its own
+    // process, carrying `latte_memory`.
+    const before = spawned.length;
+    await adapter.start({
+      workId: 'wrk_1', chatId: 'mem_memory_only', roleId: 'copywriter', roleName: 'Copywriter',
+      directory: dir, title: 't', label: 'Codex', accountId: SYSTEM_ACCOUNT_ID,
+      mcpServers: memServer('brand-a'),
+    });
+    expect(spawned).toHaveLength(before + 1);
+    const memoryArgs = spawned.at(-1)?.args ?? [];
+    expect(memoryArgs).toEqual(expect.arrayContaining(['-c', 'mcp_servers.latte_memory.command=/usr/bin/engram']));
+    expect(memoryArgs.join(' ')).not.toContain('latte_coordination');
+  });
+
+  it('a member requesting coordination+memory together degrades to memory-only (never loses latte_memory) once the ceiling is genuinely full', async () => {
+    const spawned: Array<{ args: string[]; env: Record<string, string | undefined> }> = [];
+    adapter = makeAdapter(events, dir, spawned, { maxChats: MAX_COORDINATED_CODEX_PROCESSES + 4 });
+
+    for (let i = 0; i < MAX_COORDINATED_CODEX_PROCESSES; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await adapter.start({
+        workId: 'wrk_1', chatId: `mem_coord_${i}`, roleId: 'copywriter', roleName: 'Copywriter',
+        directory: dir, title: 't', label: 'Codex', accountId: SYSTEM_ACCOUNT_ID,
+        mcpServers: coordServer(`tok_${i}`),
+      });
+    }
+    expect(spawned).toHaveLength(MAX_COORDINATED_CODEX_PROCESSES);
+
+    const before = spawned.length;
+    await adapter.start({
+      workId: 'wrk_1', chatId: 'mem_degraded', roleId: 'copywriter', roleName: 'Copywriter',
+      directory: dir, title: 't', label: 'Codex', accountId: SYSTEM_ACCOUNT_ID,
+      mcpServers: [...coordServer('tok_degraded_secret'), ...memServer('brand-b')],
+    });
+
+    // Degraded: no Nth coordinated process for coordination -- but still one
+    // new process for its (kept) memory config.
+    expect(spawned).toHaveLength(before + 1);
+    const degradedArgs = spawned.at(-1)?.args ?? [];
+    const degradedEnv = spawned.at(-1)?.env ?? {};
+    expect(degradedArgs).toEqual(expect.arrayContaining(['-c', 'mcp_servers.latte_memory.command=/usr/bin/engram']));
+    expect(degradedArgs.join(' ')).not.toContain('latte_coordination');
+    expect(degradedArgs.join(' ')).not.toContain('tok_degraded_secret'); // token never leaks even when the coordination entry is dropped
+    expect(degradedEnv.LATTE_COORD_TOKEN).toBeUndefined();
+  });
+});

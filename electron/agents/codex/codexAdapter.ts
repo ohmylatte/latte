@@ -90,6 +90,8 @@ export class CodexChatAdapter implements RuntimeAdapter {
   // today.
   readonly mcpInjection = 'per-member' as const;
   private readonly servers = new Map<string, CodexAppServer>();
+  /** serverKeys whose live server carries a `latte_coordination` (`kind:'http'`) entry -- what `countCoordinatedServers()` counts. A memory-only (`stdio`, `latte_memory`) server's key is never added here, even though its fingerprint half is non-empty too (task 6.39). */
+  private readonly coordinatedServerKeys = new Set<string>();
   private readonly chats = new Map<string, LiveChat>();
   private readonly byThread = new Map<string, string>();
   private readonly env: NodeJS.ProcessEnv;
@@ -168,10 +170,19 @@ export class CodexChatAdapter implements RuntimeAdapter {
     // process -- visibly logged, never a silent failure (task 5.7).
     let mcpServers = input.mcpServers;
     let serverKey = `${accountId}|${mcpFingerprint(mcpServers)}`;
-    if (mcpServers && mcpServers.length > 0 && !this.servers.has(serverKey) && this.countCoordinatedServers() >= MAX_COORDINATED_CODEX_PROCESSES) {
+    // Only an `http` entry (`latte_coordination`) consumes a coordination
+    // slot -- a member carrying just `stdio` (`latte_memory`, engram ships to
+    // every member by default since slice 6-C) is memory-only and must never
+    // be gated by this ceiling (task 6.39).
+    const wantsCoordination = mcpServers?.some((server) => server.kind === 'http') ?? false;
+    if (wantsCoordination && !this.servers.has(serverKey) && this.countCoordinatedServers() >= MAX_COORDINATED_CODEX_PROCESSES) {
       this.deps.log?.(`[codex ${chatId}] coordination MCP not injected: ${MAX_COORDINATED_CODEX_PROCESSES} coordinated codex app-server processes already running app-wide`);
-      mcpServers = undefined;
-      serverKey = `${accountId}|`;
+      // Drop ONLY the coordination entry -- a degraded member keeps its
+      // memory (mirrors CoordinationInjectionPlanner, task 6.31: never
+      // coordination without memory, memory survives a coordination degrade).
+      const withoutCoordination = mcpServers?.filter((server) => server.kind !== 'http') ?? [];
+      mcpServers = withoutCoordination.length > 0 ? withoutCoordination : undefined;
+      serverKey = `${accountId}|${mcpFingerprint(mcpServers)}`;
     }
     const server = await this.serverFor(accountId, serverKey, mcpServers);
     // The role personality rides as developer instructions on the thread (start and resume alike).
@@ -315,6 +326,7 @@ export class CodexChatAdapter implements RuntimeAdapter {
     if (![...this.chats.values()].some((c) => c.serverKey === live.serverKey)) {
       this.servers.get(live.serverKey)?.stop();
       this.servers.delete(live.serverKey);
+      this.coordinatedServerKeys.delete(live.serverKey);
       forgetServerPid(this.deps.serverCwd, live.serverKey);
     }
   }
@@ -326,16 +338,12 @@ export class CodexChatAdapter implements RuntimeAdapter {
       forgetServerPid(this.deps.serverCwd, key);
     }
     this.servers.clear();
+    this.coordinatedServerKeys.clear();
   }
 
-  /** How many app-servers currently carry a coordination injection (non-empty fingerprint half of their key) -- the count MAX_COORDINATED_CODEX_PROCESSES bounds. */
+  /** How many live app-servers currently carry a coordination injection (an `http` `latte_coordination` entry) -- the count MAX_COORDINATED_CODEX_PROCESSES bounds. A memory-only (`stdio` `latte_memory`) server never counts, even though its fingerprint half of the key is non-empty too (task 6.39 -- see `coordinatedServerKeys`). */
   private countCoordinatedServers(): number {
-    let count = 0;
-    for (const key of this.servers.keys()) {
-      const bar = key.indexOf('|');
-      if (bar !== -1 && key.slice(bar + 1) !== '') count += 1;
-    }
-    return count;
+    return this.coordinatedServerKeys.size;
   }
 
   // Internals ---------------------------------------------------------------------
@@ -394,6 +402,7 @@ export class CodexChatAdapter implements RuntimeAdapter {
       const runtime = await this.deps.resolveExecutable();
       if (!runtime) throw new UnavailableError('Codex is not installed or not on PATH');
       const hasMcp = mcpServers !== undefined && mcpServers.length > 0;
+      const hasCoordination = mcpServers?.some((s) => s.kind === 'http') ?? false;
       server = new CodexAppServer({
         executable: runtime.executable,
         env: {
@@ -425,14 +434,17 @@ export class CodexChatAdapter implements RuntimeAdapter {
           this.deps.emit({ chatId: live.chatId, type: 'closed', reason });
         }
         this.servers.delete(serverKey);
+        this.coordinatedServerKeys.delete(serverKey);
         forgetServerPid(this.deps.serverCwd, serverKey);
       };
+      if (hasCoordination) this.coordinatedServerKeys.add(serverKey);
       this.servers.set(serverKey, server);
     }
     try {
       await server.ensure();
     } catch (error) {
       this.servers.delete(serverKey);
+      this.coordinatedServerKeys.delete(serverKey);
       throw new UnavailableError(describe(error));
     }
     // Recorded on every resolution (new or reused), so the pid file always
