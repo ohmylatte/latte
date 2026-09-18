@@ -30,6 +30,15 @@ import type {
   BrandContextRevisionSource,
   BrandContextSaveResult,
   BrandContextStatus,
+  CoordinationAskView,
+  CoordinationAuthorityMode,
+  CoordinationBudget,
+  CoordinationGateView,
+  CoordinationLogEntryView,
+  CoordinationRunView,
+  CoordinationTaskView,
+  CoordinatorGrant,
+  HandoffTaskBridgeResult,
   Decision,
   DecisionAuthorityMode,
   DecisionProposalInput,
@@ -88,6 +97,7 @@ import { WORK_FILES } from '../core/paths';
 import { EngramClient, memoryProjectFor } from '../memory/engram';
 import { AccountStore } from '../agents/accounts';
 import { isAccountRuntime, isChatRuntime, type AgentHub, type MemberContext } from '../agents/hub';
+import { CoordinationEngine } from '../coordination/engine';
 import type { McpCatalog } from '../agents/mcp';
 import { RoleCatalog } from '../agents/roles';
 import { isEffortTier } from '../agents/tiers';
@@ -99,7 +109,7 @@ import { LearningService } from '../learning/service';
 import type { SkillCandidateRecord } from '../learning/types';
 import type { CandidateGenerator } from '../learning/worker';
 import type { LearningRepository } from '../storage/learningRepository';
-import { briefDocumentId, type DocumentRecord, type LatteRepository } from '../storage/repository';
+import { briefDocumentId, type CoordinationRunRecord, type DocumentRecord, type LatteRepository } from '../storage/repository';
 import { collectBrandMemory, hasInheritedContent, type BrandMemorySnapshot } from '../workspace/brandMemory';
 import { brandContextNudge, electBrandContextOwner } from '../workspace/brandContextNudge';
 import { INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
@@ -212,6 +222,41 @@ function kindOf(value: string): DocumentKind {
   return (DOCUMENT_KINDS as string[]).includes(value) ? (value as DocumentKind) : 'note';
 }
 
+/**
+ * Validates a `CoordinationBudget` on write: `maxDispatches` must be a
+ * positive integer, unless it is explicitly `null` alongside a non-empty
+ * `unlimitedConfirmedAt` — an unlimited budget is always a human choice,
+ * never an implicit default (spec: "No Implicit Unlimited Budget"). Every
+ * secondary cap is optional but, when present, a non-negative integer.
+ * Returns a normalized object (every optional field present as `null` when
+ * omitted) so a stored round-trip is byte-for-byte stable.
+ */
+function requireCoordinationBudget(value: unknown): CoordinationBudget {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new ValidationError('Invalid coordination budget');
+  const b = value as Record<string, unknown>;
+  const optionalNonNegativeInt = (v: unknown, name: string): number | null =>
+    v === null || v === undefined ? null : requireInt(v, name, 0, Number.MAX_SAFE_INTEGER);
+  let maxDispatches: number | null;
+  let unlimitedConfirmedAt: string | null = null;
+  if (b.maxDispatches === null) {
+    if (typeof b.unlimitedConfirmedAt !== 'string' || b.unlimitedConfirmedAt.trim().length === 0) {
+      throw new ValidationError('An unlimited coordination budget requires an explicit unlimitedConfirmedAt');
+    }
+    maxDispatches = null;
+    unlimitedConfirmedAt = b.unlimitedConfirmedAt;
+  } else {
+    maxDispatches = requireInt(b.maxDispatches, 'maxDispatches', 1, Number.MAX_SAFE_INTEGER);
+  }
+  return {
+    maxDispatches,
+    unlimitedConfirmedAt,
+    maxTokens: optionalNonNegativeInt(b.maxTokens, 'maxTokens'),
+    maxCostMicros: optionalNonNegativeInt(b.maxCostMicros, 'maxCostMicros'),
+    maxWallMinutes: optionalNonNegativeInt(b.maxWallMinutes, 'maxWallMinutes'),
+    maxConcurrent: optionalNonNegativeInt(b.maxConcurrent, 'maxConcurrent'),
+  };
+}
+
 function requireProviderId(value: unknown): string {
   if (typeof value !== 'string' || !PROVIDER_ID.test(value)) throw new TypeError('Invalid provider id');
   return value;
@@ -252,9 +297,16 @@ export class LatteService implements BackendApi {
   readonly learningService: LearningService;
   private readonly brandContextPort: BrandContextPort;
   private readonly skillResolverPort: SkillResolverPort;
+  private readonly coordination: CoordinationEngine;
 
   constructor(private readonly deps: LatteServiceDeps) {
     this.clock = deps.clock ?? nowIso;
+    this.coordination = new CoordinationEngine({
+      repo: deps.repo,
+      hub: deps.hub,
+      clock: this.clock,
+      memberContext: (workId) => this.memberContext(workId),
+    });
     this.branding = new BrandingService({
       repo: deps.repo,
       files: deps.files,
@@ -1397,6 +1449,208 @@ export class LatteService implements BackendApi {
   private readDecisionAuthority(workId: string): DecisionAuthorityMode {
     const raw = this.deps.repo.getMeta('decision_authority:' + workId);
     return raw === 'off' || raw === 'auto-record' ? raw : 'suggest';
+  }
+
+  // Coordination (autonomous multi-agent runs) ------------------------------
+  // Per-Work settings only, following `readDecisionAuthority` literally: a
+  // closed union in `meta`, validated on write, safe default on an unset or
+  // invalid read. The run/task/dispatch engine itself is a later phase.
+
+  private readCoordinationAuthority(workId: string): CoordinationAuthorityMode {
+    const raw = this.deps.repo.getMeta('coordination_authority:' + workId);
+    return raw === 'plan' || raw === 'auto' ? raw : 'manual';
+  }
+
+  async getCoordinationAuthority(workId: string): Promise<CoordinationAuthorityMode> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    return this.readCoordinationAuthority(id);
+  }
+
+  async setCoordinationAuthority(workId: string, mode: CoordinationAuthorityMode): Promise<CoordinationAuthorityMode> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    if (mode !== 'manual' && mode !== 'plan' && mode !== 'auto') throw new ValidationError('Invalid coordination authority');
+    this.deps.repo.setMeta('coordination_authority:' + id, mode);
+    return mode;
+  }
+
+  /**
+   * `null` when unset or when the stored JSON fails validation — `BUDGET_UNSET`
+   * is a real state (see `electron/coordination/budget.ts`), never an implicit
+   * unlimited default, so an unreadable value degrades to "unset", not to some
+   * invented budget.
+   */
+  private readCoordinationBudget(workId: string): CoordinationBudget | null {
+    const raw = this.deps.repo.getMeta('coordination_budget:' + workId);
+    if (!raw) return null;
+    try {
+      return requireCoordinationBudget(JSON.parse(raw));
+    } catch {
+      return null;
+    }
+  }
+
+  async getCoordinationBudget(workId: string): Promise<CoordinationBudget | null> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    return this.readCoordinationBudget(id);
+  }
+
+  async setCoordinationBudget(workId: string, budget: CoordinationBudget): Promise<CoordinationBudget> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    const valid = requireCoordinationBudget(budget);
+    const json = JSON.stringify(valid);
+    this.deps.repo.setMeta('coordination_budget:' + id, json);
+    // A raised cap must also reach a run already in flight — the run's own
+    // snapshot is never a live read, so it has to be written here too (design
+    // decision 1: "raising a cap writes BOTH the run row and the Work default").
+    this.deps.repo.updateActiveCoordinationRunBudget(id, json, this.clock());
+    return valid;
+  }
+
+  /** `null`/empty stored value, or a member id that no longer belongs to this Work, both read back as "no coordinator". */
+  private readCoordinatorGrant(workId: string): CoordinatorGrant {
+    const raw = this.deps.repo.getMeta('coordination_coordinator:' + workId);
+    if (!raw) return null;
+    const member = this.deps.repo.findMember(raw);
+    return member && member.workId === workId ? raw : null;
+  }
+
+  async getCoordinatorGrant(workId: string): Promise<CoordinatorGrant> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    return this.readCoordinatorGrant(id);
+  }
+
+  /**
+   * A capability grant, not a role: this never touches the member's `roleId`
+   * or prompt. Writing a new holder implicitly revokes whoever held it before
+   * — the meta key holds exactly one id, so both can never be true at once.
+   */
+  async setCoordinatorGrant(workId: string, memberId: string | null): Promise<CoordinatorGrant> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    if (memberId === null) {
+      this.deps.repo.setMeta('coordination_coordinator:' + id, '');
+      return null;
+    }
+    const mid = requireId(memberId, 'memberId');
+    const member = this.deps.repo.findMember(mid);
+    if (!member || member.workId !== id) throw new ValidationError('Coordinator grant must reference a team member of this Work');
+    this.deps.repo.setMeta('coordination_coordinator:' + id, mid);
+    return mid;
+  }
+
+  // Coordination run lifecycle, gates, bitácora, asks and the handoff bridge.
+  // Phase 3: IPC-only — `electron/coordination/engine.ts` is the single
+  // dispatch choke point; nothing here reaches `hub.send` a second way.
+
+  private toCoordinationRunView(run: CoordinationRunRecord): CoordinationRunView {
+    return {
+      id: run.id,
+      workId: run.workId,
+      status: run.status,
+      coordinatorMemberId: run.coordinatorMemberId,
+      budget: JSON.parse(run.budgetJson) as CoordinationBudget,
+      planApproved: run.planApprovedAt != null,
+      suspendReason: run.suspendReason,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+    };
+  }
+
+  async startCoordinationRun(workId: string): Promise<CoordinationRunView> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    const coordinatorMemberId = this.readCoordinatorGrant(id);
+    const run = await this.coordination.startRun(id, coordinatorMemberId);
+    return this.toCoordinationRunView(run);
+  }
+
+  async pauseCoordinationRun(runId: string): Promise<CoordinationRunView> {
+    return this.toCoordinationRunView(this.coordination.pauseRun(requireId(runId, 'runId')));
+  }
+
+  async resumeCoordinationRun(runId: string): Promise<CoordinationRunView> {
+    return this.toCoordinationRunView(this.coordination.resumeRun(requireId(runId, 'runId')));
+  }
+
+  async cancelCoordinationRun(runId: string): Promise<CoordinationRunView> {
+    return this.toCoordinationRunView(this.coordination.cancelRun(requireId(runId, 'runId')));
+  }
+
+  /** The Work's active run, or `null` when none is running — never throws for "no run", that is the normal case. */
+  async getCoordinationRun(workId: string): Promise<CoordinationRunView | null> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    const run = this.deps.repo.findActiveCoordinationRun(id);
+    return run ? this.toCoordinationRunView(run) : null;
+  }
+
+  async listCoordinationGates(runId: string): Promise<CoordinationGateView[]> {
+    return this.coordination.listGates(requireId(runId, 'runId'));
+  }
+
+  async resolveCoordinationGate(gateId: string, decision: 'approve' | 'reject', editedPrompt: string | null = null): Promise<CoordinationRunView> {
+    const clean = requireId(gateId, 'gateId');
+    if (decision !== 'approve' && decision !== 'reject') throw new ValidationError('Invalid gate decision');
+    const resolved = await this.coordination.resolveGate(clean, decision, editedPrompt ?? undefined);
+    const runId = 'runId' in resolved ? resolved.runId : (resolved as CoordinationRunRecord).id;
+    return this.toCoordinationRunView(this.coordination.getRun(runId));
+  }
+
+  async listCoordinationLog(runId: string): Promise<CoordinationLogEntryView[]> {
+    return this.coordination.listLog(requireId(runId, 'runId'));
+  }
+
+  async answerCoordinationAsk(askId: string, answer: string): Promise<CoordinationAskView> {
+    const clean = requireId(askId, 'askId');
+    const cleanAnswer = requireText(answer, 'Answer', LIMITS.decision);
+    return this.coordination.answerAsk(clean, cleanAnswer);
+  }
+
+  /**
+   * WHEN the Work has an active run, mints a `coordination_task` for the
+   * accepted handoff and attempts to dispatch it through the exact same
+   * choke point `latte_dispatch` uses; the handoff file is then dismissed,
+   * matching the existing "accepting consumes the request" behaviour.
+   * Outside an active run this is a pure no-op: `listHandoffs`/`dismissHandoff`
+   * are untouched, and the caller falls back to opening a chat draft exactly
+   * as it did before this change.
+   */
+  async acceptHandoffAsTask(workId: string, fileName: string): Promise<HandoffTaskBridgeResult> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    if (!this.deps.repo.findActiveCoordinationRun(id)) return { bridged: false, task: null };
+    const pending = await this.listHandoffs(id);
+    const handoff = pending.find((h) => h.fileName === fileName);
+    if (!handoff) throw new ValidationError('Ese pedido ya no está en la carpeta');
+    const result = await this.coordination.bridgeHandoffToTask(id, handoff.roleId, handoff.request);
+    if (!result.bridged) return { bridged: false, task: null };
+    await this.dismissHandoff(id, fileName).catch(() => undefined);
+    return { bridged: true, task: { id: result.task.id, roleId: result.task.roleId, spec: result.task.spec, status: result.task.status } };
+  }
+
+  /**
+   * Manual dispatch settlement via IPC, zero MCP (task 3.19 — the "close"
+   * half of the safety line): `latte_report` is called by the worker, but
+   * without MCP no worker has tools, so nothing ever settled a dispatch. A
+   * human reads the worker's own chat and records the outcome here instead —
+   * coherent with `manual` authority mode, where the human already IS the
+   * coordinator. Enters through `CoordinationEngine.settleDispatch`, which
+   * re-enters `report()` — the exact function `latte_report` calls — so
+   * idempotency, wrong-reporter rejection, ledger settlement and the
+   * dispatch's settling timestamp all behave identically to an agent's own
+   * report.
+   */
+  async settleCoordinationDispatch(taskId: string, outcome: 'succeeded' | 'failed', summary: string, files: string | null = null): Promise<CoordinationTaskView> {
+    const id = requireId(taskId, 'taskId');
+    if (outcome !== 'succeeded' && outcome !== 'failed') throw new ValidationError('Invalid dispatch outcome');
+    const cleanSummary = requireText(summary, 'Summary', LIMITS.decision);
+    const task = await this.coordination.settleDispatch(id, outcome, cleanSummary, files ?? null);
+    return { id: task.id, runId: task.runId, roleId: task.roleId, spec: task.spec, status: task.status, attempts: task.attempts, resultSummary: task.resultSummary };
   }
 
   // Agents ------------------------------------------------------------------

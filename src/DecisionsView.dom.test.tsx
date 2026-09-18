@@ -163,6 +163,60 @@ describe('the permission summary', () => {
   });
 });
 
+describe('the coordination settings summary (additive, Phase 2 of autonomous-coordination)', () => {
+  it('does not render when the caller has not wired coordination state, and the other two settings are unaffected', () => {
+    const { container } = renderView('es-AR');
+    expect(container.querySelector('.decision-coordination')).toBeNull();
+    expect(container.querySelector('select')).not.toBeNull();
+    expect(container.querySelector('.decision-permissions')).not.toBeNull();
+  });
+
+  it('renders a read-only summary of authority, budget and coordinator grant, offering no control, without touching the other two settings', () => {
+    const { container } = renderView('es-AR', {
+      coordinationAuthority: 'auto',
+      coordinationBudget: { maxDispatches: 10, unlimitedConfirmedAt: null },
+      coordinatorGrant: 'm1',
+      team: [member({ id: 'm1', roleId: 'strategist', roleName: 'Estratega' })],
+      permissions: 'ask',
+      handoffs: [],
+    });
+    const section = container.querySelector('.decision-coordination');
+    expect(section).not.toBeNull();
+    expect(section!.querySelector('select')).toBeNull();
+    expect(section!.querySelector('button')).toBeNull();
+    expect(section!.textContent).toContain('Automático');
+    expect(section!.textContent).toContain('10');
+    expect(section!.textContent).toContain('Estratega');
+    // The two pre-existing settings still render, untouched.
+    expect(container.querySelector('select')).not.toBeNull();
+    expect(container.querySelector('.decision-permissions')).not.toBeNull();
+  });
+
+  it('shows the unset/no-coordinator state honestly instead of inventing a value', () => {
+    const { container } = renderView('es-AR', {
+      coordinationAuthority: 'manual',
+      coordinationBudget: null,
+      coordinatorGrant: null,
+    });
+    const section = container.querySelector('.decision-coordination');
+    expect(section!.textContent).toContain('Sin presupuesto configurado');
+    expect(section!.textContent).toContain('Sin coordinador asignado');
+  });
+
+  it('renders the same summary in English, with nothing left in Spanish', () => {
+    const { container } = renderView('en-US', {
+      coordinationAuthority: 'plan',
+      coordinationBudget: { maxDispatches: null, unlimitedConfirmedAt: '2026-01-01T00:00:00.000Z' },
+      coordinatorGrant: null,
+    });
+    const section = container.querySelector('.decision-coordination');
+    expect(section!.textContent).toContain('By plan');
+    expect(section!.textContent).toContain('No dispatch limit');
+    expect(section!.textContent).toContain('No coordinator assigned');
+    expect(section!.textContent).not.toContain('Sin');
+  });
+});
+
 describe('callbacks', () => {
   it('fires draft, authority, approve, reject and archive callbacks', () => {
     const onDraftChange = vi.fn();

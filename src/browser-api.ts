@@ -202,6 +202,20 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   addDecision: async (workId, text) => change(s => { const createdAt=now(); const d:Decision = { id:id(),workId,text,rationale:'',alternativesRejected:[],evidenceRefs:[],status:'approved',source:{chatId:null,messageId:null,memberId:null,roleId:null,runtime:null},clientRequestId:null,fingerprint:'',createdAt,decidedAt:createdAt }; s.decisions.push(d); return d; }),
   getDecisionAuthority:async workId=>(localStorage.getItem('latte:decision-authority:'+workId) as 'off'|'suggest'|'auto-record'|null)??'suggest',
   setDecisionAuthority:async(workId,mode)=>{localStorage.setItem('latte:decision-authority:'+workId,mode);return mode;},
+  // Coordination is a desktop-only feature (real runtime processes, a loopback
+  // MCP server); the preview has neither, so it reports the safe defaults and
+  // refuses writes, exactly like getWorkPermissions/setWorkPermissions above.
+  getCoordinationAuthority:async()=>'manual' as const,setCoordinationAuthority:unavailable,
+  getCoordinationBudget:async()=>null,setCoordinationBudget:unavailable,
+  getCoordinatorGrant:async()=>null,setCoordinatorGrant:unavailable,
+  // Phase 3: run lifecycle, gates, bitácora, asks and the handoff bridge —
+  // same desktop-only reasoning as above. No run ever exists in the preview.
+  startCoordinationRun:unavailable,pauseCoordinationRun:unavailable,resumeCoordinationRun:unavailable,cancelCoordinationRun:unavailable,
+  getCoordinationRun:async()=>null,listCoordinationGates:async()=>[],resolveCoordinationGate:unavailable,listCoordinationLog:async()=>[],answerCoordinationAsk:unavailable,
+  acceptHandoffAsTask:async()=>({bridged:false,task:null}),
+  // Task 3.19: manual settlement is desktop-only too — same reasoning as the
+  // rest of this section, no run and no dispatch ever exist in the preview.
+  settleCoordinationDispatch:unavailable,
   approveDecision:async(decisionId,edited)=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='approved';if(edited)d.text=edited;d.decidedAt=now();return d;}),
   rejectDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='rejected';d.decidedAt=now();return d;}),
   archiveDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='archived';d.decidedAt=now();return d;}),

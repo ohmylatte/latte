@@ -627,6 +627,129 @@ export interface PrepareGenerationOutcome {
   instructionsRefreshed: boolean;
 }
 
+/**
+ * Coordination (autonomous multi-agent runs): per-Work settings that cross
+ * the IPC boundary. Everything else about a run (tasks, dispatches, the
+ * mailbox) is Phase 3's `electron/coordination/engine.ts`; these three types
+ * are only what a human configures ahead of time, following the
+ * `DecisionAuthorityMode` precedent exactly — a closed union, validated on
+ * write, defaulting to a safe value on an unset or invalid read.
+ */
+export type CoordinationAuthorityMode = 'manual' | 'plan' | 'auto';
+
+/**
+ * A Work's coordination budget default. `startCoordinationRun` (Phase 3)
+ * copies this into `coordination_run.budget_json` at run start, so raising a
+ * cap later never rewrites a run already in flight.
+ *
+ * `maxDispatches` is the primary, required unit: it is always countable
+ * (`SUM(dispatches) WHERE kind='spend'`) with zero cost data. The other caps
+ * are optional and secondary because `ChatUsage.costUsd` is nullable per
+ * runtime — `maxCostMicros` is inherently best-effort, never authoritative.
+ * `maxDispatches: null` means "no cap" and is only ever valid alongside an
+ * explicit `unlimitedConfirmedAt` timestamp: an unlimited budget is always a
+ * human choice, never an implicit default.
+ */
+export interface CoordinationBudget {
+  maxDispatches: number | null;
+  unlimitedConfirmedAt?: string | null;
+  maxTokens?: number | null;
+  maxCostMicros?: number | null;
+  maxWallMinutes?: number | null;
+  maxConcurrent?: number | null;
+}
+
+/**
+ * The single team member (by id) holding the `coordinator` capability grant
+ * for a Work, or `null` when none does. A capability, not a role: granting it
+ * never changes the member's `roleId` or prompt.
+ */
+export type CoordinatorGrant = string | null;
+
+/**
+ * Phase 3: the run/task/dispatch surface, reachable only through IPC in this
+ * phase (no MCP transport exists yet — see `electron/coordination/engine.ts`).
+ * These are read views over `LatteRepository`'s coordination rows, never the
+ * rows themselves: the storage layer stays free to evolve independently of
+ * what crosses the process boundary.
+ */
+export type CoordinationRunStatus = 'planning' | 'running' | 'suspended' | 'done' | 'cancelled';
+
+export interface CoordinationRunView {
+  id: string;
+  workId: string;
+  status: CoordinationRunStatus;
+  coordinatorMemberId: string | null;
+  budget: CoordinationBudget;
+  planApproved: boolean;
+  suspendReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The three gate kinds a human resolves with approve/reject. An open `latte_ask` is a separate surface (`answerCoordinationAsk`) — its middle action is the answer itself, not an edit. */
+export type CoordinationGateKind = 'plan' | 'dispatch' | 'budget';
+
+export interface CoordinationGateView {
+  id: string;
+  kind: CoordinationGateKind;
+  runId: string;
+  taskId?: string | null;
+  dispatchId?: string | null;
+  /** Only present on a `dispatch` gate: the task prompt, editable before approval. */
+  prompt?: string | null;
+  createdAt: string;
+}
+
+export type CoordinationDispatchStatus = 'pending_approval' | 'dispatched' | 'running' | 'reported' | 'failed' | 'rejected' | 'cancelled';
+
+/** One bitácora entry, derived only from a `coordination_dispatch` row's own timestamps — never narrative text. */
+export interface CoordinationLogEntryView {
+  id: string;
+  taskId: string;
+  memberId: string;
+  status: CoordinationDispatchStatus;
+  createdAt: string;
+  startedAt: string | null;
+  settledAt: string | null;
+}
+
+export type CoordinationTaskStatus = 'pending' | 'ready' | 'dispatched' | 'running' | 'done' | 'failed' | 'blocked';
+
+/** A task's own state after `settleCoordinationDispatch` (task 3.19) settles its current dispatch. */
+export interface CoordinationTaskView {
+  id: string;
+  runId: string;
+  roleId: string;
+  spec: string;
+  status: CoordinationTaskStatus;
+  attempts: number;
+  resultSummary: string | null;
+}
+
+export interface CoordinationAskView {
+  id: string;
+  runId: string;
+  taskId: string | null;
+  memberId: string;
+  question: string;
+  answer: string | null;
+  deadlineAt: string;
+  answeredAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * `acceptHandoffAsTask` bridges a handoff into a `coordination_task` only
+ * when the Work has an active run; `bridged:false` means "do nothing new" —
+ * the existing handoff flow (open a member, draft the request, dismiss the
+ * file) is unaffected, exactly as the spec requires outside an active run.
+ */
+export interface HandoffTaskBridgeResult {
+  bridged: boolean;
+  task: { id: string; roleId: string; spec: string; status: string } | null;
+}
+
 export interface LatteAPI {
   getUiLocale(): Promise<UiLocale>;
   setUiLocale(locale: UiLocale): Promise<UiLocale>;
@@ -885,5 +1008,44 @@ export interface LatteAPI {
   installUpdate(): Promise<InstallOutcome>;
   /** Fires on every phase change, including the progress of a download. */
   onUpdateState(callback: (state: UpdateState) => void): () => void;
+  // Coordination (autonomous multi-agent runs) — per-Work settings only; the
+  // run/task/dispatch surface arrives in a later phase.
+  getCoordinationAuthority(workId: string): Promise<CoordinationAuthorityMode>;
+  setCoordinationAuthority(workId: string, mode: CoordinationAuthorityMode): Promise<CoordinationAuthorityMode>;
+  /** `null` means unset (`BUDGET_UNSET`) — never an implicit unlimited default. */
+  getCoordinationBudget(workId: string): Promise<CoordinationBudget | null>;
+  setCoordinationBudget(workId: string, budget: CoordinationBudget): Promise<CoordinationBudget>;
+  getCoordinatorGrant(workId: string): Promise<CoordinatorGrant>;
+  /** `memberId: null` revokes the grant outright; granting to a new member implicitly revokes whoever held it before. */
+  setCoordinatorGrant(workId: string, memberId: string | null): Promise<CoordinatorGrant>;
+  // Coordination (Phase 3): run lifecycle, gates, bitácora, asks and the
+  // handoff bridge — reachable only through IPC in this phase, no MCP yet.
+  /** Starts a run for this Work. Throws `BUDGET_UNSET` unless a budget was already configured — no implicit unlimited run. */
+  startCoordinationRun(workId: string): Promise<CoordinationRunView>;
+  /** "Pausar equipo": in-flight dispatches finish and report; nothing new starts. */
+  pauseCoordinationRun(runId: string): Promise<CoordinationRunView>;
+  /** Unconditional: whether budget actually allows a next dispatch is re-checked at dispatch time, not here. */
+  resumeCoordinationRun(runId: string): Promise<CoordinationRunView>;
+  cancelCoordinationRun(runId: string): Promise<CoordinationRunView>;
+  /** The Work's active run, or `null` when none is running. */
+  getCoordinationRun(workId: string): Promise<CoordinationRunView | null>;
+  listCoordinationGates(runId: string): Promise<CoordinationGateView[]>;
+  /** `editedPrompt` only applies to a `dispatch` gate (edit-then-approve); ignored otherwise. */
+  resolveCoordinationGate(gateId: string, decision: 'approve' | 'reject', editedPrompt?: string | null): Promise<CoordinationRunView>;
+  /** The bitácora: one entry per `coordination_dispatch` lifecycle event, oldest first. */
+  listCoordinationLog(runId: string): Promise<CoordinationLogEntryView[]>;
+  answerCoordinationAsk(askId: string, answer: string): Promise<CoordinationAskView>;
+  /** WHEN the Work has an active run, mints a `coordination_task` for the accepted handoff instead of only opening a chat draft. */
+  acceptHandoffAsTask(workId: string, fileName: string): Promise<HandoffTaskBridgeResult>;
+  /**
+   * Manual dispatch settlement via IPC, zero MCP (task 3.19): a human reads
+   * the worker's own chat and records the outcome directly, coherent with
+   * `manual` authority mode where the human already IS the coordinator.
+   * Enters through the exact same choke point `latte_report` uses, so
+   * idempotency, wrong-reporter rejection, ledger settlement and the
+   * dispatch's settling timestamp all behave identically to an agent's own
+   * report.
+   */
+  settleCoordinationDispatch(taskId: string, outcome: 'succeeded' | 'failed', summary: string, files?: string | null): Promise<CoordinationTaskView>;
 }
 declare global { interface Window { latte?: LatteAPI } }

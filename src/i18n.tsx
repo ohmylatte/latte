@@ -483,6 +483,16 @@ const es = {
   'decision.permissions.lead': 'Aprobación ≠ autorización: aprobar una decisión no cambia los permisos de este trabajo.',
   'decision.permissions.handoffs': 'Solicitudes de permiso',
   'decision.permissions.handoffs.empty': 'Sin solicitudes de permiso',
+  // --- Coordinación autónoma: resumen de solo lectura (autonomous-coordination, Phase 2) --
+  'coordination.settings.kicker': 'COORDINACIÓN AUTÓNOMA',
+  'coordination.authority.manual': 'Manual: cada despacho pide tu aprobación',
+  'coordination.authority.plan': 'Por plan: aprobás el plan una vez y después despacha solo',
+  'coordination.authority.auto': 'Automático: despacha sin pedir aprobación',
+  'coordination.budget.unset': 'Sin presupuesto configurado',
+  'coordination.budget.unlimited': 'Sin límite de despachos (confirmado)',
+  'coordination.budget.limited': 'Hasta {count} despachos',
+  'coordination.coordinator.none': 'Sin coordinador asignado',
+  'coordination.coordinator.assigned': 'Coordinador: {name}',
   // --- Resultados: lo que el trabajo entregó ----------------------------
   'resultados.tab': 'Resultados',
   'resultados.region': 'Resultados',
@@ -964,6 +974,16 @@ const en: Record<MessageKey, string> = {
   'decision.permissions.lead': 'Approval ≠ authorization: approving a decision does not change this work’s permissions.',
   'decision.permissions.handoffs': 'Permission requests',
   'decision.permissions.handoffs.empty': 'No permission requests',
+  // --- Autonomous coordination: read-only summary (autonomous-coordination, Phase 2) --
+  'coordination.settings.kicker': 'AUTONOMOUS COORDINATION',
+  'coordination.authority.manual': 'Manual: every dispatch asks for your approval',
+  'coordination.authority.plan': 'By plan: approve the plan once, then it dispatches on its own',
+  'coordination.authority.auto': 'Automatic: dispatches without asking for approval',
+  'coordination.budget.unset': 'No budget configured',
+  'coordination.budget.unlimited': 'No dispatch limit (confirmed)',
+  'coordination.budget.limited': 'Up to {count} dispatches',
+  'coordination.coordinator.none': 'No coordinator assigned',
+  'coordination.coordinator.assigned': 'Coordinator: {name}',
   // --- Resultados: what the work delivered ------------------------------
   'resultados.tab': 'Results',
   'resultados.region': 'Results',

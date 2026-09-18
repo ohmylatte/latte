@@ -1,6 +1,7 @@
 import { ARCHIVE_SCHEMA_SQL } from './archiveSchema';
 import { BRAND_CONTEXT_SCHEMA_SQL } from './brandContextSchema';
 import { BRANDING_SCHEMA_SQL } from './brandingSchema';
+import { COORDINATION_SCHEMA_SQL } from './coordinationSchema';
 import { GENERATION_SCHEMA_SQL } from './generationSchema';
 import { LEARNING_SCHEMA_SQL } from './learningSchema';
 
@@ -129,7 +130,7 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-` + GENERATION_SCHEMA_SQL + BRANDING_SCHEMA_SQL + LEARNING_SCHEMA_SQL + ARCHIVE_SCHEMA_SQL + BRAND_CONTEXT_SCHEMA_SQL;
+` + GENERATION_SCHEMA_SQL + BRANDING_SCHEMA_SQL + LEARNING_SCHEMA_SQL + ARCHIVE_SCHEMA_SQL + BRAND_CONTEXT_SCHEMA_SQL + COORDINATION_SCHEMA_SQL;
 
 /**
  * Not bumped for works.expected_output / works.result_path / works.out_of_scope_stages
@@ -145,5 +146,11 @@ CREATE TABLE IF NOT EXISTS meta (
  * Schema 9 adds brand_archives (soft-delete, no ALTER on brands).
  * Schema 10 adds brand_context_proposals (agent drafts of Brand.context).
  * Schema 11 adds brand_context_revisions (the immutable history of Brand.context).
+ * Schema 12 adds the coordination_* tables (autonomous coordination runs).
+ * No ALTER is needed for this bump: every coordination column ships in its
+ * table's initial CREATE TABLE, so there is nothing to gate on
+ * pragma_table_info yet — that path is reserved for a later nullable column
+ * on one of these same tables, the same way documents/works/team_members grew
+ * columns above.
  */
-export const SCHEMA_VERSION = '11';
+export const SCHEMA_VERSION = '12';

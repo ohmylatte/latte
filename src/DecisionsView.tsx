@@ -1,7 +1,7 @@
 import { translate as t } from './i18n';
 import { Plus } from 'lucide-react';
 import { KnowledgeOrigin } from './KnowledgeScope';
-import type { AgentRole, Decision, DecisionAuthorityMode, HandoffRequest, TeamMember, Work, WorkPermissionMode } from '../shared/contracts';
+import type { AgentRole, CoordinationAuthorityMode, CoordinationBudget, Decision, DecisionAuthorityMode, HandoffRequest, TeamMember, Work, WorkPermissionMode } from '../shared/contracts';
 
 /**
  * Decisiones: the extracted, enriched in-work decisions surface.
@@ -42,6 +42,22 @@ export interface DecisionsViewProps {
   onReject: (id: string) => void;
   onArchive: (id: string) => void;
   onAuthorityChange: (mode: DecisionAuthorityMode) => void;
+  /**
+   * Additive, read-only coordination settings summary (autonomous-coordination,
+   * Phase 2). `undefined` means the caller has not wired coordination state yet
+   * (that hook-up is `useCoordination`, a later phase) — the section simply
+   * does not render, so a Work with no coordination data looks exactly as it
+   * did before this change. There is no control here to edit these settings;
+   * editing arrives with the coordination gate UI in a later phase.
+   */
+  coordinationAuthority?: CoordinationAuthorityMode;
+  coordinationBudget?: CoordinationBudget | null;
+  coordinatorGrant?: string | null;
+}
+
+/** The coordinator's team member, resolved to a display name — never a raw id. */
+function resolveCoordinatorName(memberId: string, team: readonly TeamMember[]): string | null {
+  return team.find((m) => m.id === memberId)?.roleName ?? null;
 }
 
 /**
@@ -115,6 +131,22 @@ export function DecisionsView(props: DecisionsViewProps) {
       {props.handoffs.length === 0
         ? <p className="decision-permissions-empty">{t('decision.permissions.handoffs.empty')}</p>
         : <ul className="decision-handoff-list">{props.handoffs.map(h => <li key={h.fileName}><span>{h.roleName}</span><small>{h.fileName}</small></li>)}</ul>}
+    </section>}
+    {props.work && props.coordinationAuthority !== undefined && <section className="decision-coordination">
+      <div className="document-kicker">{t('coordination.settings.kicker')}</div>
+      <p className="decision-coordination-authority">{t(`coordination.authority.${props.coordinationAuthority}` as 'coordination.authority.manual')}</p>
+      <p className="decision-coordination-budget">
+        {props.coordinationBudget == null
+          ? t('coordination.budget.unset')
+          : props.coordinationBudget.maxDispatches == null
+            ? t('coordination.budget.unlimited')
+            : t('coordination.budget.limited', { count: props.coordinationBudget.maxDispatches })}
+      </p>
+      <p className="decision-coordination-grant">
+        {props.coordinatorGrant
+          ? t('coordination.coordinator.assigned', { name: resolveCoordinatorName(props.coordinatorGrant, props.team) ?? props.coordinatorGrant })
+          : t('coordination.coordinator.none')}
+      </p>
     </section>}
   </div>;
 }

@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AgentEvent } from '../../shared/contracts';
+import { vi } from 'vitest';
+import { EMPTY_USAGE, type AgentEvent, type ChatSession, type TeamMember, type TeamMemberStatus } from '../../shared/contracts';
 import { createBackend, type Backend, type BackendOptions } from '../../electron/bootstrap';
 import type { CommandResult, CommandRunner } from '../../electron/runtime/commandRunner';
 import type { PtyLoadResult, PtyProcessLike, PtySpawnOptions } from '../../electron/runtime/ptyLoader';
@@ -121,6 +122,53 @@ export interface TestBackend extends Backend {
   dir: string;
   events: AgentEvent[];
   cleanup: () => void;
+}
+
+// --- Fake coordination team --------------------------------------------------
+// Coordination dispatches a member exactly the way `requestBrandContextDraft`
+// does (`hub.listTeam` / `openMember` / `addMember` / `send`), so coordination
+// tests control the team the same way `brand-context-proposals.test.ts`'s
+// MEMBER_BUSY test does: mock the hub surface instead of spawning a real
+// runtime (this worktree's default fakes report every runtime as absent).
+
+export interface FakeTeamMember { id: string; workId: string; roleId: string; status: TeamMemberStatus }
+
+const fakeTeamMemberShape = (m: FakeTeamMember): TeamMember => ({
+  id: m.id, workId: m.workId, roleId: m.roleId, roleName: m.roleId, initial: m.roleId[0]?.toUpperCase() ?? 'X',
+  runtime: 'codex', model: null, accountId: null, label: 'Codex', status: m.status, tier: 'balanced',
+  usage: EMPTY_USAGE,
+  continuedFrom: null, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+});
+
+const fakeSessionFor = (m: FakeTeamMember): ChatSession => ({
+  id: m.id, workId: m.workId, provider: 'codex', model: null, accountId: null, label: 'Codex',
+  resumed: false, roleId: m.roleId, roleName: m.roleId, historyRecovered: false,
+});
+
+/**
+ * Replaces `hub.listTeam`/`openMember`/`addMember`/`send` with in-memory fakes
+ * driven by `members` (mutated in place, so a test can flip `status` between
+ * calls). `addMember` appends a fresh working member and returns it, mirroring
+ * the real hub's "adding opens it" contract.
+ */
+export function fakeCoordinationHub(b: TestBackend, members: FakeTeamMember[]) {
+  const send = vi.spyOn(b.hub, 'send').mockResolvedValue(undefined);
+  vi.spyOn(b.hub, 'listTeam').mockImplementation((workId: string) => members.filter((m) => m.workId === workId).map(fakeTeamMemberShape));
+  vi.spyOn(b.hub, 'openMember').mockImplementation(async (memberId: string) => {
+    const member = members.find((m) => m.id === memberId);
+    if (!member) throw new Error(`fakeCoordinationHub: unknown member ${memberId}`);
+    member.status = 'idle';
+    return fakeSessionFor(member);
+  });
+  vi.spyOn(b.hub, 'addMember').mockImplementation(async (input) => {
+    // Realistic: opening a member starts it idle. A turn only makes it
+    // 'working' once something is actually sent to it (`hub.send`, mocked
+    // above) — a test simulating a busy member sets `status` itself.
+    const member: FakeTeamMember = { id: `mem_fake_${members.length + 1}`, workId: input.workId, roleId: input.roleId, status: 'idle' };
+    members.push(member);
+    return fakeSessionFor(member);
+  });
+  return { send, members };
 }
 
 export async function makeBackend(overrides: Partial<BackendOptions> = {}): Promise<TestBackend> {

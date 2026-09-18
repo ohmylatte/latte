@@ -33,6 +33,13 @@ interface MemberRow extends SqlRow { id: string; work_id: string; role_id: strin
 interface GenerationRow extends SqlRow { id: string; work_id: string; brand_id: string; context_json: string; context_hash: string; created_at: string }
 interface EvidenceRow extends SqlRow { id: string; generation_id: string; runtime: string; chat_id: string | null; projected_at: string; files_written: string }
 interface CheckRow extends SqlRow { id: string; generation_id: string; relative_path: string; file_hash: string | null; checks_json: string; brand_compliant: number | null; created_at: string }
+interface CoordinationRunRow extends SqlRow { id: string; work_id: string; status: string; coordinator_member_id: string | null; budget_json: string; plan_json: string | null; plan_approved_at: string | null; suspend_reason: string | null; created_at: string; updated_at: string }
+interface CoordinationTaskRow extends SqlRow { id: string; run_id: string; seq: number; role_id: string; spec: string; status: string; depth: number; attempts: number; in_plan: number; assigned_member_id: string | null; result_summary: string | null; result_files_json: string | null; created_at: string; updated_at: string }
+interface CoordinationDispatchRow extends SqlRow { id: string; run_id: string; task_id: string; member_id: string; attempt: number; status: string; gate_id: string | null; prompt: string; outcome: string | null; summary: string | null; files_json: string | null; reservation_id: string | null; created_at: string; started_at: string | null; settled_at: string | null }
+interface CoordinationMessageRow extends SqlRow { id: string; run_id: string; to_member_id: string; from_member_id: string | null; kind: string; body: string; delivered_at: string | null; created_at: string }
+interface CoordinationAskRow extends SqlRow { id: string; run_id: string; task_id: string | null; member_id: string; question: string; answer: string | null; deadline_at: string; answered_at: string | null; created_at: string }
+interface CoordinationCostReservationRow extends SqlRow { id: string; run_id: string; dispatch_id: string | null; member_id: string; runtime: string; model: string; max_input_tokens: number; max_output_tokens: number; max_cost_micros: number; state: string; usage_json: string | null; created_at: string; settled_at: string | null }
+interface CoordinationCostLedgerRow extends SqlRow { id: string; run_id: string; reservation_id: string | null; kind: string; dispatches: number; cost_micros: number; detail_json: string; created_at: string }
 
 /** Persisted part of a tracked document. Titles and status are UI-facing; the file name is Latte-generated. */
 export interface DocumentRecord {
@@ -75,6 +82,133 @@ export interface TeamMemberRecord {
   usage?: ChatUsage;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Autonomous coordination records (schema 12). Kept local to the storage
+ * layer for now: Phase 1 only ships the store and the pure `dag`/`budget`
+ * modules, wired to nothing, so there is no IPC surface yet to justify
+ * promoting these to `shared/contracts.ts` (that is Phase 2, task 2.1).
+ */
+export type CoordinationRunStatus = 'planning' | 'running' | 'suspended' | 'done' | 'cancelled';
+
+export interface CoordinationRunRecord {
+  id: string;
+  workId: string;
+  status: CoordinationRunStatus;
+  coordinatorMemberId: string | null;
+  /** The per-run budget snapshot, copied from the Work's default at run start. */
+  budgetJson: string;
+  planJson: string | null;
+  planApprovedAt: string | null;
+  suspendReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CoordinationTaskStatus = 'pending' | 'ready' | 'dispatched' | 'running' | 'done' | 'failed' | 'blocked';
+
+export interface CoordinationTaskRecord {
+  id: string;
+  runId: string;
+  seq: number;
+  roleId: string;
+  spec: string;
+  status: CoordinationTaskStatus;
+  depth: number;
+  attempts: number;
+  /** Whether this task was part of the plan snapshot approved under `'plan'` authority. A column, never a JSON diff. */
+  inPlan: boolean;
+  assignedMemberId: string | null;
+  resultSummary: string | null;
+  resultFilesJson: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One dependency edge: `taskId` depends on `dependsOnId`. */
+export interface CoordinationTaskDep {
+  taskId: string;
+  dependsOnId: string;
+}
+
+export type CoordinationDispatchStatus = 'pending_approval' | 'dispatched' | 'running' | 'reported' | 'failed' | 'rejected' | 'cancelled';
+
+/** One row per dispatch attempt. The bitácora's only source: never write narrative text that isn't backed by one of these. */
+export interface CoordinationDispatchRecord {
+  id: string;
+  runId: string;
+  taskId: string;
+  memberId: string;
+  attempt: number;
+  status: CoordinationDispatchStatus;
+  gateId: string | null;
+  prompt: string;
+  outcome: string | null;
+  summary: string | null;
+  filesJson: string | null;
+  reservationId: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  settledAt: string | null;
+}
+
+export type CoordinationMessageKind = 'task' | 'answer' | 'note';
+
+export interface CoordinationMessageRecord {
+  id: string;
+  runId: string;
+  toMemberId: string;
+  fromMemberId: string | null;
+  kind: CoordinationMessageKind;
+  body: string;
+  deliveredAt: string | null;
+  createdAt: string;
+}
+
+export interface CoordinationAskRecord {
+  id: string;
+  runId: string;
+  taskId: string | null;
+  memberId: string;
+  question: string;
+  answer: string | null;
+  deadlineAt: string;
+  answeredAt: string | null;
+  createdAt: string;
+}
+
+export type CoordinationCostReservationState = 'reserved' | 'settled' | 'uncertain';
+
+/** Column-for-column `learning_cost_reservations` (see learningSchema.ts). */
+export interface CoordinationCostReservationRecord {
+  id: string;
+  runId: string;
+  dispatchId: string | null;
+  memberId: string;
+  runtime: string;
+  model: string;
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  maxCostMicros: number;
+  state: CoordinationCostReservationState;
+  usageJson: string | null;
+  createdAt: string;
+  settledAt: string | null;
+}
+
+export type CoordinationCostLedgerKind = 'spend' | 'duplicate_spend' | 'denied';
+
+/** Column-for-column `learning_cost_ledger`; the row is append-only by trigger, never by convention alone. */
+export interface CoordinationCostLedgerRecord {
+  id: string;
+  runId: string;
+  reservationId: string | null;
+  kind: CoordinationCostLedgerKind;
+  dispatches: number;
+  costMicros: number;
+  detailJson: string;
+  createdAt: string;
 }
 
 const BRAND_SELECT = 'SELECT b.id, b.name, b.context, b.created_at, a.archived_at FROM brands b LEFT JOIN brand_archives a ON a.brand_id = b.id';
@@ -199,6 +333,98 @@ const toMember = (r: MemberRow): TeamMemberRecord => ({
   usage: parseUsage(r.usage_json),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
+});
+
+const toCoordinationRun = (r: CoordinationRunRow): CoordinationRunRecord => ({
+  id: r.id,
+  workId: r.work_id,
+  status: r.status as CoordinationRunStatus,
+  coordinatorMemberId: r.coordinator_member_id,
+  budgetJson: r.budget_json,
+  planJson: r.plan_json,
+  planApprovedAt: r.plan_approved_at,
+  suspendReason: r.suspend_reason,
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+});
+const toCoordinationTask = (r: CoordinationTaskRow): CoordinationTaskRecord => ({
+  id: r.id,
+  runId: r.run_id,
+  seq: Number(r.seq),
+  roleId: r.role_id,
+  spec: r.spec,
+  status: r.status as CoordinationTaskStatus,
+  depth: Number(r.depth),
+  attempts: Number(r.attempts),
+  inPlan: Number(r.in_plan) === 1,
+  assignedMemberId: r.assigned_member_id,
+  resultSummary: r.result_summary,
+  resultFilesJson: r.result_files_json,
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+});
+const toCoordinationDispatch = (r: CoordinationDispatchRow): CoordinationDispatchRecord => ({
+  id: r.id,
+  runId: r.run_id,
+  taskId: r.task_id,
+  memberId: r.member_id,
+  attempt: Number(r.attempt),
+  status: r.status as CoordinationDispatchStatus,
+  gateId: r.gate_id,
+  prompt: r.prompt,
+  outcome: r.outcome,
+  summary: r.summary,
+  filesJson: r.files_json,
+  reservationId: r.reservation_id,
+  createdAt: r.created_at,
+  startedAt: r.started_at,
+  settledAt: r.settled_at,
+});
+const toCoordinationMessage = (r: CoordinationMessageRow): CoordinationMessageRecord => ({
+  id: r.id,
+  runId: r.run_id,
+  toMemberId: r.to_member_id,
+  fromMemberId: r.from_member_id,
+  kind: r.kind as CoordinationMessageKind,
+  body: r.body,
+  deliveredAt: r.delivered_at,
+  createdAt: r.created_at,
+});
+const toCoordinationAsk = (r: CoordinationAskRow): CoordinationAskRecord => ({
+  id: r.id,
+  runId: r.run_id,
+  taskId: r.task_id,
+  memberId: r.member_id,
+  question: r.question,
+  answer: r.answer,
+  deadlineAt: r.deadline_at,
+  answeredAt: r.answered_at,
+  createdAt: r.created_at,
+});
+const toCoordinationCostReservation = (r: CoordinationCostReservationRow): CoordinationCostReservationRecord => ({
+  id: r.id,
+  runId: r.run_id,
+  dispatchId: r.dispatch_id,
+  memberId: r.member_id,
+  runtime: r.runtime,
+  model: r.model,
+  maxInputTokens: Number(r.max_input_tokens),
+  maxOutputTokens: Number(r.max_output_tokens),
+  maxCostMicros: Number(r.max_cost_micros),
+  state: r.state as CoordinationCostReservationState,
+  usageJson: r.usage_json,
+  createdAt: r.created_at,
+  settledAt: r.settled_at,
+});
+const toCoordinationCostLedger = (r: CoordinationCostLedgerRow): CoordinationCostLedgerRecord => ({
+  id: r.id,
+  runId: r.run_id,
+  reservationId: r.reservation_id,
+  kind: r.kind as CoordinationCostLedgerKind,
+  dispatches: Number(r.dispatches),
+  costMicros: Number(r.cost_micros),
+  detailJson: r.detail_json,
+  createdAt: r.created_at,
 });
 
 /** Deterministic id for a member created by the v2 -> v3 migration (idempotent re-runs). */
@@ -858,5 +1084,239 @@ export class LatteRepository {
     return this.db
       .all<CheckRow>('SELECT * FROM artifact_checks WHERE generation_id = ? ORDER BY created_at ASC, id ASC', [generationId])
       .map(toCheck);
+  }
+
+  // Coordination (autonomous runs, schema 12) ---------------------------------
+  // Phase 1: storage only. Nothing here is called from any IPC method yet.
+
+  insertCoordinationRun(run: CoordinationRunRecord): CoordinationRunRecord {
+    this.db.run(
+      'INSERT INTO coordination_run(id, work_id, status, coordinator_member_id, budget_json, plan_json, plan_approved_at, suspend_reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [run.id, run.workId, run.status, run.coordinatorMemberId, run.budgetJson, run.planJson, run.planApprovedAt, run.suspendReason, run.createdAt, run.updatedAt],
+    );
+    return this.getCoordinationRun(run.id);
+  }
+
+  getCoordinationRun(id: string): CoordinationRunRecord {
+    const row = this.db.get<CoordinationRunRow>('SELECT * FROM coordination_run WHERE id = ?', [id]);
+    if (!row) throw new NotFoundError('CoordinationRun', id);
+    return toCoordinationRun(row);
+  }
+
+  /** The Work's live run, if any: `planning`/`running`/`suspended` — the same set the partial unique index enforces one of. */
+  findActiveCoordinationRun(workId: string): CoordinationRunRecord | null {
+    const row = this.db.get<CoordinationRunRow>(
+      "SELECT * FROM coordination_run WHERE work_id = ? AND status IN ('planning','running','suspended')",
+      [workId],
+    );
+    return row ? toCoordinationRun(row) : null;
+  }
+
+  updateCoordinationRunStatus(id: string, status: CoordinationRunStatus, updatedAt: string, suspendReason: string | null = null): CoordinationRunRecord {
+    this.getCoordinationRun(id);
+    this.db.run('UPDATE coordination_run SET status = ?, suspend_reason = ?, updated_at = ? WHERE id = ?', [status, suspendReason, updatedAt, id]);
+    return this.getCoordinationRun(id);
+  }
+
+  /** Records the plan snapshot (the task ids `latte_plan_submit` just created), still unapproved. */
+  setCoordinationPlan(id: string, planJson: string, updatedAt: string): CoordinationRunRecord {
+    this.getCoordinationRun(id);
+    this.db.run('UPDATE coordination_run SET plan_json = ?, updated_at = ? WHERE id = ?', [planJson, updatedAt, id]);
+    return this.getCoordinationRun(id);
+  }
+
+  /** The one human approval `'plan'` authority requires before any snapshot task can skip its dispatch gate. */
+  approveCoordinationPlan(id: string, approvedAt: string): CoordinationRunRecord {
+    this.getCoordinationRun(id);
+    this.db.run('UPDATE coordination_run SET plan_approved_at = ?, updated_at = ? WHERE id = ?', [approvedAt, approvedAt, id]);
+    return this.getCoordinationRun(id);
+  }
+
+  /** Also updates the active run's own snapshot when one exists: a raised cap must reach a run already in flight, never only the Work's future default. */
+  updateActiveCoordinationRunBudget(workId: string, budgetJson: string, updatedAt: string): void {
+    const run = this.findActiveCoordinationRun(workId);
+    if (!run) return;
+    this.db.run('UPDATE coordination_run SET budget_json = ?, updated_at = ? WHERE id = ?', [budgetJson, updatedAt, run.id]);
+  }
+
+  insertCoordinationTask(task: CoordinationTaskRecord): CoordinationTaskRecord {
+    this.db.run(
+      'INSERT INTO coordination_task(id, run_id, seq, role_id, spec, status, depth, attempts, in_plan, assigned_member_id, result_summary, result_files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [task.id, task.runId, task.seq, task.roleId, task.spec, task.status, task.depth, task.attempts, task.inPlan ? 1 : 0, task.assignedMemberId, task.resultSummary, task.resultFilesJson, task.createdAt, task.updatedAt],
+    );
+    return this.getCoordinationTask(task.id);
+  }
+
+  getCoordinationTask(id: string): CoordinationTaskRecord {
+    const row = this.db.get<CoordinationTaskRow>('SELECT * FROM coordination_task WHERE id = ?', [id]);
+    if (!row) throw new NotFoundError('CoordinationTask', id);
+    return toCoordinationTask(row);
+  }
+
+  listCoordinationTasks(runId: string): CoordinationTaskRecord[] {
+    return this.db.all<CoordinationTaskRow>('SELECT * FROM coordination_task WHERE run_id = ? ORDER BY seq ASC, id ASC', [runId]).map(toCoordinationTask);
+  }
+
+  /** Partial patch: only the fields named are changed, everything else keeps its current value. */
+  updateCoordinationTask(id: string, patch: {
+    status?: CoordinationTaskStatus; depth?: number; attempts?: number; assignedMemberId?: string | null;
+    resultSummary?: string | null; resultFilesJson?: string | null; inPlan?: boolean;
+  }, updatedAt: string): CoordinationTaskRecord {
+    const current = this.getCoordinationTask(id);
+    this.db.run(
+      'UPDATE coordination_task SET status = ?, depth = ?, attempts = ?, assigned_member_id = ?, result_summary = ?, result_files_json = ?, in_plan = ?, updated_at = ? WHERE id = ?',
+      [
+        patch.status ?? current.status,
+        patch.depth ?? current.depth,
+        patch.attempts ?? current.attempts,
+        patch.assignedMemberId === undefined ? current.assignedMemberId : patch.assignedMemberId,
+        patch.resultSummary === undefined ? current.resultSummary : patch.resultSummary,
+        patch.resultFilesJson === undefined ? current.resultFilesJson : patch.resultFilesJson,
+        patch.inPlan === undefined ? (current.inPlan ? 1 : 0) : (patch.inPlan ? 1 : 0),
+        updatedAt,
+        id,
+      ],
+    );
+    return this.getCoordinationTask(id);
+  }
+
+  /** Edges live on their own table so cycle detection is a graph query, never a JSON parse. */
+  insertCoordinationTaskDep(taskId: string, dependsOnId: string): void {
+    this.db.run('INSERT INTO coordination_task_dep(task_id, depends_on_id) VALUES (?, ?)', [taskId, dependsOnId]);
+  }
+
+  /** Every edge for every task in a run, for feeding `dag.ts`'s pure functions. */
+  listCoordinationTaskDeps(runId: string): CoordinationTaskDep[] {
+    return this.db
+      .all<{ task_id: string; depends_on_id: string }>(
+        'SELECT d.task_id, d.depends_on_id FROM coordination_task_dep d INNER JOIN coordination_task t ON t.id = d.task_id WHERE t.run_id = ?',
+        [runId],
+      )
+      .map((r) => ({ taskId: r.task_id, dependsOnId: r.depends_on_id }));
+  }
+
+  insertCoordinationDispatch(dispatch: CoordinationDispatchRecord): CoordinationDispatchRecord {
+    this.db.run(
+      'INSERT INTO coordination_dispatch(id, run_id, task_id, member_id, attempt, status, gate_id, prompt, outcome, summary, files_json, reservation_id, created_at, started_at, settled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [dispatch.id, dispatch.runId, dispatch.taskId, dispatch.memberId, dispatch.attempt, dispatch.status, dispatch.gateId, dispatch.prompt, dispatch.outcome, dispatch.summary, dispatch.filesJson, dispatch.reservationId, dispatch.createdAt, dispatch.startedAt, dispatch.settledAt],
+    );
+    return this.getCoordinationDispatch(dispatch.id);
+  }
+
+  getCoordinationDispatch(id: string): CoordinationDispatchRecord {
+    const row = this.db.get<CoordinationDispatchRow>('SELECT * FROM coordination_dispatch WHERE id = ?', [id]);
+    if (!row) throw new NotFoundError('CoordinationDispatch', id);
+    return toCoordinationDispatch(row);
+  }
+
+  /** Newest last: the bitácora's own source, in the order the events actually happened. */
+  listCoordinationDispatches(runId: string): CoordinationDispatchRecord[] {
+    return this.db.all<CoordinationDispatchRow>('SELECT * FROM coordination_dispatch WHERE run_id = ? ORDER BY created_at ASC, id ASC', [runId]).map(toCoordinationDispatch);
+  }
+
+  updateCoordinationDispatch(id: string, patch: {
+    status?: CoordinationDispatchStatus; gateId?: string | null; prompt?: string; outcome?: string | null; summary?: string | null;
+    filesJson?: string | null; reservationId?: string | null; startedAt?: string | null; settledAt?: string | null;
+  }): CoordinationDispatchRecord {
+    const current = this.getCoordinationDispatch(id);
+    this.db.run(
+      'UPDATE coordination_dispatch SET status = ?, gate_id = ?, prompt = ?, outcome = ?, summary = ?, files_json = ?, reservation_id = ?, started_at = ?, settled_at = ? WHERE id = ?',
+      [
+        patch.status ?? current.status,
+        patch.gateId === undefined ? current.gateId : patch.gateId,
+        patch.prompt ?? current.prompt,
+        patch.outcome === undefined ? current.outcome : patch.outcome,
+        patch.summary === undefined ? current.summary : patch.summary,
+        patch.filesJson === undefined ? current.filesJson : patch.filesJson,
+        patch.reservationId === undefined ? current.reservationId : patch.reservationId,
+        patch.startedAt === undefined ? current.startedAt : patch.startedAt,
+        patch.settledAt === undefined ? current.settledAt : patch.settledAt,
+        id,
+      ],
+    );
+    return this.getCoordinationDispatch(id);
+  }
+
+  insertCoordinationMessage(message: CoordinationMessageRecord): CoordinationMessageRecord {
+    this.db.run(
+      'INSERT INTO coordination_message(id, run_id, to_member_id, from_member_id, kind, body, delivered_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [message.id, message.runId, message.toMemberId, message.fromMemberId, message.kind, message.body, message.deliveredAt, message.createdAt],
+    );
+    return message;
+  }
+
+  /** FIFO: enqueue order, undelivered only. One index scan (`idx_coordination_message_undelivered`). */
+  listUndeliveredCoordinationMessages(runId: string, toMemberId: string): CoordinationMessageRecord[] {
+    return this.db
+      .all<CoordinationMessageRow>(
+        'SELECT * FROM coordination_message WHERE run_id = ? AND to_member_id = ? AND delivered_at IS NULL ORDER BY created_at ASC, id ASC',
+        [runId, toMemberId],
+      )
+      .map(toCoordinationMessage);
+  }
+
+  markCoordinationMessageDelivered(id: string, deliveredAt: string): void {
+    this.db.run('UPDATE coordination_message SET delivered_at = ? WHERE id = ?', [deliveredAt, id]);
+  }
+
+  insertCoordinationAsk(ask: CoordinationAskRecord): CoordinationAskRecord {
+    this.db.run(
+      'INSERT INTO coordination_ask(id, run_id, task_id, member_id, question, answer, deadline_at, answered_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [ask.id, ask.runId, ask.taskId, ask.memberId, ask.question, ask.answer, ask.deadlineAt, ask.answeredAt, ask.createdAt],
+    );
+    return this.getCoordinationAsk(ask.id);
+  }
+
+  getCoordinationAsk(id: string): CoordinationAskRecord {
+    const row = this.db.get<CoordinationAskRow>('SELECT * FROM coordination_ask WHERE id = ?', [id]);
+    if (!row) throw new NotFoundError('CoordinationAsk', id);
+    return toCoordinationAsk(row);
+  }
+
+  /** Unanswered asks for a run (`idx_coordination_ask_open`). */
+  listOpenCoordinationAsks(runId: string): CoordinationAskRecord[] {
+    return this.db.all<CoordinationAskRow>('SELECT * FROM coordination_ask WHERE run_id = ? AND answered_at IS NULL ORDER BY created_at ASC, id ASC', [runId]).map(toCoordinationAsk);
+  }
+
+  answerCoordinationAsk(id: string, answer: string, answeredAt: string): CoordinationAskRecord {
+    this.getCoordinationAsk(id);
+    this.db.run('UPDATE coordination_ask SET answer = ?, answered_at = ? WHERE id = ?', [answer, answeredAt, id]);
+    return this.getCoordinationAsk(id);
+  }
+
+  // Coordination cost ledger (column-for-column learning_cost_reservations/ledger) --
+
+  insertCoordinationCostReservation(row: CoordinationCostReservationRecord): void {
+    this.db.run(
+      'INSERT INTO coordination_cost_reservations(id, run_id, dispatch_id, member_id, runtime, model, max_input_tokens, max_output_tokens, max_cost_micros, state, usage_json, created_at, settled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [row.id, row.runId, row.dispatchId, row.memberId, row.runtime, row.model, row.maxInputTokens, row.maxOutputTokens, row.maxCostMicros, row.state, row.usageJson, row.createdAt, row.settledAt],
+    );
+  }
+
+  settleCoordinationCostReservation(id: string, usageJson: string | null, settledAt: string, uncertain: boolean): void {
+    this.db.run(
+      "UPDATE coordination_cost_reservations SET state = ?, usage_json = ?, settled_at = ? WHERE id = ? AND state = 'reserved'",
+      [uncertain ? 'uncertain' : 'settled', usageJson, settledAt, id],
+    );
+  }
+
+  getCoordinationCostReservation(id: string): CoordinationCostReservationRecord | null {
+    const row = this.db.get<CoordinationCostReservationRow>('SELECT * FROM coordination_cost_reservations WHERE id = ?', [id]);
+    return row ? toCoordinationCostReservation(row) : null;
+  }
+
+  /** Append-only by trigger: no code path here ever issues an UPDATE/DELETE against this table. */
+  insertCoordinationCostLedger(row: CoordinationCostLedgerRecord): void {
+    this.db.run(
+      'INSERT INTO coordination_cost_ledger(id, run_id, reservation_id, kind, dispatches, cost_micros, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [row.id, row.runId, row.reservationId, row.kind, row.dispatches, row.costMicros, row.detailJson, row.createdAt],
+    );
+  }
+
+  /** Every ledger row for a run, oldest first — the source `budget.ts`'s caller sums into a `BudgetUsage` snapshot. */
+  listCoordinationCostLedger(runId: string): CoordinationCostLedgerRecord[] {
+    return this.db
+      .all<CoordinationCostLedgerRow>('SELECT * FROM coordination_cost_ledger WHERE run_id = ? ORDER BY created_at ASC, id ASC', [runId])
+      .map(toCoordinationCostLedger);
   }
 }
