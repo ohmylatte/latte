@@ -1,7 +1,7 @@
 import { currentLocale, translate as t } from './i18n';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Check, CircleAlert, CircleCheck, FolderCheck, FolderLock, Forward, LoaderCircle, MessageSquare, MessageSquarePlus, Pause, Play, Plug, Plus, Settings2, Trash2, UserPlus, X, Zap } from 'lucide-react';
-import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
+import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { ChatPane } from './ChatPane';
 import { useChatState } from './chat-store';
@@ -75,6 +75,15 @@ export interface TeamPanelProps {
   /** Only the permission mutation is pending; chat activity must not disable this control. */
   permissionBusy: boolean;
   onPermissions: (mode: WorkPermissionMode) => void;
+  /**
+   * Additive, optional (autonomous-coordination Phase 7 task 7.7): `undefined`
+   * or `null` means no active run to pause — the control does not render, so
+   * an unwired caller sees zero change. `pauseCoordinationRun` already exists
+   * (Phase 3); this is UI only. Pausing lets the in-flight dispatch finish
+   * and report; no new dispatch starts.
+   */
+  coordinationRun?: CoordinationRunView | null;
+  onPauseCoordination?: (runId: string) => void;
 }
 
 const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex' };
@@ -118,6 +127,7 @@ export function TeamPanel(props: TeamPanelProps) {
         {workTotal > 0 && <span className="team-usage-total" title={t('usage.help')}>{t('usage.workTotal', { tokens: formatTokens(workTotal, currentLocale()) })}</span>}
         <button className="team-tab-add" aria-label={t('ui.auto.269')} title={t('ui.auto.269')} disabled={busy || !isDesktop} onClick={() => setAdding(true)}><UserPlus size={15} /></button>
         <button className="team-tab-add" aria-label="Proveedores de IA" title="Agentes y proveedores" onClick={props.onProviders}><Settings2 size={15} /></button>
+        {props.coordinationRun && props.coordinationRun.status === 'running' && <button className="team-pause-coordination" title={t('coordination.run.pauseHelp')} disabled={busy} onClick={() => props.onPauseCoordination?.(props.coordinationRun!.id)}><Pause size={13} />{t('coordination.run.pause')}</button>}
         {selected && <div className="team-tab-actions">
           {mode === 'advanced' && <>
             <ModelPicker member={selected} busy={busy} onModel={props.onModel} />

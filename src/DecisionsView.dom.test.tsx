@@ -14,7 +14,7 @@ const { fireEvent, render, screen } = await import('@testing-library/react');
 const { DecisionsView } = await import('./DecisionsView');
 import type { DecisionsViewProps } from './DecisionsView';
 import { EMPTY_USAGE } from '../shared/contracts';
-import type { AgentRole, Decision, HandoffRequest, TeamMember, Work } from '../shared/contracts';
+import type { AgentRole, CoordinationAskView, CoordinationGateView, CoordinationProposal, Decision, HandoffRequest, TeamMember, Work } from '../shared/contracts';
 
 const work = (patch: Partial<Work> = {}): Work => ({
   id: 'w1', brandId: 'b1', title: 'Lanzamiento', brief: 'Lanzar la campaña.',
@@ -31,6 +31,20 @@ const member = (patch: Partial<TeamMember> = {}): TeamMember => ({
 });
 const role = (patch: Partial<AgentRole> = {}): AgentRole => ({ id: 'strategist', name: 'Strategist', initial: 'S', summary: 'Compara opciones.', builtin: false, tier: 'deep', ...patch });
 const handoff = (patch: Partial<HandoffRequest> = {}): HandoffRequest => ({ fileName: 'h.md', roleId: 'strategist', roleName: 'Estratega', known: true, request: 'Pido permiso.', ...patch });
+const gateView = (patch: Partial<CoordinationGateView> = {}): CoordinationGateView => ({
+  id: 'g1', kind: 'plan', runId: 'run1', createdAt: '2026-09-01T00:00:00.000Z', ...patch,
+});
+const askView = (patch: Partial<CoordinationAskView> = {}): CoordinationAskView => ({
+  id: 'ask1', runId: 'run1', taskId: null, memberId: 'm1', question: '¿Seguimos con el mismo tono?',
+  answer: null, deadlineAt: '2026-09-02T00:00:00.000Z', answeredAt: null, createdAt: '2026-09-01T00:00:00.000Z', ...patch,
+});
+const proposal = (patch: Partial<CoordinationProposal> = {}): CoordinationProposal => ({
+  plan: [{ roleId: 'copywriter', spec: 'Escribir 3 posts para el lanzamiento' }],
+  estimatedDispatches: 8,
+  membersToHire: [{ roleId: 'designer', why: 'Necesitamos piezas visuales para las 3 posts' }],
+  rationale: 'El equipo actual no alcanza para el volumen del mes.',
+  ...patch,
+});
 
 const base: DecisionsViewProps = {
   work: work(),
@@ -242,5 +256,206 @@ describe('callbacks', () => {
     expect(onReject).toHaveBeenCalledWith('p1');
     fireEvent.click(screen.getByText('Deshacer'));
     expect(onArchive).toHaveBeenCalledWith('a1');
+  });
+});
+
+describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.4-7.6)', () => {
+  it('does not render when the caller has not wired gate state', () => {
+    const { container } = renderView('es-AR');
+    expect(container.querySelector('.decision-gates')).toBeNull();
+  });
+
+  it('renders no section when wired but there is nothing pending — zero rows is never a zero', () => {
+    const { container } = renderView('es-AR', { gates: [], openAsks: [] });
+    expect(container.querySelector('.decision-gates')).toBeNull();
+  });
+
+  it('renders the plan, dispatch and budget gates simultaneously, plus an open ask', () => {
+    const { container } = renderView('es-AR', {
+      gates: [
+        gateView({ id: 'g-plan', kind: 'plan' }),
+        gateView({ id: 'g-dispatch', kind: 'dispatch', taskId: 't1', dispatchId: 'd1', prompt: 'Escribir el post de lanzamiento' }),
+        gateView({ id: 'g-budget', kind: 'budget' }),
+      ],
+      openAsks: [askView()],
+    });
+    expect(container.querySelectorAll('.decision-gate-plan')).toHaveLength(1);
+    expect(container.querySelectorAll('.decision-gate-dispatch')).toHaveLength(1);
+    expect(container.querySelectorAll('.decision-gate-budget')).toHaveLength(1);
+    expect(container.querySelectorAll('.decision-ask')).toHaveLength(1);
+    expect(container.textContent).toContain('Escribir el post de lanzamiento');
+    expect(container.textContent).toContain('¿Seguimos con el mismo tono?');
+  });
+
+  it('gives the budget-exhausted gate exactly 2 actions — the three-action triple is a pattern, not a contract', () => {
+    const { container } = renderView('es-AR', { gates: [gateView({ id: 'g-budget', kind: 'budget' })] });
+    const actions = container.querySelectorAll('.decision-gate-budget .decision-gate-actions button');
+    expect(actions).toHaveLength(2);
+    expect([...actions].map((b) => b.textContent)).toEqual(['Aprobar', 'Rechazar']);
+  });
+
+  it('gives the plan gate exactly 2 actions too — there is nothing to edit at plan-approval, the engine ignores it', () => {
+    const { container } = renderView('es-AR', { gates: [gateView({ id: 'g-plan', kind: 'plan' })] });
+    const actions = container.querySelectorAll('.decision-gate-plan .decision-gate-actions button');
+    expect(actions).toHaveLength(2);
+  });
+
+  it('gives the dispatch gate all 3 actions, since its prompt is genuinely editable', () => {
+    const { container } = renderView('es-AR', { gates: [gateView({ id: 'g-dispatch', kind: 'dispatch', prompt: 'Prompt original' })] });
+    const actions = container.querySelectorAll('.decision-gate-dispatch .decision-gate-actions button');
+    expect(actions).toHaveLength(3);
+  });
+
+  it('resolves the plan and budget gates through the real approve/reject verb', () => {
+    const onResolveGate = vi.fn();
+    const { container } = renderView('es-AR', {
+      gates: [gateView({ id: 'g-plan', kind: 'plan' }), gateView({ id: 'g-budget', kind: 'budget' })],
+      onResolveGate,
+    });
+    fireEvent.click(container.querySelector('.decision-gate-plan .decision-gate-actions button')!);
+    expect(onResolveGate).toHaveBeenCalledWith('g-plan', 'approve');
+    const budgetButtons = container.querySelectorAll('.decision-gate-budget .decision-gate-actions button');
+    fireEvent.click(budgetButtons[1]);
+    expect(onResolveGate).toHaveBeenCalledWith('g-budget', 'reject');
+  });
+
+  it('edits the dispatch prompt and approves the edited payload through the same verb every other gate uses', () => {
+    const onResolveGate = vi.fn();
+    vi.spyOn(window, 'prompt').mockReturnValue('Prompt editado');
+    const { container } = renderView('es-AR', { gates: [gateView({ id: 'g-dispatch', kind: 'dispatch', prompt: 'Prompt original' })], onResolveGate });
+    const actions = container.querySelectorAll('.decision-gate-dispatch .decision-gate-actions button');
+    fireEvent.click(actions[1]); // Editar y aprobar
+    expect(onResolveGate).toHaveBeenCalledWith('g-dispatch', 'approve', 'Prompt editado');
+    vi.restoreAllMocks();
+  });
+
+  it('answers an open ask through onAnswerAsk, never through onResolveGate', () => {
+    const onAnswerAsk = vi.fn();
+    const onResolveGate = vi.fn();
+    vi.spyOn(window, 'prompt').mockReturnValue('Sí, mismo tono');
+    const { container } = renderView('es-AR', { openAsks: [askView({ id: 'ask1' })], onAnswerAsk, onResolveGate });
+    fireEvent.click(container.querySelector('.decision-ask button')!);
+    expect(onAnswerAsk).toHaveBeenCalledWith('ask1', 'Sí, mismo tono');
+    expect(onResolveGate).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  describe('the proposal gate — the WOW surface (task 7.5)', () => {
+    it('renders the plan, the hires with their reasons, the budget and the rationale, offering exactly the 3 real actions', () => {
+      const { container } = renderView('es-AR', {
+        gates: [gateView({
+          id: 'g-proposal', kind: 'proposal',
+          proposalJson: JSON.stringify(proposal()),
+          aggregate: { otherActiveRuns: 0, otherCommittedDispatches: 0, totalIfApproved: 8 },
+        })],
+        roles: [role({ id: 'copywriter', name: 'Redactor' }), role({ id: 'designer', name: 'Diseñador' })],
+      });
+      const card = container.querySelector('.decision-gate-proposal')!;
+      expect(card).not.toBeNull();
+      expect(card.textContent).toContain('Redactor');
+      expect(card.textContent).toContain('Escribir 3 posts para el lanzamiento');
+      expect(card.textContent).toContain('Diseñador');
+      expect(card.textContent).toContain('Necesitamos piezas visuales');
+      expect(card.textContent).toContain('El equipo actual no alcanza para el volumen del mes.');
+      expect(card.textContent).toContain('8');
+      const actions = card.querySelectorAll('.decision-gate-actions button');
+      expect(actions).toHaveLength(3);
+    });
+
+    it('asserts there is no separate settings form anywhere in the flow: no dropdown, no modal dialog, just the plan', () => {
+      const { container } = renderView('es-AR', {
+        gates: [gateView({ id: 'g-proposal', kind: 'proposal', proposalJson: JSON.stringify(proposal()), aggregate: { otherActiveRuns: 0, otherCommittedDispatches: 0, totalIfApproved: 8 } })],
+      });
+      const card = container.querySelector('.decision-gate-proposal')!;
+      expect(card.textContent).toContain('No hay ningún formulario de configuración');
+      expect(card.querySelector('select')).toBeNull();
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      // Even after opening the edit affordance, still no dialog and no dropdown.
+      fireEvent.click(card.querySelectorAll('.decision-gate-actions button')[1]);
+      expect(card.querySelector('select')).toBeNull();
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+    });
+
+    it('lets you drop a hire and lower the cap, approving the EDITED payload through resolveCoordinationGate(id,"approve",edited)', () => {
+      const onResolveGate = vi.fn();
+      const { container } = renderView('es-AR', {
+        gates: [gateView({ id: 'g-proposal', kind: 'proposal', proposalJson: JSON.stringify(proposal()), aggregate: { otherActiveRuns: 0, otherCommittedDispatches: 0, totalIfApproved: 8 } })],
+        onResolveGate,
+      });
+      const card = container.querySelector('.decision-gate-proposal')!;
+      fireEvent.click(card.querySelectorAll('.decision-gate-actions button')[1]); // Editar y aprobar
+      const numberInput = card.querySelector('input[type="number"]') as HTMLInputElement;
+      fireEvent.change(numberInput, { target: { value: '3' } });
+      const hireCheckbox = card.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      fireEvent.click(hireCheckbox);
+      fireEvent.click(screen.getByText('Confirmar edición y aprobar'));
+      expect(onResolveGate).toHaveBeenCalledTimes(1);
+      const [gateId, decision, editedJson] = onResolveGate.mock.calls[0];
+      expect(gateId).toBe('g-proposal');
+      expect(decision).toBe('approve');
+      const edited = JSON.parse(editedJson as string) as CoordinationProposal;
+      expect(edited.estimatedDispatches).toBe(3);
+      expect(edited.membersToHire).toEqual([]);
+    });
+
+    it('discard grants nothing: reject calls onResolveGate with no edited payload', () => {
+      const onResolveGate = vi.fn();
+      const { container } = renderView('es-AR', {
+        gates: [gateView({ id: 'g-proposal', kind: 'proposal', proposalJson: JSON.stringify(proposal()), aggregate: { otherActiveRuns: 0, otherCommittedDispatches: 0, totalIfApproved: 8 } })],
+        onResolveGate,
+      });
+      const card = container.querySelector('.decision-gate-proposal')!;
+      const actions = card.querySelectorAll('.decision-gate-actions button');
+      fireEvent.click(actions[2]); // Rechazar
+      expect(onResolveGate).toHaveBeenCalledWith('g-proposal', 'reject');
+      expect(onResolveGate).not.toHaveBeenCalledWith('g-proposal', 'reject', expect.anything());
+    });
+  });
+
+  describe('the aggregate — never hidden (task 7.6)', () => {
+    it('shows this work, other teams now, and the total if approved', () => {
+      const { container } = renderView('es-AR', {
+        gates: [gateView({
+          id: 'g-proposal', kind: 'proposal', proposalJson: JSON.stringify(proposal({ estimatedDispatches: 8 })),
+          aggregate: { otherActiveRuns: 2, otherCommittedDispatches: 10, totalIfApproved: 18 },
+        })],
+      });
+      const text = container.querySelector('.decision-gate-proposal')!.textContent!;
+      expect(text).toContain('8');
+      expect(text).toContain('2');
+      expect(text).toContain('10');
+      expect(text).toContain('18');
+    });
+
+    it('says so instead of printing a fabricated total when another run is explicitly unlimited', () => {
+      const { container } = renderView('es-AR', {
+        gates: [gateView({
+          id: 'g-proposal', kind: 'proposal', proposalJson: JSON.stringify(proposal({ estimatedDispatches: 8 })),
+          aggregate: { otherActiveRuns: 1, otherCommittedDispatches: null, totalIfApproved: null },
+        })],
+      });
+      const text = container.querySelector('.decision-gate-proposal')!.textContent!;
+      expect(text).toContain('no podemos calcular el total');
+      expect(text).not.toContain('null');
+    });
+  });
+
+  it('renders the same gates in English, with nothing left in Spanish', () => {
+    const { container } = renderView('en-US', {
+      gates: [
+        gateView({ id: 'g-budget', kind: 'budget' }),
+        gateView({
+          id: 'g-proposal', kind: 'proposal', proposalJson: JSON.stringify(proposal({ estimatedDispatches: 8 })),
+          aggregate: { otherActiveRuns: 1, otherCommittedDispatches: null, totalIfApproved: null },
+        }),
+      ],
+    });
+    expect(container.textContent).toContain('Budget exhausted');
+    expect(container.textContent).toContain('COORDINATION PROPOSAL');
+    expect(container.textContent).toContain('cannot calculate a total');
+    expect(container.textContent).toContain('There is no settings form');
+    for (const spanish of ['Presupuesto agotado', 'PROPUESTA DE COORDINACIÓN', 'no podemos calcular']) {
+      expect(container.textContent).not.toContain(spanish);
+    }
   });
 });

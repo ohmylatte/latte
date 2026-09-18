@@ -75,6 +75,8 @@ export interface HomeInput {
   documents: readonly WorkDocument[];
   states: Readonly<Record<string, DocumentState>>;
   checking: boolean;
+  /** Additive, optional (autonomous-coordination Phase 7 task 7.2): `undefined` means the caller has not wired coordination state yet — see `HomeSinceLastVisitInput`. */
+  coordinationSinceLastVisit?: readonly HomeSinceLastVisitInput[];
 }
 
 export interface HomeContinueRow {
@@ -100,6 +102,29 @@ export interface HomeReviewRow {
   title: string;
 }
 
+/**
+ * What "since your last visit" can report about a coordination run, kept to
+ * exactly what a persisted `coordination_dispatch`/run row can answer — never
+ * a narrative guess. `awaitingYou` is a pending gate; the other three are
+ * lifecycle facts (autonomous-coordination, Phase 7 task 7.2).
+ */
+export type SinceLastVisitKind = 'done' | 'failed' | 'awaitingYou' | 'budgetConsumed';
+
+/** What the caller hands over, already reduced to persisted facts. `undefined` means unwired (Phase 2's `!== undefined` pattern) — the card renders exactly like an empty list. */
+export interface HomeSinceLastVisitInput {
+  id: string;
+  workId: string;
+  kind: SinceLastVisitKind;
+}
+
+export interface HomeSinceLastVisitRow {
+  id: string;
+  workId: string;
+  /** '' when the work is not in the list handed over: never an invented title. */
+  workTitle: string;
+  kind: SinceLastVisitKind;
+}
+
 export interface HomeSummary {
   step: HomeStep;
   stepKey: MessageKey;
@@ -110,6 +135,8 @@ export interface HomeSummary {
   reviewRows: HomeReviewRow[];
   /** The brand has no work yet: Continuar collapses to the one action. */
   showNewWork: boolean;
+  /** Empty for both an unwired caller (`undefined` input) and a wired caller with nothing to report — zero rows is never a zero. */
+  sinceLastVisitRows: HomeSinceLastVisitRow[];
 }
 
 /**
@@ -171,5 +198,11 @@ export function homeSummary(input: HomeInput): HomeSummary {
       title: document.title,
     })),
     showNewWork: input.works.length === 0,
+    sinceLastVisitRows: (input.coordinationSinceLastVisit ?? []).map((event) => ({
+      id: event.id,
+      workId: event.workId,
+      workTitle: titles.get(event.workId) ?? '',
+      kind: event.kind,
+    })),
   };
 }

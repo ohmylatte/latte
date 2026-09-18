@@ -1,5 +1,5 @@
 import type { MessageKey } from './i18n';
-import type { Decision, DocumentState, TeamMember, Work, WorkDocument } from '../shared/contracts';
+import type { CoordinationDispatchStatus, CoordinationLogEntryView, Decision, DocumentState, TeamMember, Work, WorkDocument } from '../shared/contracts';
 import { needsReview } from './document-organizer';
 import { orientationSummary, type OrientationStep } from './orientation-summary';
 
@@ -54,6 +54,9 @@ export interface ResumenInput {
   /** True while an agent session of this work is running (`contextStatus.works[].live`). */
   live: boolean;
   brandContextDefined: boolean;
+  /** Additive, optional (autonomous-coordination Phase 7 task 7.3): the Work's coordination bitácora, oldest first. `undefined` when the caller has not wired coordination state — the caller (`ResumenView`) keeps the whole section hidden, distinct from a wired-but-empty run. */
+  coordinationLog?: readonly CoordinationLogEntryView[];
+  coordinationHires?: readonly CoordinationHireEvent[];
 }
 
 /** The narrowed facts `resumenEstado` decides on, testable in isolation. */
@@ -68,6 +71,39 @@ export interface ResumenDecisionRow {
   id: string;
   text: string;
   createdAt: string;
+}
+
+/**
+ * One member hired by an approved coordination proposal (autonomous-
+ * coordination, Phase 7 task 7.3) — how a caller (`useCoordination`, Phase
+ * 7.11) reports a team that grew while the person was away, so it becomes a
+ * bitácora event rather than a silent surprise.
+ */
+export interface CoordinationHireEvent {
+  memberId: string;
+  roleName: string;
+  hiredAt: string;
+}
+
+/**
+ * One bitácora row: either a `coordination_dispatch` lifecycle event (derived
+ * strictly from `CoordinationLogEntryView`'s own timestamps — never narrative
+ * text) or a member hired by an approved proposal. Merged and sorted
+ * chronologically, oldest first, matching `listCoordinationLog`'s own order.
+ */
+export type BitacoraRow =
+  | { kind: 'dispatch'; id: string; taskId: string; memberId: string; status: CoordinationDispatchStatus; at: string }
+  | { kind: 'hire'; id: string; memberId: string; roleName: string; at: string };
+
+/** Pure merge + sort: no invented rows, no invented order. */
+export function bitacoraRows(log: readonly CoordinationLogEntryView[], hires: readonly CoordinationHireEvent[]): BitacoraRow[] {
+  const dispatchRows: BitacoraRow[] = log.map((entry) => ({
+    kind: 'dispatch', id: entry.id, taskId: entry.taskId, memberId: entry.memberId, status: entry.status, at: entry.createdAt,
+  }));
+  const hireRows: BitacoraRow[] = hires.map((event, index) => ({
+    kind: 'hire', id: `hire:${event.memberId}:${index}`, memberId: event.memberId, roleName: event.roleName, at: event.hiredAt,
+  }));
+  return [...dispatchRows, ...hireRows].sort((a, b) => a.at.localeCompare(b.at));
 }
 
 export interface ResumenSummary {
@@ -92,6 +128,8 @@ export interface ResumenSummary {
   pendingDecisions: ResumenDecisionRow[];
   // the cycle, handed to the presentational map
   cycle: readonly CyclePhase[];
+  /** Empty for both an unwired caller and a wired one with nothing to report — zero rows is never a zero. */
+  bitacoraRows: BitacoraRow[];
 }
 
 /**
@@ -147,5 +185,6 @@ export function resumenSummary(input: ResumenInput): ResumenSummary {
     reviewDocuments: ladder.reviewDocuments,
     pendingDecisions: pendingDecisions.map((decision) => ({ id: decision.id, text: decision.text, createdAt: decision.createdAt })),
     cycle: CYCLE_PHASES,
+    bitacoraRows: bitacoraRows(input.coordinationLog ?? [], input.coordinationHires ?? []),
   };
 }

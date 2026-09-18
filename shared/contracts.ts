@@ -704,6 +704,34 @@ export interface CoordinationGateAggregate {
   totalIfApproved: number | null;
 }
 
+/**
+ * The shape of a `proposal` gate's `proposalJson`, mirrored from
+ * `electron/coordination/engine.ts`'s own `CoordinationProposal` (Phase 7,
+ * task 7.5) — the renderer parses `CoordinationGateView.proposalJson` into
+ * this, never into a narrative summary. Kept in sync by hand: this type never
+ * crosses IPC as its own `LatteAPI` method, it is only what a JSON string
+ * field decodes to on both sides of the process boundary.
+ */
+export interface CoordinationProposalTask {
+  roleId: string;
+  spec: string;
+  dependsOn?: number[];
+}
+
+export interface CoordinationProposalHire {
+  roleId: string;
+  why: string;
+}
+
+export interface CoordinationProposal {
+  plan: CoordinationProposalTask[];
+  /** `null` only ever means "unlimited", and only alongside `unlimitedConfirmedAt` — "no implicit unlimited" applies to a proposal exactly as it does to a Work's own budget default. */
+  estimatedDispatches: number | null;
+  unlimitedConfirmedAt?: string | null;
+  membersToHire?: CoordinationProposalHire[];
+  rationale: string;
+}
+
 export interface CoordinationGateView {
   id: string;
   kind: CoordinationGateKind;

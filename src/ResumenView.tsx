@@ -1,7 +1,7 @@
 import { translate as t } from './i18n';
-import { resumenSummary } from './resumen-summary';
+import { resumenSummary, type CoordinationHireEvent } from './resumen-summary';
 import { CycleMap } from './CycleMap';
-import type { Brand, Decision, DocumentState, TeamMember, Work, WorkDocument, WorkPermissionMode } from '../shared/contracts';
+import type { Brand, CoordinationLogEntryView, Decision, DocumentState, TeamMember, Work, WorkDocument, WorkPermissionMode } from '../shared/contracts';
 
 /**
  * Resumen: the first in-work tab, answering "¿dónde estamos?" on one screen.
@@ -33,6 +33,13 @@ export interface ResumenViewProps {
   /** True while an agent session of this work is running. */
   live: boolean;
   brandContextDefined: boolean;
+  /**
+   * Additive, optional (autonomous-coordination Phase 7 task 7.3): `undefined`
+   * means the caller has not wired coordination state yet — the bitácora
+   * section does not render at all, so an unwired caller sees zero change.
+   */
+  coordinationLog?: readonly CoordinationLogEntryView[];
+  coordinationHires?: readonly CoordinationHireEvent[];
   formatDate: (value: string) => string;
   onOpenBrief: () => void;
 }
@@ -51,6 +58,8 @@ export function ResumenView(props: ResumenViewProps) {
     team: props.team,
     live: props.live,
     brandContextDefined: props.brandContextDefined,
+    coordinationLog: props.coordinationLog,
+    coordinationHires: props.coordinationHires,
   });
   return <section className="resumen-view" role="region" aria-label={t('resumen.region')}>
     <div className="document-kicker">{t('resumen.kicker')}</div>
@@ -112,6 +121,16 @@ export function ResumenView(props: ResumenViewProps) {
           <li key={row.id}><p>{row.text}</p><small>{props.formatDate(row.createdAt)}</small></li>
         ))}</ul>}
       </section>
+
+      {props.coordinationLog !== undefined && <section className="resumen-item" data-item="bitacora">
+        <h2>{t('resumen.bitacora')}</h2>
+        {summary.bitacoraRows.length > 0 && <ul className="resumen-bitacora-list">{summary.bitacoraRows.map((row) => (
+          <li className="resumen-bitacora-row" key={row.id}>
+            <p>{row.kind === 'hire' ? t('resumen.bitacora.hired', { roleName: row.roleName }) : t(`resumen.bitacora.status.${row.status}` as 'resumen.bitacora.status.reported')}</p>
+            <small>{props.formatDate(row.at)}</small>
+          </li>
+        ))}</ul>}
+      </section>}
 
       <section className="resumen-item" data-item="acciones">
         <h2>{t('resumen.acciones')}</h2>

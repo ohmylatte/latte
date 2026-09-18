@@ -204,3 +204,34 @@ describe('the summary Inicio renders', () => {
     expect(homeSummary(facts)).toEqual(homeSummary(facts));
   });
 });
+
+describe('the since-last-visit card (additive, autonomous-coordination Phase 7)', () => {
+  it('renders no rows when the caller has not wired coordination state', () => {
+    const summary = homeSummary(input());
+    expect(summary.sinceLastVisitRows).toEqual([]);
+  });
+
+  it('renders no rows for an explicitly empty list — zero rows is never a zero', () => {
+    const summary = homeSummary(input({ coordinationSinceLastVisit: [] }));
+    expect(summary.sinceLastVisitRows).toEqual([]);
+  });
+
+  it('resolves the work title from the works it was given, one row per event, order preserved', () => {
+    const summary = homeSummary(input({
+      works: [{ id: 'w1', title: 'Lanzamiento', updatedAt: '' }],
+      coordinationSinceLastVisit: [
+        { id: 'e1', workId: 'w1', kind: 'done' },
+        { id: 'e2', workId: 'w1', kind: 'awaitingYou' },
+      ],
+    }));
+    expect(summary.sinceLastVisitRows).toEqual([
+      { id: 'e1', workId: 'w1', workTitle: 'Lanzamiento', kind: 'done' },
+      { id: 'e2', workId: 'w1', workTitle: 'Lanzamiento', kind: 'awaitingYou' },
+    ]);
+  });
+
+  it('leaves the work title empty instead of inventing one for an unknown work', () => {
+    const summary = homeSummary(input({ coordinationSinceLastVisit: [{ id: 'e1', workId: 'nope', kind: 'failed' }] }));
+    expect(summary.sinceLastVisitRows[0].workTitle).toBe('');
+  });
+});
