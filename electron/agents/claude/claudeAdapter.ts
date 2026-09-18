@@ -116,12 +116,16 @@ export const FOLDER_TOOLS = ['Read(./**)', 'Write(./**)', 'Edit(./**)'];
  */
 export class ClaudeChatAdapter implements RuntimeAdapter {
   readonly runtime = 'claude' as const;
-  // Task 4.1's baseline: every adapter defaults to 'none'. The translation
-  // below (tasks 4.2-4.4) is real and tested, but flipping this to
-  // 'per-member' is left for whoever wires coordinationRuntimeSupport
-  // (Phase 6) — nothing reads this field yet, so there is nothing to claim
-  // working end-to-end before a coordinator can actually reach a member.
-  readonly mcpInjection = 'none' as const;
+  // Task 4.1's baseline was 'none'; the translation (tasks 4.2-4.4) was real
+  // and tested but flipping this flag was deliberately left for Phase 6
+  // (task 6.23), since nothing read it yet. It flips now: engram ships BY
+  // DEFAULT to every Claude member (design-v2-conversational D3), and
+  // nothing about that decision is gated on coordination, so this adapter
+  // must always be able to receive an mcpServers array, run or no run,
+  // coordination flag on or off. Nothing calls coordinationRuntimeSupport's
+  // eligibility rules from here — that stays hub wiring's job (6f/6.29+);
+  // this field only says the adapter CAN translate whatever it is given.
+  readonly mcpInjection = 'per-member' as const;
   private readonly chats = new Map<string, LiveChat>();
   private readonly env: NodeJS.ProcessEnv;
   private readonly platform: NodeJS.Platform;
@@ -170,21 +174,23 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       if (promptFile) args.push('--append-system-prompt-file', promptFile);
       else args.push('--append-system-prompt', instructions);
     }
-    // Coordination MCP injection (sdd/autonomous-coordination, Phase 4). Only
+    // MCP injection (sdd/autonomous-coordination, Phase 4; the http|stdio
+    // union and engram-by-default, Phase 6 task 6.21-6.23). Only
     // `--mcp-config` is pushed, NEVER `--strict-mcp-config`: strict mode would
     // also strip the human's own MCP servers from this member for the whole
     // session, a capability removal AGENTS.md forbids. Isolation of Latte's
-    // own tools comes from the per-member bearer token inside the file, not
-    // from strict mode (design decision, sdd/autonomous-coordination/design).
+    // own coordination tool comes from the per-member bearer token inside the
+    // file, not from strict mode (design decision, sdd/autonomous-coordination/design).
     // The token itself never touches argv: it is off in the config file, and
     // the version floor guards against a headless process hanging forever on
-    // an approval prompt no human can answer.
+    // an approval prompt no human can answer. `latte_memory` (engram) carries
+    // no token at all and rides the SAME file/flag — see writeMcpConfigFile.
     let mcpConfigFile: string | null = null;
     if (input.mcpServers && input.mcpServers.length > 0) {
       if (!claudeSupportsMcpInjection(runtime.version)) {
-        this.deps.log?.(`[claude ${chatId}] CLI ${runtime.version ?? 'unknown'} predates 2.1.246, coordination MCP not injected this session`);
+        this.deps.log?.(`[claude ${chatId}] CLI ${runtime.version ?? 'unknown'} predates 2.1.246, MCP servers not injected this session`);
       } else if (!this.deps.promptDir) {
-        this.deps.log?.(`[claude ${chatId}] no promptDir configured, coordination MCP not injected this session`);
+        this.deps.log?.(`[claude ${chatId}] no promptDir configured, MCP servers not injected this session`);
       } else {
         mcpConfigFile = this.writeMcpConfigFile(chatId, input.mcpServers);
       }
@@ -352,9 +358,12 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
   }
 
   /**
-   * The coordination MCP server(s) for this chat alone, in the shape Claude
-   * Code's `--mcp-config` expects. Written next to the prompt file so it dies
-   * with the session; mode 0600 because the file holds a live bearer token
+   * The MCP server(s) for this chat alone, in the shape Claude Code's
+   * `--mcp-config` expects. Both kinds ride in the SAME file (task 6.22):
+   * Claude's `--mcp-config` format already supports an `http` entry and a
+   * `stdio` entry side by side, so `latte_coordination` and `latte_memory`
+   * cost no second seam. Written next to the prompt file so it dies with
+   * the session; mode 0600 because the file can hold a live bearer token
    * and, unlike the prompt text, is not meant for anything but this process
    * to read. No inline-JSON fallback: the token would then sit in argv,
    * exactly what this whole design keeps off the command line.
@@ -366,13 +375,15 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       const file = path.join(dir, `${chatId}.mcp.json`);
       const mcpServers: Record<string, unknown> = {};
       for (const server of servers) {
-        mcpServers[server.name] = { type: 'http', url: server.url, headers: { Authorization: `Bearer ${server.token}` } };
+        mcpServers[server.name] = server.kind === 'http'
+          ? { type: 'http', url: server.url, headers: { Authorization: `Bearer ${server.token}` } }
+          : { type: 'stdio', command: server.command, args: server.args, ...(server.env ? { env: server.env } : {}) };
       }
       writeFileAtomic(file, JSON.stringify({ mcpServers }));
       try { fs.chmodSync(file, 0o600); } catch { /* best-effort; some filesystems ignore it */ }
       return file;
     } catch (error) {
-      this.deps.log?.(`[claude ${chatId}] mcp config file failed, coordination MCP not injected this session: ${describe(error)}`);
+      this.deps.log?.(`[claude ${chatId}] mcp config file failed, MCP servers not injected this session: ${describe(error)}`);
       return null;
     }
   }

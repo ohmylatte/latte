@@ -42,18 +42,37 @@ export interface AdapterStartInput {
 }
 
 /**
- * One coordination MCP server to inject into a single chat's runtime
- * process. Namespaced so it cannot collide with a user's own server; the
- * token is opaque to the adapter and MUST be kept off argv (a spawned
- * process's command line is visible to every other process on the machine).
+ * One MCP server to inject into a single chat's runtime process. Namespaced
+ * so it cannot collide with a user's own server. A discriminated union
+ * (task 6.21, sdd/autonomous-coordination design-v2-conversational D3):
+ * coordination is remote HTTP, memory is a local stdio process — the two
+ * kinds an adapter's `--mcp-config`/`-c mcp_servers.*` translation must
+ * speak are structurally different, so the type says so rather than
+ * carrying optional fields that only make sense for one kind.
+ *
+ * `latte_coordination` is minted per member (its `token` is what forces two
+ * coordinated members of one Codex account onto separate processes,
+ * `mcpFingerprint.ts`); `latte_memory` carries no token at all and is
+ * identical for every member of the same brand (what lets engram-only
+ * Codex members of a brand SHARE one process, D3's load-bearing invariant).
  */
-export interface AdapterMcpServer {
-  name: 'latte_coordination';
-  /** Streamable HTTP, always 127.0.0.1 plus a random port. */
-  url: string;
-  /** Opaque bearer, scoped to this member's grant. */
-  token: string;
-}
+export type AdapterMcpServer =
+  | {
+    kind: 'http';
+    name: 'latte_coordination';
+    /** Streamable HTTP, always 127.0.0.1 plus a random port. */
+    url: string;
+    /** Opaque bearer, scoped to this member's grant. MUST be kept off argv (a spawned process's command line is visible to every other process on the machine). */
+    token: string;
+  }
+  | {
+    kind: 'stdio';
+    name: 'latte_memory';
+    /** Resolved `engram` executable path. */
+    command: string;
+    args: string[];
+    env?: Record<string, string>;
+  };
 
 export interface AdapterStartResult {
   session: ChatSession;

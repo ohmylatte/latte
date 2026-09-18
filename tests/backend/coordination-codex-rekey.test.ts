@@ -22,7 +22,7 @@ async function waitFor(check: () => boolean, timeoutMs = 6_000): Promise<void> {
 }
 
 function coordServer(token: string, url = 'http://127.0.0.1:59999/mcp'): AdapterMcpServer[] {
-  return [{ name: 'latte_coordination', url, token }];
+  return [{ kind: 'http', name: 'latte_coordination', url, token }];
 }
 
 function makeAdapter(events: ChatEvent[], dir: string, spawned?: Array<{ args: string[]; env: Record<string, string | undefined> }>, opts?: { maxChats?: number }) {
