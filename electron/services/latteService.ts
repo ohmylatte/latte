@@ -2271,7 +2271,13 @@ export class LatteService implements BackendApi {
    * `createBackend` una sola vez, apenas la base está migrada.
    */
   sweepUncertainCoordinationDispatches(): number {
-    return this.coordination.sweepUncertainDispatches();
+    const swept = this.coordination.sweepUncertainDispatches();
+    // Y en el mismo arranque, la reparación del estado final: las bases que
+    // dejó la versión sin `done` tienen runs `running` con todas sus tareas
+    // terminales, ocupando un cupo app-wide para siempre. Va DESPUÉS del
+    // barrido: éste puede devolver tareas a `ready`, y ésas no cierran nada.
+    this.coordination.sweepFinishedRuns();
+    return swept;
   }
 
   // Internals ---------------------------------------------------------------

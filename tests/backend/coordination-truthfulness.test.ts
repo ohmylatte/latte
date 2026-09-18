@@ -234,17 +234,18 @@ describe('CoordinationEngine — capacidades que decía tener', () => {
 
   // --- #8: una dependencia bloqueada no deja huérfanos ----------------------
 
-  it('una tarea cuya dependencia queda blocked pasa a blocked, no se queda pending para siempre (juicio #8)', async () => {
+  it('una tarea cuya dependencia fracasa definitivamente pasa a blocked, no se queda pending para siempre (juicio #8)', async () => {
     await b.service.setCoordinationAuthority(workId, 'auto');
     const first = engine.taskCreate(runId, { roleId: 'role_a', spec: 'a' });
     const second = engine.taskCreate(runId, { roleId: 'role_b', spec: 'b', dependsOn: [first.id] });
-    // Tres fracasos: la primera tarea llega al tope de intentos y queda blocked.
+    // Tres fracasos: la primera tarea llega al tope de intentos y queda
+    // `failed` (terminal, definitivo); la que dependía de ella queda `blocked`.
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await engine.startDispatch({ grant: coordinator(), taskId: first.id });
       const dispatch = b.repo.listCoordinationDispatches(runId).find((d) => d.taskId === first.id && d.status === 'dispatched')!;
       await engine.report(worker(dispatch.memberId), first.id, 'failed', 'no salió');
     }
-    expect(b.repo.getCoordinationTask(first.id).status).toBe('blocked');
+    expect(b.repo.getCoordinationTask(first.id).status).toBe('failed');
     expect(b.repo.getCoordinationTask(second.id).status).toBe('blocked');
   });
 

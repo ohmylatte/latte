@@ -751,7 +751,9 @@ export interface CoordinationGateView {
 export type CoordinationDispatchStatus = 'pending_approval' | 'dispatched' | 'running' | 'reported' | 'failed' | 'rejected' | 'cancelled';
 
 /** One bitácora entry, derived only from a `coordination_dispatch` row's own timestamps — never narrative text. */
-export interface CoordinationLogEntryView {
+export interface CoordinationDispatchLogEntryView {
+  /** Absent means the same as `'dispatch'`: every entry but the run's own closing one is a dispatch. */
+  kind?: 'dispatch';
   id: string;
   taskId: string;
   memberId: string;
@@ -760,6 +762,22 @@ export interface CoordinationLogEntryView {
   startedAt: string | null;
   settledAt: string | null;
 }
+
+/**
+ * The run's closing entry: the only bitácora row that does not come from a
+ * dispatch. Also derived, never stored — the counts are read off the run's own
+ * tasks each time, so the sentence cannot drift from what happened.
+ */
+export interface CoordinationRunDoneLogEntryView {
+  kind: 'run_done';
+  id: string;
+  runId: string;
+  tasksDone: number;
+  tasksFailed: number;
+  createdAt: string;
+}
+
+export type CoordinationLogEntryView = CoordinationDispatchLogEntryView | CoordinationRunDoneLogEntryView;
 
 export type CoordinationTaskStatus = 'pending' | 'ready' | 'dispatched' | 'running' | 'done' | 'failed' | 'blocked';
 

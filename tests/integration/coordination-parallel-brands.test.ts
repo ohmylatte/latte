@@ -98,6 +98,10 @@ describe('coordination parallel brands: two Brands, two Works, two active runs, 
 
   it('each budget is consumed only by its own dispatches — A hitting its cap suspends A and never touches B', async () => {
     const taskA = engine.taskCreate(runA, { roleId: 'strategist', spec: 'A1' });
+    // A2 se crea ANTES de reportar A1: un run cuyas tareas quedaron todas
+    // terminales ahora termina (`done`), y un run terminado ya no despacha
+    // nada — lo que este test mide es el tope de A, no el cierre del run.
+    const taskA2 = engine.taskCreate(runA, { roleId: 'strategist', spec: 'A2' });
     const outcomeA = await engine.startDispatch({ grant: coordA(), taskId: taskA.id });
     const memberA = b.repo.getCoordinationDispatch(outcomeA.dispatchId).memberId;
     // El único despacho permitido de A ya quedó consumido al reservarlo
@@ -105,7 +109,6 @@ describe('coordination parallel brands: two Brands, two Works, two active runs, 
     // para que la segunda tarea del mismo rol llegue al chequeo de tope.
     await engine.report({ workId: workA, runId: runA, memberId: memberA, role: 'worker' }, taskA.id, 'succeeded', 'done');
 
-    const taskA2 = engine.taskCreate(runA, { roleId: 'strategist', spec: 'A2' });
     await expect(engine.startDispatch({ grant: coordA(), taskId: taskA2.id })).rejects.toMatchObject({ code: 'BUDGET_EXCEEDED' });
     expect(engine.getRun(runA)).toMatchObject({ status: 'suspended', suspendReason: 'max_dispatches' });
 

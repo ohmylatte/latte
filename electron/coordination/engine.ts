@@ -115,7 +115,9 @@ export interface CoordinationGateAggregate {
   totalIfApproved: number | null;
 }
 
-export interface CoordinationLogEntry {
+export interface CoordinationDispatchLogEntry {
+  /** Ausente y `'dispatch'` son lo mismo: toda entrada previa a la del cierre del run es de despacho. */
+  kind?: 'dispatch';
   id: string;
   taskId: string;
   memberId: string;
@@ -124,6 +126,23 @@ export interface CoordinationLogEntry {
   startedAt: string | null;
   settledAt: string | null;
 }
+
+/**
+ * El cierre del run, la única entrada de la bitácora que no nace de una fila de
+ * `coordination_dispatch`. No se guarda: se DERIVA del estado del run y del de
+ * sus tareas cada vez que se lee, igual que las otras — así no puede divergir
+ * de lo que la base dice de verdad.
+ */
+export interface CoordinationRunDoneLogEntry {
+  kind: 'run_done';
+  id: string;
+  runId: string;
+  tasksDone: number;
+  tasksFailed: number;
+  createdAt: string;
+}
+
+export type CoordinationLogEntry = CoordinationDispatchLogEntry | CoordinationRunDoneLogEntry;
 
 export interface CoordinationEngineDeps {
   repo: LatteRepository;
@@ -503,11 +522,29 @@ export class CoordinationEngine {
     return { otherActiveRuns: others.length, otherCommittedDispatches, totalIfApproved };
   }
 
-  /** The bitácora: derived only from `coordination_dispatch` rows, one entry per lifecycle event. */
+  /**
+   * The bitácora: derived only from `coordination_dispatch` rows, one entry per
+   * lifecycle event — más, cuando el run terminó, la entrada de cierre con
+   * cuántas tareas salieron bien y cuántas fallaron. También derivada: se
+   * cuenta sobre las tareas, no se guarda una frase que después pueda mentir.
+   */
   listLog(runId: string): CoordinationLogEntry[] {
-    return this.deps.repo.listCoordinationDispatches(runId).map((d) => ({
+    const entries: CoordinationLogEntry[] = this.deps.repo.listCoordinationDispatches(runId).map((d) => ({
       id: d.id, taskId: d.taskId, memberId: d.memberId, status: d.status, createdAt: d.createdAt, startedAt: d.startedAt, settledAt: d.settledAt,
     }));
+    const run = this.deps.repo.getCoordinationRun(runId);
+    if (run.status === 'done') {
+      const tasks = this.deps.repo.listCoordinationTasks(runId);
+      entries.push({
+        kind: 'run_done',
+        id: `run-done:${run.id}`,
+        runId: run.id,
+        tasksDone: tasks.filter((t) => t.status === 'done').length,
+        tasksFailed: tasks.filter((t) => t.status === 'failed').length,
+        createdAt: run.updatedAt,
+      });
+    }
+    return entries;
   }
 
   /**
@@ -877,20 +914,72 @@ export class CoordinationEngine {
     });
 
     if (outcome === 'succeeded') {
-      const updated = this.deps.repo.updateCoordinationTask(taskId, { status: 'done', resultSummary: summary, resultFilesJson: filesJson }, now);
+      this.deps.repo.updateCoordinationTask(taskId, { status: 'done', resultSummary: summary, resultFilesJson: filesJson }, now);
       this.recomputeReadiness(task.runId, now);
-      this.touch(grant.workId, task.runId);
-      return updated;
+    } else {
+      const attempts = task.attempts + 1;
+      if (attempts >= MAX_ATTEMPTS_PER_TASK) {
+        // `failed`, no `blocked`: agotar los intentos es un fracaso DEFINITIVO
+        // de esta tarea, y eso es terminal — el run puede cerrarse con ella
+        // adentro. `blocked` queda para lo que todavía se puede destrabar
+        // (una dependencia caída, un rol sin aprobar), que es justamente lo
+        // que tiene que mantener el run vivo para que alguien intervenga.
+        this.deps.repo.updateCoordinationTask(taskId, { status: 'failed', attempts }, now);
+        // Y con él caen sus dependientes: nadie los va a destrabar nunca más.
+        this.recomputeReadiness(task.runId, now);
+      } else {
+        this.deps.repo.updateCoordinationTask(taskId, { status: 'ready', attempts, assignedMemberId: null }, now);
+      }
     }
-    const attempts = task.attempts + 1;
+    // EL punto único: toda tarea que pasa a un estado terminal sale por acá.
+    this.finishRunIfComplete(task.runId, now);
     this.touch(grant.workId, task.runId);
-    if (attempts >= MAX_ATTEMPTS_PER_TASK) {
-      const blocked = this.deps.repo.updateCoordinationTask(taskId, { status: 'blocked', attempts }, now);
-      // Y con él caen sus dependientes: nadie los va a destrabar nunca más.
-      this.recomputeReadiness(task.runId, now);
-      return this.deps.repo.getCoordinationTask(blocked.id);
+    return this.deps.repo.getCoordinationTask(taskId);
+  }
+
+  /**
+   * El estado final que nunca se había diseñado. Un run termina cuando ya no
+   * queda NADA por hacer: todas sus tareas en un estado terminal (`done` o
+   * `failed`), ningún despacho en vuelo y ninguna reserva abierta. Idempotente
+   * por construcción — sólo escribe desde `running`/`suspended`.
+   *
+   * `blocked` NO es terminal a propósito: una tarea bloqueada (por una
+   * dependencia caída o por un rol que la persona no aprobó) todavía se puede
+   * destrabar re-planificando, así que el run sigue vivo y visible en vez de
+   * cerrarse tapando el problema.
+   *
+   * Un run SIN tareas tampoco termina: es el run recién aprobado cuyo
+   * coordinador todavía no planificó nada.
+   */
+  private finishRunIfComplete(runId: string, now: string): void {
+    const run = this.deps.repo.getCoordinationRun(runId);
+    if (run.status !== 'running' && run.status !== 'suspended') return;
+    const tasks = this.deps.repo.listCoordinationTasks(runId);
+    if (tasks.length === 0) return;
+    if (!tasks.every((t) => t.status === 'done' || t.status === 'failed')) return;
+    // Un despacho o una reserva todavía abiertos son trabajo en vuelo: la foto
+    // de las tareas puede estar adelantada respecto de la contabilidad.
+    const open = this.deps.repo.listCoordinationDispatches(runId).some((d) => d.status === 'dispatched' || d.status === 'running');
+    if (open) return;
+    if (this.deps.repo.countOpenCoordinationCostReservations(runId) > 0) return;
+    this.deps.repo.updateCoordinationRunStatus(runId, 'done', now, null);
+  }
+
+  /**
+   * La reparación de las bases que dejó la versión sin estado final: un run
+   * `running`/`suspended` cuyas tareas ya están todas terminales pasa a `done`
+   * al arrancar. Corre junto a `sweepUncertainDispatches` (y después de él: el
+   * barrido puede devolver tareas a `ready`, y ésas no cierran nada).
+   * Idempotente: la segunda corrida no encuentra nada que escribir.
+   */
+  sweepFinishedRuns(): number {
+    const now = this.deps.clock();
+    let finished = 0;
+    for (const run of this.deps.repo.listActiveCoordinationRuns()) {
+      this.finishRunIfComplete(run.id, now);
+      if (this.deps.repo.getCoordinationRun(run.id).status === 'done') finished += 1;
     }
-    return this.deps.repo.updateCoordinationTask(taskId, { status: 'ready', attempts, assignedMemberId: null }, now);
+    return finished;
   }
 
   /**
@@ -958,7 +1047,7 @@ export class CoordinationEngine {
     const now = this.deps.clock();
     // Las escrituras van juntas, por lo mismo que en `report`: cerrar la
     // reserva sin asentar el gasto vuelve el despacho invisible para el tope.
-    return this.deps.repo.transaction(() => {
+    const outcome = this.deps.repo.transaction(() => {
       if (dispatch.reservationId) {
         this.deps.repo.settleCoordinationCostReservation(dispatch.reservationId, null, now, true);
         // El asiento se escribe igual que en `report`: el miembro FUE despachado
@@ -972,10 +1061,16 @@ export class CoordinationEngine {
       const settled = this.deps.repo.updateCoordinationDispatch(dispatchId, { status: 'cancelled', settledAt: now });
       const task = this.deps.repo.getCoordinationTask(dispatch.taskId);
       const attempts = opts.incrementAttempts ? task.attempts + 1 : task.attempts;
-      const status = opts.incrementAttempts && attempts >= MAX_ATTEMPTS_PER_TASK ? 'blocked' : 'ready';
+      // `failed` por la misma razón que en `report`: agotar los intentos es
+      // definitivo, y lo definitivo es terminal.
+      const status = opts.incrementAttempts && attempts >= MAX_ATTEMPTS_PER_TASK ? 'failed' : 'ready';
       this.deps.repo.updateCoordinationTask(task.id, { status, attempts, assignedMemberId: null }, now);
+      if (status === 'failed') this.recomputeReadiness(task.runId, now);
       return settled;
     });
+    // Fuera de la transacción, igual que en `report`: el mismo punto único.
+    this.finishRunIfComplete(dispatch.runId, now);
+    return outcome;
   }
 
   /**

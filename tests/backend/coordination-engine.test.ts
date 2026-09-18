@@ -133,7 +133,11 @@ describe('CoordinationEngine — the dispatch choke point', () => {
 
   // --- 3.7: attempt cap --------------------------------------------------------
 
-  it('a task blocks after its 3rd consecutive failure', async () => {
+  // Exhausting the attempt cap now writes `failed`, not `blocked`: a definitive
+  // failure is TERMINAL (the run may close with it inside), while `blocked` is
+  // kept for what a re-plan could still unblock — a poisoned dependency or an
+  // unapproved role — and that is exactly what must keep a run alive.
+  it('a task fails for good after its 3rd consecutive failure', async () => {
     await b.service.setCoordinationAuthority(workId, 'auto');
     const task = engine.taskCreate(runId, { roleId: 'strategist', spec: 'Flaky' });
     for (let i = 0; i < 2; i += 1) {
@@ -145,7 +149,7 @@ describe('CoordinationEngine — the dispatch choke point', () => {
     const third = await engine.startDispatch({ grant: coordinator(), taskId: task.id });
     const dispatch3 = b.repo.getCoordinationDispatch(third.dispatchId);
     const final = await engine.report(worker(dispatch3.memberId), task.id, 'failed', 'still nope');
-    expect(final.status).toBe('blocked');
+    expect(final.status).toBe('failed');
     expect(final.attempts).toBe(3);
   });
 
@@ -367,7 +371,7 @@ describe('CoordinationEngine — the dispatch choke point', () => {
       expect(updated.attempts).toBe(1);
     });
 
-    it('a 3rd manually-settled failure blocks the task — the same attempt cap latte_report enforces', async () => {
+    it('a 3rd manually-settled failure fails the task for good — the same attempt cap latte_report enforces', async () => {
       const task = engine.taskCreate(runId, { roleId: 'strategist', spec: 'Flaky' });
       for (let i = 0; i < 2; i += 1) {
         await engine.startDispatch({ grant: coordinator(), taskId: task.id });
@@ -378,7 +382,7 @@ describe('CoordinationEngine — the dispatch choke point', () => {
 
       const final = await engine.settleDispatch(task.id, 'failed', 'still nope');
 
-      expect(final.status).toBe('blocked');
+      expect(final.status).toBe('failed');
       expect(final.attempts).toBe(3);
     });
 
@@ -416,10 +420,14 @@ describe('CoordinationEngine — the dispatch choke point', () => {
       // maxDispatches counts SETTLED spend (usage.dispatchesUsed), not merely
       // in-flight reservations — task A must be reported before the cap bites.
       const taskA = engine.taskCreate(runId, { roleId: 'strategist', spec: 'A' });
+      // Task B exists BEFORE A is reported: a run whose every task reached a
+      // terminal state now finishes (`status:'done'`), and a finished run has
+      // no budget gate to resolve. The plan this test is about always had two
+      // tasks; only the order in which they were created was accidental.
+      const taskB = engine.taskCreate(runId, { roleId: 'strategist', spec: 'B' });
       const outcomeA = await engine.startDispatch({ grant: coordinator(), taskId: taskA.id });
       const memberIdA = b.repo.getCoordinationDispatch(outcomeA.dispatchId).memberId;
       await engine.report(worker(memberIdA), taskA.id, 'succeeded', 'done'); // consumes the only allowed dispatch
-      const taskB = engine.taskCreate(runId, { roleId: 'strategist', spec: 'B' });
       await expect(engine.startDispatch({ grant: coordinator(), taskId: taskB.id })).rejects.toMatchObject({ code: 'BUDGET_EXCEEDED' });
       expect(engine.getRun(runId)).toMatchObject({ status: 'suspended', suspendReason: 'max_dispatches' });
       const gates = engine.listGates(runId);

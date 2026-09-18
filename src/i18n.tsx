@@ -550,6 +550,7 @@ const es = {
   'resumen.bitacora.status.rejected': 'Rechazado',
   'resumen.bitacora.status.cancelled': 'Cancelado',
   'resumen.bitacora.hired': '{roleName} se sumó al equipo',
+  'resumen.bitacora.runDone': 'El equipo terminó: {done} tareas listas, {failed} fallidas',
   // --- Coordinación: pausar el equipo mid-dispatch (autonomous-coordination, Phase 7) --
   'coordination.run.pause': 'Pausar equipo',
   'coordination.run.pauseHelp': 'El despacho en curso termina y reporta; no arranca uno nuevo.',
@@ -1132,6 +1133,7 @@ const en: Record<MessageKey, string> = {
   'resumen.bitacora.status.rejected': 'Rejected',
   'resumen.bitacora.status.cancelled': 'Cancelled',
   'resumen.bitacora.hired': '{roleName} joined the team',
+  'resumen.bitacora.runDone': 'The team finished: {done} tasks done, {failed} failed',
   // --- Coordination: pausing the team mid-dispatch (autonomous-coordination, Phase 7) --
   'coordination.run.pause': 'Pause team',
   'coordination.run.pauseHelp': 'The in-flight dispatch finishes and reports; no new dispatch starts.',

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { I18nProvider } from './i18n';
 import { ResumenView, type ResumenViewProps } from './ResumenView';
-import { EMPTY_USAGE, type Brand, type CoordinationLogEntryView, type Work } from '../shared/contracts';
+import { EMPTY_USAGE, type Brand, type CoordinationDispatchLogEntryView, type CoordinationLogEntryView, type Work } from '../shared/contracts';
 
 /**
  * The settle action on the in-flight dispatch row (autonomous-coordination
@@ -17,7 +17,7 @@ const work = (patch: Partial<Work> = {}): Work => ({
   id: 'w1', brandId: 'b1', title: 'Lanzamiento', brief: 'Lanzar la campaña.', folder: null,
   expectedOutput: null, resultPath: null, updatedAt: '2026-09-01T00:00:00.000Z', ...patch,
 });
-const logEntry = (patch: Partial<CoordinationLogEntryView> = {}): CoordinationLogEntryView => ({
+const logEntry = (patch: Partial<CoordinationDispatchLogEntryView> = {}): CoordinationLogEntryView => ({
   id: 'log1', taskId: 'task1', memberId: 'm1', status: 'dispatched',
   createdAt: '2026-09-01T00:00:00.000Z', startedAt: '2026-09-01T00:00:00.000Z', settledAt: null, ...patch,
 });

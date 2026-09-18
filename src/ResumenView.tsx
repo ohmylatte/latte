@@ -136,7 +136,11 @@ export function ResumenView(props: ResumenViewProps) {
         <h2>{t('resumen.bitacora')}</h2>
         {summary.bitacoraRows.length > 0 && <ul className="resumen-bitacora-list">{summary.bitacoraRows.map((row) => (
           <li className="resumen-bitacora-row" key={row.id}>
-            <p>{row.kind === 'hire' ? t('resumen.bitacora.hired', { roleName: row.roleName }) : t(`resumen.bitacora.status.${row.status}` as 'resumen.bitacora.status.reported')}</p>
+            <p>{row.kind === 'hire'
+              ? t('resumen.bitacora.hired', { roleName: row.roleName })
+              : row.kind === 'runDone'
+                ? t('resumen.bitacora.runDone', { done: row.tasksDone, failed: row.tasksFailed })
+                : t(`resumen.bitacora.status.${row.status}` as 'resumen.bitacora.status.reported')}</p>
             <small>{props.formatDate(row.at)}</small>
             {row.kind === 'dispatch' && IN_FLIGHT_STATUSES.has(row.status) && props.onSettleDispatch && <div className="resumen-bitacora-settle">
               <button type="button" className="resumen-bitacora-settle-succeeded" onClick={() => {
