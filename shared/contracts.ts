@@ -92,6 +92,7 @@ export interface FeatureFlags {
   generation: boolean;
   brandKits: boolean;
   learning: boolean;
+  coordination: boolean;
 }
 export interface AgencyProfilePatch { publicName: string; website?: string | null; contact?: string | null }
 export interface AgencyProfileView {

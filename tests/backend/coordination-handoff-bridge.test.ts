@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
 import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 // Spec: "Handoff Unaffected Outside an Active Run" + "acceptHandoff Bridges to
@@ -23,6 +24,7 @@ describe('acceptHandoffAsTask: the handoff-to-coordination bridge', () => {
     brandId = brand.id;
     dir = path.join(b.dir, 'brands', brandId, 'works', workId);
     fakeCoordinationHub(b, [] as FakeTeamMember[]);
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON); // task 8.1: this file drives startCoordinationRun through the real IPC surface
   });
   afterEach(() => b.cleanup());
 

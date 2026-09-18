@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
 import { fakeRunner, makeBackend, type TestBackend } from './helpers';
 
 // Tasks 6.33-6.36: the IPC surface built on top of `CoordinationInjectionPlanner`
@@ -40,6 +41,10 @@ describe('LatteService.coordinationRuntimeSupport (task 6.33)', () => {
 
   it('a Work with NO run anywhere still reports a Claude member above the floor as able to propose (task 6.33/6.29 headline)', async () => {
     b = await makeBackend({ runner: claudeResolvable('2.1.263') });
+    // Task 8.1: this headline proves the ON path (coordination eligibility,
+    // independent of any run) -- the OFF path is proven separately in
+    // coordination-feature-flag.test.ts.
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON);
     vi.spyOn(b.claude, 'start').mockResolvedValue({ session: fakeSession('mem_x'), runtimeSessionId: '' });
     const brand = await b.service.createBrand('Marca');
     const work = await b.service.createWork(brand.id, 'Trabajo');
@@ -69,6 +74,7 @@ describe('LatteService.listActiveCoordinationRuns (task 6.34)', () => {
 
   it('returns one row per active run across every Brand', async () => {
     b = await makeBackend();
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON); // task 8.1: this test proves the ON path
     const brandA = await b.service.createBrand('Marca A');
     const workA = await b.service.createWork(brandA.id, 'Trabajo A');
     await b.service.setCoordinationBudget(workA.id, { maxDispatches: 5 });
@@ -99,6 +105,7 @@ describe('the latte:coordination-event channel fires from real IPC-driven change
   it('startCoordinationRun (through LatteService, not a directly-constructed engine) fires emitCoordination', async () => {
     const emitted: Array<{ brandId: string; workId: string; runId: string | null }> = [];
     b = await makeBackend({ emitCoordination: (event) => emitted.push(event) });
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON); // task 8.1: this test proves the ON path
     const brand = await b.service.createBrand('Marca');
     const work = await b.service.createWork(brand.id, 'Trabajo');
     await b.service.setCoordinationBudget(work.id, { maxDispatches: 5 });

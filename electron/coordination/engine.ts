@@ -17,6 +17,7 @@
 import type { AgentHub, MemberContext } from '../agents/hub';
 import type { CoordinationAuthorityMode, CoordinationBudget } from '../../shared/contracts';
 import { LatteError, NotFoundError, ValidationError } from '../core/errors';
+import { FeatureDisabledError } from '../core/features';
 import { newId } from '../core/ids';
 import type {
   CoordinationAskRecord,
@@ -129,6 +130,20 @@ export interface CoordinationEngineDeps {
    * pure no-op for them.
    */
   emit?: (event: { brandId: string; workId: string; runId: string | null }) => void;
+  /**
+   * Task 8.1 (rollout gate): `featureFlags('coordination')`. Optional and
+   * defaults to ENABLED when absent -- every pre-8.1 test (direct engine
+   * construction, ~150 of them) never wires this and must keep behaving
+   * exactly as before. Real production wiring (`latteService.ts`,
+   * `bootstrap.ts`'s `mcpEngine`) passes the REAL flag, off by default like
+   * every other feature. Gates only the two entry points that can create a
+   * run (`startRun`, `requestCoordination`) -- everything downstream already
+   * requires an active run (task 6.3's `NO_ACTIVE_RUN` guard), so gating
+   * creation alone is sufficient: no run, no gate, no coordination server
+   * ever gets used. Engram injection (task 6.29) is a SEPARATE policy and is
+   * deliberately NOT read here.
+   */
+  isCoordinationEnabled?: () => boolean;
 }
 
 function isDagStatus(status: CoordinationTaskRecord['status']): DagTask['status'] {
@@ -146,10 +161,17 @@ export class CoordinationEngine {
     } catch { /* an event listener's own failure is never this engine's problem */ }
   }
 
+  /** Task 8.1: the single choke point for the rollout gate. Called first, before any read/write, by both `startRun` and `requestCoordination` -- the only two ways a run row can ever be created. */
+  private requireCoordinationEnabled(): void {
+    const enabled = this.deps.isCoordinationEnabled ? this.deps.isCoordinationEnabled() : true;
+    if (!enabled) throw new FeatureDisabledError('coordination');
+  }
+
   // -- Run lifecycle (IPC-facing) --------------------------------------------
 
   /** Requires a configured budget (`BUDGET_UNSET` otherwise) — no implicit unlimited run ever starts. */
   async startRun(workId: string, coordinatorMemberId: string | null): Promise<CoordinationRunRecord> {
+    this.requireCoordinationEnabled();
     const existing = this.deps.repo.findActiveCoordinationRun(workId);
     if (existing) throw new LatteError('RUN_ALREADY_ACTIVE', 'This Work already has an active coordination run');
     this.assertRunCeiling();
@@ -434,6 +456,7 @@ export class CoordinationEngine {
    * "a run is already live": `findActiveCoordinationRun` sees both alike.
    */
   async requestCoordination(grant: CoordinationGrant, proposal: CoordinationProposal): Promise<CoordinationRunRecord> {
+    this.requireCoordinationEnabled();
     const existing = this.deps.repo.findActiveCoordinationRun(grant.workId);
     if (existing) throw new LatteError('RUN_ALREADY_ACTIVE', `This Work already has an active coordination run (${existing.id}, ${existing.status})`);
     this.assertRunCeiling();

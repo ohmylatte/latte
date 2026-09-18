@@ -102,7 +102,7 @@ export const browserAPI: LatteAPI = {
   },
   clearOnboardingDraft: async () => change(s => { s.onboardingDraft = undefined; }),
   appInfo: async () => ({ dataDir: '', engine: 'localStorage (vista previa)', engineReason: 'La vista web no usa SQLite', pack: null, packRoles: 0, version: 'web' }),
-  featureFlags: async () => ({ generation: false, brandKits: false, learning: false }),
+  featureFlags: async () => ({ generation: false, brandKits: false, learning: false, coordination: false }),
   listBrands: async () => read().brands.filter(b => !b.archivedAt),
   getBrand: async brandId => {
     const b = read().brands.find(x => x.id === brandId);

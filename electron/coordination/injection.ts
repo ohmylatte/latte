@@ -90,6 +90,17 @@ export interface CoordinationInjectionDeps {
   resolveClaudeVersion: () => Promise<string | null>;
   /** The resolved `engram` executable path, or `null` if not on PATH. Mirrors `EngramClient`'s own `locate()`. */
   resolveEngramBinary: () => Promise<string | null>;
+  /**
+   * Task 8.1 (rollout gate): `featureFlags('coordination')`. Optional,
+   * defaults to ENABLED when absent -- every pre-8.1 test (`coordination-hub-wiring.test.ts`'s
+   * 18 planner-level scenarios included) constructs this planner without it
+   * and must keep behaving exactly as before. Real wiring (`bootstrap.ts`)
+   * passes the REAL flag, off by default. When disabled, `latte_coordination`
+   * is never delivered and the MCP server never starts (`ensureStarted` is
+   * never called) -- `latte_memory` is computed and delivered exactly as
+   * always (task 6.29's policy stays independent of this one).
+   */
+  isCoordinationEnabled?: () => boolean;
 }
 
 interface Decision {
@@ -195,6 +206,11 @@ export class CoordinationInjectionPlanner {
   // -- Decision logic (pure given the current ledger) -----------------------
 
   private async evaluate(input: MemberInjectionInput): Promise<Decision> {
+    // Task 8.1: coordination lives behind `featureFlags('coordination')`.
+    // Memory does not -- this is the ONLY read of the flag in this method,
+    // and it only ever narrows `coordinationEligible`, never `memoryServer`.
+    const coordinationFeatureOn = this.deps.isCoordinationEnabled ? this.deps.isCoordinationEnabled() : true;
+
     if (input.runtime === 'opencode') {
       return { coordinationEligible: false, memoryServer: null, reason: 'opencode_shared_server' };
     }
@@ -205,14 +221,20 @@ export class CoordinationInjectionPlanner {
         return { coordinationEligible: false, memoryServer: null, reason: 'claude_below_floor' };
       }
       const memoryServer = await this.memoryServerFor(input);
-      return { coordinationEligible: true, memoryServer, reason: memoryServer ? null : 'engram_not_installed' };
+      return {
+        coordinationEligible: coordinationFeatureOn,
+        memoryServer,
+        reason: memoryServer ? null : 'engram_not_installed',
+      };
     }
 
     // Codex: memory and coordination are evaluated independently, then
     // combined -- coordination, when granted, always carries memory too
     // (same process); memory alone needs its own ceiling check.
     const memoryServer = await this.memoryServerFor(input);
-    const coordination = this.evaluateCodexCoordination(input);
+    const coordination = coordinationFeatureOn
+      ? this.evaluateCodexCoordination(input)
+      : { eligible: false, reason: null as CoordinationDegradedReason | null };
     if (coordination.eligible) {
       return { coordinationEligible: true, memoryServer, reason: memoryServer ? null : 'engram_not_installed' };
     }

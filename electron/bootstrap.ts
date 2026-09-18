@@ -16,6 +16,7 @@ import { CoordinationInjectionPlanner } from './coordination/injection';
 import { CoordinationMcpServer } from './coordination/mcpServer';
 import { createHttpListen } from './coordination/mcpTransport';
 import { CoordinationTokenRegistry } from './coordination/tokens';
+import { featureEnabled } from './core/features';
 import { LattePaths } from './core/paths';
 import type { TaskkillExecFile } from './core/processTree';
 import { nowIso } from './core/ids';
@@ -269,6 +270,11 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
   // are stateless proxies over the same `repo`/`hub`, so the two are
   // behaviourally identical -- this one exists only so the coordination MCP
   // server's `tools/call` path needs no reference into `LatteService`.
+  // Task 8.1: the real feature-flag reader, off by default like every other
+  // feature. Shared by both the coordination engine (gates run creation) and
+  // the injection planner (gates `latte_coordination` delivery) -- `latte_memory`
+  // never reads this, per task 6.29's independent policy.
+  const isCoordinationEnabled = () => featureEnabled((key) => repo.getMeta(key), 'coordination');
   const coordinationTokens = new CoordinationTokenRegistry();
   const mcpEngine = new CoordinationEngine({
     repo,
@@ -276,6 +282,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     clock: nowIso,
     memberContext: (workId) => service.memberContext(workId),
     emit: options.emitCoordination,
+    isCoordinationEnabled,
   });
   const coordinationMcpServer = new CoordinationMcpServer({
     repo,
@@ -290,6 +297,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     server: coordinationMcpServer,
     resolveClaudeVersion: async () => (await detector.resolve('claude'))?.version ?? null,
     resolveEngramBinary: locateEngram,
+    isCoordinationEnabled,
   });
   hub.attachCoordinationInjection(injectionPlanner);
   service.attachCoordinationInjection(injectionPlanner);

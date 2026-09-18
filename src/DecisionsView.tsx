@@ -248,7 +248,14 @@ const DEGRADED_KEY: Record<CoordinationDegradedReason, string> = {
 /** The coordination line: nothing to flag when the member can propose; the reason's own sentence otherwise (it already says "dispatch manual"). */
 function describeCoordinationSupport(row: CoordinationMemberSupport): string {
   if (row.canPropose) return t('coordination.support.available');
-  return row.reason ? t(`coordination.degraded.${DEGRADED_KEY[row.reason]}` as 'coordination.degraded.claudeBelowFloor') : t('coordination.support.available');
+  // `reason` is one of the six ceiling/floor causes -- name it honestly. A
+  // member that cannot propose with NO reason attached (task 8.1) means the
+  // `coordination` feature flag itself is off app-wide: a distinct, real
+  // cause, never the same sentence as "no restrictions" (that would be a
+  // silent failure -- the member genuinely cannot propose).
+  return row.reason
+    ? t(`coordination.degraded.${DEGRADED_KEY[row.reason]}` as 'coordination.degraded.claudeBelowFloor')
+    : t('coordination.support.disabled');
 }
 
 /** The memory line, independent of the coordination line (task 6.29): `engram_not_installed` explains a missing memory server specifically; any other reason falls back to an honest generic sentence rather than reusing a "dispatch manual" sentence under the wrong heading. */

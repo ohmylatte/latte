@@ -540,6 +540,18 @@ describe('coordination support badges (additive, autonomous-coordination Phase 7
     expect(row.textContent).toContain('Memoria disponible');
   });
 
+  it('task 8.1: canPropose false with NO reason (the coordination feature flag itself is off) is never rendered as "available" — that would be a silent failure', () => {
+    const { container } = renderView('es-AR', {
+      team: [member({ id: 'm1', roleName: 'Estratega' })],
+      coordinationSupport: [support({ memberId: 'm1', canPropose: false, reason: null, memoryInjected: true })],
+    });
+    const row = container.querySelector('.decision-support-row')!;
+    expect(row.textContent).not.toContain('Sin restricciones para coordinar');
+    expect(row.textContent).toContain('desactivada en esta instalación');
+    // Memory is unaffected -- the two policies stay independent even in this new state.
+    expect(row.textContent).toContain('Memoria disponible');
+  });
+
   it('renders the same badges in English, with nothing left in Spanish', () => {
     const { container } = renderView('en-US', {
       team: [member({ id: 'm1', roleName: 'Estratega' })],

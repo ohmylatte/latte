@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FEATURE_KEYS, FEATURE_ON, featureEnabled, isFeatureOn, requireFeature } from '../../electron/core/features';
+import { FEATURE_KEYS, FEATURE_ON, featureEnabled, isFeatureOn, readFeatureFlags, requireFeature } from '../../electron/core/features';
 import { makeBackend, type TestBackend } from './helpers';
 
 const payload = {
@@ -34,6 +34,30 @@ describe('feature flags helper', () => {
     const meta: Record<string, string> = {};
     expect(featureEnabled((k) => meta[k] ?? null, 'generation')).toBe(false);
     expect(() => requireFeature((k) => meta[k] ?? null, 'learning')).toThrow(/FEATURE_DISABLED|disabled/i);
+  });
+
+  // Task 8.1 (rollout gate): coordination reuses this SAME generic mechanism
+  // -- no flag existed for it before this task. Off by default, like every
+  // other feature ("no secrets").
+  it('carries a coordination key too, off by default like every other feature', () => {
+    expect(FEATURE_KEYS.coordination).toBe('feature:coordination');
+    const meta: Record<string, string> = {};
+    expect(featureEnabled((k) => meta[k] ?? null, 'coordination')).toBe(false);
+    expect(() => requireFeature((k) => meta[k] ?? null, 'coordination')).toThrow(/./);
+    try {
+      requireFeature((k) => meta[k] ?? null, 'coordination');
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toMatchObject({ code: 'FEATURE_DISABLED' });
+    }
+    meta[FEATURE_KEYS.coordination] = FEATURE_ON;
+    expect(featureEnabled((k) => meta[k] ?? null, 'coordination')).toBe(true);
+    expect(readFeatureFlags((k) => meta[k] ?? null)).toEqual({
+      generation: false,
+      brandKits: false,
+      learning: false,
+      coordination: true,
+    });
   });
 });
 

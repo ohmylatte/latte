@@ -225,9 +225,18 @@ describe('Claude Code reports what it spent', () => {
 
   it('starts the CLI at the tier the member works on', async () => {
     const argvFor = async (tier: 'light' | 'balanced' | 'deep') => {
+      // The fake CLI streams this reply in two `content_block_delta` halves
+      // before the final, complete `assistant` message -- waiting on a mere
+      // `startsWith('ARGV')` races the first half in (flaky: sometimes the
+      // poll lands between the two deltas and reads a truncated string that
+      // still happens to start with "ARGV"). Waiting on the `usage` event
+      // instead is race-free: `finish()` only emits its `result` (which
+      // becomes this event) AFTER every prior stdout line -- including the
+      // full-text `assistant` message -- has already been written and read.
+      const before = usageEvents(events).length;
       const { session } = await adapter.start({ workId: 'wrk_1', directory: dir, title: 't', label: 'Claude', accountId: null, tier });
       await adapter.send(session.id, 'dame el argv');
-      await waitFor(() => adapter.listMessages(session.id).some((m) => m.parts.some((p) => p.type === 'text' && p.text.startsWith('ARGV'))));
+      await waitFor(() => usageEvents(events).length > before);
       const part = adapter.listMessages(session.id).flatMap((m) => m.parts).find((p) => p.type === 'text' && p.text.startsWith('ARGV')) as { text: string };
       adapter.stop(session.id);
       return part.text;

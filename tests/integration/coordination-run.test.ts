@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CoordinationEngine } from '../../electron/coordination/engine';
 import { createCoordinationTools } from '../../electron/coordination/tools';
+import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
 import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from '../backend/helpers';
 
 /**
@@ -25,6 +26,7 @@ describe('coordination run: plan_submit -> dispatch -> report -> done (manual au
     workId = work.id;
     members = [];
     fakeCoordinationHub(b, members);
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON); // task 8.1: this test drives startCoordinationRun through the real IPC surface
     await b.service.setCoordinationBudget(workId, { maxDispatches: 5 });
     await b.service.setCoordinationAuthority(workId, 'manual');
     engine = new CoordinationEngine({

@@ -282,6 +282,8 @@ export class LatteService implements BackendApi {
       clock: this.clock,
       memberContext: (workId) => this.memberContext(workId),
       emit: deps.emitCoordination,
+      // Task 8.1: the real flag, off by default like every other feature.
+      isCoordinationEnabled: () => featureEnabled((key) => deps.repo.getMeta(key), 'coordination'),
     });
     this.branding = new BrandingService({
       repo: deps.repo,
