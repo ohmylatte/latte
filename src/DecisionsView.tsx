@@ -3,8 +3,8 @@ import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { KnowledgeOrigin } from './KnowledgeScope';
 import type {
-  AgentRole, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudget, CoordinationGateAggregate,
-  CoordinationGateView, CoordinationProposal, Decision, DecisionAuthorityMode, HandoffRequest, TeamMember, Work, WorkPermissionMode,
+  AgentRole, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudget, CoordinationDegradedReason, CoordinationGateAggregate,
+  CoordinationGateView, CoordinationMemberSupport, CoordinationProposal, Decision, DecisionAuthorityMode, HandoffRequest, TeamMember, Work, WorkPermissionMode,
 } from '../shared/contracts';
 
 /**
@@ -70,6 +70,16 @@ export interface DecisionsViewProps {
   /** A `latte_ask` is a separate surface (Phase 3): its one action is the answer itself, never an edit. */
   openAsks?: readonly CoordinationAskView[];
   onAnswerAsk?: (askId: string, answer: string) => void;
+  /**
+   * Additive, optional (autonomous-coordination Phase 7 task 7.9): per-member
+   * degraded badges from `coordinationRuntimeSupport`. `undefined` means the
+   * caller has not wired support state — the section does not render, same
+   * as an empty list (zero rows is never a zero). Coordination and memory
+   * are two INDEPENDENT injection policies (task 6.29): a member can carry
+   * memory with no coordination, or coordination with no memory — never
+   * silent about either.
+   */
+  coordinationSupport?: readonly CoordinationMemberSupport[];
 }
 
 /** The coordinator's team member, resolved to a display name — never a raw id. */
@@ -225,6 +235,39 @@ function ProposalGateCard({ gate, roles, team, onResolveGate }: {
   </div>;
 }
 
+/** Maps a `CoordinationDegradedReason` to the matching `coordination.degraded.*` i18n key suffix — the six sentences slice 7-A already added. */
+const DEGRADED_KEY: Record<CoordinationDegradedReason, string> = {
+  claude_below_floor: 'claudeBelowFloor',
+  codex_run_cap: 'codexRunCap',
+  codex_global_cap: 'codexGlobalCap',
+  codex_process_ceiling: 'codexProcessCeiling',
+  opencode_shared_server: 'opencodeSharedServer',
+  engram_not_installed: 'engramMissing',
+};
+
+/** The coordination line: nothing to flag when the member can propose; the reason's own sentence otherwise (it already says "dispatch manual"). */
+function describeCoordinationSupport(row: CoordinationMemberSupport): string {
+  if (row.canPropose) return t('coordination.support.available');
+  return row.reason ? t(`coordination.degraded.${DEGRADED_KEY[row.reason]}` as 'coordination.degraded.claudeBelowFloor') : t('coordination.support.available');
+}
+
+/** The memory line, independent of the coordination line (task 6.29): `engram_not_installed` explains a missing memory server specifically; any other reason falls back to an honest generic sentence rather than reusing a "dispatch manual" sentence under the wrong heading. */
+function describeMemorySupport(row: CoordinationMemberSupport): string {
+  if (row.memoryInjected) return t('coordination.memory.available');
+  if (row.reason === 'engram_not_installed') return t('coordination.degraded.engramMissing');
+  return t('coordination.memory.unavailable');
+}
+
+/** One row per team member (task 7.9): coordination and memory status, rendered independently — never a single combined verdict. */
+function SupportRow({ row, team }: { row: CoordinationMemberSupport; team: readonly TeamMember[] }) {
+  const name = team.find((m) => m.id === row.memberId)?.roleName ?? row.memberId;
+  return <li className="decision-support-row" data-member-id={row.memberId}>
+    <strong>{name}</strong>
+    <p className="decision-support-coordination">{describeCoordinationSupport(row)}</p>
+    <p className="decision-support-memory">{describeMemorySupport(row)}</p>
+  </li>;
+}
+
 /** An open `latte_ask` (Phase 3): its one action is the answer itself, never an edit — a different surface from the approve/reject gates above. */
 function AskCard({ ask, formatDate, onAnswerAsk }: { ask: CoordinationAskView; formatDate: (value: string) => string; onAnswerAsk?: DecisionsViewProps['onAnswerAsk'] }) {
   return <div className="decision-ask">
@@ -288,6 +331,10 @@ export function DecisionsView(props: DecisionsViewProps) {
         return <PlanGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} />;
       })}
       {props.openAsks?.map((ask) => <AskCard key={ask.id} ask={ask} formatDate={props.formatDate} onAnswerAsk={props.onAnswerAsk} />)}
+    </section>}
+    {(props.coordinationSupport?.length ?? 0) > 0 && <section className="decision-coordination-support">
+      <div className="document-kicker">{t('coordination.teams.kicker')}</div>
+      <ul>{props.coordinationSupport!.map((row) => <SupportRow key={row.memberId} row={row} team={props.team} />)}</ul>
     </section>}
     {props.work && <section className="decision-permissions">
       <div className="document-kicker">{t('decision.permissions.kicker')}</div>

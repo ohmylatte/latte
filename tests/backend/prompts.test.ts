@@ -94,6 +94,34 @@ describe('Marketing base prompt composition', () => {
   });
 });
 
+/**
+ * Autonomous-coordination Phase 7 task 7.12: when a human asks the
+ * strategist to coordinate the team, it must PROPOSE a concrete plan with
+ * `latte_request_coordination` instead of ever answering that it lacks
+ * permissions or asking the human to configure something first — proposing
+ * IS how it asks (`latte/coordination-wow-entrypoint`). Smoke test only:
+ * proves the role still parses via `RoleCatalog.promptFor()` and that the
+ * composed prompt names the tool. Model behaviour is out of scope here.
+ */
+describe('Strategist proposes coordination instead of asking for permissions (task 7.12)', () => {
+  it('names the exact tool the human approval routes through', () => {
+    const prompt = catalog.promptFor('strategist');
+    expect(prompt).toContain('latte_request_coordination');
+  });
+
+  it('never tells the human to configure something first — proposing is the ask', () => {
+    const prompt = catalog.promptFor('strategist');
+    expect(prompt).toMatch(/propose a concrete plan/i);
+    expect(prompt).toMatch(/never answer that you lack permissions|ask the human to configure/i);
+  });
+
+  it('still layers on top of the base prompt without breaking it', () => {
+    const prompt = catalog.promptFor('strategist');
+    expect(prompt).toContain('marketing, not on software');
+    expect(prompt).toContain('# Role: Strategist');
+  });
+});
+
 describe('The base prompt reaches every runtime', () => {
   let dir: string;
   beforeEach(() => { dir = makeTempDir(); });

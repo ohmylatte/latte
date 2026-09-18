@@ -40,9 +40,19 @@ export interface ResumenViewProps {
    */
   coordinationLog?: readonly CoordinationLogEntryView[];
   coordinationHires?: readonly CoordinationHireEvent[];
+  /**
+   * Additive, optional (autonomous-coordination Phase 7 task 7.11): settles
+   * the in-flight dispatch of a bitácora row — surfaces task 3.19's
+   * `settleCoordinationDispatch(taskId, outcome, summary)` directly, never
+   * reinvents it. `undefined` means the caller has not wired it: no settle
+   * control renders, even for a `dispatched`/`running` row.
+   */
+  onSettleDispatch?: (taskId: string, outcome: 'succeeded' | 'failed', summary: string) => void;
   formatDate: (value: string) => string;
   onOpenBrief: () => void;
 }
+
+const IN_FLIGHT_STATUSES = new Set(['dispatched', 'running']);
 
 export function ResumenView(props: ResumenViewProps) {
   if (!props.work) {
@@ -128,6 +138,16 @@ export function ResumenView(props: ResumenViewProps) {
           <li className="resumen-bitacora-row" key={row.id}>
             <p>{row.kind === 'hire' ? t('resumen.bitacora.hired', { roleName: row.roleName }) : t(`resumen.bitacora.status.${row.status}` as 'resumen.bitacora.status.reported')}</p>
             <small>{props.formatDate(row.at)}</small>
+            {row.kind === 'dispatch' && IN_FLIGHT_STATUSES.has(row.status) && props.onSettleDispatch && <div className="resumen-bitacora-settle">
+              <button type="button" className="resumen-bitacora-settle-succeeded" onClick={() => {
+                const value = window.prompt(t('coordination.settle.summaryPrompt'), '');
+                if (value?.trim()) props.onSettleDispatch!(row.taskId, 'succeeded', value.trim());
+              }}>{t('coordination.settle.succeeded')}</button>
+              <button type="button" className="resumen-bitacora-settle-failed" onClick={() => {
+                const value = window.prompt(t('coordination.settle.summaryPrompt'), '');
+                if (value?.trim()) props.onSettleDispatch!(row.taskId, 'failed', value.trim());
+              }}>{t('coordination.settle.failed')}</button>
+            </div>}
           </li>
         ))}</ul>}
       </section>}

@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, Home, MessageSquare, Minus, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, X } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, AppInfo, OnboardingDraft } from '../shared/contracts';
+import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, AppInfo, OnboardingDraft, CoordinationActiveRunSummary } from '../shared/contracts';
 import { api, chatStore, isDesktop } from './browser-api';
 import { DocumentsView, NewDocumentDialog } from './DocumentsView';
 import { hasMetadataDrafts } from './DocumentMetadata';
@@ -29,6 +29,10 @@ import { OnboardingGate, type OnboardingResult } from './OnboardingGate';
 import { contextSaveNotice } from './context-view';
 import { applyFetchedBrand } from './brand-context-sync';
 import { confirmFolderLink } from './folder-link';
+import { useCoordination } from './useCoordination';
+import { ActiveTeamsStrip } from './ActiveTeamsStrip';
+import { MemoryNotice } from './MemoryNotice';
+import { sinceLastVisitFromActiveRuns } from './home-summary';
 
 /**
  * Every workspace view, in one place.
@@ -116,6 +120,14 @@ export function App() {
   // would read `brand?.context` from a stale closure and the new work is not
   // guaranteed to be `works[0]` once the list is re-read.
   const pendingWorkRef = useRef<string | null>(null);
+  /**
+   * The view a pending brand-switch should land on once its work resolves
+   * (autonomous-coordination Phase 7 task 7.11): the active-teams strip can
+   * select a Brand the person is not currently viewing, and it must land on
+   * Decisiones, not the default Brief — same mechanism as `pendingWorkRef`,
+   * consumed once by the same effect.
+   */
+  const pendingViewRef = useRef<View | null>(null);
   // The brand effect re-reads works when the id changes. Finishing the walk on
   // the already-selected brand (the demo) changes nothing, so it needs its own
   // reason to run; the ref above is only honoured if the effect runs.
@@ -157,6 +169,19 @@ export function App() {
     }
     return list;
   };
+  /**
+   * Autonomous-coordination Phase 7 task 7.11: the one hook that wires real
+   * coordination data into `HomeView`, `ResumenView`, `DecisionsView` and
+   * `TeamPanel` — every one of which slice 7-A built against additive,
+   * optional props only. `activeRuns` is global (every Brand); everything
+   * else is scoped to whichever Work is currently open.
+   */
+  const coordination = useCoordination(work?.id ?? null);
+  // The memory notice (task 7.10) is dismissed per Brand, for this session
+  // only: this state is plain React state, never persisted, so it "returns
+  // next launch while the condition holds" simply because a fresh launch
+  // starts with an empty Set — no localStorage, no backend write.
+  const [memoryNoticeDismissed, setMemoryNoticeDismissed] = useState<Set<string>>(new Set());
   const [prompt, setPrompt] = useState(''), [decision, setDecision] = useState('');
   const [memory, setMemory] = useState(''), [memoryAvailable, setMemoryAvailable] = useState(false), [memoryNote, setMemoryNote] = useState('');
   const [endedSessions, setEndedSessions] = useState<Set<string>>(new Set());
@@ -370,7 +395,7 @@ export function App() {
     void api.getDecisionAuthority(work.id).then(value => { if (active) setDecisionAuthority(value); }).catch(() => { if (active) setDecisionAuthority('suggest'); });
     return () => { active = false; };
   }, [work?.id]);
-  useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setKnowledgeScope(ALL_BRAND_SCOPE); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); const preferred = list.find(w => w.id === pendingWorkRef.current) ?? list[0] ?? null; pendingWorkRef.current = null; setWork(preferred); }).catch(e => setError(displayError(e))); }, [brand?.id, brandEpoch]);
+  useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setKnowledgeScope(ALL_BRAND_SCOPE); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); const preferred = list.find(w => w.id === pendingWorkRef.current) ?? list[0] ?? null; pendingWorkRef.current = null; setWork(preferred); if (preferred && pendingViewRef.current) setView(pendingViewRef.current); pendingViewRef.current = null; }).catch(e => setError(displayError(e))); }, [brand?.id, brandEpoch]);
   useEffect(() => {
     if (!brand) { setDocuments([]); setDecisions([]); return; }
     let active = true;
@@ -470,6 +495,26 @@ export function App() {
   // the resolution: a row whose work is gone does nothing instead of crashing.
   const openWork = (workId: string) => { const target = works.find((w) => w.id === workId); if (target) selectWork(target); };
   const openWorkDecisions = (workId: string) => { const target = works.find((w) => w.id === workId); if (target) selectWork(target, 'decisions'); };
+  /**
+   * The active-teams strip (task 7.8) only observes and navigates: clicking
+   * a row selects that Brand + Work and opens Decisiones, where the real
+   * approve/reject controls live. When the run's Brand is already open,
+   * this is `openWorkDecisions` unchanged. When it is a DIFFERENT Brand —
+   * the interesting case, a run the person was not looking at — the same
+   * `pendingWorkRef` mechanism `finishOnboarding` uses lands on the right
+   * work once its list loads, and `pendingViewRef` (added for this task)
+   * makes it land on Decisiones instead of the default Brief.
+   */
+  const openActiveRun = (run: CoordinationActiveRunSummary) => {
+    if (brand?.id === run.brandId) { openWorkDecisions(run.workId); return; }
+    const target = brands.find((b) => b.id === run.brandId);
+    if (!target || !guard()) return;
+    pendingWorkRef.current = run.workId;
+    pendingViewRef.current = 'decisions';
+    setBrand(target);
+    setContext(target.context);
+    setMemory(''); setMemoryAvailable(false); memoryGeneration.current++;
+  };
   const openDocument = (documentId: string) => {
     const document = documents.find((d) => d.id === documentId);
     if (!document) return;
@@ -875,6 +920,7 @@ export function App() {
     <aside className="sidebar">
       <div className="wordmark"><span className="logo-mark" aria-hidden="true" />Latte<button className="rail-toggle" aria-expanded={!railed} aria-label={railed ? t('ui.auto.029') : t('ui.auto.030')} title={railed ? t('ui.auto.029') : t('ui.auto.030')} onClick={() => setRailed(v => !v)}>{railed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button></div>
       <div className="brand-picker"><select aria-label={t('ui.auto.031')} value={brand?.id ?? ''} onChange={e => { const b = brands.find(b => b.id === e.target.value); if (b) selectBrand(b); }}>{!brands.length && <option value="">{t('ui.auto.032')}</option>}{brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select><ChevronDown size={15} /></div>
+      <ActiveTeamsStrip runs={coordination.activeRuns} onOpen={openActiveRun} />
       <button className="subtle sidebar-add" disabled={transitioning} onClick={() => { setName(''); setModal('brand'); }}><Plus size={14} />  {t('ui.auto.033')}</button>
       <button type="button" className="subtle sidebar-add" onClick={() => setShowArchived(v => !v)} aria-expanded={showArchived}>{t('brand.archivedToggle')}{archivedBrands.length ? ` (${archivedBrands.length})` : ''}</button>
       {showArchived && <div className="archived-brands">{archivedBrands.length === 0 ? <p className="sidebar-hint">{t('brand.noneArchived')}</p> : archivedBrands.map(b => <div key={b.id} className="archived-brand-row"><span title={b.name}>{b.name}</span><button type="button" className="subtle" disabled={busy} onClick={() => run(() => restoreArchivedBrand(b.id))}>{t('brand.restore')}</button></div>)}</div>}
@@ -887,13 +933,14 @@ export function App() {
     </aside>
     <header className="topbar"><div className="breadcrumb">{brand?.name ?? 'Bienvenido a Latte'}<span>/</span><strong>{work?.title ?? 'Tu espacio de marketing'}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
     <main className="workspace" aria-hidden={focusChat} inert={focusChat}>
-      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} />}
+      <MemoryNotice support={coordination.support} dismissed={Boolean(brand && memoryNoticeDismissed.has(brand.id))} onDismiss={() => { if (brand) setMemoryNoticeDismissed(prev => new Set(prev).add(brand.id)); }} />
+      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} coordinationSinceLastVisit={brand ? sinceLastVisitFromActiveRuns(coordination.activeRuns, brand.id) : []} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} />}
       {/* The tabs and the knowledge-scope filter are in-work chrome: on Inicio
           they would read as "a work with no tab selected". */}
       {view !== 'home' && <><div className="tabs"><button className={view === 'resumen' ? 'selected' : ''} onClick={() => setView('resumen')}>{t('resumen.tab')}</button><button className={view === 'trabajo' ? 'selected' : ''} onClick={() => setView('trabajo')}>{t('trabajo.tab')}</button><button className={view === 'evidencia' ? 'selected' : ''} onClick={() => setView('evidencia')}>{t('evidencia.tab')}</button><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><button className={view === 'resultados' ? 'selected' : ''} onClick={() => setView('resultados')}>{t('resultados.tab')}</button><div className="tab-spacer" /></div>
       {(view === 'brief' || view === 'funnel' || view === 'decisions') && brand && <KnowledgeScopeFilter works={works} currentWorkId={work?.id ?? null} value={knowledgeScope} onChange={setKnowledgeScope} />}</>}
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}
-      {view === 'resumen' && <ResumenView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} formatDate={date} onOpenBrief={() => { setLayout('review'); setView('brief'); }} />}
+      {view === 'resumen' && <ResumenView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} coordinationLog={work ? coordination.log : undefined} onSettleDispatch={coordination.settleDispatch} formatDate={date} onOpenBrief={() => { setLayout('review'); setView('brief'); }} />}
       {view === 'trabajo' && <TrabajoView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} handoffs={handoffs} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} mode={mode} formatDate={date} onOpenChat={() => { setLayout('conversation'); setView('brief'); }} />}
       {view === 'evidencia' && <EvidenciaView work={work} workId={work?.id ?? ''} documents={documents} decisions={decisions} untracked={untracked} states={homeStates} checking={homeChecking} formatDate={date} onTrack={trackFile} onImported={() => loadKnowledge(work?.brandId ?? '', work?.id)} busy={busy} />}
       {view === 'resultados' && <ResultadosView work={work} decisions={decisions} formatDate={date} />}
@@ -921,12 +968,12 @@ export function App() {
         onReload={() => void reloadContext()}
         onOverride={() => void overrideContext()}
       />}
-      {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} />}
+      {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} coordinationAuthority={work ? coordination.authority : undefined} coordinationBudget={work ? coordination.budget : undefined} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} gates={work ? coordination.gates : undefined} onResolveGate={coordination.resolveGate} coordinationSupport={work ? coordination.support : undefined} />}
       {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice('Aprendizaje guardado en Engram'); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
       <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
     </main>
     <aside className="agent-panel">{focusChat && (error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}<button type="button" className={'panel-resizer' + (dragging ? ' dragging' : '')} aria-label={t('ui.auto.066')} title={t('ui.auto.067')} onPointerDown={startResize} />
-      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} />
+      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} />
       <details className="active-context">
         <summary><Bookmark size={12} />{t('ui.auto.035')}<span>{[brand?.context ? 'marca' : null, work ? 'trabajo' : null, decisions.length ? `${decisions.length} decisiones` : null].filter(Boolean).join(' · ') || t('ui.auto.068')}</span></summary>
         <div className="active-context-body">

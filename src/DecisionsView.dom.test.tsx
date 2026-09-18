@@ -14,7 +14,7 @@ const { fireEvent, render, screen } = await import('@testing-library/react');
 const { DecisionsView } = await import('./DecisionsView');
 import type { DecisionsViewProps } from './DecisionsView';
 import { EMPTY_USAGE } from '../shared/contracts';
-import type { AgentRole, CoordinationAskView, CoordinationGateView, CoordinationProposal, Decision, HandoffRequest, TeamMember, Work } from '../shared/contracts';
+import type { AgentRole, CoordinationAskView, CoordinationDegradedReason, CoordinationGateView, CoordinationMemberSupport, CoordinationProposal, Decision, HandoffRequest, TeamMember, Work } from '../shared/contracts';
 
 const work = (patch: Partial<Work> = {}): Work => ({
   id: 'w1', brandId: 'b1', title: 'Lanzamiento', brief: 'Lanzar la campaña.',
@@ -37,6 +37,9 @@ const gateView = (patch: Partial<CoordinationGateView> = {}): CoordinationGateVi
 const askView = (patch: Partial<CoordinationAskView> = {}): CoordinationAskView => ({
   id: 'ask1', runId: 'run1', taskId: null, memberId: 'm1', question: '¿Seguimos con el mismo tono?',
   answer: null, deadlineAt: '2026-09-02T00:00:00.000Z', answeredAt: null, createdAt: '2026-09-01T00:00:00.000Z', ...patch,
+});
+const support = (patch: Partial<CoordinationMemberSupport> = {}): CoordinationMemberSupport => ({
+  memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, ...patch,
 });
 const proposal = (patch: Partial<CoordinationProposal> = {}): CoordinationProposal => ({
   plan: [{ roleId: 'copywriter', spec: 'Escribir 3 posts para el lanzamiento' }],
@@ -457,5 +460,92 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
     for (const spanish of ['Presupuesto agotado', 'PROPUESTA DE COORDINACIÓN', 'no podemos calcular']) {
       expect(container.textContent).not.toContain(spanish);
     }
+  });
+});
+
+/**
+ * Degraded badges (additive, autonomous-coordination Phase 7 task 7.9):
+ * per-member coordination/memory status from `coordinationRuntimeSupport`.
+ * Coordination and memory are two INDEPENDENT injection policies (task
+ * 6.29) — a coordination-degraded member still shows memory as available,
+ * and vice versa. Never silent, never a capability presented as working.
+ */
+describe('coordination support badges (additive, autonomous-coordination Phase 7 task 7.9)', () => {
+  it('does not render when the caller has not wired support state', () => {
+    const { container } = renderView('es-AR');
+    expect(container.querySelector('.decision-coordination-support')).toBeNull();
+  });
+
+  it('renders nothing for an empty list — zero rows is never a zero', () => {
+    const { container } = renderView('es-AR', { coordinationSupport: [] });
+    expect(container.querySelector('.decision-coordination-support')).toBeNull();
+  });
+
+  it('renders one row per member, resolved to its display name — never a raw id', () => {
+    const { container } = renderView('es-AR', {
+      team: [member({ id: 'm1', roleName: 'Estratega' })],
+      coordinationSupport: [support({ memberId: 'm1' })],
+    });
+    const row = container.querySelector('.decision-support-row')!;
+    expect(row).not.toBeNull();
+    expect(row.textContent).toContain('Estratega');
+  });
+
+  it('a coordination-degraded member still shows memory as available — the two policies are independent', () => {
+    const { container } = renderView('es-AR', {
+      team: [member({ id: 'm1', roleName: 'Estratega' })],
+      coordinationSupport: [support({ memberId: 'm1', canPropose: false, reason: 'codex_run_cap', memoryInjected: true })],
+    });
+    const row = container.querySelector('.decision-support-row')!;
+    expect(row.textContent).toContain('tope de miembros de Codex coordinados por corrida');
+    expect(row.textContent).toContain('Memoria disponible');
+  });
+
+  it('vice versa: a memory-degraded member (engram missing) still shows coordination as unrestricted', () => {
+    const { container } = renderView('es-AR', {
+      team: [member({ id: 'm1', roleName: 'Estratega' })],
+      coordinationSupport: [support({ memberId: 'm1', canPropose: true, reason: 'engram_not_installed', memoryInjected: false })],
+    });
+    const row = container.querySelector('.decision-support-row')!;
+    expect(row.textContent).toContain('Falta el binario de Engram');
+    expect(row.textContent).toContain('Sin restricciones para coordinar');
+  });
+
+  it('each of the six degraded reasons renders its own distinct, honest sentence', () => {
+    const reasons: Array<[CoordinationDegradedReason, string]> = [
+      ['claude_below_floor', 'anterior a la mínima soportada'],
+      ['codex_run_cap', 'tope de miembros de Codex coordinados por corrida'],
+      ['codex_global_cap', 'tope de procesos de Codex coordinados en toda la app'],
+      ['codex_process_ceiling', 'tope total de procesos de Codex en toda la app'],
+      ['opencode_shared_server', 'OpenCode comparte un solo servidor'],
+      ['engram_not_installed', 'Falta el binario de Engram'],
+    ];
+    for (const [reason, phrase] of reasons) {
+      const { container, unmount } = renderView('es-AR', {
+        team: [member({ id: 'm1', roleName: 'Estratega' })],
+        coordinationSupport: [support({ memberId: 'm1', canPropose: false, reason, memoryInjected: reason !== 'engram_not_installed' })],
+      });
+      expect(container.querySelector('.decision-support-row')!.textContent, reason).toContain(phrase);
+      unmount();
+    }
+  });
+
+  it('a member with neither degradation shows both as available, never silent', () => {
+    const { container } = renderView('es-AR', {
+      team: [member({ id: 'm1', roleName: 'Estratega' })],
+      coordinationSupport: [support({ memberId: 'm1', canPropose: true, reason: null, memoryInjected: true })],
+    });
+    const row = container.querySelector('.decision-support-row')!;
+    expect(row.textContent).toContain('Sin restricciones para coordinar');
+    expect(row.textContent).toContain('Memoria disponible');
+  });
+
+  it('renders the same badges in English, with nothing left in Spanish', () => {
+    const { container } = renderView('en-US', {
+      team: [member({ id: 'm1', roleName: 'Estratega' })],
+      coordinationSupport: [support({ memberId: 'm1', canPropose: false, reason: 'engram_not_installed', memoryInjected: false })],
+    });
+    expect(container.textContent).toContain('The Engram binary is missing');
+    expect(container.textContent).not.toContain('Falta el binario de Engram');
   });
 });

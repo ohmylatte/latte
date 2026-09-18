@@ -1,5 +1,6 @@
 import { ValidationError } from '../core/errors';
 import { assertId } from '../core/paths';
+import { isValidId } from '../core/ids';
 
 export const LIMITS = {
   name: 120,
@@ -38,6 +39,29 @@ export function requireLabel(value: unknown, name: string, max: number): string 
 
 export function requireId(value: unknown, name: string): string {
   assertId(value, name);
+  return value;
+}
+
+/**
+ * A coordination gate id (task 7.14 discovery): `engine.ts`'s `listGates()`
+ * builds three of its four gate kinds as SYNTHETIC ids never persisted as a
+ * row — `plan:<runId>`, `budget:<runId>`, `proposal:<runId>` — because there
+ * is nothing to select by primary key for a gate derived from the run's own
+ * state. Only a `dispatch` gate carries a real row id (`ID_PATTERN`, no
+ * colon). The generic `requireId` rejected the other three outright, which
+ * meant `resolveCoordinationGate` could approve a dispatch gate through IPC
+ * but never a plan, budget or proposal gate — validated narrowly here
+ * instead of loosening `ID_PATTERN`, which doubles as a filesystem-path
+ * safety net for every other entity id in the app.
+ */
+export function requireGateId(value: unknown): string {
+  if (typeof value !== 'string') throw new ValidationError('gateId must be a string');
+  const prefixed = value.match(/^(plan|budget|proposal):(.+)$/);
+  if (prefixed) {
+    if (!isValidId(prefixed[2])) throw new ValidationError('Invalid gateId');
+    return value;
+  }
+  if (!isValidId(value)) throw new ValidationError('Invalid gateId');
   return value;
 }
 

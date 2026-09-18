@@ -1,5 +1,5 @@
 import type { MessageKey } from './i18n';
-import type { Decision, DocumentState, Work, WorkDocument } from '../shared/contracts';
+import type { CoordinationActiveRunSummary, Decision, DocumentState, Work, WorkDocument } from '../shared/contracts';
 import { needsReview } from './document-organizer';
 
 /**
@@ -158,6 +158,26 @@ export function homeStep(input: HomeLadderInput): HomeStep {
   if (input.liveWorkIds.length > 0) return 'live';
   if (input.workCount === 0) return 'works';
   return 'none';
+}
+
+/**
+ * Derives `HomeSinceLastVisitInput` rows straight from `listActiveCoordinationRuns()`
+ * (task 6.34, the one app-scoped read the change ships) — zero extra IPC
+ * calls (task 7.11's `useCoordination` already fetches this for the global
+ * strip). Only `awaitingYou` (a pending gate) and `budgetConsumed` (the cap
+ * reached) are honestly derivable from that summary alone: `done`/`failed`
+ * would need per-run history no brand-scoped method exposes today, so they
+ * are deliberately never invented here — a disclosed scope limit, not an
+ * oversight (see `apply-progress-phase7b`).
+ */
+export function sinceLastVisitFromActiveRuns(runs: readonly CoordinationActiveRunSummary[], brandId: string): HomeSinceLastVisitInput[] {
+  const rows: HomeSinceLastVisitInput[] = [];
+  for (const run of runs) {
+    if (run.brandId !== brandId) continue;
+    if (run.pendingGates > 0) rows.push({ id: `${run.runId}:gates`, workId: run.workId, kind: 'awaitingYou' });
+    if (run.maxDispatches != null && run.dispatchesUsed >= run.maxDispatches) rows.push({ id: `${run.runId}:budget`, workId: run.workId, kind: 'budgetConsumed' });
+  }
+  return rows;
 }
 
 /** The ladder plus every row, ready to render. */

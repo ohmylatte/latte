@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { HOME_STEP_KEYS, homeStep, homeSummary, type HomeInput, type HomeLadderInput } from './home-summary';
-import type { Decision, DocumentState, WorkDocument } from '../shared/contracts';
+import { HOME_STEP_KEYS, homeStep, homeSummary, sinceLastVisitFromActiveRuns, type HomeInput, type HomeLadderInput } from './home-summary';
+import type { CoordinationActiveRunSummary, Decision, DocumentState, WorkDocument } from '../shared/contracts';
 
 /**
  * The pure core of Inicio: which of the loaded facts wins, how the three cards
@@ -233,5 +233,50 @@ describe('the since-last-visit card (additive, autonomous-coordination Phase 7)'
   it('leaves the work title empty instead of inventing one for an unknown work', () => {
     const summary = homeSummary(input({ coordinationSinceLastVisit: [{ id: 'e1', workId: 'nope', kind: 'failed' }] }));
     expect(summary.sinceLastVisitRows[0].workTitle).toBe('');
+  });
+});
+
+/**
+ * `sinceLastVisitFromActiveRuns` (task 7.11): the real, honestly-scoped
+ * source `useCoordination` feeds Inicio's "since your last visit" card —
+ * derived strictly from `listActiveCoordinationRuns()`, the one app-scoped
+ * read this change ships, so wiring it costs no extra IPC call. Only
+ * `awaitingYou` (a pending gate) and `budgetConsumed` (the cap reached) are
+ * derivable from that summary alone; `done`/`failed` would need per-run
+ * history no brand-scoped method exposes, so this function never invents
+ * them — a deliberate, disclosed scope limit, not an oversight.
+ */
+describe('sinceLastVisitFromActiveRuns: honest, no extra IPC call', () => {
+  const run = (patch: Partial<CoordinationActiveRunSummary> = {}): CoordinationActiveRunSummary => ({
+    runId: 'run1', workId: 'w1', workTitle: 'Lanzamiento', brandId: 'b1', brandName: 'Casa Oliva',
+    status: 'running', dispatchesUsed: 3, maxDispatches: 10, pendingGates: 0, ...patch,
+  });
+
+  it('reports nothing for a brand with no active runs', () => {
+    expect(sinceLastVisitFromActiveRuns([], 'b1')).toEqual([]);
+  });
+
+  it('ignores runs of a different brand entirely', () => {
+    expect(sinceLastVisitFromActiveRuns([run({ brandId: 'other' })], 'b1')).toEqual([]);
+  });
+
+  it('reports awaitingYou when the run has pending gates', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({ pendingGates: 2 })], 'b1');
+    expect(rows).toEqual([{ id: 'run1:gates', workId: 'w1', kind: 'awaitingYou' }]);
+  });
+
+  it('reports budgetConsumed once dispatchesUsed reaches the cap', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({ dispatchesUsed: 10, maxDispatches: 10 })], 'b1');
+    expect(rows).toEqual([{ id: 'run1:budget', workId: 'w1', kind: 'budgetConsumed' }]);
+  });
+
+  it('never reports budgetConsumed for an explicitly unlimited run, no matter how many dispatches ran', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({ dispatchesUsed: 999, maxDispatches: null })], 'b1');
+    expect(rows).toEqual([]);
+  });
+
+  it('can report both kinds for the same run at once', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({ pendingGates: 1, dispatchesUsed: 5, maxDispatches: 5 })], 'b1');
+    expect(rows.map((r) => r.kind).sort()).toEqual(['awaitingYou', 'budgetConsumed']);
   });
 });

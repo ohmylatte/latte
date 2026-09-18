@@ -1,7 +1,7 @@
 import { translate as t } from './i18n';
 import { useEffect, useState, type ReactNode } from 'react';
 import { ArrowLeft, HardDrive, Info, Plug, SlidersHorizontal, Sparkles, Wrench } from 'lucide-react';
-import type { AppInfo } from '../shared/contracts';
+import type { AppInfo, CoordinationBudget } from '../shared/contracts';
 import { api, isDesktop } from './browser-api';
 import { ProvidersView } from './ProvidersView';
 import { ProfilesView } from './ProfilesView';
@@ -75,7 +75,7 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       {section === 'tools' && <ToolsView onNotice={onNotice} onError={onError} workId={workId} />}
       {section === 'workspace' && <WorkspaceSection onError={onError} onReopenOnboarding={onReopenOnboarding} />}
       {section === 'language' && <LanguageSection />}
-      {section === 'advanced' && <ModeSection mode={mode} onModeChange={onModeChange} />}
+      {section === 'advanced' && <><ModeSection mode={mode} onModeChange={onModeChange} /><CoordinationGlobalBudgetSection onError={onError} /></>}
     </main>
   </div>;
 }
@@ -124,5 +124,48 @@ function ModeSection({ mode, onModeChange }: { mode: LatteMode; onModeChange: (m
       <label>{t('settings.modeLabel')}<select value={mode} onChange={e => onModeChange(e.target.value as LatteMode)}><option value="simple">{t('settings.modeSimple')}</option><option value="advanced">{t('settings.modeAdvanced')}</option></select></label>
     </div>
     <p className="footnote">{t('settings.modeHelp')}</p>
+  </section>;
+}
+
+/**
+ * The optional app-wide coordination dispatch cap (autonomous-coordination
+ * Phase 7 task 7.13): advanced settings only, progressive disclosure. Unset
+ * shows the same honest "no budget configured" sentence Decisiones already
+ * uses for a Work's own budget — never an invented default. The primary
+ * flow (starting or approving a run) never routes through this: it is
+ * reachable only from here, and setting it never applies retroactively to a
+ * run already in flight.
+ */
+function CoordinationGlobalBudgetSection({ onError }: { onError: (text: string) => void }) {
+  const { t } = useI18n();
+  const [budget, setBudget] = useState<CoordinationBudget | null>(null);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { void api.getCoordinationGlobalBudget().then(setBudget).catch(e => onError(e instanceof Error ? e.message : String(e))); }, []);
+  const save = () => {
+    const parsed = Number(draft);
+    if (!draft.trim() || !Number.isInteger(parsed) || parsed <= 0) return;
+    setSaving(true);
+    void api.setCoordinationGlobalBudget({ maxDispatches: parsed })
+      .then(next => { setBudget(next); setDraft(''); })
+      .catch(e => onError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setSaving(false));
+  };
+  return <section className="settings-section coordination-global-budget">
+    <h2>{t('coordination.globalBudget.kicker')}</h2>
+    <p className="settings-lead">{t('coordination.globalBudget.help')}</p>
+    <p className="coordination-global-budget-value">
+      {budget == null
+        ? t('coordination.budget.unset')
+        : budget.maxDispatches == null
+          ? t('coordination.budget.unlimited')
+          : t('coordination.budget.limited', { count: budget.maxDispatches })}
+    </p>
+    <div className="settings-facts">
+      <label>{t('coordination.globalBudget.setLabel')}
+        <input className="coordination-global-budget-input" type="number" min={1} value={draft} onChange={e => setDraft(e.target.value)} />
+      </label>
+      <button className="coordination-global-budget-save" disabled={saving || !draft.trim()} onClick={save}>{t('coordination.globalBudget.save')}</button>
+    </div>
   </section>;
 }

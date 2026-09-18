@@ -532,7 +532,7 @@ const es = {
   'coordination.degraded.engramMissing': 'Falta el binario de Engram: este miembro trabaja sin memoria compartida.',
   // --- Memoria de marca: aviso cuando falta Engram (Phase 7, slice 7-B) --
   'memory.notice.missingTitle': 'La memoria de marca no está disponible',
-  'memory.notice.missingBody': 'Falta el binario «engram». Los miembros trabajan sin memoria compartida entre ellos.',
+  'memory.notice.missingBody': 'Falta el binario «engram». Cada miembro arranca de cero y no ve lo que los demás ya decidieron: no hay memoria compartida entre ellos.',
   'memory.notice.installLink': 'Cómo instalarlo',
   // --- Inicio: desde tu última visita (autonomous-coordination, Phase 7) --
   'home.since.title': 'Desde tu última visita',
@@ -553,6 +553,22 @@ const es = {
   // --- Coordinación: pausar el equipo mid-dispatch (autonomous-coordination, Phase 7) --
   'coordination.run.pause': 'Pausar equipo',
   'coordination.run.pauseHelp': 'El despacho en curso termina y reporta; no arranca uno nuevo.',
+  // --- Coordinación: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
+  'coordination.teams.status.planning': 'Planificando',
+  'coordination.teams.status.running': 'En curso',
+  'coordination.teams.status.suspended': 'Suspendido',
+  'coordination.teams.status.done': 'Terminado',
+  'coordination.teams.status.cancelled': 'Cancelado',
+  'coordination.support.available': 'Sin restricciones para coordinar',
+  'coordination.memory.available': 'Memoria disponible',
+  'coordination.memory.unavailable': 'Sin memoria compartida para este miembro',
+  'coordination.settle.succeeded': 'Marcar como terminado',
+  'coordination.settle.failed': 'Marcar como fallido',
+  'coordination.settle.summaryPrompt': 'Resumen del resultado',
+  'coordination.globalBudget.kicker': 'TOPE GLOBAL DE DESPACHOS (AVANZADO)',
+  'coordination.globalBudget.help': 'Opcional, se suma al presupuesto de cada Trabajo, nunca lo reemplaza. Sin configurar, no aplica ningún tope extra.',
+  'coordination.globalBudget.setLabel': 'Nuevo tope',
+  'coordination.globalBudget.save': 'Guardar',
   // --- Resultados: lo que el trabajo entregó ----------------------------
   'resultados.tab': 'Resultados',
   'resultados.region': 'Resultados',
@@ -1083,7 +1099,7 @@ const en: Record<MessageKey, string> = {
   'coordination.degraded.engramMissing': 'The Engram binary is missing: this member works without shared memory.',
   // --- Brand memory: notice when Engram is missing (Phase 7, slice 7-B) --
   'memory.notice.missingTitle': 'Brand memory is not available',
-  'memory.notice.missingBody': 'The «engram» binary is missing. Members work without memory shared between them.',
+  'memory.notice.missingBody': 'The «engram» binary is missing. Each member starts from zero and cannot see what the others already decided: there is no shared memory between them.',
   'memory.notice.installLink': 'How to install it',
   // --- Inicio: since your last visit (autonomous-coordination, Phase 7) --
   'home.since.title': 'Since your last visit',
@@ -1104,6 +1120,22 @@ const en: Record<MessageKey, string> = {
   // --- Coordination: pausing the team mid-dispatch (autonomous-coordination, Phase 7) --
   'coordination.run.pause': 'Pause team',
   'coordination.run.pauseHelp': 'The in-flight dispatch finishes and reports; no new dispatch starts.',
+  // --- Coordination: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
+  'coordination.teams.status.planning': 'Planning',
+  'coordination.teams.status.running': 'Running',
+  'coordination.teams.status.suspended': 'Suspended',
+  'coordination.teams.status.done': 'Done',
+  'coordination.teams.status.cancelled': 'Cancelled',
+  'coordination.support.available': 'No coordination restrictions',
+  'coordination.memory.available': 'Memory available',
+  'coordination.memory.unavailable': 'No shared memory for this member',
+  'coordination.settle.succeeded': 'Mark as done',
+  'coordination.settle.failed': 'Mark as failed',
+  'coordination.settle.summaryPrompt': 'Outcome summary',
+  'coordination.globalBudget.kicker': 'GLOBAL DISPATCH CAP (ADVANCED)',
+  'coordination.globalBudget.help': "Optional, adds on top of each Work's own budget, never replaces it. Unset, no extra cap applies.",
+  'coordination.globalBudget.setLabel': 'New cap',
+  'coordination.globalBudget.save': 'Save',
   // --- Resultados: what the work delivered ------------------------------
   'resultados.tab': 'Results',
   'resultados.region': 'Results',
