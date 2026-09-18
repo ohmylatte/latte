@@ -613,3 +613,87 @@ describe('CoordinationEngine — the dispatch choke point', () => {
     });
   });
 });
+
+// Task 6.37: the `latte:coordination-event` channel's underlying trigger --
+// an optional `emit` dep, called on run/task/dispatch/gate changes, carrying
+// `{brandId, workId, runId}`. A separate engine instance (`b`'s own hub, a
+// fresh `CoordinationEngine`) so this file's existing fixtures are untouched.
+describe('CoordinationEngine — emits a coordination event on state changes (task 6.37)', () => {
+  let b: TestBackend;
+  let engine: CoordinationEngine;
+  let emitted: Array<{ brandId: string; workId: string; runId: string | null }>;
+  let workId: string;
+  let brandId: string;
+
+  beforeEach(async () => {
+    b = await makeBackend();
+    const brand = await b.service.createBrand('Marca');
+    const work = await b.service.createWork(brand.id, 'Trabajo');
+    workId = work.id;
+    brandId = brand.id;
+    await b.service.setCoordinationBudget(workId, { maxDispatches: 10 });
+    fakeCoordinationHub(b, []);
+    emitted = [];
+    engine = new CoordinationEngine({
+      repo: b.repo,
+      hub: b.hub,
+      clock: () => '2026-01-01T00:00:00.000Z',
+      memberContext: (id) => ({ workId: id, brandId: brand.id, directory: b.dir, title: 'x', extraEnv: {} }),
+      emit: (event) => emitted.push(event),
+    });
+  });
+  afterEach(() => b.cleanup());
+
+  it('fires on startRun with {brandId, workId, runId}', async () => {
+    const run = await engine.startRun(workId, null);
+    expect(emitted).toContainEqual({ brandId, workId, runId: run.id });
+  });
+
+  it('fires on requestCoordination (a run created with no run yet)', async () => {
+    const run = await engine.requestCoordination(
+      { workId, runId: null, memberId: 'mem_worker', role: 'worker' },
+      { plan: [{ roleId: 'strategist', spec: 'x' }], estimatedDispatches: 3, rationale: 'y' },
+    );
+    expect(emitted).toContainEqual({ brandId, workId, runId: run.id });
+  });
+
+  it('fires on pauseRun/resumeRun/cancelRun', async () => {
+    const run = await engine.startRun(workId, null);
+    emitted.length = 0;
+    engine.pauseRun(run.id);
+    expect(emitted).toContainEqual({ brandId, workId, runId: run.id });
+    emitted.length = 0;
+    engine.resumeRun(run.id);
+    expect(emitted).toContainEqual({ brandId, workId, runId: run.id });
+    emitted.length = 0;
+    engine.cancelRun(run.id);
+    expect(emitted).toContainEqual({ brandId, workId, runId: run.id });
+  });
+
+  it('fires on resolveGate (a dispatch gate approval)', async () => {
+    const run = await engine.startRun(workId, null);
+    await b.service.setCoordinationAuthority(workId, 'manual');
+    const task = engine.taskCreate(run.id, { roleId: 'strategist', spec: 'Draft the brief' });
+    const dispatch = await engine.startDispatch({ grant: { workId, runId: run.id, memberId: 'mem_coordinator', role: 'coordinator' }, taskId: task.id });
+    emitted.length = 0;
+    await engine.resolveGate(dispatch.dispatchId, 'approve');
+    expect(emitted).toContainEqual({ brandId, workId, runId: run.id });
+  });
+
+  it('fires on report/startDispatch (a task/dispatch change) and on settleDispatch', async () => {
+    const run = await engine.startRun(workId, null);
+    await b.service.setCoordinationAuthority(workId, 'auto');
+    const task = engine.taskCreate(run.id, { roleId: 'strategist', spec: 'Draft the brief' });
+    emitted.length = 0;
+    await engine.startDispatch({ grant: { workId, runId: run.id, memberId: 'mem_coordinator', role: 'coordinator' }, taskId: task.id });
+    expect(emitted).toContainEqual({ brandId, workId, runId: run.id });
+    emitted.length = 0;
+    await engine.settleDispatch(task.id, 'succeeded', 'done');
+    expect(emitted).toContainEqual({ brandId, workId, runId: run.id });
+  });
+
+  it('never throws or fires when no emit dep was supplied (existing tests, no behaviour change)', async () => {
+    const bare = new CoordinationEngine({ repo: b.repo, hub: b.hub, clock: () => '2026-01-01T00:00:00.000Z', memberContext: (id) => ({ workId: id, brandId, directory: b.dir, title: 'x', extraEnv: {} }) });
+    await expect(bare.startRun(workId, null)).resolves.toBeTruthy();
+  });
+});

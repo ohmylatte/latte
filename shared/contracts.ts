@@ -758,6 +758,63 @@ export interface CoordinationAskView {
 }
 
 /**
+ * Phase 6, tasks 6.28-6.33 (design-v2-conversational D2/D3): why a member's
+ * runtime does not carry a working `latte_coordination`/`latte_memory`
+ * entry right now. Six named reasons, never a silent gap.
+ */
+export type CoordinationDegradedReason =
+  | 'claude_below_floor'
+  | 'codex_run_cap'
+  | 'codex_global_cap'
+  | 'codex_process_ceiling'
+  | 'opencode_shared_server'
+  | 'engram_not_installed';
+
+/**
+ * One row per team member of the Work, from `coordinationRuntimeSupport`
+ * (task 6.33). `memoryInjected` is a SEPARATE field from `reason`/
+ * `canPropose` on purpose -- the two injection policies are independent
+ * (task 6.29): a member can carry memory with no coordination (the ordinary
+ * case, `canPropose:false`, `memoryInjected:true`, `reason` explaining only
+ * the coordination side, or `null`), never the reverse.
+ */
+export interface CoordinationMemberSupport {
+  memberId: string;
+  canPropose: boolean;
+  memoryInjected: boolean;
+  reason: CoordinationDegradedReason | null;
+}
+
+/** One row per active coordination run app-wide, for the global "Equipos activos" strip (task 6.34) -- the only app-scoped read in this change. */
+export interface CoordinationActiveRunSummary {
+  runId: string;
+  workId: string;
+  workTitle: string;
+  brandId: string;
+  brandName: string;
+  status: CoordinationRunStatus;
+  dispatchesUsed: number;
+  maxDispatches: number | null;
+  pendingGates: number;
+}
+
+/**
+ * `{brandId, workId, runId}` only -- never the payload itself (the renderer
+ * re-reads via the existing IPC methods; this channel is a "something
+ * changed, go look" nudge, not a data transport). `runId` is `null` for a
+ * change that has no run yet (e.g. a fresh `latte_request_coordination`
+ * proposal before its gate exists is still reported through the run it just
+ * created, so in practice this is rarely null -- kept nullable for honesty
+ * with `CoordinationGrant.runId`'s own shape). Lets the renderer route an
+ * event from a Brand the person is not currently looking at (task 6.37).
+ */
+export interface CoordinationEvent {
+  brandId: string;
+  workId: string;
+  runId: string | null;
+}
+
+/**
  * `acceptHandoffAsTask` bridges a handoff into a `coordination_task` only
  * when the Work has an active run; `bridged:false` means "do nothing new" —
  * the existing handoff flow (open a member, draft the request, dismiss the
@@ -1065,5 +1122,20 @@ export interface LatteAPI {
    * report.
    */
   settleCoordinationDispatch(taskId: string, outcome: 'succeeded' | 'failed', summary: string, files?: string | null): Promise<CoordinationTaskView>;
+  /**
+   * Per-member coordination/memory status for this Work (task 6.33): six
+   * named degraded reasons, `canPropose` and `memoryInjected` reported
+   * SEPARATELY. NOT gated by any coordination flag -- memory status matters
+   * even with coordination off, so the coordination-specific reasons simply
+   * come back empty/`null` rather than this method refusing to answer.
+   */
+  coordinationRuntimeSupport(workId: string): Promise<CoordinationMemberSupport[]>;
+  /** The global "Equipos activos" strip: every active run across every Brand, newest-updated first. The only app-scoped read in this change. */
+  listActiveCoordinationRuns(): Promise<CoordinationActiveRunSummary[]>;
+  /** The OPTIONAL advanced app-wide dispatch cap, on top of (never instead of) each Work's own budget. `null` = unset = no extra cap applied -- never an invented limit. */
+  getCoordinationGlobalBudget(): Promise<CoordinationBudget | null>;
+  setCoordinationGlobalBudget(budget: CoordinationBudget): Promise<CoordinationBudget>;
+  /** Fires on a run/task/dispatch/gate change, so the renderer can route an event from a Brand the person is not currently looking at (task 6.37). */
+  onCoordinationEvent(callback: (event: CoordinationEvent) => void): () => void;
 }
 declare global { interface Window { latte?: LatteAPI } }

@@ -55,4 +55,35 @@ describe('CoordinationTokenRegistry — mint / verify / revoke', () => {
     expect(registry.verify(a)?.memberId).toBe('mem_a');
     expect(registry.verify(b)?.memberId).toBe('mem_b');
   });
+
+  // Task 6.28: hub wiring revokes by (workId, memberId), not by the token
+  // string itself -- the hub knows which member is closing, not its live
+  // token, so the registry needs a lookup path from identity to token.
+  describe('revokeMember (task 6.28)', () => {
+    it('revokes the live token for a (workId, memberId), by identity rather than the token string', () => {
+      const registry = new CoordinationTokenRegistry();
+      const token = registry.mint('wrk_a', 'mem_a');
+      registry.revokeMember('wrk_a', 'mem_a');
+      expect(registry.verify(token)).toBeNull();
+      expect(registry.size).toBe(0);
+    });
+
+    it('is a no-op for a member that was never minted, or already revoked', () => {
+      const registry = new CoordinationTokenRegistry();
+      expect(() => registry.revokeMember('wrk_a', 'mem_never')).not.toThrow();
+      const token = registry.mint('wrk_a', 'mem_a');
+      registry.revokeMember('wrk_a', 'mem_a');
+      expect(() => registry.revokeMember('wrk_a', 'mem_a')).not.toThrow();
+      expect(registry.verify(token)).toBeNull();
+    });
+
+    it('never touches a different member of the same Work', () => {
+      const registry = new CoordinationTokenRegistry();
+      const a = registry.mint('wrk_a', 'mem_a');
+      const b = registry.mint('wrk_a', 'mem_b');
+      registry.revokeMember('wrk_a', 'mem_a');
+      expect(registry.verify(a)).toBeNull();
+      expect(registry.verify(b)).not.toBeNull();
+    });
+  });
 });

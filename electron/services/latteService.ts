@@ -30,11 +30,14 @@ import type {
   BrandContextRevisionSource,
   BrandContextSaveResult,
   BrandContextStatus,
+  CoordinationActiveRunSummary,
   CoordinationAskView,
   CoordinationAuthorityMode,
   CoordinationBudget,
+  CoordinationEvent,
   CoordinationGateView,
   CoordinationLogEntryView,
+  CoordinationMemberSupport,
   CoordinationRunView,
   CoordinationTaskView,
   CoordinatorGrant,
@@ -99,6 +102,7 @@ import { AccountStore } from '../agents/accounts';
 import { isAccountRuntime, isChatRuntime, type AgentHub, type MemberContext } from '../agents/hub';
 import { CoordinationEngine } from '../coordination/engine';
 import { requireCoordinationBudget } from '../coordination/budget';
+import type { CoordinationInjectionPlanner } from '../coordination/injection';
 import type { McpCatalog } from '../agents/mcp';
 import { RoleCatalog } from '../agents/roles';
 import { isEffortTier } from '../agents/tiers';
@@ -144,6 +148,7 @@ export type BackendApi = Omit<
   LatteAPI,
   | 'onAgentEvent'
   | 'onChatEvent'
+  | 'onCoordinationEvent'
   | 'reportUnsaved'
   | 'windowControl'
   | 'onWindowState'
@@ -166,6 +171,10 @@ export interface LatteServiceDeps {
   /** Routes chats across OpenCode / Claude Code / Codex and owns the primary agent. */
   hub: AgentHub;
   engram: EngramClient;
+  /** sdd/autonomous-coordination, task 6.33: the SAME planner hub wiring uses, so `coordinationRuntimeSupport` reports what actually happened for a live member (`preview()`'s own claim-lookup) rather than a second, possibly-divergent guess. Absent (tests that never wire coordination) reports every member as unsupported. */
+  injection?: CoordinationInjectionPlanner;
+  /** Task 6.37: forwarded straight into this service's own `CoordinationEngine`, so an IPC-driven change (this engine) fires the same event a real MCP `tools/call` (the SEPARATE engine instance bootstrap.ts builds for the coordination MCP server) does. */
+  emitCoordination?: (event: CoordinationEvent) => void;
   /** MCP servers, read and written through each runtime's own CLI. */
   mcp?: McpCatalog;
   /** Opens a native save dialog; returns the chosen path or null on cancel. */
@@ -272,6 +281,7 @@ export class LatteService implements BackendApi {
       hub: deps.hub,
       clock: this.clock,
       memberContext: (workId) => this.memberContext(workId),
+      emit: deps.emitCoordination,
     });
     this.branding = new BrandingService({
       repo: deps.repo,
@@ -288,6 +298,18 @@ export class LatteService implements BackendApi {
     });
     this.brandContextPort = deps.brandContext ?? brandContextAdapter(this.branding);
     this.skillResolverPort = deps.skillResolver ?? skillResolverAdapter(this.learningService);
+  }
+
+  /**
+   * sdd/autonomous-coordination, task 6.33: attached AFTER construction, the
+   * same reasoning as `AgentHub.attachCoordinationInjection` -- the planner
+   * needs `this.memberContext` (via the coordination MCP server's own
+   * `CoordinationEngine` instance), which needs this service to already
+   * exist. Bootstrap.ts builds the planner once everything else is up and
+   * hands it to both the hub and this service.
+   */
+  attachCoordinationInjection(planner: CoordinationInjectionPlanner): void {
+    this.deps.injection = planner;
   }
 
   // App ---------------------------------------------------------------------
@@ -1619,6 +1641,78 @@ export class LatteService implements BackendApi {
     return { id: task.id, runId: task.runId, roleId: task.roleId, spec: task.spec, status: task.status, attempts: task.attempts, resultSummary: task.resultSummary };
   }
 
+  /**
+   * Per-member coordination/memory status for this Work (task 6.33). Reuses
+   * `CoordinationInjectionPlanner.preview` -- the SAME decision function hub
+   * wiring's `open()` calls for real -- so a live member's row reports what
+   * ACTUALLY happened (its committed claim), not a second, possibly-stale
+   * guess; a paused/never-opened member gets an honest "if opened now"
+   * preview. Deliberately NOT gated by any coordination flag: memory status
+   * matters with coordination off, so with no `injection` wired at all
+   * (only a test-harness reality; production always wires one) every row
+   * simply reports "not supported here" rather than refusing to answer.
+   */
+  async coordinationRuntimeSupport(workId: string): Promise<CoordinationMemberSupport[]> {
+    const id = requireId(workId, 'workId');
+    const work = this.deps.repo.getWork(id);
+    const members = this.deps.hub.listTeam(id);
+    if (!this.deps.injection) {
+      return members.map((m) => ({ memberId: m.id, canPropose: false, memoryInjected: false, reason: null }));
+    }
+    const out: CoordinationMemberSupport[] = [];
+    for (const m of members) {
+      const status = await this.deps.injection.preview({ memberId: m.id, workId: id, brandId: work.brandId, runtime: m.runtime, accountId: m.accountId });
+      out.push({ memberId: m.id, canPropose: status.canPropose, memoryInjected: status.memoryInjected, reason: status.reason });
+    }
+    return out;
+  }
+
+  /** The global "Equipos activos" strip (task 6.34) -- the only app-scoped read in this change. */
+  async listActiveCoordinationRuns(): Promise<CoordinationActiveRunSummary[]> {
+    const runs = [...this.deps.repo.listActiveCoordinationRuns()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return runs.map((run) => {
+      const work = this.deps.repo.getWork(run.workId);
+      const brand = this.deps.repo.getBrand(work.brandId);
+      const budget = this.coordination.budgetBlockForEnvelope(run.id);
+      return {
+        runId: run.id,
+        workId: run.workId,
+        workTitle: work.title,
+        brandId: brand.id,
+        brandName: brand.name,
+        status: run.status,
+        dispatchesUsed: budget.dispatchesUsed,
+        maxDispatches: budget.maxDispatches,
+        pendingGates: this.coordination.listGates(run.id).length,
+      };
+    });
+  }
+
+  /**
+   * The OPTIONAL advanced app-wide dispatch cap (task 6.35): same
+   * `decisionAuthority`/`requireCoordinationBudget` precedent as every other
+   * coordination budget, meta key `coordination_budget_global`. Unset ⇒
+   * `null` and no extra cap applied -- never an invented limit. Unlike
+   * `setCoordinationBudget`, there is no per-run snapshot to also update:
+   * this cap is read fresh at dispatch time, app-wide, never copied into a
+   * `coordination_run` row.
+   */
+  async getCoordinationGlobalBudget(): Promise<CoordinationBudget | null> {
+    const raw = this.deps.repo.getMeta('coordination_budget_global');
+    if (!raw) return null;
+    try {
+      return requireCoordinationBudget(JSON.parse(raw));
+    } catch {
+      return null;
+    }
+  }
+
+  async setCoordinationGlobalBudget(budget: CoordinationBudget): Promise<CoordinationBudget> {
+    const valid = requireCoordinationBudget(budget);
+    this.deps.repo.setMeta('coordination_budget_global', JSON.stringify(valid));
+    return valid;
+  }
+
   // Agents ------------------------------------------------------------------
 
   async runtimeStatus(): Promise<RuntimeStatus[]> {
@@ -1799,7 +1893,16 @@ export class LatteService implements BackendApi {
    * context change underneath. This is a real guarantee about the managed
    * files, not about the work directory, which any process can still write.
    */
-  private memberContext(workId: string): MemberContext {
+  /**
+   * Public (not just internal) since sdd/autonomous-coordination task
+   * 6.28+: bootstrap.ts needs it to build the SEPARATE `CoordinationEngine`
+   * instance the coordination MCP server's `tools/call` path uses (kept
+   * apart from this service's own private `this.coordination` to avoid a
+   * hub<->engine<->service construction cycle -- both instances are
+   * behaviourally identical, since `CoordinationEngine` holds no state of
+   * its own beyond `deps`). Behaviour unchanged; visibility only.
+   */
+  memberContext(workId: string): MemberContext {
     const work = this.syncFromDisk(this.deps.repo.getWork(requireId(workId, 'workId')));
     const brand = this.deps.repo.getBrand(work.brandId);
     const refreshed = this.deps.hub.liveMemberCount(work.id) === 0;

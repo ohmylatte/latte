@@ -216,6 +216,12 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   // Task 3.19: manual settlement is desktop-only too — same reasoning as the
   // rest of this section, no run and no dispatch ever exist in the preview.
   settleCoordinationDispatch:unavailable,
+  // Phase 6 (tasks 6.33-6.37): same desktop-only reasoning — no real
+  // runtime process, no loopback MCP server, no coordination event ever
+  // fires in the browser preview.
+  coordinationRuntimeSupport:async()=>[],listActiveCoordinationRuns:async()=>[],
+  getCoordinationGlobalBudget:async()=>null,setCoordinationGlobalBudget:unavailable,
+  onCoordinationEvent:()=>()=>{},
   approveDecision:async(decisionId,edited)=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='approved';if(edited)d.text=edited;d.decidedAt=now();return d;}),
   rejectDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='rejected';d.decidedAt=now();return d;}),
   archiveDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='archived';d.decidedAt=now();return d;}),

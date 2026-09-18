@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { AgentEvent, ChatEvent, DecisionProposalInput } from '../shared/contracts';
+import type { AgentEvent, ChatEvent, CoordinationEvent, DecisionProposalInput } from '../shared/contracts';
 import { extractFencedBlocks } from './core/fenced';
 import { brandContextProtocolBlocks } from './workspace/brandContextProtocol';
 import { AccountStore } from './agents/accounts';
@@ -11,8 +11,14 @@ import { McpCatalog } from './agents/mcp';
 import { ProfileStore } from './agents/profiles';
 import { RoleCatalog } from './agents/roles';
 import { TranscriptStore } from './agents/transcripts';
+import { CoordinationEngine } from './coordination/engine';
+import { CoordinationInjectionPlanner } from './coordination/injection';
+import { CoordinationMcpServer } from './coordination/mcpServer';
+import { createHttpListen } from './coordination/mcpTransport';
+import { CoordinationTokenRegistry } from './coordination/tokens';
 import { LattePaths } from './core/paths';
 import type { TaskkillExecFile } from './core/processTree';
+import { nowIso } from './core/ids';
 import { EngramClient } from './memory/engram';
 import { ChatManager } from './opencode/chatManager';
 import type { OpenCodeEndpoint } from './opencode/server';
@@ -36,6 +42,8 @@ export interface BackendOptions {
   emit: (event: AgentEvent) => void;
   /** Structured chat events; optional so older harnesses keep working. */
   emitChat?: (event: ChatEvent) => void;
+  /** sdd/autonomous-coordination, task 6.37: a run/task/dispatch/gate change. Optional so older harnesses (and every test) keep working unchanged. */
+  emitCoordination?: (event: CoordinationEvent) => void;
   chooseExportPath: (suggestedFileName: string) => Promise<string | null>;
   /** Opens a native folder picker (desktop only). */
   chooseFolder?: (title: string) => Promise<string | null>;
@@ -75,6 +83,9 @@ export interface Backend {
   detector: RuntimeDetector;
   chat: ChatManager;
   hub: AgentHub;
+  /** Exposed alongside `hub` so tests can spy on `start()` directly instead of spawning a real (or fake-CLI) process. */
+  claude: ClaudeChatAdapter;
+  codex: CodexChatAdapter | null;
   accounts: AccountStore;
   info: { dataDir: string; dbFile: string; engine: string; engineReason: string; seeded: boolean; pack: string | null };
 }
@@ -218,10 +229,11 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     startTerminal: (input) => terminal.start(input),
   });
 
-  const engram = new EngramClient({
-    runner,
-    locate: () => locateExecutable(runner, 'engram', platform, env),
-  });
+  // sdd/autonomous-coordination: one closure, reused by the memory client
+  // AND the injection planner (task 6.29's `latte_memory`), so both agree on
+  // whether/where the `engram` binary lives without probing PATH twice.
+  const locateEngram = () => locateExecutable(runner, 'engram', platform, env);
+  const engram = new EngramClient({ runner, locate: locateEngram });
 
   const service = new LatteService({
     repo,
@@ -244,7 +256,43 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     confirmHtml: options.confirmHtml,
     openExternal: options.openExternal,
     brandContext: options.brandContext,
+    emitCoordination: options.emitCoordination,
   });
+
+  // sdd/autonomous-coordination, tasks 6.28-6.32/6.37: the coordination MCP
+  // server and the injection planner, wired in AFTER `hub`/`service` exist
+  // to break the construction cycle (`CoordinationMcpServer` needs a
+  // `CoordinationEngine`, which needs `hub`; `hub` needs the planner, which
+  // needs the server) -- see `AgentHub.attachCoordinationInjection`'s own
+  // comment for the full reasoning. This `mcpEngine` is a SEPARATE
+  // `CoordinationEngine` instance from `service`'s own internal one; both
+  // are stateless proxies over the same `repo`/`hub`, so the two are
+  // behaviourally identical -- this one exists only so the coordination MCP
+  // server's `tools/call` path needs no reference into `LatteService`.
+  const coordinationTokens = new CoordinationTokenRegistry();
+  const mcpEngine = new CoordinationEngine({
+    repo,
+    hub,
+    clock: nowIso,
+    memberContext: (workId) => service.memberContext(workId),
+    emit: options.emitCoordination,
+  });
+  const coordinationMcpServer = new CoordinationMcpServer({
+    repo,
+    engine: mcpEngine,
+    tokens: coordinationTokens,
+    listen: createHttpListen(),
+    log: options.log,
+  });
+  const injectionPlanner = new CoordinationInjectionPlanner({
+    repo,
+    tokens: coordinationTokens,
+    server: coordinationMcpServer,
+    resolveClaudeVersion: async () => (await detector.resolve('claude'))?.version ?? null,
+    resolveEngramBinary: locateEngram,
+  });
+  hub.attachCoordinationInjection(injectionPlanner);
+  service.attachCoordinationInjection(injectionPlanner);
 
   const seeded = options.seedDemo === false ? false : seedDemoIfEmpty(repo, files, pack);
 
@@ -257,6 +305,8 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     detector,
     chat,
     hub,
+    claude,
+    codex,
     accounts,
     info: { dataDir: paths.root, dbFile: paths.dbFile, engine: driver.kind, engineReason: reason, seeded, pack: pack ? `${pack.id}@${pack.version}` : null },
   };

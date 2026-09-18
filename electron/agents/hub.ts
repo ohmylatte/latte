@@ -19,6 +19,7 @@ import type {
 } from '../../shared/contracts';
 import { rmSync as fsRmSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
+import type { CoordinationInjectionPlanner } from '../coordination/injection';
 import { NotFoundError, UnavailableError, ValidationError } from '../core/errors';
 import { newId } from '../core/ids';
 import type { ChatManager } from '../opencode/chatManager';
@@ -112,9 +113,26 @@ export class AgentHub {
   private readonly openedOutcome = new Map<string, string | null>();
   private readonly modelCache = new Map<string, { at: number; value: AgentModelList }>();
   private readonly clock: () => string;
+  /**
+   * sdd/autonomous-coordination, task 6.28: attached AFTER construction, not
+   * a constructor dep. `CoordinationMcpServer` needs a `CoordinationEngine`,
+   * which needs this very hub -- breaking that cycle means the planner is
+   * built once the rest of the coordination stack exists and handed to an
+   * already-running hub via `attachCoordinationInjection`, well before any
+   * member is ever opened. `null` (the default, and every existing test's
+   * reality) means coordination injection simply does not happen: `open()`
+   * builds no `mcpServers` array at all, byte-identical to pre-Phase-6
+   * behaviour.
+   */
+  private injection: CoordinationInjectionPlanner | null = null;
 
   constructor(private readonly deps: AgentHubDeps) {
     this.clock = deps.clock ?? (() => new Date().toISOString());
+  }
+
+  /** Wires the coordination injection planner in after construction (see the field's own comment for why). */
+  attachCoordinationInjection(planner: CoordinationInjectionPlanner): void {
+    this.injection = planner;
   }
 
   // Primary agent -----------------------------------------------------------
@@ -287,7 +305,9 @@ export class AgentHub {
     try {
       return await this.open(record, input);
     } catch (error) {
-      // Nothing to resume yet: do not leave a member that never opened.
+      // Nothing to resume yet: do not leave a member that never opened --
+      // including whatever coordination token/ledger slot `open()` already claimed.
+      this.injection?.release(record.id);
       this.deps.repo.deleteMember(record.id);
       throw error;
     }
@@ -299,7 +319,15 @@ export class AgentHub {
     const live = this.liveSession(memberId);
     if (live) return live;
     if (record.done) this.deps.repo.setMemberDone(record.id, false, this.clock());
-    return this.open({ ...record, done: false }, context);
+    try {
+      return await this.open({ ...record, done: false }, context);
+    } catch (error) {
+      // Same reasoning as addMember's catch: a failed open must not leave a
+      // claimed coordination token/ledger slot behind for a member that
+      // never actually started.
+      this.injection?.release(record.id);
+      throw error;
+    }
   }
 
   /** Closes the conversation; the member stays and can be resumed. */
@@ -437,6 +465,18 @@ export class AgentHub {
     const adapter = this.adapterFor(record.runtime);
     const label = this.labelFor(record.runtime, record.model, record.accountId);
     const outcome = context.outcomeContext?.trim() || null;
+    // sdd/autonomous-coordination, tasks 6.28-6.29: assembled BEFORE the
+    // adapter ever sees this input, so `mcpServers` is either populated
+    // correctly on the first spawn or genuinely absent -- never patched in
+    // after the fact. `undefined` (no planner attached, the pre-Phase-6
+    // default) means this call is byte-identical to before this slice.
+    const mcpServers = this.injection ? (await this.injection.assign({
+      memberId: record.id,
+      workId: context.workId,
+      brandId: context.brandId,
+      runtime: record.runtime,
+      accountId: record.accountId,
+    })).servers : undefined;
     const adapterInput: AdapterStartInput = {
       workId: context.workId,
       chatId: record.id,
@@ -453,6 +493,7 @@ export class AgentHub {
       label,
       extraEnv: context.extraEnv,
       trustedFolder: context.trustedFolder === true,
+      mcpServers,
     };
     const result = await adapter.start(adapterInput);
     if (result.runtimeSessionId && result.runtimeSessionId !== record.sessionId) this.deps.repo.setMemberSession(record.id, result.runtimeSessionId, this.clock());
@@ -555,6 +596,10 @@ export class AgentHub {
   stop(chatId: string): void {
     this.sessions.delete(chatId);
     this.openedOutcome.delete(chatId);
+    // Task 6.28: the single chokepoint `pauseMember`/`finishMember`/
+    // `removeMember` (which calls this first) and the model/tier restart
+    // path all funnel through -- one release site covers all of them.
+    this.injection?.release(chatId);
     for (const adapter of this.adapters()) {
       if (adapter.owns(chatId)) {
         adapter.stop(chatId);
@@ -566,6 +611,7 @@ export class AgentHub {
   shutdown(): void {
     this.sessions.clear();
     this.openedOutcome.clear();
+    this.injection?.releaseAll();
     for (const adapter of this.adapters()) adapter.shutdown();
   }
 

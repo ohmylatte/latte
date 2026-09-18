@@ -121,6 +121,14 @@ export interface CoordinationEngineDeps {
   hub: AgentHub;
   clock: () => string;
   memberContext: (workId: string) => MemberContext;
+  /**
+   * Task 6.37: called after a run/task/dispatch/gate change actually lands,
+   * so the renderer's `latte:coordination-event` subscription can route an
+   * event from a Brand the person is not currently looking at. Optional --
+   * every pre-6.37 test constructs an engine without it, and this stays a
+   * pure no-op for them.
+   */
+  emit?: (event: { brandId: string; workId: string; runId: string | null }) => void;
 }
 
 function isDagStatus(status: CoordinationTaskRecord['status']): DagTask['status'] {
@@ -129,6 +137,14 @@ function isDagStatus(status: CoordinationTaskRecord['status']): DagTask['status'
 
 export class CoordinationEngine {
   constructor(private readonly deps: CoordinationEngineDeps) {}
+
+  /** Task 6.37's own trigger. `brandId` comes from `memberContext` -- the same source every other Work->Brand lookup in this file uses. Never throws: a broken `emit` dep must not break coordination itself. */
+  private touch(workId: string, runId: string | null): void {
+    if (!this.deps.emit) return;
+    try {
+      this.deps.emit({ brandId: this.deps.memberContext(workId).brandId, workId, runId });
+    } catch { /* an event listener's own failure is never this engine's problem */ }
+  }
 
   // -- Run lifecycle (IPC-facing) --------------------------------------------
 
@@ -140,7 +156,7 @@ export class CoordinationEngine {
     const budget = this.readBudget(workId);
     assertBudgetConfigured(budget);
     const now = this.deps.clock();
-    return this.deps.repo.insertCoordinationRun({
+    const run = this.deps.repo.insertCoordinationRun({
       id: newId('crn'),
       workId,
       status: 'running',
@@ -152,6 +168,8 @@ export class CoordinationEngine {
       createdAt: now,
       updatedAt: now,
     });
+    this.touch(workId, run.id);
+    return run;
   }
 
   getRun(runId: string): CoordinationRunRecord {
@@ -182,7 +200,9 @@ export class CoordinationEngine {
   pauseRun(runId: string): CoordinationRunRecord {
     const run = this.deps.repo.getCoordinationRun(runId);
     if (run.status !== 'running') return run;
-    return this.deps.repo.updateCoordinationRunStatus(runId, 'suspended', this.deps.clock(), 'paused_by_human');
+    const updated = this.deps.repo.updateCoordinationRunStatus(runId, 'suspended', this.deps.clock(), 'paused_by_human');
+    this.touch(updated.workId, updated.id);
+    return updated;
   }
 
   /**
@@ -194,11 +214,15 @@ export class CoordinationEngine {
   resumeRun(runId: string): CoordinationRunRecord {
     const run = this.deps.repo.getCoordinationRun(runId);
     if (run.status !== 'suspended') return run;
-    return this.deps.repo.updateCoordinationRunStatus(runId, 'running', this.deps.clock(), null);
+    const updated = this.deps.repo.updateCoordinationRunStatus(runId, 'running', this.deps.clock(), null);
+    this.touch(updated.workId, updated.id);
+    return updated;
   }
 
   cancelRun(runId: string): CoordinationRunRecord {
-    return this.deps.repo.updateCoordinationRunStatus(runId, 'cancelled', this.deps.clock(), null);
+    const updated = this.deps.repo.updateCoordinationRunStatus(runId, 'cancelled', this.deps.clock(), null);
+    this.touch(updated.workId, updated.id);
+    return updated;
   }
 
   /** The gate kinds a human resolves with approve/reject: proposal, plan, dispatch, budget-exhausted. Open `latte_ask`s are a separate surface (`answerAsk`). */
@@ -241,8 +265,16 @@ export class CoordinationEngine {
     return gates;
   }
 
-  /** Approves or rejects a proposal/plan/dispatch/budget gate. The dispatch branch re-enters `startDispatch` — the same choke point `latte_dispatch` uses. */
+  /** Approves or rejects a proposal/plan/dispatch/budget gate. The dispatch branch re-enters `startDispatch` — the same choke point `latte_dispatch` uses. Task 6.37: fires the coordination event once, after the fact, for every branch. */
   async resolveGate(gateId: string, decision: 'approve' | 'reject', editedPrompt?: string | null): Promise<CoordinationGate | CoordinationDispatchRecord | CoordinationRunRecord> {
+    const result = await this.resolveGateInternal(gateId, decision, editedPrompt);
+    const workId = 'workId' in result ? result.workId : this.deps.repo.getCoordinationRun(result.runId).workId;
+    const runId = 'runId' in result ? result.runId : result.id;
+    this.touch(workId, runId);
+    return result;
+  }
+
+  private async resolveGateInternal(gateId: string, decision: 'approve' | 'reject', editedPrompt?: string | null): Promise<CoordinationGate | CoordinationDispatchRecord | CoordinationRunRecord> {
     if (gateId.startsWith('proposal:')) {
       return this.resolveProposalGate(gateId.slice('proposal:'.length), decision, editedPrompt ?? undefined);
     }
@@ -364,6 +396,7 @@ export class CoordinationEngine {
     if (run.status === 'suspended' && run.suspendReason === 'all_blocked_on_ask') {
       this.deps.repo.updateCoordinationRunStatus(run.id, 'running', this.deps.clock(), null);
     }
+    this.touch(run.workId, run.id);
     return answered;
   }
 
@@ -383,6 +416,7 @@ export class CoordinationEngine {
     if (!run) return { bridged: false };
     const task = this.createTaskRow(run.id, roleId, spec, []);
     const outcome = await this.startDispatch({ grant: { workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id });
+    this.touch(workId, run.id);
     return { bridged: true, task: this.deps.repo.getCoordinationTask(task.id), dispatch: { status: outcome.status, dispatchId: outcome.dispatchId } };
   }
 
@@ -404,7 +438,7 @@ export class CoordinationEngine {
     if (existing) throw new LatteError('RUN_ALREADY_ACTIVE', `This Work already has an active coordination run (${existing.id}, ${existing.status})`);
     this.assertRunCeiling();
     const now = this.deps.clock();
-    return this.deps.repo.insertCoordinationRun({
+    const run = this.deps.repo.insertCoordinationRun({
       id: newId('crn'),
       workId: grant.workId,
       status: 'planning',
@@ -416,6 +450,8 @@ export class CoordinationEngine {
       createdAt: now,
       updatedAt: now,
     });
+    this.touch(grant.workId, run.id);
+    return run;
   }
 
   // -- Tool-facing engine methods (wrapped by tools.ts) ------------------------
@@ -433,11 +469,14 @@ export class CoordinationEngine {
     }
     const now = this.deps.clock();
     this.deps.repo.setCoordinationPlan(run.id, JSON.stringify(created.map((t) => t.id)), now);
+    this.touch(run.workId, run.id);
     return created;
   }
 
   taskCreate(runId: string, input: { roleId: string; spec: string; dependsOn?: string[] }): CoordinationTaskRecord {
-    return this.createTaskRow(runId, input.roleId, input.spec, input.dependsOn ?? []);
+    const task = this.createTaskRow(runId, input.roleId, input.spec, input.dependsOn ?? []);
+    this.touch(this.deps.repo.getCoordinationRun(runId).workId, runId);
+    return task;
   }
 
   teamList(workId: string) {
@@ -491,6 +530,7 @@ export class CoordinationEngine {
         createdAt: now, startedAt: null, settledAt: null,
       });
       this.deps.repo.updateCoordinationTask(task.id, { status: 'dispatched', assignedMemberId: session.id }, now);
+      this.touch(run.workId, run.id);
       return { status: 'pending_approval', taskId: task.id, dispatchId: dispatch.id };
     }
 
@@ -537,6 +577,7 @@ export class CoordinationEngine {
     }
     this.deps.repo.updateCoordinationTask(task.id, { status: 'dispatched', assignedMemberId: session.id }, now);
     await this.deps.hub.send(session.id, prompt);
+    this.touch(run.workId, run.id);
     return { status: 'dispatched', taskId: task.id, dispatchId: dispatch.id };
   }
 
@@ -563,9 +604,11 @@ export class CoordinationEngine {
     if (outcome === 'succeeded') {
       const updated = this.deps.repo.updateCoordinationTask(taskId, { status: 'done', resultSummary: summary, resultFilesJson: filesJson }, now);
       this.recomputeReadiness(task.runId, now);
+      this.touch(grant.workId, task.runId);
       return updated;
     }
     const attempts = task.attempts + 1;
+    this.touch(grant.workId, task.runId);
     if (attempts >= MAX_ATTEMPTS_PER_TASK) {
       return this.deps.repo.updateCoordinationTask(taskId, { status: 'blocked', attempts }, now);
     }
@@ -615,6 +658,7 @@ export class CoordinationEngine {
       deadlineAt: deadline, answeredAt: null, createdAt: now,
     });
     this.maybeSelfSuspendOnAsks(grant.runId, now);
+    this.touch(grant.workId, grant.runId);
     return ask;
   }
 

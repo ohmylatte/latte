@@ -83,6 +83,7 @@ const METHODS = [
   'listBrandContextProposals','saveBrandContext','clearBrandContext','approveBrandContextProposal','rejectBrandContextProposal','requestBrandContextDraft','brandContextStatus','listBrandContextRevisions','restoreBrandContextRevision',
   'getCoordinationAuthority','setCoordinationAuthority','getCoordinationBudget','setCoordinationBudget','getCoordinatorGrant','setCoordinatorGrant',
   'startCoordinationRun','pauseCoordinationRun','resumeCoordinationRun','cancelCoordinationRun','getCoordinationRun','listCoordinationGates','resolveCoordinationGate','listCoordinationLog','answerCoordinationAsk','acceptHandoffAsTask','settleCoordinationDispatch',
+  'coordinationRuntimeSupport','listActiveCoordinationRuns','getCoordinationGlobalBudget','setCoordinationGlobalBudget',
   'runtimeStatus',
   'startAgent',
   'writeAgent',
@@ -134,6 +135,7 @@ const METHODS = [
 
 const AGENT_EVENT_CHANNEL = 'latte:agent-event';
 const CHAT_EVENT_CHANNEL = 'latte:chat-event';
+const COORDINATION_EVENT_CHANNEL = 'latte:coordination-event';
 const UNSAVED_CHANNEL = 'latte:unsaved';
 const WINDOW_CHANNEL = 'latte:window';
 const WINDOW_STATE_CHANNEL = 'latte:window-state';
@@ -190,6 +192,17 @@ api.onChatEvent = (callback) => {
   };
   ipcRenderer.on(CHAT_EVENT_CHANNEL, listener);
   return () => ipcRenderer.removeListener(CHAT_EVENT_CHANNEL, listener);
+};
+
+api.onCoordinationEvent = (callback) => {
+  if (typeof callback !== 'function') throw new TypeError('onCoordinationEvent expects a function');
+  const listener = (_event, payload) => {
+    if (payload && typeof payload.workId === 'string' && typeof payload.brandId === 'string') {
+      callback({ brandId: payload.brandId, workId: payload.workId, runId: typeof payload.runId === 'string' ? payload.runId : null });
+    }
+  };
+  ipcRenderer.on(COORDINATION_EVENT_CHANNEL, listener);
+  return () => ipcRenderer.removeListener(COORDINATION_EVENT_CHANNEL, listener);
 };
 
 api.checkForUpdate = () => ipcRenderer.invoke(UPDATE_CHECK_CHANNEL).then(unwrap);
