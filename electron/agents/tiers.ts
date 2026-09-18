@@ -59,6 +59,27 @@ function parseVersion(value: string | null): [number, number, number] | null {
   return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
+/**
+ * `--mcp-config`/`--strict-mcp-config` exist earlier, but 2.1.246 is the
+ * first release documented to skip the approval prompt for a project-scoped
+ * server outside `--strict-mcp-config` (code.claude.com/docs/en/mcp). Below
+ * it, a headless `-p` process has no human to answer that prompt and would
+ * hang forever — worse than simply not offering coordination that session.
+ * Unlike `claudeSupportsEffort`, an unreadable version is treated as NOT
+ * supported: a flag that only fails fast is safe to guess on, a flag that
+ * can hang a child process forever is not.
+ */
+const MCP_INJECTION_SINCE = [2, 1, 246] as const;
+
+export function claudeSupportsMcpInjection(cliVersion: string | null): boolean {
+  const parsed = parseVersion(cliVersion);
+  if (!parsed) return false;
+  for (let i = 0; i < 3; i += 1) {
+    if (parsed[i] !== MCP_INJECTION_SINCE[i]) return parsed[i] > MCP_INJECTION_SINCE[i];
+  }
+  return true;
+}
+
 export function claudeArgsForTier(tier: EffortTier, explicitModel: string | null, cliVersion: string | null): string[] {
   const mapping = CLAUDE[asEffortTier(tier)];
   const chosen = explicitModel && explicitModel.trim() ? explicitModel.trim() : mapping.model;

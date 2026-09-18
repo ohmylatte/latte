@@ -33,6 +33,26 @@ export interface AdapterStartInput {
   trustedFolder?: boolean;
   /** Extra environment for the agent process (ENGRAM_PROJECT etc.). */
   extraEnv?: Record<string, string>;
+  /**
+   * Latte's own coordination MCP server(s), scoped to this chat alone. Only
+   * populated for a member reachable from an active coordination run; the
+   * adapter decides how (or whether) its runtime can actually receive them.
+   */
+  mcpServers?: AdapterMcpServer[];
+}
+
+/**
+ * One coordination MCP server to inject into a single chat's runtime
+ * process. Namespaced so it cannot collide with a user's own server; the
+ * token is opaque to the adapter and MUST be kept off argv (a spawned
+ * process's command line is visible to every other process on the machine).
+ */
+export interface AdapterMcpServer {
+  name: 'latte_coordination';
+  /** Streamable HTTP, always 127.0.0.1 plus a random port. */
+  url: string;
+  /** Opaque bearer, scoped to this member's grant. */
+  token: string;
 }
 
 export interface AdapterStartResult {
@@ -65,6 +85,8 @@ export function sessionFrom(input: AdapterStartInput, provider: ChatRuntime, mod
 
 export interface RuntimeAdapter {
   readonly runtime: ChatRuntime;
+  /** Whether this runtime can receive a coordination MCP server scoped to one chat. */
+  readonly mcpInjection: 'per-member' | 'none';
   start(input: AdapterStartInput): Promise<AdapterStartResult>;
   owns(chatId: string): boolean;
   /** True while the runtime is answering on this chat. */

@@ -10,9 +10,9 @@ import { killProcessTree, spawnInOwnProcessGroup } from '../../core/processTree'
 import { addUsage, tokenCount } from '../../core/usage';
 import { spawnSpecFor } from '../../runtime/commandRunner';
 import { scrubEnv } from '../../runtime/terminalManager';
-import { claudeArgsForTier } from '../tiers';
+import { claudeArgsForTier, claudeSupportsMcpInjection } from '../tiers';
 import type { TranscriptStore } from '../transcripts';
-import { sessionFrom, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../types';
+import { sessionFrom, type AdapterMcpServer, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../types';
 
 export interface ClaudeAdapterDeps {
   resolveExecutable: () => Promise<{ executable: string; version: string | null } | null>;
@@ -72,6 +72,8 @@ interface LiveChat {
    */
   epoch: string;
   mcpServers: Array<{ name: string; status: string }>;
+  /** The coordination mcp-config file written for this chat, if any. Deleted when the chat ends. */
+  mcpConfigFile: string | null;
   /** What this process has consumed since it started. The lifetime total is the hub's job. */
   usage: ChatUsage;
   /**
@@ -114,6 +116,12 @@ export const FOLDER_TOOLS = ['Read(./**)', 'Write(./**)', 'Edit(./**)'];
  */
 export class ClaudeChatAdapter implements RuntimeAdapter {
   readonly runtime = 'claude' as const;
+  // Task 4.1's baseline: every adapter defaults to 'none'. The translation
+  // below (tasks 4.2-4.4) is real and tested, but flipping this to
+  // 'per-member' is left for whoever wires coordinationRuntimeSupport
+  // (Phase 6) — nothing reads this field yet, so there is nothing to claim
+  // working end-to-end before a coordinator can actually reach a member.
+  readonly mcpInjection = 'none' as const;
   private readonly chats = new Map<string, LiveChat>();
   private readonly env: NodeJS.ProcessEnv;
   private readonly platform: NodeJS.Platform;
@@ -162,6 +170,26 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       if (promptFile) args.push('--append-system-prompt-file', promptFile);
       else args.push('--append-system-prompt', instructions);
     }
+    // Coordination MCP injection (sdd/autonomous-coordination, Phase 4). Only
+    // `--mcp-config` is pushed, NEVER `--strict-mcp-config`: strict mode would
+    // also strip the human's own MCP servers from this member for the whole
+    // session, a capability removal AGENTS.md forbids. Isolation of Latte's
+    // own tools comes from the per-member bearer token inside the file, not
+    // from strict mode (design decision, sdd/autonomous-coordination/design).
+    // The token itself never touches argv: it is off in the config file, and
+    // the version floor guards against a headless process hanging forever on
+    // an approval prompt no human can answer.
+    let mcpConfigFile: string | null = null;
+    if (input.mcpServers && input.mcpServers.length > 0) {
+      if (!claudeSupportsMcpInjection(runtime.version)) {
+        this.deps.log?.(`[claude ${chatId}] CLI ${runtime.version ?? 'unknown'} predates 2.1.246, coordination MCP not injected this session`);
+      } else if (!this.deps.promptDir) {
+        this.deps.log?.(`[claude ${chatId}] no promptDir configured, coordination MCP not injected this session`);
+      } else {
+        mcpConfigFile = this.writeMcpConfigFile(chatId, input.mcpServers);
+      }
+    }
+    if (mcpConfigFile) args.push('--mcp-config', mcpConfigFile);
     const spec = spawnSpecFor(runtime.executable, args, this.platform, this.env);
     const env = { ...scrubEnv(this.env), ...this.deps.accountEnv(input.accountId ?? null), ...(input.extraEnv ?? {}) };
 
@@ -191,6 +219,7 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       restoredIds: new Set(),
       epoch: randomUUID().slice(0, 8),
       mcpServers: [],
+      mcpConfigFile,
       usage: EMPTY_USAGE,
       costSoFar: null,
     };
@@ -322,6 +351,32 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
     }
   }
 
+  /**
+   * The coordination MCP server(s) for this chat alone, in the shape Claude
+   * Code's `--mcp-config` expects. Written next to the prompt file so it dies
+   * with the session; mode 0600 because the file holds a live bearer token
+   * and, unlike the prompt text, is not meant for anything but this process
+   * to read. No inline-JSON fallback: the token would then sit in argv,
+   * exactly what this whole design keeps off the command line.
+   */
+  private writeMcpConfigFile(chatId: string, servers: AdapterMcpServer[]): string | null {
+    try {
+      const dir = this.deps.promptDir as string;
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `${chatId}.mcp.json`);
+      const mcpServers: Record<string, unknown> = {};
+      for (const server of servers) {
+        mcpServers[server.name] = { type: 'http', url: server.url, headers: { Authorization: `Bearer ${server.token}` } };
+      }
+      writeFileAtomic(file, JSON.stringify({ mcpServers }));
+      try { fs.chmodSync(file, 0o600); } catch { /* best-effort; some filesystems ignore it */ }
+      return file;
+    } catch (error) {
+      this.deps.log?.(`[claude ${chatId}] mcp config file failed, coordination MCP not injected this session: ${describe(error)}`);
+      return null;
+    }
+  }
+
   private write(live: LiveChat, payload: unknown): void {
     try {
       live.child.stdin?.write(`${JSON.stringify(payload)}\n`);
@@ -337,6 +392,8 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
     this.chats.delete(live.chatId);
     try { live.child.stdin?.end(); } catch { /* ignore */ }
     killProcessTree(live.child, this.platform);
+    // The bearer token lives only in this file. It must not outlive the chat.
+    if (live.mcpConfigFile) { try { fs.rmSync(live.mcpConfigFile, { force: true }); } catch { /* ignore */ } }
     this.deps.emit({ chatId: live.chatId, type: 'closed', reason });
   }
 

@@ -73,6 +73,10 @@ const TOOL_TEXT_LIMIT = 12_000;
  */
 export class CodexChatAdapter implements RuntimeAdapter {
   readonly runtime = 'codex' as const;
+  // Per-thread MCP config is broken in the installed app-server (thread/start
+  // override hangs, see spike sdd/autonomous-coordination/spike-mcp-injection);
+  // per-process re-keying is Phase 5, not yet implemented.
+  readonly mcpInjection = 'none' as const;
   private readonly servers = new Map<string, CodexAppServer>();
   private readonly chats = new Map<string, LiveChat>();
   private readonly byThread = new Map<string, string>();
