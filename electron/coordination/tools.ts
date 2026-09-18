@@ -8,7 +8,7 @@
  */
 import type { CoordinationAuthorityMode } from '../../shared/contracts';
 import { LatteError } from '../core/errors';
-import type { CoordinationBudgetBlock, CoordinationEngine, CoordinationGrant } from './engine';
+import type { CoordinationBudgetBlock, CoordinationEngine, CoordinationGrant, CoordinationProposal } from './engine';
 
 export interface ToolEnvelope<T> {
   ok: boolean;
@@ -18,11 +18,26 @@ export interface ToolEnvelope<T> {
   error?: { code: string; message: string };
 }
 
-async function wrap<T>(engine: CoordinationEngine, grant: CoordinationGrant, requireCoordinator: boolean, fn: () => Promise<T> | T): Promise<ToolEnvelope<T>> {
+/**
+ * Names the door, not just the lock (task 6.4): a rejection that only says
+ * "no" leaves a worker stuck. Proposing IS how a worker asks — the human
+ * approves it once and gets the grant, the budget and the authority
+ * together (design-v2-conversational, D1).
+ */
+const FORBIDDEN_MESSAGE =
+  "You don't hold the coordinator grant for this Work. To coordinate, propose a plan with latte_request_coordination — the human approves it once and you get the grant, the budget and the authority together.";
+
+async function wrap<T>(engine: CoordinationEngine, grant: CoordinationGrant, requireCoordinator: boolean, fn: () => Promise<T> | T, requiresRun = false): Promise<ToolEnvelope<T>> {
   const authority = engine.readAuthorityForEnvelope(grant.workId);
   const budget = engine.budgetBlockForEnvelope(grant.runId);
   if (requireCoordinator && grant.role !== 'coordinator') {
-    return { ok: false, authority, budget, data: null, error: { code: 'FORBIDDEN', message: 'This tool requires the coordinator grant' } };
+    return { ok: false, authority, budget, data: null, error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE } };
+  }
+  // `latte_report`/`check`/`ask` need a live run to act against; a grant
+  // lazily resolved to `runId:null` (task 6.3) fails cleanly here instead of
+  // reaching the engine at all — nothing is mutated because nothing runs.
+  if (requiresRun && grant.runId == null) {
+    return { ok: false, authority, budget, data: null, error: { code: 'NO_ACTIVE_RUN', message: 'This Work has no active coordination run yet.' } };
   }
   try {
     const data = await fn();
@@ -36,14 +51,19 @@ async function wrap<T>(engine: CoordinationEngine, grant: CoordinationGrant, req
 
 export function createCoordinationTools(engine: CoordinationEngine) {
   return {
+    // `latte_plan_submit`/`task_create` also need a live run (the same
+    // `runId == null` guard `latte_report`/`check`/`ask` got in task 6.3):
+    // a coordinator grant can be lazily resolved with no active run (the
+    // run just ended, or the grant was set without ever starting one), and
+    // there is nothing to submit a plan or create a task INTO.
     latte_plan_submit: (grant: CoordinationGrant, args: { tasks: Array<{ roleId: string; spec: string; dependsOn?: number[] }> }) =>
-      wrap(engine, grant, true, () => engine.planSubmit(grant.runId, args.tasks).map((t) => ({ taskId: t.id, seq: t.seq }))),
+      wrap(engine, grant, true, () => engine.planSubmit(grant.runId as string, args.tasks).map((t) => ({ taskId: t.id, seq: t.seq })), true),
 
     latte_task_create: (grant: CoordinationGrant, args: { roleId: string; spec: string; dependsOn?: string[] }) =>
       wrap(engine, grant, true, () => {
-        const task = engine.taskCreate(grant.runId, args);
+        const task = engine.taskCreate(grant.runId as string, args);
         return { taskId: task.id, status: task.status };
-      }),
+      }, true),
 
     latte_dispatch: (grant: CoordinationGrant, args: { taskId: string; approvedGateId?: string }) =>
       // Caller-supplied bypass fields (e.g. a claimed `approved`/`status`) are
@@ -54,12 +74,20 @@ export function createCoordinationTools(engine: CoordinationEngine) {
       wrap(engine, grant, true, () => engine.teamList(grant.workId)),
 
     latte_report: (grant: CoordinationGrant, args: { taskId: string; outcome: 'succeeded' | 'failed'; summary: string; files?: string | null }) =>
-      wrap(engine, grant, false, () => engine.report(grant, args.taskId, args.outcome, args.summary, args.files ?? null)),
+      wrap(engine, grant, false, () => engine.report(grant, args.taskId, args.outcome, args.summary, args.files ?? null), true),
 
     latte_check: (grant: CoordinationGrant, args: { wait?: number }) =>
-      wrap(engine, grant, false, () => engine.check(grant.memberId, args.wait)),
+      wrap(engine, grant, false, () => engine.check(grant.memberId, args.wait), true),
 
     latte_ask: (grant: CoordinationGrant, args: { question: string; ttlMinutes?: number; taskId?: string }) =>
-      wrap(engine, grant, false, () => engine.ask(grant, args.question, args.ttlMinutes, args.taskId)),
+      wrap(engine, grant, false, () => engine.ask(grant, args.question, args.ttlMinutes, args.taskId), true),
+
+    // The sentence becomes a gate (task 6.5): callable by ANY member, not
+    // just a coordinator (`requireCoordinator:false`) — this is precisely
+    // the tool the FORBIDDEN message above points a rejected worker toward.
+    // Needs no active run (`requiresRun` left at its default `false`): the
+    // whole point is that no run exists yet.
+    latte_request_coordination: (grant: CoordinationGrant, args: CoordinationProposal) =>
+      wrap(engine, grant, false, () => engine.requestCoordination(grant, args)),
   };
 }

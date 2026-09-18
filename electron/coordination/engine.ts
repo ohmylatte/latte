@@ -27,15 +27,24 @@ import type {
   LatteRepository,
 } from '../storage/repository';
 import { canAddTask, computeReadyTasks, computeTaskDepth, type DagEdge, type DagTask } from './dag';
-import { assertBudgetConfigured, BudgetUnsetError, reserveDispatch, type BudgetUsage } from './budget';
+import { assertBudgetConfigured, BudgetUnsetError, requireCoordinationBudget, reserveDispatch, type BudgetUsage } from './budget';
 import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, MAX_ATTEMPTS_PER_TASK, MAX_CHECK_WAIT_SECONDS } from './limits';
 
 export type CoordinationRole = 'coordinator' | 'worker';
 
-/** Stands in for a minted MCP token's resolved identity (Phase 6's `tokens.ts`). Phase 3 passes this directly — "a fake token" per the design's own testing strategy. */
+/**
+ * Stands in for a minted MCP token's resolved identity. Phase 3 passed this
+ * directly — "a fake token" per the design's own testing strategy. Phase 6
+ * (`tokens.ts`) mints a token bound only to `{workId, memberId}`; THIS grant
+ * — `runId` and `role` included — is resolved fresh per request by
+ * `resolveGrant`, below, never frozen at mint (design-v2-conversational
+ * overrules design v1). `runId` is `null` whenever the Work has no active
+ * run: a token minted before any run exists is valid, and it is exactly how
+ * `latte_request_coordination` (task 6.5) gets called at all.
+ */
 export interface CoordinationGrant {
   workId: string;
-  runId: string;
+  runId: string | null;
   memberId: string;
   role: CoordinationRole;
 }
@@ -47,7 +56,7 @@ export interface CoordinationBudgetBlock {
   maxConcurrent: number | null;
 }
 
-export type CoordinationGateKind = 'plan' | 'dispatch' | 'budget';
+export type CoordinationGateKind = 'plan' | 'dispatch' | 'budget' | 'proposal';
 
 export interface CoordinationGate {
   id: string;
@@ -56,7 +65,45 @@ export interface CoordinationGate {
   taskId?: string;
   dispatchId?: string;
   prompt?: string;
+  /** Only present on a `proposal` gate: the whole `CoordinationProposal`, JSON-encoded. */
+  proposalJson?: string | null;
+  /** Only present on a `proposal` gate: the aggregate across every OTHER active run, shown never hidden. */
+  aggregate?: CoordinationGateAggregate;
   createdAt: string;
+}
+
+/**
+ * The whole of a `latte_request_coordination` call — the sentence becomes a
+ * gate (design-v2-conversational D1). Stored verbatim as `coordination_run
+ * .plan_json` while `status:'planning'`; the human either approves it as-is
+ * or edits it (`decision.editAdd`) before approving, per `resolveGate`'s
+ * `'proposal'` branch.
+ */
+export interface CoordinationProposalTask {
+  roleId: string;
+  spec: string;
+  dependsOn?: number[];
+}
+
+export interface CoordinationProposalHire {
+  roleId: string;
+  why: string;
+}
+
+export interface CoordinationProposal {
+  plan: CoordinationProposalTask[];
+  /** `null` only ever means "unlimited", and only alongside `unlimitedConfirmedAt` — "no implicit unlimited" applies to a proposal exactly as it does to a Work's own budget default. */
+  estimatedDispatches: number | null;
+  unlimitedConfirmedAt?: string | null;
+  membersToHire?: CoordinationProposalHire[];
+  rationale: string;
+}
+
+export interface CoordinationGateAggregate {
+  otherActiveRuns: number;
+  /** `null` when another live run is itself explicitly unlimited — never a fabricated number. */
+  otherCommittedDispatches: number | null;
+  totalIfApproved: number | null;
 }
 
 export interface CoordinationLogEntry {
@@ -110,6 +157,22 @@ export class CoordinationEngine {
     return this.deps.repo.getCoordinationRun(runId);
   }
 
+  /**
+   * Resolves a member's grant PER REQUEST — the lazy-resolution rule
+   * (task 6.2, overruling design v1's "freeze at mint"): `runId` is whatever
+   * run is active for the Work right now (`null` if none), `role` is
+   * whichever member currently holds the `coordination_coordinator:<W>` meta
+   * key. The same `{workId, memberId}` pair, never re-minted and with no
+   * process restart, moves from `runId:null`/`'worker'` to a live run and to
+   * `'coordinator'` as the Work's state changes underneath it — and flips
+   * back the moment the grant moves elsewhere, with no revocation step.
+   */
+  resolveGrant(workId: string, memberId: string): CoordinationGrant {
+    const run = this.deps.repo.findActiveCoordinationRun(workId);
+    const coordinatorMemberId = this.deps.repo.getMeta('coordination_coordinator:' + workId);
+    return { workId, memberId, runId: run?.id ?? null, role: coordinatorMemberId === memberId ? 'coordinator' : 'worker' };
+  }
+
   listTasks(runId: string): CoordinationTaskRecord[] {
     return this.deps.repo.listCoordinationTasks(runId);
   }
@@ -137,14 +200,33 @@ export class CoordinationEngine {
     return this.deps.repo.updateCoordinationRunStatus(runId, 'cancelled', this.deps.clock(), null);
   }
 
-  /** The three gate kinds a human resolves with approve/reject: plan, dispatch, budget-exhausted. Open `latte_ask`s are a separate surface (`answerAsk`). */
+  /** The gate kinds a human resolves with approve/reject: proposal, plan, dispatch, budget-exhausted. Open `latte_ask`s are a separate surface (`answerAsk`). */
   listGates(runId: string): CoordinationGate[] {
     const run = this.deps.repo.getCoordinationRun(runId);
     const gates: CoordinationGate[] = [];
+    // The proposal gate (task 6.9): a 'planning' run holds an unapproved
+    // `latte_request_coordination` proposal. Unlike the 'plan' gate below,
+    // it appears in EVERY authority mode — the proposal decides the
+    // authority, so there is no authority yet to gate it by.
+    if (run.status === 'planning') {
+      const proposal = run.planJson ? (JSON.parse(run.planJson) as CoordinationProposal) : null;
+      gates.push({
+        id: `proposal:${run.id}`,
+        kind: 'proposal',
+        runId: run.id,
+        proposalJson: run.planJson,
+        aggregate: proposal ? this.computeAggregate(run, proposal) : undefined,
+        createdAt: run.createdAt,
+      });
+    }
     // The plan snapshot only gates dispatch under 'plan' authority — under
     // 'manual' every dispatch already gates individually, and under 'auto'
     // nothing gates, so a plan gate would be a decision nobody needs to make.
-    if (this.readAuthority(run.workId) === 'plan' && run.planJson && !run.planApprovedAt) {
+    // Guarded against 'planning': that status is the PROPOSAL gate's own
+    // territory above, even though `plan_json` is set on both (a different
+    // shape — the whole proposal here, a task-id snapshot for the Phase 3
+    // 'plan' gate) — the two must never both fire for the same run.
+    if (run.status !== 'planning' && this.readAuthority(run.workId) === 'plan' && run.planJson && !run.planApprovedAt) {
       gates.push({ id: `plan:${run.id}`, kind: 'plan', runId: run.id, createdAt: run.createdAt });
     }
     for (const dispatch of this.deps.repo.listCoordinationDispatches(runId)) {
@@ -158,8 +240,11 @@ export class CoordinationEngine {
     return gates;
   }
 
-  /** Approves or rejects a plan/dispatch/budget gate. The dispatch branch re-enters `startDispatch` — the same choke point `latte_dispatch` uses. */
+  /** Approves or rejects a proposal/plan/dispatch/budget gate. The dispatch branch re-enters `startDispatch` — the same choke point `latte_dispatch` uses. */
   async resolveGate(gateId: string, decision: 'approve' | 'reject', editedPrompt?: string | null): Promise<CoordinationGate | CoordinationDispatchRecord | CoordinationRunRecord> {
+    if (gateId.startsWith('proposal:')) {
+      return this.resolveProposalGate(gateId.slice('proposal:'.length), decision, editedPrompt ?? undefined);
+    }
     if (gateId.startsWith('plan:')) {
       const runId = gateId.slice('plan:'.length);
       const run = this.deps.repo.getCoordinationRun(runId);
@@ -188,6 +273,80 @@ export class CoordinationEngine {
       editedPrompt: editedPrompt ?? undefined,
     });
     return this.deps.repo.getCoordinationDispatch(outcome.dispatchId);
+  }
+
+  /**
+   * The proposal gate's own resolution (task 6.10, design-v2-conversational
+   * D1). `reject` is trivial: `cancelRun` only ever touches `run.status`, so
+   * "reject grants nothing" (task 6.12) holds for free — no meta key, no
+   * hire, no task is ever written.
+   *
+   * `approve` performs SIX effects that must land together or not at all —
+   * a failing `hub.addMember` must leave NO grant, NO budget, NO tasks
+   * (task 6.10). `hub.addMember` is async and SQLite's own transaction is
+   * synchronous, so the two cannot literally share one `BEGIN`/`COMMIT`;
+   * atomicity is achieved by ORDERING instead: every hire is attempted
+   * FIRST, before any database write, so a failure there throws with
+   * nothing yet written. Once every hire has succeeded, the five remaining
+   * effects (grant, budget meta key, budget on the run row, authority,
+   * tasks + plan-approval + run status) land inside one real
+   * `repo.transaction()`, so a failure among THEM (e.g. the task/depth cap)
+   * cannot leave a partial result either.
+   */
+  private async resolveProposalGate(runId: string, decision: 'approve' | 'reject', editedProposalJson?: string): Promise<CoordinationRunRecord> {
+    const run = this.deps.repo.getCoordinationRun(runId);
+    if (decision === 'reject') return this.cancelRun(runId);
+
+    const proposal: CoordinationProposal = editedProposalJson ? JSON.parse(editedProposalJson) : JSON.parse(run.planJson!);
+    // "No implicit unlimited" re-asserted for an EDITED proposal too (task
+    // 6.11): the same validator `setCoordinationBudget` already uses.
+    const budget = requireCoordinationBudget({ maxDispatches: proposal.estimatedDispatches, unlimitedConfirmedAt: proposal.unlimitedConfirmedAt ?? null });
+
+    for (const hire of proposal.membersToHire ?? []) {
+      await this.deps.hub.addMember({ ...this.deps.memberContext(run.workId), roleId: hire.roleId });
+    }
+
+    const now = this.deps.clock();
+    return this.deps.repo.transaction(() => {
+      this.deps.repo.setMeta('coordination_coordinator:' + run.workId, run.coordinatorMemberId ?? '');
+      const budgetJson = JSON.stringify(budget);
+      this.deps.repo.setMeta('coordination_budget:' + run.workId, budgetJson);
+      this.deps.repo.updateActiveCoordinationRunBudget(run.workId, budgetJson, now); // the run is still 'planning' here — included in the active set
+      this.deps.repo.setMeta('coordination_authority:' + run.workId, 'plan');
+      this.deps.repo.setCoordinationPlan(run.id, JSON.stringify(proposal), now); // the approved (possibly edited) proposal, for the record
+      const created: CoordinationTaskRecord[] = []; // index-based dependsOn, exactly like planSubmit's own loop
+      for (const item of proposal.plan) {
+        const dependsOnIds = (item.dependsOn ?? []).map((idx) => {
+          const dep = created[idx];
+          if (!dep) throw new ValidationError(`Plan task dependsOn index ${idx} is out of range`);
+          return dep.id;
+        });
+        const task = this.createTaskRow(run.id, item.roleId, item.spec, dependsOnIds);
+        this.deps.repo.updateCoordinationTask(task.id, { inPlan: true }, now);
+        created.push(task);
+      }
+      this.deps.repo.approveCoordinationPlan(run.id, now);
+      return this.deps.repo.updateCoordinationRunStatus(run.id, 'running', now, null);
+    });
+  }
+
+  /**
+   * The aggregate across every OTHER active run (task 6.13): shown, never
+   * hidden. `null` for the sum — and therefore for the total — the moment
+   * any other run is itself explicitly unlimited: an honest "can't sum
+   * this" beats a fabricated number.
+   */
+  private computeAggregate(currentRun: CoordinationRunRecord, proposal: CoordinationProposal): CoordinationGateAggregate {
+    const others = this.deps.repo.listActiveCoordinationRuns().filter((r) => r.id !== currentRun.id);
+    let otherCommittedDispatches: number | null = 0;
+    for (const other of others) {
+      const budget = JSON.parse(other.budgetJson) as CoordinationBudget;
+      if (budget.maxDispatches == null) { otherCommittedDispatches = null; break; }
+      otherCommittedDispatches = (otherCommittedDispatches as number) + budget.maxDispatches;
+    }
+    const mine = proposal.estimatedDispatches;
+    const totalIfApproved = mine == null || otherCommittedDispatches == null ? null : mine + otherCommittedDispatches;
+    return { otherActiveRuns: others.length, otherCommittedDispatches, totalIfApproved };
   }
 
   /** The bitácora: derived only from `coordination_dispatch` rows, one entry per lifecycle event. */
@@ -226,6 +385,37 @@ export class CoordinationEngine {
     return { bridged: true, task: this.deps.repo.getCoordinationTask(task.id), dispatch: { status: outcome.status, dispatchId: outcome.dispatchId } };
   }
 
+  /**
+   * The sentence becomes a gate (task 6.5, design-v2-conversational D1): ANY
+   * member — a plain worker grant, no coordinator, no run needed — may
+   * propose a plan. Writes exactly ONE `coordination_run` row,
+   * `status:'planning'`, holding the whole proposal. Deliberately does
+   * NOTHING else: zero tasks, zero dispatches, zero `hub.send` — a proposal
+   * cannot spend (task 6.6 enforces this from the other side, at
+   * `startDispatch`). "One proposal per Work" (task 6.8) reuses the exact
+   * `RUN_ALREADY_ACTIVE` check `startRun` already makes — the partial unique
+   * index's own `WHERE status IN (...)` already includes `'planning'`, so no
+   * separate case is needed for "another proposal is already pending" vs.
+   * "a run is already live": `findActiveCoordinationRun` sees both alike.
+   */
+  async requestCoordination(grant: CoordinationGrant, proposal: CoordinationProposal): Promise<CoordinationRunRecord> {
+    const existing = this.deps.repo.findActiveCoordinationRun(grant.workId);
+    if (existing) throw new LatteError('RUN_ALREADY_ACTIVE', `This Work already has an active coordination run (${existing.id}, ${existing.status})`);
+    const now = this.deps.clock();
+    return this.deps.repo.insertCoordinationRun({
+      id: newId('crn'),
+      workId: grant.workId,
+      status: 'planning',
+      coordinatorMemberId: grant.memberId,
+      budgetJson: JSON.stringify({ maxDispatches: proposal.estimatedDispatches, unlimitedConfirmedAt: proposal.unlimitedConfirmedAt ?? null }),
+      planJson: JSON.stringify(proposal),
+      planApprovedAt: null,
+      suspendReason: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
   // -- Tool-facing engine methods (wrapped by tools.ts) ------------------------
 
   planSubmit(runId: string, tasks: Array<{ roleId: string; spec: string; dependsOn?: number[] }>): CoordinationTaskRecord[] {
@@ -261,8 +451,16 @@ export class CoordinationEngine {
    */
   async startDispatch(ctx: { grant: CoordinationGrant; taskId: string; approvedGateId?: string; editedPrompt?: string }): Promise<{ status: 'dispatched' | 'pending_approval'; taskId: string; dispatchId: string }> {
     if (ctx.grant.role !== 'coordinator') throw new LatteError('FORBIDDEN', 'Only the coordinator may dispatch');
+    if (ctx.grant.runId == null) throw new LatteError('RUN_NOT_ACTIVE', 'No active coordination run for this Work');
     const run = this.deps.repo.getCoordinationRun(ctx.grant.runId);
-    if (run.status !== 'running' && run.status !== 'planning') throw new LatteError('RUN_NOT_ACTIVE', `Run is ${run.status}`);
+    // FIRST run-status assertion (task 6.6): a `'planning'` run holds an
+    // unapproved proposal — `plan_json`/`budget_json` nobody confirmed yet.
+    // Phase 3 left this open (it silently ACCEPTED 'planning', dormant only
+    // because nothing ever wrote that status); the proposal gate now writes
+    // it for real, so this must reject before anything else, or an
+    // unapproved proposal could spend a budget no human confirmed.
+    if (run.status === 'planning') throw new LatteError('COORDINATION_NOT_APPROVED', 'This coordination run has not been approved yet');
+    if (run.status !== 'running') throw new LatteError('RUN_NOT_ACTIVE', `Run is ${run.status}`);
     const task = this.deps.repo.getCoordinationTask(ctx.taskId);
     if (task.runId !== run.id) throw new NotFoundError('CoordinationTask', ctx.taskId);
 
@@ -342,6 +540,7 @@ export class CoordinationEngine {
 
   /** `outcome:'succeeded'` unblocks dependents; `'failed'` returns the task to `ready`, or `blocked` at the attempt cap. Idempotent on an already-`done` task. */
   async report(grant: CoordinationGrant, taskId: string, outcome: 'succeeded' | 'failed', summary: string, filesJson: string | null = null): Promise<CoordinationTaskRecord> {
+    if (grant.runId == null) throw new LatteError('NO_ACTIVE_RUN', 'This Work has no active coordination run');
     const task = this.deps.repo.getCoordinationTask(taskId);
     // The CURRENT dispatch: there is at most one `dispatched`/`running` row
     // for a task at a time (a new attempt is only ever created after the
@@ -405,6 +604,7 @@ export class CoordinationEngine {
   }
 
   ask(grant: CoordinationGrant, question: string, ttlMinutes?: number, taskId?: string): CoordinationAskRecord {
+    if (grant.runId == null) throw new LatteError('NO_ACTIVE_RUN', 'This Work has no active coordination run');
     const clampedTtl = Math.min(Math.max(ttlMinutes ?? ASK_TTL_DEFAULT_MINUTES, 1), ASK_TTL_MAX_MINUTES);
     const now = this.deps.clock();
     const deadline = new Date(new Date(now).getTime() + clampedTtl * 60_000).toISOString();
@@ -445,7 +645,9 @@ export class CoordinationEngine {
     return this.readAuthority(workId);
   }
 
-  budgetBlockForEnvelope(runId: string): CoordinationBudgetBlock {
+  /** `null` (no active run for the Work — a lazily-resolved grant's honest state) answers with a zeroed block instead of throwing `NotFound`. */
+  budgetBlockForEnvelope(runId: string | null): CoordinationBudgetBlock {
+    if (runId == null) return { dispatchesUsed: 0, maxDispatches: null, inFlight: 0, maxConcurrent: null };
     const run = this.deps.repo.getCoordinationRun(runId);
     const budget = this.readRunBudget(run);
     const usage = this.usageFor(runId);

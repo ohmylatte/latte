@@ -687,8 +687,22 @@ export interface CoordinationRunView {
   updatedAt: string;
 }
 
-/** The three gate kinds a human resolves with approve/reject. An open `latte_ask` is a separate surface (`answerCoordinationAsk`) — its middle action is the answer itself, not an edit. */
-export type CoordinationGateKind = 'plan' | 'dispatch' | 'budget';
+/**
+ * The gate kinds a human resolves with approve/reject. An open `latte_ask`
+ * is a separate surface (`answerCoordinationAsk`) — its middle action is the
+ * answer itself, not an edit. `'proposal'` (Phase 6, design-v2-conversational
+ * D1): a worker's `latte_request_coordination` — the sentence becomes this
+ * ONE gate. Unlike `'plan'` (which only appears under `'plan'` authority),
+ * `'proposal'` appears in every authority mode: it decides the authority.
+ */
+export type CoordinationGateKind = 'plan' | 'dispatch' | 'budget' | 'proposal';
+
+/** The aggregate across every OTHER active run, shown at a `proposal` gate — never hidden (design-v2-conversational D2). `null` fields mean an honest "can't sum this", never a fabricated number (e.g. another run is explicitly unlimited). */
+export interface CoordinationGateAggregate {
+  otherActiveRuns: number;
+  otherCommittedDispatches: number | null;
+  totalIfApproved: number | null;
+}
 
 export interface CoordinationGateView {
   id: string;
@@ -698,6 +712,10 @@ export interface CoordinationGateView {
   dispatchId?: string | null;
   /** Only present on a `dispatch` gate: the task prompt, editable before approval. */
   prompt?: string | null;
+  /** Only present on a `proposal` gate: the whole proposal, JSON-encoded. */
+  proposalJson?: string | null;
+  /** Only present on a `proposal` gate. */
+  aggregate?: CoordinationGateAggregate;
   createdAt: string;
 }
 

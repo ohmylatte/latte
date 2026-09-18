@@ -1112,6 +1112,19 @@ export class LatteRepository {
     return row ? toCoordinationRun(row) : null;
   }
 
+  /**
+   * Every active run app-wide, across every Work and every Brand —
+   * `planning`/`running`/`suspended`, the same set `idx_coordination_run_active`
+   * enforces one-per-Work of. Feeds a proposal gate's `aggregate` (task 6.13:
+   * "the aggregate is shown, not hidden") and, later, the global "Equipos
+   * activos" strip (task 6.34, out of this slice).
+   */
+  listActiveCoordinationRuns(): CoordinationRunRecord[] {
+    return this.db
+      .all<CoordinationRunRow>("SELECT * FROM coordination_run WHERE status IN ('planning','running','suspended') ORDER BY created_at ASC, id ASC", [])
+      .map(toCoordinationRun);
+  }
+
   updateCoordinationRunStatus(id: string, status: CoordinationRunStatus, updatedAt: string, suspendReason: string | null = null): CoordinationRunRecord {
     this.getCoordinationRun(id);
     this.db.run('UPDATE coordination_run SET status = ?, suspend_reason = ?, updated_at = ? WHERE id = ?', [status, suspendReason, updatedAt, id]);

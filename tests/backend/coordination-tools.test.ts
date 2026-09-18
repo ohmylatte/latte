@@ -64,6 +64,15 @@ describe('coordination tools: grant enforcement and envelope stability', () => {
     expect(envelope.ok).toBe(false);
   });
 
+  // Task 6.4: a rejection that does not teach the path is the bug this task
+  // exists for. The FORBIDDEN envelope must NAME latte_request_coordination.
+  it('the FORBIDDEN rejection names latte_request_coordination as the path to the grant', async () => {
+    const envelope = await tools.latte_dispatch(workerGrant(), { taskId: 'ctk_whatever' });
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('FORBIDDEN');
+    expect(envelope.error?.message).toContain('latte_request_coordination');
+  });
+
   it('the dispatch envelope shape is stable across manual and auto authority, differing only in data.status', async () => {
     await b.service.setCoordinationAuthority(workId, 'manual');
     const manualTask = await tools.latte_task_create(coordinatorGrant(), { roleId: 'strategist', spec: 'A' });

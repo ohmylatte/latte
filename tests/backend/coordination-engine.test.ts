@@ -440,4 +440,91 @@ describe('CoordinationEngine — the dispatch choke point', () => {
       expect(engine.getRun(runId).status).toBe('cancelled');
     });
   });
+
+  // --- 6.2: resolveGrant — LAZY resolution, never frozen at mint -------------
+  // (design-v2-conversational overrules v1). `tokens.ts` binds only
+  // {workId, memberId}; this is the per-request resolver that derives runId
+  // and role fresh every call — no re-mint, no respawn, no revocation.
+
+  describe('resolveGrant — the grant is resolved per request, never frozen at mint', () => {
+    it('(i) with no run yet, resolves runId:null and role:worker', async () => {
+      const brand2 = await b.service.createBrand('Otra marca');
+      const otherWork = await b.service.createWork(brand2.id, 'Otro trabajo');
+
+      const grant = engine.resolveGrant(otherWork.id, 'mem_x');
+
+      expect(grant).toEqual({ workId: otherWork.id, memberId: 'mem_x', runId: null, role: 'worker' });
+    });
+
+    it('(ii) a run starts afterward: the same member id now resolves to it, no re-mint, no respawn', async () => {
+      const brand2 = await b.service.createBrand('Otra marca 2');
+      const work2 = await b.service.createWork(brand2.id, 'Otro trabajo 2');
+      await b.service.setCoordinationBudget(work2.id, { maxDispatches: 5 });
+
+      const before = engine.resolveGrant(work2.id, 'mem_y');
+      expect(before.runId).toBeNull();
+
+      const startedRun = await engine.startRun(work2.id, null);
+      const after = engine.resolveGrant(work2.id, 'mem_y');
+
+      expect(after.runId).toBe(startedRun.id);
+      expect(after.role).toBe('worker');
+    });
+
+    it('(iii) the coordinator meta key is set to this member: role flips to coordinator', async () => {
+      b.repo.insertMember({ id: 'mem_z', workId, roleId: 'strategist', roleName: 'Strategist', initial: 'S', runtime: 'codex', model: null, accountId: null, sessionId: '', done: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
+
+      await b.service.setCoordinatorGrant(workId, 'mem_z');
+
+      expect(engine.resolveGrant(workId, 'mem_z').role).toBe('coordinator');
+    });
+
+    it('(iv) the grant is transferred away: the same member flips back to worker with no revocation step', async () => {
+      b.repo.insertMember({ id: 'mem_z', workId, roleId: 'strategist', roleName: 'Strategist', initial: 'S', runtime: 'codex', model: null, accountId: null, sessionId: '', done: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
+      b.repo.insertMember({ id: 'mem_other', workId, roleId: 'copywriter', roleName: 'Copywriter', initial: 'C', runtime: 'codex', model: null, accountId: null, sessionId: '', done: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
+
+      await b.service.setCoordinatorGrant(workId, 'mem_z');
+      expect(engine.resolveGrant(workId, 'mem_z').role).toBe('coordinator');
+
+      await b.service.setCoordinatorGrant(workId, 'mem_other'); // no revoke() call anywhere — the meta write alone is enough
+      expect(engine.resolveGrant(workId, 'mem_z').role).toBe('worker');
+      expect(engine.resolveGrant(workId, 'mem_other').role).toBe('coordinator');
+    });
+  });
+
+  // --- 6.3: a grant with no active run ----------------------------------------
+  // `CoordinationGrant.runId` widens to `string | null`;
+  // `budgetBlockForEnvelope(null)` must answer honestly instead of throwing;
+  // `latte_report`/`check`/`ask` with a null-run grant must fail cleanly.
+
+  describe('a grant with no active run', () => {
+    it('budgetBlockForEnvelope(null) returns the honest zeroed block instead of throwing NotFound', () => {
+      const block = engine.budgetBlockForEnvelope(null);
+      expect(block).toEqual({ dispatchesUsed: 0, maxDispatches: null, inFlight: 0, maxConcurrent: null });
+    });
+
+    it('latte_report / latte_check / latte_ask each return {ok:false, error.code:NO_ACTIVE_RUN} and mutate nothing', async () => {
+      const tools = createCoordinationTools(engine);
+      const grant: CoordinationGrant = { workId, runId: null, memberId: 'mem_no_run', role: 'worker' };
+      const asksBefore = b.repo.listOpenCoordinationAsks(runId);
+
+      const reportEnvelope = await tools.latte_report(grant, { taskId: 'ctk_whatever', outcome: 'succeeded', summary: 'x' });
+      expect(reportEnvelope).toMatchObject({ ok: false, error: { code: 'NO_ACTIVE_RUN' } });
+
+      const checkEnvelope = await tools.latte_check(grant, {});
+      expect(checkEnvelope).toMatchObject({ ok: false, error: { code: 'NO_ACTIVE_RUN' } });
+
+      const askEnvelope = await tools.latte_ask(grant, { question: '¿Qué hago?' });
+      expect(askEnvelope).toMatchObject({ ok: false, error: { code: 'NO_ACTIVE_RUN' } });
+
+      // Nothing was mutated anywhere, including the real active run from beforeEach.
+      expect(b.repo.listOpenCoordinationAsks(runId)).toEqual(asksBefore);
+    });
+
+    it('engine.report/ask throw NO_ACTIVE_RUN directly too, for any caller that bypasses tools.ts', async () => {
+      const grant: CoordinationGrant = { workId, runId: null, memberId: 'mem_no_run', role: 'worker' };
+      await expect(engine.report(grant, 'ctk_whatever', 'succeeded', 'x')).rejects.toMatchObject({ code: 'NO_ACTIVE_RUN' });
+      expect(() => engine.ask(grant, '¿Qué hago?')).toThrowError(expect.objectContaining({ code: 'NO_ACTIVE_RUN' }));
+    });
+  });
 });

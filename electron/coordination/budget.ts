@@ -33,8 +33,53 @@
  * to `engine.ts` (Phase 3, task 3.10) — see the note on `reserveDispatch`
  * below.
  */
+import { ValidationError } from '../core/errors';
+import { requireInt } from '../services/validation';
 import type { CoordinationBudget } from '../../shared/contracts';
 export type { CoordinationBudget };
+
+/**
+ * Validates a `CoordinationBudget` on write: `maxDispatches` must be a
+ * positive integer, unless it is explicitly `null` alongside a non-empty
+ * `unlimitedConfirmedAt` — an unlimited budget is always a human choice,
+ * never an implicit default (spec: "No Implicit Unlimited Budget"). Every
+ * secondary cap is optional but, when present, a non-negative integer.
+ * Returns a normalized object (every optional field present as `null` when
+ * omitted) so a stored round-trip is byte-for-byte stable.
+ *
+ * Moved here from `latteService.ts` (Phase 6, task 6.11): the proposal
+ * approval path (`engine.ts`'s `resolveGate` on a `proposal` gate) needs the
+ * exact same validator "no implicit unlimited" re-applies to an edited
+ * proposal's budget, and `engine.ts` cannot import from `latteService.ts`
+ * without a cycle. `latteService.ts` re-exports/imports this one, so every
+ * call site (Phase 2's `setCoordinationBudget` included) keeps behaving
+ * identically.
+ */
+export function requireCoordinationBudget(value: unknown): CoordinationBudget {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new ValidationError('Invalid coordination budget');
+  const b = value as Record<string, unknown>;
+  const optionalNonNegativeInt = (v: unknown, name: string): number | null =>
+    v === null || v === undefined ? null : requireInt(v, name, 0, Number.MAX_SAFE_INTEGER);
+  let maxDispatches: number | null;
+  let unlimitedConfirmedAt: string | null = null;
+  if (b.maxDispatches === null) {
+    if (typeof b.unlimitedConfirmedAt !== 'string' || b.unlimitedConfirmedAt.trim().length === 0) {
+      throw new ValidationError('An unlimited coordination budget requires an explicit unlimitedConfirmedAt');
+    }
+    maxDispatches = null;
+    unlimitedConfirmedAt = b.unlimitedConfirmedAt;
+  } else {
+    maxDispatches = requireInt(b.maxDispatches, 'maxDispatches', 1, Number.MAX_SAFE_INTEGER);
+  }
+  return {
+    maxDispatches,
+    unlimitedConfirmedAt,
+    maxTokens: optionalNonNegativeInt(b.maxTokens, 'maxTokens'),
+    maxCostMicros: optionalNonNegativeInt(b.maxCostMicros, 'maxCostMicros'),
+    maxWallMinutes: optionalNonNegativeInt(b.maxWallMinutes, 'maxWallMinutes'),
+    maxConcurrent: optionalNonNegativeInt(b.maxConcurrent, 'maxConcurrent'),
+  };
+}
 
 /** Running totals for one run, maintained by the caller and passed in fresh each time. */
 export interface BudgetUsage {

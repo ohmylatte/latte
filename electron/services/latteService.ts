@@ -98,6 +98,7 @@ import { EngramClient, memoryProjectFor } from '../memory/engram';
 import { AccountStore } from '../agents/accounts';
 import { isAccountRuntime, isChatRuntime, type AgentHub, type MemberContext } from '../agents/hub';
 import { CoordinationEngine } from '../coordination/engine';
+import { requireCoordinationBudget } from '../coordination/budget';
 import type { McpCatalog } from '../agents/mcp';
 import { RoleCatalog } from '../agents/roles';
 import { isEffortTier } from '../agents/tiers';
@@ -220,41 +221,6 @@ const DOCUMENT_STATUSES: DocumentStatus[] = ['draft', 'review', 'approved'];
 /** A kind guessed from a file name is only accepted when Latte knows it. */
 function kindOf(value: string): DocumentKind {
   return (DOCUMENT_KINDS as string[]).includes(value) ? (value as DocumentKind) : 'note';
-}
-
-/**
- * Validates a `CoordinationBudget` on write: `maxDispatches` must be a
- * positive integer, unless it is explicitly `null` alongside a non-empty
- * `unlimitedConfirmedAt` — an unlimited budget is always a human choice,
- * never an implicit default (spec: "No Implicit Unlimited Budget"). Every
- * secondary cap is optional but, when present, a non-negative integer.
- * Returns a normalized object (every optional field present as `null` when
- * omitted) so a stored round-trip is byte-for-byte stable.
- */
-function requireCoordinationBudget(value: unknown): CoordinationBudget {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new ValidationError('Invalid coordination budget');
-  const b = value as Record<string, unknown>;
-  const optionalNonNegativeInt = (v: unknown, name: string): number | null =>
-    v === null || v === undefined ? null : requireInt(v, name, 0, Number.MAX_SAFE_INTEGER);
-  let maxDispatches: number | null;
-  let unlimitedConfirmedAt: string | null = null;
-  if (b.maxDispatches === null) {
-    if (typeof b.unlimitedConfirmedAt !== 'string' || b.unlimitedConfirmedAt.trim().length === 0) {
-      throw new ValidationError('An unlimited coordination budget requires an explicit unlimitedConfirmedAt');
-    }
-    maxDispatches = null;
-    unlimitedConfirmedAt = b.unlimitedConfirmedAt;
-  } else {
-    maxDispatches = requireInt(b.maxDispatches, 'maxDispatches', 1, Number.MAX_SAFE_INTEGER);
-  }
-  return {
-    maxDispatches,
-    unlimitedConfirmedAt,
-    maxTokens: optionalNonNegativeInt(b.maxTokens, 'maxTokens'),
-    maxCostMicros: optionalNonNegativeInt(b.maxCostMicros, 'maxCostMicros'),
-    maxWallMinutes: optionalNonNegativeInt(b.maxWallMinutes, 'maxWallMinutes'),
-    maxConcurrent: optionalNonNegativeInt(b.maxConcurrent, 'maxConcurrent'),
-  };
 }
 
 function requireProviderId(value: unknown): string {
