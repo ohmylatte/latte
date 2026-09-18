@@ -6,8 +6,14 @@ const readline = require('node:readline');
 
 const out = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
 const notify = (method, params) => out({ jsonrpc: '2.0', method, params });
-let counter = 0;
-let serverRequestId = 100;
+// Seeded by this process's own pid: two coordinated members each spawn their
+// OWN fake app-server process (sdd/autonomous-coordination, Phase 5), and a
+// counter starting at 0 in every process would make both mint the exact
+// same thread/turn ids ("thr_1", "turn_1", ...), colliding in the adapter's
+// shared byThread map. Real Codex generates globally-unique ids per process;
+// this keeps the fake honest about that instead of only working by luck.
+let counter = process.pid * 1000;
+let serverRequestId = process.pid * 1000 + 100;
 const threads = new Map();
 const pendingApprovals = new Map();
 
@@ -232,6 +238,8 @@ rl.on('line', (line) => {
         threads.get(threadId).slowTurn = turnId;
         return; // waits for turn/interrupt
       }
+      // Simulates the whole app-server process dying mid-turn (sdd/autonomous-coordination, Phase 5's re-key regression test): no reply, the process just exits.
+      if (/crash-server/i.test(text)) { process.exit(9); }
       // Lets a test see the reasoning effort the turn was actually started with.
       if (/effort/i.test(text)) { finish(`EFFORT ${params.effort || 'none'}`, 'completed'); return; }
       if (/fail/i.test(text)) { finish('', 'failed'); return; }

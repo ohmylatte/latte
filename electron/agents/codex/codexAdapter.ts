@@ -4,12 +4,15 @@ import { DEFAULT_EFFORT_TIER, EMPTY_USAGE, type AccountLoginStart, type AgentMod
 import { NotFoundError, UnavailableError, ValidationError } from '../../core/errors';
 import { newId } from '../../core/ids';
 import { addUsage, tokenCount } from '../../core/usage';
+import { MAX_COORDINATED_CODEX_PROCESSES } from '../../coordination/limits';
 import { scrubEnv } from '../../runtime/terminalManager';
 import { SYSTEM_ACCOUNT_ID } from '../accounts';
 import { codexEffortForTier } from '../tiers';
-import { sessionFrom, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../types';
+import { sessionFrom, type AdapterMcpServer, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../types';
 import { CodexAppServer, isRecord } from './appServer';
 import { contentFromAnswers, errorMessage, isHttpUrl, mapElicitationForm, mcpToolOutput, type ElicitationFormField } from './elicitation';
+import { codexMcpConfigEnv, codexMcpConfigOverrides, mcpFingerprint } from './mcpFingerprint';
+import { forgetServerPid, recordServerPid } from './staleServers';
 
 export interface CodexAdapterDeps {
   resolveExecutable: () => Promise<{ executable: string; version: string | null } | null>;
@@ -40,6 +43,8 @@ interface LiveChat {
   chatId: string;
   workId: string;
   accountId: string;
+  /** `accountId + '|' + mcpFingerprint`: the actual server-map key this chat's app-server lives under. Ordinary (non-coordinated) chats share one process per account (`fingerprint === ''`); a coordinated member's own token gives it a unique key and its own process. `onExit`/`stop()` must sweep by THIS, never by `accountId` alone -- see sdd/autonomous-coordination Phase 5, task 5.3/5.4. */
+  serverKey: string;
   threadId: string;
   directory: string;
   turnId: string | null;
@@ -74,9 +79,16 @@ const TOOL_TEXT_LIMIT = 12_000;
 export class CodexChatAdapter implements RuntimeAdapter {
   readonly runtime = 'codex' as const;
   // Per-thread MCP config is broken in the installed app-server (thread/start
-  // override hangs, see spike sdd/autonomous-coordination/spike-mcp-injection);
-  // per-process re-keying is Phase 5, not yet implemented.
-  readonly mcpInjection = 'none' as const;
+  // override hangs, see spike sdd/autonomous-coordination/spike-mcp-injection).
+  // Per-PROCESS `-c mcp_servers.*` overrides are verified on 0.154.0 (both the
+  // http and stdio shapes) and implemented below (Phase 5): a coordinated
+  // member gets its own re-keyed app-server. Unlike Claude's Phase 4 (left at
+  // 'none' per that task's literal wording, deferred to Phase 6), nothing
+  // held Codex's flag back, so it flips here now that the translation is
+  // real and tested -- nothing reads this field yet (that is Phase 6's
+  // coordinationRuntimeSupport), so the flip has zero behavioural effect
+  // today.
+  readonly mcpInjection = 'per-member' as const;
   private readonly servers = new Map<string, CodexAppServer>();
   private readonly chats = new Map<string, LiveChat>();
   private readonly byThread = new Map<string, string>();
@@ -148,7 +160,20 @@ export class CodexChatAdapter implements RuntimeAdapter {
     const chatId = input.chatId ?? newId('ses');
     if (this.chats.has(chatId)) throw new ValidationError('This chat is already open');
     const accountId = input.accountId ?? SYSTEM_ACCOUNT_ID;
-    const server = await this.serverFor(accountId);
+    // Coordination MCP (sdd/autonomous-coordination, Phase 5). A coordinated
+    // member gets its own app-server, re-keyed by account+fingerprint so its
+    // crash never sweeps an unrelated chat on the same account (task 5.3/5.4).
+    // App-wide, the process budget is finite: past MAX_COORDINATED_CODEX_PROCESSES
+    // this member degrades to no injection rather than spawning an Nth
+    // process -- visibly logged, never a silent failure (task 5.7).
+    let mcpServers = input.mcpServers;
+    let serverKey = `${accountId}|${mcpFingerprint(mcpServers)}`;
+    if (mcpServers && mcpServers.length > 0 && !this.servers.has(serverKey) && this.countCoordinatedServers() >= MAX_COORDINATED_CODEX_PROCESSES) {
+      this.deps.log?.(`[codex ${chatId}] coordination MCP not injected: ${MAX_COORDINATED_CODEX_PROCESSES} coordinated codex app-server processes already running app-wide`);
+      mcpServers = undefined;
+      serverKey = `${accountId}|`;
+    }
+    const server = await this.serverFor(accountId, serverKey, mcpServers);
     // The role personality rides as developer instructions on the thread (start and resume alike).
     const instructions = input.instructions?.trim() ?? '';
     const threadOptions = { cwd: input.directory, approvalPolicy: 'on-request', sandbox: 'workspace-write', ...(input.model ? { model: input.model } : {}), ...(instructions ? { developerInstructions: instructions } : {}) };
@@ -177,7 +202,7 @@ export class CodexChatAdapter implements RuntimeAdapter {
       if (!thread || typeof thread.id !== 'string') throw new UnavailableError('Codex returned no thread id');
       threadId = thread.id;
     }
-    const live: LiveChat = { chatId, workId: input.workId, accountId, threadId, directory: input.directory, turnId: null, assistantId: null, messages: new Map(), order: [], pending: new Map(), busy: false, tier: input.tier ?? DEFAULT_EFFORT_TIER, usage: EMPTY_USAGE, usageSoFar: null, usageTurnId: null };
+    const live: LiveChat = { chatId, workId: input.workId, accountId, serverKey, threadId, directory: input.directory, turnId: null, assistantId: null, messages: new Map(), order: [], pending: new Map(), busy: false, tier: input.tier ?? DEFAULT_EFFORT_TIER, usage: EMPTY_USAGE, usageSoFar: null, usageTurnId: null };
     this.chats.set(chatId, live);
     this.byThread.set(threadId, chatId);
     if (resumed) await this.loadHistory(live, server);
@@ -195,7 +220,9 @@ export class CodexChatAdapter implements RuntimeAdapter {
   async send(chatId: string, text: string): Promise<void> {
     const live = this.require(chatId);
     if (live.busy) throw new ValidationError('Codex is still working on the previous message');
-    const server = await this.serverFor(live.accountId);
+    // The chat's OWN server, not just any server for the account: a
+    // coordinated member's thread lives on its own re-keyed app-server.
+    const server = await this.serverFor(live.accountId, live.serverKey);
     const userMessage: ChatMessage = { id: `user-${randomUUID()}`, chatId, role: 'user', parts: [{ type: 'text', id: `user-${randomUUID()}`, text }], createdAt: new Date().toISOString(), completed: true, error: null };
     this.upsertMessage(live, userMessage);
     this.deps.emit({ chatId, type: 'message', message: userMessage });
@@ -219,7 +246,7 @@ export class CodexChatAdapter implements RuntimeAdapter {
   async abort(chatId: string): Promise<void> {
     const live = this.require(chatId);
     if (!live.turnId) return;
-    const server = await this.serverFor(live.accountId);
+    const server = await this.serverFor(live.accountId, live.serverKey);
     try {
       await server.request('turn/interrupt', { threadId: live.threadId, turnId: live.turnId });
     } catch (error) {
@@ -282,16 +309,33 @@ export class CodexChatAdapter implements RuntimeAdapter {
     this.chats.delete(chatId);
     this.byThread.delete(live.threadId);
     this.deps.emit({ chatId, type: 'closed', reason: 'stopped' });
-    if (![...this.chats.values()].some((c) => c.accountId === live.accountId)) {
-      this.servers.get(live.accountId)?.stop();
-      this.servers.delete(live.accountId);
+    // Keyed by serverKey, not accountId: two coordinated members of the same
+    // account own DIFFERENT app-servers (task 5.3/5.4). Stopping one must
+    // never touch the other's still-live process.
+    if (![...this.chats.values()].some((c) => c.serverKey === live.serverKey)) {
+      this.servers.get(live.serverKey)?.stop();
+      this.servers.delete(live.serverKey);
+      forgetServerPid(this.deps.serverCwd, live.serverKey);
     }
   }
 
   shutdown(): void {
     for (const id of [...this.chats.keys()]) this.stop(id);
-    for (const server of this.servers.values()) server.stop();
+    for (const [key, server] of this.servers) {
+      server.stop();
+      forgetServerPid(this.deps.serverCwd, key);
+    }
     this.servers.clear();
+  }
+
+  /** How many app-servers currently carry a coordination injection (non-empty fingerprint half of their key) -- the count MAX_COORDINATED_CODEX_PROCESSES bounds. */
+  private countCoordinatedServers(): number {
+    let count = 0;
+    for (const key of this.servers.keys()) {
+      const bar = key.indexOf('|');
+      if (bar !== -1 && key.slice(bar + 1) !== '') count += 1;
+    }
+    return count;
   }
 
   // Internals ---------------------------------------------------------------------
@@ -312,7 +356,11 @@ export class CodexChatAdapter implements RuntimeAdapter {
    * when the Settings screen needs it and never while the app starts.
    */
   async listModels(accountId: string): Promise<AgentModel[]> {
-    const live = this.servers.get(accountId);
+    // Any server for this account answers a model list identically,
+    // coordinated or not -- reuse whichever one is already up rather than
+    // spawning a new one just to ask this.
+    const prefix = `${accountId}|`;
+    const live = [...this.servers.entries()].find(([key]) => key.startsWith(prefix))?.[1];
     if (live) return parseModelList(await live.request('model/list', {}));
     const runtime = await this.deps.resolveExecutable();
     if (!runtime) throw new UnavailableError('Codex is not installed or not on PATH');
@@ -332,40 +380,65 @@ export class CodexChatAdapter implements RuntimeAdapter {
     }
   }
 
-  private async serverFor(accountId: string): Promise<CodexAppServer> {
-    let server = this.servers.get(accountId);
+  /**
+   * `serverKey` defaults to the plain "ordinary" key (`accountId|`, empty
+   * fingerprint) for the account-scoped call sites (login, MCP status,
+   * ephemeral model list) that have no per-member servers to inject.
+   * `mcpServers`, when present, is translated to `-c mcp_servers.*`
+   * overrides on the PROCESS argv (verified on 0.154.0, spike
+   * sdd/autonomous-coordination/spike-mcp-injection) -- never per-thread.
+   */
+  private async serverFor(accountId: string, serverKey: string = `${accountId}|`, mcpServers?: AdapterMcpServer[]): Promise<CodexAppServer> {
+    let server = this.servers.get(serverKey);
     if (!server) {
       const runtime = await this.deps.resolveExecutable();
       if (!runtime) throw new UnavailableError('Codex is not installed or not on PATH');
+      const hasMcp = mcpServers !== undefined && mcpServers.length > 0;
       server = new CodexAppServer({
         executable: runtime.executable,
-        env: { ...scrubEnv(this.env), ...this.deps.accountEnv(accountId === SYSTEM_ACCOUNT_ID ? null : accountId) },
+        env: {
+          ...scrubEnv(this.env),
+          ...this.deps.accountEnv(accountId === SYSTEM_ACCOUNT_ID ? null : accountId),
+          // The bearer token lives ONLY here, never on argv (visible in
+          // process listings) -- task 5.6.
+          ...(hasMcp ? codexMcpConfigEnv(mcpServers) : {}),
+        },
         cwd: this.deps.serverCwd,
         platform: this.platform,
         spawnImpl: this.deps.spawnImpl,
         requestTimeoutMs: this.deps.requestTimeoutMs,
         log: this.deps.log,
+        extraArgs: hasMcp ? codexMcpConfigOverrides(mcpServers) : [],
       });
       server.notifications.add((method, params) => this.onNotification(method, params));
       server.serverRequests.add((method, params, respond, fail) => this.onServerRequest(method, params, respond, fail));
       server.onExit = (reason) => {
-        for (const live of [...this.chats.values()].filter((c) => c.accountId === accountId)) {
+        // Keyed by serverKey (account+fingerprint), never by accountId
+        // alone: two coordinated members of the same account live on
+        // DIFFERENT servers, so one's crash must sweep only its own chats
+        // (task 5.3/5.4 -- the single highest-risk edit in this change).
+        for (const live of [...this.chats.values()].filter((c) => c.serverKey === serverKey)) {
           this.settlePending(live, reason);
           if (live.busy) this.deps.emit({ chatId: live.chatId, type: 'error', message: reason });
           this.chats.delete(live.chatId);
           this.byThread.delete(live.threadId);
           this.deps.emit({ chatId: live.chatId, type: 'closed', reason });
         }
-        this.servers.delete(accountId);
+        this.servers.delete(serverKey);
+        forgetServerPid(this.deps.serverCwd, serverKey);
       };
-      this.servers.set(accountId, server);
+      this.servers.set(serverKey, server);
     }
     try {
       await server.ensure();
     } catch (error) {
-      this.servers.delete(accountId);
+      this.servers.delete(serverKey);
       throw new UnavailableError(describe(error));
     }
+    // Recorded on every resolution (new or reused), so the pid file always
+    // names the live process -- the startup sweep (task 5.8) reaps only
+    // what is left behind after a crash never reaches this line again.
+    if (server.pid !== null) recordServerPid(this.deps.serverCwd, serverKey, server.pid);
     return server;
   }
 

@@ -18,6 +18,14 @@ export interface AppServerOptions {
   requestTimeoutMs?: number;
   log?: (line: string) => void;
   clientVersion?: string;
+  /**
+   * Extra argv appended after `app-server` itself -- e.g. the coordination
+   * `-c mcp_servers.*` overrides (sdd/autonomous-coordination, Phase 5).
+   * These belong on the PROCESS argv, never on a `thread/start` call: the
+   * spike found any per-thread config override hangs the following
+   * `turn/start` forever on the installed 0.154.0 (openai/codex#45361).
+   */
+  extraArgs?: string[];
 }
 
 interface Pending { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -81,6 +89,11 @@ export class CodexAppServer {
     return this.child !== null && this.child.exitCode === null && this.initialised;
   }
 
+  /** The OS pid of the live child, or null before launch / after it exits. Recorded by the caller (`codexAdapter.ts`) for the startup stray-process sweep. */
+  get pid(): number | null {
+    return this.child?.pid ?? null;
+  }
+
   async ensure(): Promise<void> {
     if (this.running) return;
     if (this.starting) return this.starting;
@@ -140,7 +153,7 @@ export class CodexAppServer {
 
   private async launch(): Promise<void> {
     const binary = resolveCodexBinary(this.options.executable, this.platform);
-    const spec = spawnSpecFor(binary, ['app-server'], this.platform, this.options.env);
+    const spec = spawnSpecFor(binary, ['app-server', ...(this.options.extraArgs ?? [])], this.platform, this.options.env);
     const env = { ...this.options.env, CODEX_MANAGED_BY_NPM: '1' };
     let child: ChildProcess;
     try {

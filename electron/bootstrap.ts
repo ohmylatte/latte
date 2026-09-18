@@ -5,12 +5,14 @@ import { brandContextProtocolBlocks } from './workspace/brandContextProtocol';
 import { AccountStore } from './agents/accounts';
 import { ClaudeChatAdapter } from './agents/claude/claudeAdapter';
 import { CodexChatAdapter } from './agents/codex/codexAdapter';
+import { sweepStrayCodexServers } from './agents/codex/staleServers';
 import { AgentHub } from './agents/hub';
 import { McpCatalog } from './agents/mcp';
 import { ProfileStore } from './agents/profiles';
 import { RoleCatalog } from './agents/roles';
 import { TranscriptStore } from './agents/transcripts';
 import { LattePaths } from './core/paths';
+import type { TaskkillExecFile } from './core/processTree';
 import { EngramClient } from './memory/engram';
 import { ChatManager } from './opencode/chatManager';
 import type { OpenCodeEndpoint } from './opencode/server';
@@ -60,6 +62,8 @@ export interface BackendOptions {
   version: string;
   /** Tests inject a fake brand port so prepareGeneration never touches BrandingService. */
   brandContext?: BrandContextPort;
+  /** Tests inject a fake taskkill for the startup stray-codex-app-server sweep (sdd/autonomous-coordination, task 5.8), so no real OS process is ever touched in a test. */
+  taskkillImpl?: TaskkillExecFile;
 }
 
 export interface Backend {
@@ -78,6 +82,11 @@ export interface Backend {
 /** Wires every backend piece together. Used by main.ts and by the tests. */
 export async function createBackend(options: BackendOptions): Promise<Backend> {
   const paths = new LattePaths(options.dataDir);
+  // sdd/autonomous-coordination, task 5.8: reap any codex app-server this
+  // data directory spawned in a previous run that never cleaned up (a
+  // crash, a force-quit) before anything new might reuse the same pid-file
+  // bookkeeping. Independent of the DB, so it runs before the migration.
+  sweepStrayCodexServers(paths.root, { platform: options.platform ?? process.platform, taskkillImpl: options.taskkillImpl, log: options.log });
   const { driver, reason } = await openDriver(paths.dbFile, options.driver ?? 'auto');
   const repo = new LatteRepository(driver);
   const learning = new LearningRepository(driver);
