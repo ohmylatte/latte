@@ -27,19 +27,30 @@ export interface ToolEnvelope<T> {
 const FORBIDDEN_MESSAGE =
   "You don't hold the coordinator grant for this Work. To coordinate, propose a plan with latte_request_coordination — the human approves it once and you get the grant, the budget and the authority together.";
 
+/** El bloque que viaja cuando el presupuesto del run NO se pudo leer: ceros y `null`, nunca un número inventado. */
+const UNREADABLE_BUDGET_BLOCK: CoordinationBudgetBlock = { dispatchesUsed: 0, maxDispatches: null, inFlight: 0, maxConcurrent: null };
+
 async function wrap<T>(engine: CoordinationEngine, grant: CoordinationGrant, requireCoordinator: boolean, fn: () => Promise<T> | T, requiresRun = false): Promise<ToolEnvelope<T>> {
-  const authority = engine.readAuthorityForEnvelope(grant.workId);
-  const budget = engine.budgetBlockForEnvelope(grant.runId);
-  if (requireCoordinator && grant.role !== 'coordinator') {
-    return { ok: false, authority, budget, data: null, error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE } };
-  }
-  // `latte_report`/`check`/`ask` need a live run to act against; a grant
-  // lazily resolved to `runId:null` (task 6.3) fails cleanly here instead of
-  // reaching the engine at all — nothing is mutated because nothing runs.
-  if (requiresRun && grant.runId == null) {
-    return { ok: false, authority, budget, data: null, error: { code: 'NO_ACTIVE_RUN', message: 'This Work has no active coordination run yet.' } };
-  }
+  // Crítico 4: estas dos lecturas vivían FUERA del try. `budgetBlockForEnvelope`
+  // tira cuando el `budget_json` del run es ilegible, así que un solo run roto
+  // hacía escapar la excepción de `handleMcpRequest` entero y TODA llamada MCP
+  // posterior de ese Trabajo —incluso un `latte_check` que no toca nada—
+  // terminaba como HTTP 500. Adentro del try, un presupuesto ilegible es un
+  // error DE ESTA llamada: HTTP 200, `ok:false`, con su código.
+  let authority: CoordinationAuthorityMode = 'manual';
+  let budget: CoordinationBudgetBlock = UNREADABLE_BUDGET_BLOCK;
   try {
+    authority = engine.readAuthorityForEnvelope(grant.workId);
+    budget = engine.budgetBlockForEnvelope(grant.runId);
+    if (requireCoordinator && grant.role !== 'coordinator') {
+      return { ok: false, authority, budget, data: null, error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE } };
+    }
+    // `latte_report`/`check`/`ask` need a live run to act against; a grant
+    // lazily resolved to `runId:null` (task 6.3) fails cleanly here instead of
+    // reaching the engine at all — nothing is mutated because nothing runs.
+    if (requiresRun && grant.runId == null) {
+      return { ok: false, authority, budget, data: null, error: { code: 'NO_ACTIVE_RUN', message: 'This Work has no active coordination run yet.' } };
+    }
     const data = await fn();
     return { ok: true, authority, budget, data };
   } catch (error) {

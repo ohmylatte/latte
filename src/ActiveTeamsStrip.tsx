@@ -32,7 +32,11 @@ export function ActiveTeamsStrip({ runs, onOpen }: ActiveTeamsStripProps) {
           <span className="active-teams-strip-brand">{run.brandName}</span>
           <span className="active-teams-strip-work">{run.workTitle}</span>
           <span className="active-teams-strip-status">{t(`coordination.teams.status.${run.status}` as 'coordination.teams.status.running')}</span>
-          <span className="active-teams-strip-budget">{run.dispatchesUsed} / {run.maxDispatches ?? '∞'}</span>
+          {/* Un presupuesto que no se pudo leer NO se dibuja como "∞": eso
+              sería exactamente la mentira que el `null` de esta fila produce. */}
+          <span className="active-teams-strip-budget">
+            {run.budgetInvalid ? t('coordination.teams.budgetInvalid') : `${run.dispatchesUsed} / ${run.maxDispatches ?? '∞'}`}
+          </span>
           {run.pendingGates > 0 && <span className="active-teams-strip-gates">{t('coordination.teams.gatesWaiting', { count: run.pendingGates })}</span>}
         </button>
       </li>)}

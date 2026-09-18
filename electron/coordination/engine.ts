@@ -19,6 +19,7 @@ import type { CoordinationAuthorityMode, CoordinationBudget } from '../../shared
 import { LatteError, NotFoundError, ValidationError } from '../core/errors';
 import { FeatureDisabledError } from '../core/features';
 import { newId } from '../core/ids';
+import { LIMITS, requireInt, requireText } from '../services/validation';
 import type {
   CoordinationAskRecord,
   CoordinationDispatchRecord,
@@ -617,6 +618,12 @@ export class CoordinationEngine {
    */
   async requestCoordination(grant: CoordinationGrant, proposal: CoordinationProposal): Promise<CoordinationRunRecord> {
     this.requireCoordinationEnabled();
+    // ANTES de tocar la base: un `estimatedDispatches` que no sea entero
+    // positivo produce un `budget_json` que `requireCoordinationBudget`
+    // rechaza, y esa fila después rompía la tira global de TODAS las marcas y
+    // convertía cada llamada MCP siguiente de este Trabajo en un HTTP 500.
+    // Un run con presupuesto ilegible no se inserta nunca.
+    requireInt(proposal.estimatedDispatches, 'estimatedDispatches', 1, Number.MAX_SAFE_INTEGER);
     const existing = this.deps.repo.findActiveCoordinationRun(grant.workId);
     if (existing) throw new LatteError('RUN_ALREADY_ACTIVE', `This Work already has an active coordination run (${existing.id}, ${existing.status})`);
     this.assertRunCeiling();
@@ -1292,7 +1299,17 @@ export class CoordinationEngine {
    * suelta el reclamo y relanza): nunca habilita.
    */
   private readRunBudget(run: CoordinationRunRecord): CoordinationBudget {
-    return requireCoordinationBudget(JSON.parse(run.budgetJson));
+    try {
+      return requireCoordinationBudget(JSON.parse(run.budgetJson));
+    } catch (error) {
+      // La razón se NOMBRA. Antes salía como un `VALIDATION` genérico
+      // ("Invalid coordination budget") desde el fondo de la pila, y quien lo
+      // recibía —un despacho denegado, la tira global— no tenía forma de
+      // distinguir "este run tiene el presupuesto roto" de cualquier otro
+      // dato inválido. Con un código propio, la fila se puede marcar y el
+      // despacho se puede denegar con una razón que se lee.
+      throw new LatteError('COORDINATION_BUDGET_INVALID', `This run's budget cannot be read: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**

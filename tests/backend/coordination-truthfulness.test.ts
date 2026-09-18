@@ -306,10 +306,25 @@ describe('CoordinationEngine — la propuesta aprobada es el equipo que se contr
 
   // --- #10: el agente no puede firmarse un presupuesto ilimitado ------------
 
+  // Crítico 4: `estimatedDispatches: null` ya no llega siquiera a guardarse —
+  // se rechaza en la puerta, porque ese valor producía un `budget_json`
+  // ilegible que después tumbaba la tira global de todas las marcas. Los tres
+  // casos de abajo probaban el juicio #10 CON ese valor; ahora lo prueban con
+  // una propuesta que sí se puede guardar, que es donde el juicio #10 vive de
+  // verdad: la confirmación de ilimitado tiene que venir de la PERSONA, en el
+  // payload de aprobación, nunca del agente.
+  it('el agente no puede siquiera proponer un presupuesto ilimitado: se rechaza sin escribir run (juicio #10 + crítico 4)', async () => {
+    await expect(engine.requestCoordination(
+      { workId, runId: null, memberId: 'mem_proposer', role: 'worker' },
+      proposal({ estimatedDispatches: null, unlimitedConfirmedAt: '2026-01-01T00:00:00.000Z' }),
+    )).rejects.toMatchObject({ code: 'VALIDATION' });
+    expect(b.repo.findActiveCoordinationRun(workId)).toBeNull();
+  });
+
   it('un `unlimitedConfirmedAt` escrito por el agente se ignora al guardar la propuesta (juicio #10)', async () => {
     const run = await engine.requestCoordination(
       { workId, runId: null, memberId: 'mem_proposer', role: 'worker' },
-      proposal({ estimatedDispatches: null, unlimitedConfirmedAt: '2026-01-01T00:00:00.000Z' }),
+      proposal({ estimatedDispatches: 5, unlimitedConfirmedAt: '2026-01-01T00:00:00.000Z' }),
     );
     const stored = JSON.parse(run.budgetJson) as { unlimitedConfirmedAt: string | null };
     expect(stored.unlimitedConfirmedAt).toBeNull();
@@ -317,19 +332,32 @@ describe('CoordinationEngine — la propuesta aprobada es el equipo que se contr
     expect(storedProposal.unlimitedConfirmedAt ?? null).toBeNull();
   });
 
-  it('aprobar tal cual una propuesta ilimitada sin confirmación humana no concede nada (juicio #10)', async () => {
+  it('aprobar tal cual una propuesta con un `unlimitedConfirmedAt` del agente no concede ilimitado (juicio #10)', async () => {
     const run = await engine.requestCoordination(
       { workId, runId: null, memberId: 'mem_proposer', role: 'worker' },
-      proposal({ estimatedDispatches: null, unlimitedConfirmedAt: '2026-01-01T00:00:00.000Z' }),
+      proposal({ estimatedDispatches: 5, unlimitedConfirmedAt: '2026-01-01T00:00:00.000Z' }),
     );
-    await expect(engine.resolveGate(`proposal:${run.id}`, 'approve')).rejects.toThrow();
+    await engine.resolveGate(`proposal:${run.id}`, 'approve');
+    const approved = b.repo.getCoordinationRun(run.id);
+    const budget = JSON.parse(approved.budgetJson) as { maxDispatches: number | null; unlimitedConfirmedAt: string | null };
+    expect(budget.maxDispatches).toBe(5); // el tope que la persona vio, no el ilimitado que el agente se firmó
+    expect(budget.unlimitedConfirmedAt).toBeNull();
+  });
+
+  it('un payload editado que pide ilimitado SIN confirmación no concede nada, y el gate queda pendiente (juicio #10)', async () => {
+    const run = await engine.requestCoordination(
+      { workId, runId: null, memberId: 'mem_proposer', role: 'worker' },
+      proposal({ estimatedDispatches: 5 }),
+    );
+    const sinConfirmar = JSON.stringify({ ...proposal({ estimatedDispatches: null }), unlimitedConfirmedAt: null });
+    await expect(engine.resolveGate(`proposal:${run.id}`, 'approve', sinConfirmar)).rejects.toThrow();
     expect(b.repo.getCoordinationRun(run.id).status).toBe('planning');
   });
 
   it('la confirmación explícita de la persona, en el payload editado, sí concede ilimitado (juicio #10)', async () => {
     const run = await engine.requestCoordination(
       { workId, runId: null, memberId: 'mem_proposer', role: 'worker' },
-      proposal({ estimatedDispatches: null }),
+      proposal({ estimatedDispatches: 5 }),
     );
     const human = JSON.stringify({ ...proposal({ estimatedDispatches: null }), unlimitedConfirmedAt: '2026-09-18T12:00:00.000Z' });
     await engine.resolveGate(`proposal:${run.id}`, 'approve', human);

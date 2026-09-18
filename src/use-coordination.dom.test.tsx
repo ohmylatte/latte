@@ -75,7 +75,7 @@ describe('useCoordination(workId): no Work open', () => {
   });
 
   it('still fetches the GLOBAL active-runs strip even with no Work open', async () => {
-    mocks.listActiveCoordinationRuns.mockResolvedValue([{ runId: 'r1', workId: 'w9', workTitle: 'Otro', brandId: 'b9', brandName: 'Otra marca', status: 'running', dispatchesUsed: 1, maxDispatches: 5, pendingGates: 0 }]);
+    mocks.listActiveCoordinationRuns.mockResolvedValue([{ runId: 'r1', workId: 'w9', workTitle: 'Otro', brandId: 'b9', brandName: 'Otra marca', status: 'running', dispatchesUsed: 1, maxDispatches: 5, pendingGates: 0, budgetInvalid: false }]);
     const { result } = renderHook(() => useCoordination(null));
     await waitFor(() => expect(result.current.activeRuns).toHaveLength(1));
   });
@@ -246,7 +246,7 @@ describe('useCoordination(workId): refreshActiveRuns tiene su PROPIO guard de ge
     await waitFor(() => expect(mocks.listActiveCoordinationRuns).toHaveBeenCalledTimes(2));
 
     // La llamada MÁS NUEVA resuelve primero...
-    resolvers[1]([{ runId: 'r2', workId: 'w2', workTitle: 'Nuevo', brandId: 'b2', brandName: 'Marca 2', status: 'running', dispatchesUsed: 0, maxDispatches: 5, pendingGates: 0 }]);
+    resolvers[1]([{ runId: 'r2', workId: 'w2', workTitle: 'Nuevo', brandId: 'b2', brandName: 'Marca 2', status: 'running', dispatchesUsed: 0, maxDispatches: 5, pendingGates: 0, budgetInvalid: false }]);
     await waitFor(() => expect(result.current.activeRuns).toHaveLength(1));
 
     // ...y la VIEJA resuelve después: no puede pisar las filas nuevas.

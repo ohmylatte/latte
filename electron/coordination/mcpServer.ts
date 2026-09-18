@@ -196,8 +196,14 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
             required: ['roleId', 'spec'],
           },
         },
-        estimatedDispatches: { type: ['integer', 'null'], description: 'null means unlimited, and is only valid together with unlimitedConfirmedAt — never an implicit unlimited budget.' },
-        unlimitedConfirmedAt: { type: ['string', 'null'] },
+        // `['integer','null']` publicaba como legal el único valor que el
+        // validador de presupuesto rechaza SIEMPRE desde acá: un ilimitado
+        // sólo vale con una confirmación humana, y `requestCoordination`
+        // descarta la que escriba el agente. Publicarlo dejaba que un agente
+        // bien portado, siguiendo el esquema al pie de la letra, escribiera un
+        // `budget_json` ilegible que después rompía la tira de TODAS las
+        // marcas. Lo que no se puede aceptar no se publica.
+        estimatedDispatches: { type: 'integer', minimum: 1, description: 'How many dispatches this plan is estimated to need. A positive integer; an unlimited budget is a human choice made when approving, never something a plan can ask for.' },
         membersToHire: {
           type: 'array',
           items: {

@@ -1710,7 +1710,22 @@ export class LatteService implements BackendApi {
     return runs.map((run) => {
       const work = this.deps.repo.getWork(run.workId);
       const brand = this.deps.repo.getBrand(work.brandId);
-      const budget = this.coordination.budgetBlockForEnvelope(run.id);
+      // Lectura TOLERANTE POR FILA (crítico 4): un `budget_json` ilegible en
+      // UNA marca hacía tirar este `map` entero, o sea que una fila rota
+      // borraba de la pantalla los equipos activos de todas las demás marcas.
+      // La fila rota se declara rota y el resto de la lista sobrevive.
+      let dispatchesUsed = 0;
+      let maxDispatches: number | null = null;
+      let pendingGates = 0;
+      let budgetInvalid = false;
+      try {
+        const budget = this.coordination.budgetBlockForEnvelope(run.id);
+        dispatchesUsed = budget.dispatchesUsed;
+        maxDispatches = budget.maxDispatches;
+        pendingGates = this.coordination.listGates(run.id).length;
+      } catch {
+        budgetInvalid = true;
+      }
       return {
         runId: run.id,
         workId: run.workId,
@@ -1718,9 +1733,10 @@ export class LatteService implements BackendApi {
         brandId: brand.id,
         brandName: brand.name,
         status: run.status,
-        dispatchesUsed: budget.dispatchesUsed,
-        maxDispatches: budget.maxDispatches,
-        pendingGates: this.coordination.listGates(run.id).length,
+        dispatchesUsed,
+        maxDispatches,
+        pendingGates,
+        budgetInvalid,
       };
     });
   }

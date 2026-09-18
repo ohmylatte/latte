@@ -851,6 +851,15 @@ export interface CoordinationActiveRunSummary {
   dispatchesUsed: number;
   maxDispatches: number | null;
   pendingGates: number;
+  /**
+   * `true` cuando el `budget_json` de ESTE run no se pudo leer. Antes, una
+   * sola fila así hacía tirar el mapeo entero y la tira global —que es
+   * app-wide, de TODAS las marcas— se caía para todo el mundo. Ahora la fila
+   * se marca y las demás marcas se listan igual; `maxDispatches`/
+   * `dispatchesUsed` vienen en `null`/`0`, que NO significa "sin tope": sólo
+   * significa que no se pudo leer, y por eso existe este campo.
+   */
+  budgetInvalid: boolean;
 }
 
 /**
