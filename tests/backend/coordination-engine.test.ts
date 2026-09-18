@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CoordinationEngine, type CoordinationGrant } from '../../electron/coordination/engine';
 import { MAX_ACTIVE_COORDINATION_RUNS } from '../../electron/coordination/limits';
 import { createCoordinationTools } from '../../electron/coordination/tools';
-import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
+import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
  * engine.ts is the single dispatch choke point. These tests exercise it
@@ -43,6 +43,11 @@ describe('CoordinationEngine — the dispatch choke point', () => {
     });
     const run = await engine.startRun(workId, null);
     runId = run.id;
+    // Ronda 4, juicio #3: el alta automatica quedo acotada a lo que la
+    // persona aprobo. Este run nace de `startRun`, sin propuesta, asi que
+    // declara aca los roles que su persona hubiera aprobado -- lo que se
+    // esta probando es otra cosa.
+    approveCoordinationRoles(b, runId, 'strategist', 'copywriter');
   });
   afterEach(() => b.cleanup());
 
@@ -249,10 +254,10 @@ describe('CoordinationEngine — the dispatch choke point', () => {
     expect(engine.check('mem_x')).toEqual([]);
   });
 
-  it('latte_check never actually blocks, regardless of the requested wait', () => {
+  it('latte_check never actually blocks: ya no publica ningun `wait` que ignorar', () => {
     b.repo.insertMember({ id: 'mem_y', workId, roleId: 'strategist', roleName: 'Strategist', initial: 'S', runtime: 'codex', model: null, accountId: null, sessionId: '', done: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
     const started = Date.now();
-    const result = engine.check('mem_y', 600);
+    const result = engine.check('mem_y');
     expect(Date.now() - started).toBeLessThan(1000);
     expect(result).toEqual([]);
   });
@@ -672,6 +677,9 @@ describe('CoordinationEngine — emits a coordination event on state changes (ta
 
   it('fires on resolveGate (a dispatch gate approval)', async () => {
     const run = await engine.startRun(workId, null);
+    // Ronda 4, juicio #3: un run de `startRun` no trae roles aprobados, y el
+    // alta automatica quedo acotada a ellos. Lo que se prueba aca es otra cosa.
+    approveCoordinationRoles(b, run.id, 'strategist');
     await b.service.setCoordinationAuthority(workId, 'manual');
     const task = engine.taskCreate(run.id, { roleId: 'strategist', spec: 'Draft the brief' });
     const dispatch = await engine.startDispatch({ grant: { workId, runId: run.id, memberId: 'mem_coordinator', role: 'coordinator' }, taskId: task.id });
@@ -682,6 +690,9 @@ describe('CoordinationEngine — emits a coordination event on state changes (ta
 
   it('fires on report/startDispatch (a task/dispatch change) and on settleDispatch', async () => {
     const run = await engine.startRun(workId, null);
+    // Ronda 4, juicio #3: un run de `startRun` no trae roles aprobados, y el
+    // alta automatica quedo acotada a ellos. Lo que se prueba aca es otra cosa.
+    approveCoordinationRoles(b, run.id, 'strategist');
     await b.service.setCoordinationAuthority(workId, 'auto');
     const task = engine.taskCreate(run.id, { roleId: 'strategist', spec: 'Draft the brief' });
     emitted.length = 0;

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
-import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
+import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 // Spec: "Handoff Unaffected Outside an Active Run" + "acceptHandoff Bridges to
 // a Task During an Active Run". `acceptHandoffAsTask` is the new backend
@@ -46,6 +46,8 @@ describe('acceptHandoffAsTask: the handoff-to-coordination bridge', () => {
     await b.service.setCoordinationBudget(workId, { maxDispatches: 10 });
     await b.service.setCoordinationAuthority(workId, 'auto');
     const run = await b.service.startCoordinationRun(workId);
+    // Ronda 4, juicio #3: el puente crea la tarea, no contrata a nadie nuevo.
+    approveCoordinationRoles(b, run.id, 'strategist');
     writeHandoff('para-strategist.md', 'strategist', 'Draft the Q3 brief.');
 
     const result = await b.service.acceptHandoffAsTask(workId, 'para-strategist.md');
@@ -67,6 +69,8 @@ describe('acceptHandoffAsTask: the handoff-to-coordination bridge', () => {
     await b.service.setCoordinationBudget(workId, { maxDispatches: 10 });
     await b.service.setCoordinationAuthority(workId, 'manual');
     const run = await b.service.startCoordinationRun(workId);
+    // Ronda 4, juicio #3: el puente crea la tarea, no contrata a nadie nuevo.
+    approveCoordinationRoles(b, run.id, 'strategist');
     writeHandoff('para-strategist.md', 'strategist', 'Draft the Q3 brief.');
 
     await b.service.acceptHandoffAsTask(workId, 'para-strategist.md');
@@ -78,7 +82,7 @@ describe('acceptHandoffAsTask: the handoff-to-coordination bridge', () => {
 
   it('throws when the named handoff is no longer in the folder', async () => {
     await b.service.setCoordinationBudget(workId, { maxDispatches: 10 });
-    await b.service.startCoordinationRun(workId);
+    approveCoordinationRoles(b, (await b.service.startCoordinationRun(workId)).id, 'strategist');
     await expect(b.service.acceptHandoffAsTask(workId, 'para-ghost.md')).rejects.toThrow(/ya no está/);
   });
 
@@ -90,6 +94,8 @@ describe('acceptHandoffAsTask: the handoff-to-coordination bridge', () => {
     await b.service.setCoordinationBudget(workId, { maxDispatches: 10 });
     await b.service.setCoordinationAuthority(workId, 'manual');
     const run = await b.service.startCoordinationRun(workId);
+    // Ronda 4, juicio #3: el puente crea la tarea, no contrata a nadie nuevo.
+    approveCoordinationRoles(b, run.id, 'strategist');
     writeHandoff('para-strategist.md', 'strategist', 'Draft the Q3 brief.');
 
     const bridged = await b.service.acceptHandoffAsTask(workId, 'para-strategist.md');

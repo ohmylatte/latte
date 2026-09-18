@@ -76,8 +76,9 @@ export function createCoordinationTools(engine: CoordinationEngine) {
     latte_report: (grant: CoordinationGrant, args: { taskId: string; outcome: 'succeeded' | 'failed'; summary: string; files?: string | null }) =>
       wrap(engine, grant, false, () => engine.report(grant, args.taskId, args.outcome, args.summary, args.files ?? null), true),
 
-    latte_check: (grant: CoordinationGrant, args: { wait?: number }) =>
-      wrap(engine, grant, false, () => engine.check(grant.memberId, args.wait), true),
+    // Sin `wait`: el servidor nunca esperó y el buzón todavía no tiene productor.
+    latte_check: (grant: CoordinationGrant, _args: Record<string, never>) =>
+      wrap(engine, grant, false, () => engine.check(grant.memberId), true),
 
     latte_ask: (grant: CoordinationGrant, args: { question: string; ttlMinutes?: number; taskId?: string }) =>
       wrap(engine, grant, false, () => engine.ask(grant, args.question, args.ttlMinutes, args.taskId), true),

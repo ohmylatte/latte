@@ -64,11 +64,14 @@ rl.on('line', (line) => {
         out({ jsonrpc: '2.0', id, error: { code: -32601, message: 'unknown method mcpServerStatus/list' } });
         return;
       }
+      // `FAKE_CODEX_MCP_STATUS` (una lista de nombres) reemplaza el catalogo:
+      // es como se prueba que Latte reporta lo que el runtime CONOCE y no lo
+      // que Latte pidio.
       reply({
-        data: [
-          { name: 'remoto', authStatus: 'notLoggedIn', resourceTemplates: [], resources: [], tools: {} },
-          { name: 'engram', authStatus: 'unsupported', resourceTemplates: [], resources: [], tools: {} },
-        ],
+        data: (process.env.FAKE_CODEX_MCP_STATUS
+          ? JSON.parse(process.env.FAKE_CODEX_MCP_STATUS)
+          : ['remoto', 'engram']
+        ).map((name) => ({ name, authStatus: name === 'remoto' ? 'notLoggedIn' : 'unsupported', resourceTemplates: [], resources: [], tools: {} })),
       });
       return;
     case 'thread/start': {

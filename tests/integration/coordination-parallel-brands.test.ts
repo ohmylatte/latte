@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CoordinationEngine, type CoordinationGrant } from '../../electron/coordination/engine';
 import { createCoordinationTools } from '../../electron/coordination/tools';
-import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from '../backend/helpers';
+import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from '../backend/helpers';
 
 /**
  * Task 6.16 — the definitive answer to "can coordination run in parallel
@@ -76,6 +76,10 @@ describe('coordination parallel brands: two Brands, two Works, two active runs, 
     runA = rA.id;
     const rB = await engine.startRun(workB, null);
     runB = rB.id;
+    // Ronda 4, juicio #3: sin propuesta aprobada el alta automatica queda
+    // acotada. Lo que se prueba aca es el aislamiento entre Marcas.
+    approveCoordinationRoles(b, runA, 'strategist', 'copywriter');
+    approveCoordinationRoles(b, runB, 'strategist', 'copywriter');
   });
   afterEach(() => b.cleanup());
 
@@ -96,8 +100,9 @@ describe('coordination parallel brands: two Brands, two Works, two active runs, 
     const taskA = engine.taskCreate(runA, { roleId: 'strategist', spec: 'A1' });
     const outcomeA = await engine.startDispatch({ grant: coordA(), taskId: taskA.id });
     const memberA = b.repo.getCoordinationDispatch(outcomeA.dispatchId).memberId;
-    // Consume A's one and only allowed dispatch (maxDispatches counts SETTLED
-    // spend, not in-flight reservations).
+    // El único despacho permitido de A ya quedó consumido al reservarlo
+    // (maxDispatches cuenta despachos, no reportes); esto libera al miembro
+    // para que la segunda tarea del mismo rol llegue al chequeo de tope.
     await engine.report({ workId: workA, runId: runA, memberId: memberA, role: 'worker' }, taskA.id, 'succeeded', 'done');
 
     const taskA2 = engine.taskCreate(runA, { roleId: 'strategist', spec: 'A2' });

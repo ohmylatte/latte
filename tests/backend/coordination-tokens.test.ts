@@ -86,4 +86,90 @@ describe('CoordinationTokenRegistry — mint / verify / revoke', () => {
       expect(registry.verify(b)).not.toBeNull();
     });
   });
+
+  // Task 10 (judgment-day round 4): `size` counts every MINTED token, but the
+  // injection planner mints one unconditionally for every member of every
+  // Work of every Brand, regardless of coordination eligibility -- most are
+  // never handed to a runtime. `stopIfIdle` must key off DELIVERY, not mint,
+  // or the loopback server never stops. `markDelivered`/`deliveredSize` are
+  // the new surface that lets it do that; `size` keeps its old meaning
+  // unchanged (asserted explicitly below, since other suites still depend on
+  // it counting every live token, delivered or not).
+  describe('markDelivered / deliveredSize (task 10)', () => {
+    it('a minted token is not delivered until markDelivered says so: deliveredSize starts at 0 even though size is 1', () => {
+      const registry = new CoordinationTokenRegistry();
+      registry.mint('wrk_a', 'mem_a');
+
+      expect(registry.size).toBe(1);
+      expect(registry.deliveredSize).toBe(0);
+    });
+
+    it('markDelivered marks the CURRENT live token for that member as delivered', () => {
+      const registry = new CoordinationTokenRegistry();
+      registry.mint('wrk_a', 'mem_a');
+
+      registry.markDelivered('wrk_a', 'mem_a');
+
+      expect(registry.deliveredSize).toBe(1);
+    });
+
+    it('deliveredSize counts only delivered tokens, never every minted one', () => {
+      const registry = new CoordinationTokenRegistry();
+      registry.mint('wrk_a', 'mem_a');
+      registry.mint('wrk_a', 'mem_b');
+      registry.mint('wrk_a', 'mem_c');
+      expect(registry.size).toBe(3);
+
+      registry.markDelivered('wrk_a', 'mem_b');
+
+      expect(registry.deliveredSize).toBe(1);
+    });
+
+    it('is a no-op for a member that was never minted', () => {
+      const registry = new CoordinationTokenRegistry();
+      expect(() => registry.markDelivered('wrk_a', 'mem_never')).not.toThrow();
+      expect(registry.deliveredSize).toBe(0);
+    });
+
+    it('is a no-op for a member whose token was already revoked', () => {
+      const registry = new CoordinationTokenRegistry();
+      const token = registry.mint('wrk_a', 'mem_a');
+      registry.revoke(token);
+
+      expect(() => registry.markDelivered('wrk_a', 'mem_a')).not.toThrow();
+      expect(registry.deliveredSize).toBe(0);
+    });
+
+    it('revoke clears delivered status along with the token itself', () => {
+      const registry = new CoordinationTokenRegistry();
+      const token = registry.mint('wrk_a', 'mem_a');
+      registry.markDelivered('wrk_a', 'mem_a');
+      expect(registry.deliveredSize).toBe(1);
+
+      registry.revoke(token);
+
+      expect(registry.deliveredSize).toBe(0);
+    });
+
+    it('revokeMember clears delivered status too', () => {
+      const registry = new CoordinationTokenRegistry();
+      registry.mint('wrk_a', 'mem_a');
+      registry.markDelivered('wrk_a', 'mem_a');
+
+      registry.revokeMember('wrk_a', 'mem_a');
+
+      expect(registry.deliveredSize).toBe(0);
+    });
+
+    it('delivery does NOT survive a re-mint: a fresh token for the same member starts undelivered', () => {
+      const registry = new CoordinationTokenRegistry();
+      registry.mint('wrk_a', 'mem_a');
+      registry.markDelivered('wrk_a', 'mem_a');
+      expect(registry.deliveredSize).toBe(1);
+
+      registry.mint('wrk_a', 'mem_a'); // replaces the token
+
+      expect(registry.deliveredSize).toBe(0);
+    });
+  });
 });

@@ -77,6 +77,13 @@ export interface BackendOptions {
 
 export interface Backend {
   service: LatteService;
+  /**
+   * El chokepoint por el que pasa TODO evento de chat antes de llegar a la
+   * interfaz. Expuesto para que el camino de muerte de proceso (un `closed`
+   * de un adaptador -> `hub.stop` -> `injection.release`, juicio #8) se pueda
+   * probar sin spawnear un runtime real.
+   */
+  emitChat: (event: ChatEvent) => void;
   repo: LatteRepository;
   learning: LearningRepository;
   files: WorkspaceFiles;
@@ -143,6 +150,19 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     // An adapter counts only the process it runs; the member's lifetime total
     // is persisted, so the hub replaces it before the interface sees it.
     if (event.type === 'usage') { forward(hub.recordUsage(event)); return; }
+    // Juicio #8, ronda 4: este era el UNICO camino por el que la muerte de un
+    // proceso podia llegar al hub, y solo manejaba `usage` y `message`. Un
+    // `{type:'closed'}` de `ClaudeChatAdapter.finish` o de
+    // `CodexAppServer.onExit` no llegaba nunca a `hub.stop`, y por lo tanto
+    // tampoco a `injection.release`: el miembro caido se quedaba con su
+    // reclamo, su bearer token (que no vence), su cupo de techo y su cupo de
+    // memoria. Despues de seis muertes asi, `totalCoordinated()` alcanzaba
+    // MAX_COORDINATED_CODEX_PROCESSES PARA SIEMPRE y ningun miembro volvia a
+    // recibir coordinacion; y `tokens` nunca llegaba a cero, asi que
+    // `stopIfIdle` tampoco podia cerrar el listener de loopback.
+    // `hub.stop` es idempotente: el adaptador ya se borro a si mismo, asi que
+    // el loop no encuentra duenio y esto no reentra.
+    if (event.type === 'closed') { hub.stop(event.chatId); forward(event); return; }
     if (event.type === 'message' && event.message.role === 'assistant' && event.message.completed) {
       const assistantText = event.message.parts.filter(p=>p.type==='text').map(p=>(p as {text:string}).text).join('\n');
       for (const proposal of decisionProtocolBlocks(assistantText)) {
@@ -193,6 +213,9 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     emit: (event) => emitChat(event),
     accountEnv: (accountId) => accounts.envFor('claude', accountId),
     onSessionId: (chatId, sessionId) => hub.rememberSession(chatId, sessionId),
+    // El `system/init` del CLI trae el estado REAL de cada servidor MCP: la
+    // unica evidencia de que el proceso los levanto (juicio #1, ronda 4).
+    onMcpServers: (chatId, connected) => hub.confirmRuntimeMcpServers(chatId, connected),
     promptDir: path.join(paths.root, 'prompts'),
     transcripts,
     env,
@@ -299,13 +322,32 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     resolveEngramBinary: locateEngram,
     isCoordinationEnabled,
   });
-  hub.attachCoordinationInjection(injectionPlanner);
+  // El segundo argumento es el juicio #2: con el reclamo ya corregido por el
+  // runtime, el archivo de instrucciones del Trabajo se vuelve a escribir.
+  hub.attachCoordinationInjection(injectionPlanner, (workId) => service.refreshInstructionsAfterInjection(workId));
   service.attachCoordinationInjection(injectionPlanner);
 
   const seeded = options.seedDemo === false ? false : seedDemoIfEmpty(repo, files, pack);
 
+  // El hermano de `sweepStrayCodexServers`, pero del lado de la base: los
+  // despachos que la corrida anterior dejo en vuelo (una caida, un force-quit)
+  // se reconcilian ANTES de que la interfaz muestre nada. Sin esto, cada uno
+  // quedaba `dispatched` con su reserva abierta para siempre, quemando de
+  // forma irrecuperable un despacho del Trabajo y del tope app-wide, y su run
+  // no podia terminar nunca. Un fallo aca no puede impedir que la app abra.
+  try {
+    const swept = service.sweepUncertainCoordinationDispatches();
+    if (swept > 0) options.log?.(`[latte] coordination: ${swept} in-flight dispatch(es) settled as uncertain after an unclean exit`);
+  } catch (error) {
+    options.log?.(`[latte] coordination sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   return {
     service,
+    // El unico punto por el que pasa TODO evento de chat antes de llegar a la
+    // interfaz: se expone para que el camino de muerte de proceso (juicio #8)
+    // se pueda probar sin spawnear nada.
+    emitChat,
     repo,
     learning,
     files,

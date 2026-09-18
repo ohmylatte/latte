@@ -546,6 +546,11 @@ export class LatteRepository {
     this.db.run('INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)', [key, value]);
   }
 
+  /** Borra la clave entera. "No configurado" y "configurado en algo que no sirve" son estados distintos: un ajuste opcional tiene que poder volver a NO estar. */
+  deleteMeta(key: string): void {
+    this.db.run('DELETE FROM meta WHERE key = ?', [key]);
+  }
+
   get engine(): SqlDriver['kind'] {
     return this.db.kind;
   }
@@ -1204,6 +1209,26 @@ export class LatteRepository {
     return this.getCoordinationTask(id);
   }
 
+  /**
+   * Compare-and-set: se queda con una tarea `ready` para despacharla, en UNA
+   * sola sentencia. `false` significa que otro la reclamó primero — es lo que
+   * hace que dos `latte_dispatch` simultáneos sobre la misma tarea no puedan
+   * despachar los dos. Se llama SIEMPRE antes de cualquier `await`.
+   */
+  claimCoordinationTaskForDispatch(id: string, updatedAt: string): boolean {
+    return this.db.run("UPDATE coordination_task SET status = 'dispatched', updated_at = ? WHERE id = ? AND status = 'ready'", [updatedAt, id]) > 0;
+  }
+
+  /** Compare-and-set sobre el gate: dos clics en "Aprobar" compiten por esta fila y uno solo gana. */
+  claimCoordinationDispatchFromGate(id: string, startedAt: string): boolean {
+    return this.db.run("UPDATE coordination_dispatch SET status = 'dispatched', started_at = ? WHERE id = ? AND status = 'pending_approval'", [startedAt, id]) > 0;
+  }
+
+  /** Devuelve el gate a la mesa cuando el despacho no llegó a concretarse (por ejemplo, todos los miembros del rol están ocupados). */
+  releaseCoordinationDispatchToGate(id: string): void {
+    this.db.run("UPDATE coordination_dispatch SET status = 'pending_approval', started_at = NULL WHERE id = ?", [id]);
+  }
+
   /** Edges live on their own table so cycle detection is a graph query, never a JSON parse. */
   insertCoordinationTaskDep(taskId: string, dependsOnId: string): void {
     this.db.run('INSERT INTO coordination_task_dep(task_id, depends_on_id) VALUES (?, ?)', [taskId, dependsOnId]);
@@ -1234,19 +1259,32 @@ export class LatteRepository {
   }
 
   /** Newest last: the bitácora's own source, in the order the events actually happened. */
+  /**
+   * Todo despacho todavía en vuelo, de toda la app: `dispatched` o `running`.
+   * Es lo que el barrido de arranque y el de cierre reconcilian — sin esto,
+   * una caída con tres despachos en vuelo dejaba esas tres tareas y sus tres
+   * reservas abiertas PARA SIEMPRE, quemando cupo del Trabajo y de la app.
+   */
+  listOpenCoordinationDispatches(): CoordinationDispatchRecord[] {
+    return this.db
+      .all<CoordinationDispatchRow>("SELECT * FROM coordination_dispatch WHERE status IN ('dispatched','running') ORDER BY created_at ASC, id ASC", [])
+      .map(toCoordinationDispatch);
+  }
+
   listCoordinationDispatches(runId: string): CoordinationDispatchRecord[] {
     return this.db.all<CoordinationDispatchRow>('SELECT * FROM coordination_dispatch WHERE run_id = ? ORDER BY created_at ASC, id ASC', [runId]).map(toCoordinationDispatch);
   }
 
   updateCoordinationDispatch(id: string, patch: {
-    status?: CoordinationDispatchStatus; gateId?: string | null; prompt?: string; outcome?: string | null; summary?: string | null;
+    status?: CoordinationDispatchStatus; memberId?: string; gateId?: string | null; prompt?: string; outcome?: string | null; summary?: string | null;
     filesJson?: string | null; reservationId?: string | null; startedAt?: string | null; settledAt?: string | null;
   }): CoordinationDispatchRecord {
     const current = this.getCoordinationDispatch(id);
     this.db.run(
-      'UPDATE coordination_dispatch SET status = ?, gate_id = ?, prompt = ?, outcome = ?, summary = ?, files_json = ?, reservation_id = ?, started_at = ?, settled_at = ? WHERE id = ?',
+      'UPDATE coordination_dispatch SET status = ?, member_id = ?, gate_id = ?, prompt = ?, outcome = ?, summary = ?, files_json = ?, reservation_id = ?, started_at = ?, settled_at = ? WHERE id = ?',
       [
         patch.status ?? current.status,
+        patch.memberId ?? current.memberId,
         patch.gateId === undefined ? current.gateId : patch.gateId,
         patch.prompt ?? current.prompt,
         patch.outcome === undefined ? current.outcome : patch.outcome,
@@ -1335,6 +1373,49 @@ export class LatteRepository {
       'INSERT INTO coordination_cost_ledger(id, run_id, reservation_id, kind, dispatches, cost_micros, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       [row.id, row.runId, row.reservationId, row.kind, row.dispatches, row.costMicros, row.detailJson, row.createdAt],
     );
+  }
+
+  /**
+   * Reservas todavía abiertas (`state = 'reserved'`): gasto ya comprometido al
+   * despachar, que nadie liquidó aún. Sin esto el tope sólo contaría lo que el
+   * agente se dignó a reportar — un agente que nunca llama a `latte_report`
+   * tendría presupuesto infinito. Sin `runId` es el total de la app.
+   */
+  countOpenCoordinationCostReservations(runId?: string): number {
+    const row = runId
+      ? this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM coordination_cost_reservations WHERE state = 'reserved' AND run_id = ?", [runId])
+      : this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM coordination_cost_reservations WHERE state = 'reserved'");
+    return row?.n ?? 0;
+  }
+
+  /** Las reservas abiertas de los runs vivos, la contraparte de `sumActiveCoordinationSpentDispatches` para el tope app-wide. */
+  countOpenActiveCoordinationCostReservations(): number {
+    const row = this.db.get<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM coordination_cost_reservations WHERE state = 'reserved' AND run_id IN (SELECT id FROM coordination_run WHERE status IN ('planning','running','suspended'))",
+    );
+    return row?.n ?? 0;
+  }
+
+  /** `SUM(dispatches) WHERE kind = 'spend'` de UN run. La otra mitad del tope del Trabajo. */
+  sumCoordinationSpentDispatches(runId: string): number {
+    const row = this.db.get<{ n: number | null }>("SELECT SUM(dispatches) AS n FROM coordination_cost_ledger WHERE kind = 'spend' AND run_id = ?", [runId]);
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Lo mismo, pero sumando sólo los runs VIVOS
+   * (`planning`/`running`/`suspended`). El tope app-wide se calculaba sobre el
+   * libro mayor entero, para toda la vida de la instalación: quien ponía 40
+   * tenía 40 despachos y nunca más, y después cada run de cada Marca se
+   * suspendía sin salida posible. Un tope app-wide describe cuánto puede estar
+   * pasando A LA VEZ, no cuánto pasó alguna vez; el asiento igual queda
+   * retenido, que es lo que la inmutabilidad del libro promete.
+   */
+  sumActiveCoordinationSpentDispatches(): number {
+    const row = this.db.get<{ n: number | null }>(
+      "SELECT SUM(dispatches) AS n FROM coordination_cost_ledger WHERE kind = 'spend' AND run_id IN (SELECT id FROM coordination_run WHERE status IN ('planning','running','suspended'))",
+    );
+    return row?.n ?? 0;
   }
 
   /** Every ledger row for a run, oldest first — the source `budget.ts`'s caller sums into a `BudgetUsage` snapshot. */

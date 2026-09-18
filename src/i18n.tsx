@@ -553,6 +553,19 @@ const es = {
   // --- Coordinación: pausar el equipo mid-dispatch (autonomous-coordination, Phase 7) --
   'coordination.run.pause': 'Pausar equipo',
   'coordination.run.pauseHelp': 'El despacho en curso termina y reporta; no arranca uno nuevo.',
+  'coordination.run.resume': 'Reanudar equipo',
+  'coordination.run.resumeHelp': 'Vuelve a habilitar los despachos. El presupuesto se revisa recién en el próximo intento.',
+  'coordination.run.cancel': 'Cancelar equipo',
+  'coordination.run.cancelHelp': 'Cierra la coordinación de este Trabajo y libera su cupo. No se puede deshacer.',
+  'coordination.degraded.runtimeRefused': 'El runtime no inyectó las herramientas que se habían decidido: este miembro no las tiene en su proceso.',
+  'coordination.proposal.unlimitedConfirm': 'Confirmo un presupuesto ILIMITADO para este equipo',
+  'coordination.proposal.unlimitedBlocked': 'Esta propuesta no pone tope de despachos. Un presupuesto ilimitado lo confirmás vos: editá la propuesta y marcá la casilla, o poné un tope.',
+  'decision.permissions.handoffs.accept': 'Aceptar como tarea',
+  // El puente de handoffs tiene DOS finales distintos y uno solo estaba
+  // escrito: con `bridged` no se abrio nada, se acuno una `coordination_task`
+  // y ya salio despachada -- decirle a la persona "revisalo antes de
+  // enviarlo" la manda a revisar algo que no existe, con la plata ya gastada.
+  'handoff.bridged.dispatched': 'Tarea creada para {role} y despachada al equipo. Miralo en Decisiones.',
   // --- Coordinación: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
   'coordination.teams.status.planning': 'Planificando',
   'coordination.teams.status.running': 'En curso',
@@ -567,9 +580,10 @@ const es = {
   'coordination.settle.failed': 'Marcar como fallido',
   'coordination.settle.summaryPrompt': 'Resumen del resultado',
   'coordination.globalBudget.kicker': 'TOPE GLOBAL DE DESPACHOS (AVANZADO)',
-  'coordination.globalBudget.help': 'Opcional, se suma al presupuesto de cada Trabajo, nunca lo reemplaza. Sin configurar, no aplica ningún tope extra.',
+  'coordination.globalBudget.help': 'Opcional, se suma al presupuesto de cada Trabajo, nunca lo reemplaza. Cuenta los despachos de los equipos que están activos ahora — no el histórico —, así que se libera solo cuando un equipo termina o se cancela. Sin configurar, no aplica ningún tope extra.',
   'coordination.globalBudget.setLabel': 'Nuevo tope',
   'coordination.globalBudget.save': 'Guardar',
+  'coordination.globalBudget.clear': 'Sacar el tope',
   // --- Resultados: lo que el trabajo entregó ----------------------------
   'resultados.tab': 'Resultados',
   'resultados.region': 'Resultados',
@@ -1121,6 +1135,15 @@ const en: Record<MessageKey, string> = {
   // --- Coordination: pausing the team mid-dispatch (autonomous-coordination, Phase 7) --
   'coordination.run.pause': 'Pause team',
   'coordination.run.pauseHelp': 'The in-flight dispatch finishes and reports; no new dispatch starts.',
+  'coordination.run.resume': 'Resume team',
+  'coordination.run.resumeHelp': 'Dispatching is allowed again. The budget is re-checked at the next attempt, not now.',
+  'coordination.run.cancel': 'Cancel team',
+  'coordination.run.cancelHelp': 'Closes this Work\u2019s coordination and frees its slot. This cannot be undone.',
+  'coordination.degraded.runtimeRefused': 'The runtime did not inject the tools that were decided for it: this member does not have them in its process.',
+  'coordination.proposal.unlimitedConfirm': 'I confirm an UNLIMITED budget for this team',
+  'coordination.proposal.unlimitedBlocked': 'This proposal sets no dispatch cap. An unlimited budget is yours to confirm: edit the proposal and tick the box, or set a cap.',
+  'decision.permissions.handoffs.accept': 'Accept as task',
+  'handoff.bridged.dispatched': 'Task created for {role} and dispatched to the team. Follow it in Decisions.',
   // --- Coordination: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
   'coordination.teams.status.planning': 'Planning',
   'coordination.teams.status.running': 'Running',
@@ -1135,9 +1158,10 @@ const en: Record<MessageKey, string> = {
   'coordination.settle.failed': 'Mark as failed',
   'coordination.settle.summaryPrompt': 'Outcome summary',
   'coordination.globalBudget.kicker': 'GLOBAL DISPATCH CAP (ADVANCED)',
-  'coordination.globalBudget.help': "Optional, adds on top of each Work's own budget, never replaces it. Unset, no extra cap applies.",
+  'coordination.globalBudget.help': "Optional, adds on top of each Work's own budget, never replaces it. It counts the dispatches of the teams active right now — not your history — so it frees up as each team finishes or is cancelled. Unset, no extra cap applies.",
   'coordination.globalBudget.setLabel': 'New cap',
   'coordination.globalBudget.save': 'Save',
+  'coordination.globalBudget.clear': 'Remove the cap',
   // --- Resultados: what the work delivered ------------------------------
   'resultados.tab': 'Results',
   'resultados.region': 'Results',

@@ -151,6 +151,16 @@ function CoordinationGlobalBudgetSection({ onError }: { onError: (text: string) 
       .catch(e => onError(e instanceof Error ? e.message : String(e)))
       .finally(() => setSaving(false));
   };
+  // Un tope que no se puede sacar es una trampa, no un ajuste: el validador
+  // rechaza todo valor que signifique "sin tope", asi que sin este boton la
+  // persona quedaba encerrada con el numero que puso.
+  const clear = () => {
+    setSaving(true);
+    void api.setCoordinationGlobalBudget(null)
+      .then(next => { setBudget(next); setDraft(''); })
+      .catch(e => onError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setSaving(false));
+  };
   return <section className="settings-section coordination-global-budget">
     <h2>{t('coordination.globalBudget.kicker')}</h2>
     <p className="settings-lead">{t('coordination.globalBudget.help')}</p>
@@ -166,6 +176,7 @@ function CoordinationGlobalBudgetSection({ onError }: { onError: (text: string) 
         <input className="coordination-global-budget-input" type="number" min={1} value={draft} onChange={e => setDraft(e.target.value)} />
       </label>
       <button className="coordination-global-budget-save" disabled={saving || !draft.trim()} onClick={save}>{t('coordination.globalBudget.save')}</button>
+      <button className="coordination-global-budget-clear" disabled={saving || budget == null} onClick={clear}>{t('coordination.globalBudget.clear')}</button>
     </div>
   </section>;
 }

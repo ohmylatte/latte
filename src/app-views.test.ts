@@ -69,7 +69,8 @@ describe('useCoordination wiring adds no new VIEWS entry (task 7.11)', () => {
   });
 
   it('calls the hook exactly once, unconditionally, scoped to the open Work', () => {
-    expect(app).toContain('useCoordination(work?.id ?? null)');
+    expect(app).toContain('useCoordination(work?.id ?? null,');
+    expect(app.match(/useCoordination\(/g) ?? []).toHaveLength(1);
   });
 
   it('renders the active-teams strip and the memory notice', () => {

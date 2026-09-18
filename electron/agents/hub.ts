@@ -112,6 +112,18 @@ export class AgentHub {
   /** The outcome each live conversation opened with. A model change restarts the runtime, not the conversation, so it keeps this. */
   private readonly openedOutcome = new Map<string, string | null>();
   private readonly modelCache = new Map<string, { at: number; value: AgentModelList }>();
+  /**
+   * Una apertura en vuelo por miembro (juicio #7, ronda 4). Todo guard de "ya
+   * está abierto" se chequeaba ANTES de un `await` y el registro ocurría
+   * DESPUES: `openMember` mira `liveSession` y recien despues hace `await
+   * this.open(...)`. Y `resolveTargetMember` puede elegir al MISMO miembro
+   * ocioso para dos tareas listas distintas del mismo rol -- el
+   * compare-and-set de la ronda 2 protege una fila de tarea, no esto. Las dos
+   * llamadas llegaban a `hub.openMember(X)` y arrancaban DOS procesos bajo un
+   * mismo chatId, el segundo pisando al primero. Compartir la promesa cierra
+   * la ventana entera.
+   */
+  private readonly opening = new Map<string, Promise<ChatSession>>();
   private readonly clock: () => string;
   /**
    * sdd/autonomous-coordination, task 6.28: attached AFTER construction, not
@@ -125,14 +137,37 @@ export class AgentHub {
    * behaviour.
    */
   private injection: CoordinationInjectionPlanner | null = null;
+  /**
+   * Juicio #2, ronda 4: `renderAndWriteInstructions` lee
+   * `memoryToolsInjectedForWork`, y esa respuesta puede CAMBIAR despues del
+   * spawn -- `confirmInjection` baja el reclamo cuando el runtime se nego.
+   * Sin este aviso, el archivo del Trabajo se quedaba afirmando herramientas
+   * que el proceso no tiene.
+   */
+  private onInjectionConfirmed: ((workId: string) => void) | null = null;
 
   constructor(private readonly deps: AgentHubDeps) {
     this.clock = deps.clock ?? (() => new Date().toISOString());
   }
 
   /** Wires the coordination injection planner in after construction (see the field's own comment for why). */
-  attachCoordinationInjection(planner: CoordinationInjectionPlanner): void {
+  attachCoordinationInjection(planner: CoordinationInjectionPlanner, onInjectionConfirmed?: (workId: string) => void): void {
     this.injection = planner;
+    this.onInjectionConfirmed = onInjectionConfirmed ?? null;
+  }
+
+  /**
+   * Lo que el RUNTIME reporto sobre sus propios servidores MCP, ya arrancado
+   * (juicio #1, ronda 4). Claude lo publica en su `system/init`, que llega
+   * DESPUES de que `start()` volvio: esta es la correccion tardia del reclamo
+   * que `assign()` dejo escrito antes del spawn. Un chatId que no es un
+   * miembro (un chat suelto) no tiene reclamo ninguno y se ignora.
+   */
+  confirmRuntimeMcpServers(chatId: string, connected: string[]): void {
+    const member = this.deps.repo.findMember(chatId);
+    if (!member) return;
+    this.injection?.confirmInjection(chatId, connected);
+    this.onInjectionConfirmed?.(member.workId);
   }
 
   // Primary agent -----------------------------------------------------------
@@ -396,7 +431,16 @@ export class AgentHub {
       // work, with its conversation closed, would be the worst of both: the
       // previous model is put back and the conversation reopened.
       this.deps.repo.setMemberModel(memberId, record.model ?? null, this.clock());
-      try { await this.open(this.deps.repo.getMember(memberId), reopen); } catch { /* reported through the original error */ }
+      // Juicio #9: `open()` ya reclamo un token y un cupo de techo antes de
+      // fallar. Sin soltarlo, este reintento minta un SEGUNDO reclamo, y si
+      // tambien falla nadie suelta ninguno de los dos: el token vivo impide
+      // para siempre que `stopIfIdle` cierre el servidor compartido y el cupo
+      // queda comido para toda otra Marca. `addMember`/`openMember` ya
+      // compensan asi; este camino se lo habia salteado.
+      this.injection?.release(memberId);
+      try { await this.open(this.deps.repo.getMember(memberId), reopen); } catch {
+        this.injection?.release(memberId);
+      }
       throw error;
     }
   }
@@ -429,7 +473,13 @@ export class AgentHub {
       // previous tier is put back and the conversation reopened, because a
       // member left closed on a setting that does not work is the worst of both.
       this.deps.repo.setMemberTier(memberId, previous, this.clock());
-      try { await this.open(this.deps.repo.getMember(memberId), reopen); } catch { /* reported through the original error */ }
+      // Misma compensacion que en `setMemberModel` (juicio #9): soltar el
+      // reclamo del intento fallido antes de reabrir, y otra vez si el
+      // reintento tampoco arranca.
+      this.injection?.release(memberId);
+      try { await this.open(this.deps.repo.getMember(memberId), reopen); } catch {
+        this.injection?.release(memberId);
+      }
       throw error;
     }
   }
@@ -461,7 +511,17 @@ export class AgentHub {
     }
   }
 
-  private async open(record: TeamMemberRecord, context: MemberContext): Promise<ChatSession> {
+  private open(record: TeamMemberRecord, context: MemberContext): Promise<ChatSession> {
+    const inFlight = this.opening.get(record.id);
+    if (inFlight) return inFlight;
+    const started = this.openNow(record, context);
+    this.opening.set(record.id, started);
+    const clear = () => { if (this.opening.get(record.id) === started) this.opening.delete(record.id); };
+    started.then(clear, clear);
+    return started;
+  }
+
+  private async openNow(record: TeamMemberRecord, context: MemberContext): Promise<ChatSession> {
     const adapter = this.adapterFor(record.runtime);
     const label = this.labelFor(record.runtime, record.model, record.accountId);
     const outcome = context.outcomeContext?.trim() || null;
@@ -496,6 +556,14 @@ export class AgentHub {
       mcpServers,
     };
     const result = await adapter.start(adapterInput);
+    // Lo que el adaptador entregó DE VERDAD corrige el reclamo que `assign()`
+    // dejó escrito antes del spawn: sin esto, `coordinationRuntimeSupport`
+    // afirmaba capacidades que el proceso no tenía (juicio #5).
+    this.injection?.confirmInjection(record.id, result.injectedMcpServers);
+    // El archivo de instrucciones del Trabajo se vuelve a escribir con el
+    // reclamo YA corregido (juicio #2): una negativa del runtime tiene que
+    // llegar al texto que el agente lee, no quedarse solo en la UI.
+    this.onInjectionConfirmed?.(context.workId);
     if (result.runtimeSessionId && result.runtimeSessionId !== record.sessionId) this.deps.repo.setMemberSession(record.id, result.runtimeSessionId, this.clock());
     this.sessions.set(result.session.id, result.session);
     this.openedOutcome.set(record.id, outcome);

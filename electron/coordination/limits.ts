@@ -18,9 +18,6 @@ export const MAX_DEPENDENCY_DEPTH = 20;
 /** A task blocks (never retries indefinitely) after this many consecutive failed reports. */
 export const MAX_ATTEMPTS_PER_TASK = 3;
 
-/** `latte_check(wait)` never actually blocks longer than this, no matter what was requested. */
-export const MAX_CHECK_WAIT_SECONDS = 30;
-
 /** `latte_ask` TTL when the caller omits one. */
 export const ASK_TTL_DEFAULT_MINUTES = 30;
 

@@ -5,7 +5,7 @@ import { CoordinationEngine, type CoordinationGrant } from '../../electron/coord
 import { createCoordinationTools } from '../../electron/coordination/tools';
 import { CoordinationMcpServer, MCP_PROTOCOL_VERSION, MCP_TOOL_DEFINITIONS, type ListenFn } from '../../electron/coordination/mcpServer';
 import { CoordinationTokenRegistry } from '../../electron/coordination/tokens';
-import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
+import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
  * Task 6.17-6.20 (slice 6-B) proved the pure routing core -- token/loopback
@@ -79,6 +79,11 @@ describe('CoordinationMcpServer', () => {
     tokens = new CoordinationTokenRegistry();
     const run = await engine.startRun(workId, null);
     runId = run.id;
+    // Ronda 4, juicio #3: el alta automatica quedo acotada a lo que la
+    // persona aprobo. Este run nace de `startRun`, sin propuesta, asi que
+    // declara aca los roles que su persona hubiera aprobado -- lo que se
+    // esta probando es otra cosa.
+    approveCoordinationRoles(b, runId, 'strategist');
   });
   afterEach(() => b.cleanup());
 
@@ -400,16 +405,60 @@ describe('CoordinationMcpServer', () => {
       expect(listenSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('stopIfIdle does nothing while the token registry still holds a token, even with zero active runs', async () => {
+    // Task 11: `if (this.handle) return;` then `await this.deps.listen(...)`
+    // is a TOCTOU -- two concurrent callers both observe `handle === null`
+    // before either bind resolves, so BOTH call `listen`, the second
+    // overwrites `this.handle`, and the first's socket leaks forever (never
+    // closed, unreachable from `stopIfIdle`, still serving `tools/call`).
+    it('ensureStarted memoises the in-flight bind: two concurrent callers await the SAME promise, listen is called exactly once', async () => {
+      let calls = 0;
+      const listen: ListenFn = () => new Promise((resolve) => {
+        calls += 1;
+        // Resolves on a later tick, deliberately -- if a second caller
+        // starts its OWN bind before this one settles, this is where it
+        // would happen.
+        setTimeout(() => resolve({ port: 7777, close: () => {} }), 0);
+      });
+      const server = new CoordinationMcpServer({ repo: b.repo, engine, tokens, listen });
+
+      await Promise.all([server.ensureStarted(), server.ensureStarted()]);
+
+      expect(calls).toBe(1);
+      expect(server.listening).toBe(true);
+      expect(server.boundPort).toBe(7777);
+    });
+
+    it('stopIfIdle does nothing while a DELIVERED token is still live, even with zero active runs', async () => {
       const { listen } = fakeListen();
       const server = new CoordinationMcpServer({ repo: b.repo, engine, tokens, listen });
       tokens.mint(workId, 'mem_x');
+      tokens.markDelivered(workId, 'mem_x');
       engine.cancelRun(runId); // zero active runs app-wide now
       await server.ensureStarted();
 
       server.stopIfIdle();
 
       expect(server.listening).toBe(true);
+    });
+
+    // Task 10 (judgment-day round 4): the injection planner mints a token
+    // UNCONDITIONALLY for every member of every Work of every Brand,
+    // regardless of coordination eligibility -- most of those tokens are
+    // never handed to a runtime. Keying `stopIfIdle` off raw `tokens.size`
+    // meant the loopback server kept listening long after the last run
+    // ended, for as long as any open member existed anywhere. Only DELIVERY
+    // may hold the server open.
+    it('stopIfIdle stops even while minted-but-never-delivered tokens remain (task 10)', async () => {
+      const { listen } = fakeListen();
+      const server = new CoordinationMcpServer({ repo: b.repo, engine, tokens, listen });
+      tokens.mint(workId, 'mem_x'); // minted (e.g. by the injection planner), never delivered
+      expect(tokens.size).toBeGreaterThan(0); // the OLD, buggy signal is still non-empty
+      engine.cancelRun(runId); // zero active runs app-wide
+      await server.ensureStarted();
+
+      server.stopIfIdle();
+
+      expect(server.listening).toBe(false);
     });
 
     it('stopIfIdle does nothing while any run is active app-wide, even with an EMPTY token registry', async () => {
@@ -425,10 +474,11 @@ describe('CoordinationMcpServer', () => {
       expect(server.listening).toBe(true);
     });
 
-    it('stops only once BOTH conditions hold: empty registry AND zero active runs app-wide', async () => {
+    it('stops only once BOTH conditions hold: no delivered tokens remain AND zero active runs app-wide', async () => {
       const { listen } = fakeListen();
       const server = new CoordinationMcpServer({ repo: b.repo, engine, tokens, listen });
       const token = tokens.mint(workId, 'mem_x');
+      tokens.markDelivered(workId, 'mem_x');
       await server.ensureStarted();
 
       tokens.revoke(token);
@@ -451,6 +501,8 @@ describe('CoordinationMcpServer', () => {
       const server = new CoordinationMcpServer({ repo: b.repo, engine, tokens, listen });
       const tokenA = tokens.mint(workId, 'mem_a');
       const tokenB = tokens.mint(workB.id, 'mem_b');
+      tokens.markDelivered(workId, 'mem_a');
+      tokens.markDelivered(workB.id, 'mem_b');
       await server.ensureStarted();
 
       // Empty the registry entirely (satisfies condition 1) but end ONLY
@@ -491,6 +543,123 @@ describe('CoordinationMcpServer', () => {
 
       expect(server.listening).toBe(true);
       expect(server.boundPort).toBe(6161);
+    });
+  });
+
+  // --- Endurecimiento: contaminación de prototipo y cuerpo sin tope ----------
+
+  describe('tools/call — el nombre de la herramienta es dato del que llama, no una llave al prototipo', () => {
+    async function callTool(name: string): Promise<{ status: number; body: string }> {
+      const { listen } = fakeListen();
+      const server = new CoordinationMcpServer({ repo: b.repo, engine, tokens, listen });
+      b.repo.insertMember({ id: 'mem_coordinator', workId, roleId: 'strategist', roleName: 'Strategist', initial: 'S', runtime: 'codex', model: null, accountId: null, sessionId: '', done: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
+      await b.service.setCoordinatorGrant(workId, 'mem_coordinator');
+      const token = tokens.mint(workId, 'mem_coordinator');
+      return server.handleMcpRequest(rpc('tools/call', { name, arguments: {} }), `Bearer ${token}`, '127.0.0.1');
+    }
+
+    it.each(['__proto__', 'constructor', 'toString', 'hasOwnProperty'])('%s es una herramienta desconocida, no un handler heredado', async (name) => {
+      const result = await callTool(name);
+
+      expect(result.status).toBe(200);
+      const body = rpcBody(result);
+      expect(body.error).toMatchObject({ code: -32602 });
+      expect(body.result).toBeUndefined();
+    });
+  });
+
+  describe('onRequest — el cliente nunca queda colgado', () => {
+    /** Captura el `RequestListener` que `ensureStarted` le pasa a `listen`, sin abrir un socket. */
+    async function captureListener(server: CoordinationMcpServer, listener: { current: ((req: never, res: never) => void) | null }): Promise<void> {
+      await server.ensureStarted();
+      expect(listener.current).not.toBeNull();
+    }
+
+    function fakeReqRes(body: string | Buffer[], authorization?: string) {
+      const chunks = Array.isArray(body) ? body : [Buffer.from(body, 'utf8')];
+      const handlers: Record<string, (...args: never[]) => void> = {};
+      const destroy = vi.fn();
+      const req = {
+        on: (event: string, cb: (...args: never[]) => void) => { handlers[event] = cb; },
+        headers: { authorization },
+        socket: { remoteAddress: '127.0.0.1' },
+        destroy,
+      };
+      const res = { status: 0, headers: {} as Record<string, string>, body: null as string | null, ended: false,
+        writeHead(status: number, headers: Record<string, string>) { this.status = status; this.headers = headers; },
+        end(payload: string) { this.body = payload; this.ended = true; },
+      };
+      const flush = () => { for (const chunk of chunks) handlers.data?.(chunk as never); handlers.end?.(); };
+      return { req, res, flush, handlers, destroy };
+    }
+
+    it('un fallo interno todavía escribe una respuesta, en vez de dejar la conexión abierta para siempre', async () => {
+      const listener: { current: ((req: never, res: never) => void) | null } = { current: null };
+      const listen: ListenFn = async (requestListener) => { listener.current = requestListener as never; return { port: 4242, close: () => {} }; };
+      const server = new CoordinationMcpServer({ repo: b.repo, engine, tokens, listen });
+      await captureListener(server, listener);
+      // `resolveGrant` es la lectura que `tools/call` hace FUERA de cualquier
+      // try: una base caída acá colgaba al cliente y tiraba un unhandled
+      // rejection en el proceso principal de Electron.
+      vi.spyOn(engine, 'resolveGrant').mockImplementation(() => { throw new Error('database is locked'); });
+      b.repo.insertMember({ id: 'mem_coordinator', workId, roleId: 'strategist', roleName: 'Strategist', initial: 'S', runtime: 'codex', model: null, accountId: null, sessionId: '', done: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
+      const token = tokens.mint(workId, 'mem_coordinator');
+      const { req, res, flush } = fakeReqRes(rpc('tools/call', { name: 'latte_team_list', arguments: {} }), `Bearer ${token}`);
+
+      listener.current!(req as never, res as never);
+      flush();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(res.ended).toBe(true);
+      expect(res.status).toBe(500);
+      expect(JSON.parse(res.body!)).toMatchObject({ jsonrpc: '2.0', error: { code: -32603 } });
+    });
+
+    it('un cuerpo desmedido se corta en vez de acumularse en memoria sin techo', async () => {
+      const listener: { current: ((req: never, res: never) => void) | null } = { current: null };
+      const listen: ListenFn = async (requestListener) => { listener.current = requestListener as never; return { port: 4242, close: () => {} }; };
+      const server = new CoordinationMcpServer({ repo: b.repo, engine, tokens, listen });
+      await captureListener(server, listener);
+      const huge = [Buffer.alloc(600_000, 0x61), Buffer.alloc(600_000, 0x61)];
+      const { req, res, flush, destroy } = fakeReqRes(huge, 'Bearer tok_cualquiera');
+
+      listener.current!(req as never, res as never);
+      flush();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(res.ended).toBe(true);
+      expect(res.status).toBe(413);
+      // Item 12c: sin esto, un cliente local podía seguir mandando datos para
+      // siempre hacia un handler ya descartado — la respuesta 413 se escribía,
+      // pero el socket nunca se cerraba del otro lado.
+      expect(destroy).toHaveBeenCalledTimes(1);
+    });
+
+    // Item 12c: un cliente que resetea la conexión a mitad del cuerpo emite
+    // 'error' o 'aborted' en `req` -- sin manejador, esta es la misma
+    // excepción sin capturar que tumbaba el proceso principal de Electron.
+    // El socket ya está muerto en este punto: nunca hay que intentar
+    // escribirle una respuesta.
+    describe('un socket que se cae a mitad del cuerpo', () => {
+      it.each(['error', 'aborted'] as const)('%s en req marca cerrado, deja de acumular, y nunca escribe una respuesta a un socket muerto', async (event) => {
+        const listener: { current: ((req: never, res: never) => void) | null } = { current: null };
+        const listen: ListenFn = async (requestListener) => { listener.current = requestListener as never; return { port: 4242, close: () => {} }; };
+        const server = new CoordinationMcpServer({ repo: b.repo, engine, tokens, listen });
+        await captureListener(server, listener);
+        const { req, res, handlers } = fakeReqRes('{"jsonrpc":"2.0"', 'Bearer tok_cualquiera'); // cuerpo deliberadamente incompleto
+
+        expect(() => {
+          listener.current!(req as never, res as never);
+          handlers.data?.(Buffer.from('{"jsonrpc":"2.0"', 'utf8') as never);
+          handlers[event]?.(new Error('socket hang up') as never);
+          // Algunos runtimes igual disparan 'end' después de 'error'/'aborted' — también debe ser un no-op.
+          handlers.end?.();
+        }).not.toThrow();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(res.ended).toBe(false);
+        expect(res.status).toBe(0);
+      });
     });
   });
 });

@@ -50,7 +50,9 @@ export type CoordinationDegradedReason =
   | 'codex_global_cap'
   | 'codex_process_ceiling'
   | 'opencode_shared_server'
-  | 'engram_not_installed';
+  | 'engram_not_installed'
+  /** El adaptador entregó menos de lo que este planificador reclamó (ver `confirmInjection`). */
+  | 'runtime_refused_injection';
 
 export interface MemberInjectionStatus {
   runtime: ChatRuntime;
@@ -144,7 +146,17 @@ export class CoordinationInjectionPlanner {
       await this.deps.server.ensureStarted();
       const port = this.deps.server.boundPort;
       servers.push({ kind: 'http', name: 'latte_coordination', url: `http://127.0.0.1:${port}/mcp`, token });
-      this.markCoordinated(input.workId, input.memberId);
+      // ENTREGADO, no solo acuniado (juicio #10, ronda 4): `mint()` corre para
+      // todo miembro de todo Trabajo de toda Marca, asi que `tokens.size` nunca
+      // llegaba a cero y `stopIfIdle` no podia cerrar el listener jamas. Esta
+      // linea -- y solo esta -- es donde un token llega de verdad a un runtime.
+      this.deps.tokens.markDelivered(input.workId, input.memberId);
+      // El techo que estos contadores acotan es de PROCESOS `codex app-server`
+      // (ver los docstrings de MAX_COORDINATED_CODEX_*). Claude no spawnea
+      // ninguno: contarlo acá le comía el cupo a Codex sin gastar nada, y con
+      // seis miembros Claude app-wide `totalSlots()` llegaba a frenar hasta la
+      // rama de sólo-memoria. Sólo Codex entra al ledger.
+      if (input.runtime === 'codex') this.markCoordinated(input.workId, input.memberId);
       coordinated = true;
     }
     if (decision.memoryServer) {
@@ -181,6 +193,73 @@ export class CoordinationInjectionPlanner {
       canPropose: decision.coordinationEligible,
       reason: decision.reason,
     };
+  }
+
+  /**
+   * Lo que el ADAPTADOR entregó de verdad, después de arrancar el proceso.
+   * `assign()` decide antes del spawn y deja el reclamo escrito; los
+   * adaptadores se niegan después por su cuenta (Claude sin `promptDir` o con
+   * `writeMcpConfigFile` fallando; Codex con su propio contador lleno), y sin
+   * esto `preview()` — la fuente de `coordinationRuntimeSupport` — seguía
+   * devolviendo el reclamo viejo y la UI afirmaba "Sin restricciones para
+   * coordinar" sobre un proceso sin ningún servidor. `undefined` (un adaptador
+   * que no reporta, como OpenCode) deja el reclamo intacto.
+   */
+  confirmInjection(memberId: string, injectedServerNames: string[] | undefined): void {
+    if (!injectedServerNames) return;
+    const claim = this.claims.get(memberId);
+    if (!claim) return;
+    const coordination = injectedServerNames.includes('latte_coordination');
+    const memory = injectedServerNames.includes('latte_memory');
+    const refused = (claim.status.coordinationInjected && !coordination) || (claim.status.memoryInjected && !memory);
+    if (!refused) return;
+    if (claim.coordinated && !coordination) {
+      this.coordinatedByWork.get(claim.workId)?.delete(memberId);
+      claim.coordinated = false;
+      this.deps.server.stopIfIdle();
+    }
+    if (claim.memorySlotKey && !memory) {
+      this.memorySlots.get(claim.memorySlotKey)?.delete(memberId);
+      claim.memorySlotKey = null;
+    }
+    claim.status = {
+      ...claim.status,
+      coordinationInjected: coordination,
+      memoryInjected: memory,
+      canPropose: coordination,
+      reason: 'runtime_refused_injection',
+    };
+  }
+
+  /**
+   * Si los miembros de ESTE Trabajo llevan de verdad las herramientas de
+   * engram AHORA MISMO. Lo lee `renderAndWriteInstructions`, que es sincrónico
+   * y escribe UN archivo compartido por todo el Trabajo: por eso exige que
+   * TODOS los reclamos vivos la tengan, nunca "alguno".
+   *
+   * Ronda 4, juicio #2: sin ningún reclamo vivo esto caía a
+   * `lastEngramBinaryFound`, UNA bandera global de proceso que prendía
+   * cualquier miembro de cualquier Marca. Y `renderAndWriteInstructions` se
+   * dispara desde `memberContext()` justo cuando `liveMemberCount(work.id) ===
+   * 0`, así que en la práctica ese fallback era SIEMPRE el que decidía: con la
+   * Marca A ya resuelta, el primer miembro de un Trabajo de la Marca B — un
+   * OpenCode, o un Codex pasado el `codex_process_ceiling`, ninguno de los dos
+   * recibe `latte_memory` — leía "ya tenés las herramientas de Engram,
+   * scopeadas a esta marca… guardá y buscá sin pasar `project`". Con su propio
+   * engram configurado globalmente, eso escribe la estrategia de la Marca B en
+   * un proyecto autodetectado: una escritura cruzada entre Marcas. El
+   * docstring argumentaba que la redacción conservadora es la honesta cuando
+   * no se sabe, y después codeaba el default contrario. Ahora no se sabe =
+   * `false`, y el flag global no participa.
+   */
+  memoryToolsInjectedForWork(workId: string): boolean {
+    let live = 0;
+    for (const claim of this.claims.values()) {
+      if (claim.workId !== workId) continue;
+      if (!claim.status.memoryInjected) return false;
+      live += 1;
+    }
+    return live > 0;
   }
 
   /** Frees whatever this member held: revokes its token, releases any ceiling slot, and lets the MCP server stop if it is now idle. */

@@ -22,6 +22,14 @@ export interface ClaudeAdapterDeps {
   /** Called once the CLI reveals its session id, so the hub can persist it for resume. */
   onSessionId?: (chatId: string, sessionId: string) => void;
   /**
+   * Lo que el RUNTIME reporta en su `system/init`: los servidores MCP que
+   * CONECTO de verdad, no los que Latte le pidio (juicio #1, ronda 4).
+   * Llega asincronicamente, despues de que `start()` ya volvio, asi que es
+   * una CORRECCION posterior del reclamo -- ver el comentario del
+   * `injectedMcpServers` que devuelve `startChat`.
+   */
+  onMcpServers?: (chatId: string, connected: string[]) => void;
+  /**
    * Where role prompts are written for `--append-system-prompt-file` (one file
    * per chat, Latte-owned). Without it the prompt goes inline on the command line.
    */
@@ -127,6 +135,15 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
   // this field only says the adapter CAN translate whatever it is given.
   readonly mcpInjection = 'per-member' as const;
   private readonly chats = new Map<string, LiveChat>();
+  /**
+   * Los chatIds que estan ARRANCANDO ahora mismo (juicio #7, ronda 4). El
+   * guard `this.chats.has(chatId)` vive antes de `await resolveExecutable()` y
+   * el `set` recien despues: dos `start()` concurrentes con el mismo chatId lo
+   * pasaban los dos y spawneaban DOS procesos, el segundo pisando al primero
+   * en el mapa. Cuando el primero (ya huerfano) termina, `finish()` borraba la
+   * entrada VIVA. Reservar el id sincronicamente cierra la ventana.
+   */
+  private readonly starting = new Set<string>();
   private readonly env: NodeJS.ProcessEnv;
   private readonly platform: NodeJS.Platform;
   private readonly maxChats: number;
@@ -157,7 +174,16 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
   async start(input: AdapterStartInput): Promise<AdapterStartResult> {
     if (this.chats.size >= this.maxChats) throw new ValidationError(`Too many open Claude chats (max ${this.maxChats})`);
     const chatId = input.chatId ?? newId('ses');
-    if (this.chats.has(chatId)) throw new ValidationError('This chat is already open');
+    if (this.chats.has(chatId) || this.starting.has(chatId)) throw new ValidationError('This chat is already open');
+    this.starting.add(chatId);
+    try {
+      return await this.startChat(chatId, input);
+    } finally {
+      this.starting.delete(chatId);
+    }
+  }
+
+  private async startChat(chatId: string, input: AdapterStartInput): Promise<AdapterStartResult> {
     const runtime = await this.deps.resolveExecutable();
     if (!runtime) throw new UnavailableError('Claude Code is not installed or not on PATH');
 
@@ -260,7 +286,20 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       // Honest about legacy sessions: resumed in the runtime, but with no local record to show.
       historyRecovered: live.restored > 0,
     };
-    return { session, runtimeSessionId: input.previousSessionId ?? '' };
+    // Ronda 4, juicio #1: esto era una TAUTOLOGIA. Con el archivo escrito se
+    // devolvia la lista que Latte habia pedido -- "escribimos un archivo", no
+    // "el runtime los levanto". Si `claude` arranca, parsea el config y
+    // `latte_memory` no lanza (engram movido de lugar, arquitectura
+    // equivocada), la persona igual leia que el miembro tiene memoria.
+    //
+    // El unico reporte honesto es el del propio runtime, y llega en el
+    // `system/init` -- DESPUES de que esta funcion vuelve. Asi que aca:
+    //   - sin archivo escrito => `[]`: Latte mismo se nego, y eso SI se sabe ya.
+    //   - con archivo escrito => `undefined`: "todavia no se", que
+    //     `confirmInjection` respeta dejando el reclamo previo intacto. La
+    //     correccion llega por `deps.onMcpServers` apenas el proceso habla.
+    const injectedMcpServers = mcpConfigFile ? undefined : [];
+    return { session, runtimeSessionId: input.previousSessionId ?? '', injectedMcpServers };
   }
 
   listMessages(chatId: string): ChatMessage[] {
@@ -400,7 +439,10 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
     if (live.closed) return;
     live.closed = true;
     live.busy = false;
-    this.chats.delete(live.chatId);
+    // Juicio #7: `delete` incondicional borraba la entrada VIVA cuando quien
+    // terminaba era un proceso huerfano de un spawn duplicado, emitiendo un
+    // `closed` espurio y dejando al hijo que si corre sin dueno para siempre.
+    if (this.chats.get(live.chatId) === live) this.chats.delete(live.chatId);
     try { live.child.stdin?.end(); } catch { /* ignore */ }
     killProcessTree(live.child, this.platform);
     // The bearer token lives only in this file. It must not outlive the chat.
@@ -441,6 +483,10 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
             this.deps.onSessionId?.(live.chatId, msg.session_id);
           }
           live.mcpServers = parseInitMcpServers(msg.mcp_servers);
+          // El estado por servidor que el CLI publica. Solo `connected` es
+          // una herramienta que el agente puede usar: `failed`, `needs-auth`
+          // o `pending` son un servidor que NO esta (juicio #1).
+          this.deps.onMcpServers?.(live.chatId, live.mcpServers.filter((server) => server.status === 'connected').map((server) => server.name));
         } else if (msg.subtype === 'permission_denied') {
           const toolUseId = str(msg.tool_use_id);
           const message = str(msg.message, 'Permission denied');

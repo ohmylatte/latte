@@ -314,6 +314,36 @@ export class LatteService implements BackendApi {
     this.deps.injection = planner;
   }
 
+  /**
+   * Reescribe los archivos de instrucciones de UN Trabajo despues de que el
+   * runtime confirmo (o desmintio) que inyecto los servidores MCP -- lo llama
+   * `AgentHub` via `attachCoordinationInjection` (juicio #2, ronda 4).
+   *
+   * La regla de quietud se afloja EXACTAMENTE un paso, no mas: se reescribe
+   * solo cuando este Trabajo tiene a lo sumo UN miembro vivo, o sea el que
+   * se acaba de abrir. `memberContext` ya habia escrito el archivo un
+   * instante antes (con `liveMemberCount === 0`) afirmando las herramientas
+   * que el planificador habia DECIDIDO; si el runtime despues se nego, ese
+   * mismo archivo queda mintiendole al unico proceso que lo va a leer, y
+   * todavia no leyo nada. Con dos o mas miembros vivos NO se toca: la
+   * garantia de que una conversacion en curso no ve cambiar sus archivos
+   * compartidos por debajo sigue entera.
+   */
+  refreshInstructionsAfterInjection(workId: string): void {
+    if (this.deps.hub.liveMemberCount(workId) > 1) return;
+    // Y solo si la respuesta CAMBIO: sin una negativa real del runtime no hay
+    // nada que corregir, y reescribir por reescribir pisaria los archivos
+    // compartidos en cada apertura, cambio de modelo o de esfuerzo.
+    const written = this.memoryClaimWritten.get(workId);
+    if (written === (this.deps.injection?.memoryToolsInjectedForWork(workId) ?? false)) return;
+    try {
+      const work = this.deps.repo.getWork(workId);
+      this.refreshInstructions(this.deps.repo.getBrand(work.brandId), work);
+    } catch {
+      // Mejor esfuerzo: una carpeta que ya no esta no puede tumbar una apertura.
+    }
+  }
+
   // App ---------------------------------------------------------------------
 
   async getUiLocale(): Promise<'es-AR' | 'en-US'> {
@@ -1595,6 +1625,11 @@ export class LatteService implements BackendApi {
     return this.coordination.listLog(requireId(runId, 'runId'));
   }
 
+  /** Las preguntas abiertas de un run, para que la persona pueda responderlas con `answerCoordinationAsk` en vez de quedarse sólo con "cancelar". */
+  async listOpenCoordinationAsks(runId: string): Promise<CoordinationAskView[]> {
+    return this.coordination.listOpenAsks(requireId(runId, 'runId'));
+  }
+
   async answerCoordinationAsk(askId: string, answer: string): Promise<CoordinationAskView> {
     const clean = requireId(askId, 'askId');
     const cleanAnswer = requireText(answer, 'Answer', LIMITS.decision);
@@ -1698,6 +1733,9 @@ export class LatteService implements BackendApi {
    * `setCoordinationBudget`, there is no per-run snapshot to also update:
    * this cap is read fresh at dispatch time, app-wide, never copied into a
    * `coordination_run` row.
+   *
+   * Lo que cuenta son los despachos de los runs VIVOS, no el histórico de la
+   * instalación; ver `CoordinationEngine.globalUsage`.
    */
   async getCoordinationGlobalBudget(): Promise<CoordinationBudget | null> {
     const raw = this.deps.repo.getMeta('coordination_budget_global');
@@ -1709,7 +1747,19 @@ export class LatteService implements BackendApi {
     }
   }
 
-  async setCoordinationGlobalBudget(budget: CoordinationBudget): Promise<CoordinationBudget> {
+  /**
+   * `null` BORRA el tope. Antes todo pasaba por `requireCoordinationBudget`,
+   * que rechaza cualquier valor que signifique "sin tope", así que un tope
+   * app-wide, una vez puesto, no había forma de sacarlo desde la interfaz: la
+   * persona quedaba encerrada con su propio número. "Sin tope configurado" y
+   * "tope ilimitado confirmado" siguen siendo cosas distintas — esto es la
+   * primera, volver al estado de fábrica, no un ilimitado implícito.
+   */
+  async setCoordinationGlobalBudget(budget: CoordinationBudget | null): Promise<CoordinationBudget | null> {
+    if (budget == null) {
+      this.deps.repo.deleteMeta('coordination_budget_global');
+      return null;
+    }
     const valid = requireCoordinationBudget(budget);
     this.deps.repo.setMeta('coordination_budget_global', JSON.stringify(valid));
     return valid;
@@ -2204,9 +2254,24 @@ export class LatteService implements BackendApi {
   // Lifecycle ---------------------------------------------------------------
 
   shutdown(): void {
+    // Antes de soltar los procesos: lo que quedó en vuelo se liquida acá, o
+    // no se liquida nunca. Un fallo barriendo no puede impedir que la app
+    // cierre sus recursos, así que se registra y se sigue.
+    try {
+      this.coordination.sweepUncertainDispatches();
+    } catch { /* cerrar los recursos manda: el barrido de arranque lo vuelve a intentar */ }
     this.deps.hub.shutdown();
     this.deps.terminal.stopAll();
     this.deps.repo.close();
+  }
+
+  /**
+   * El barrido de arranque, hermano del de `sweepStrayCodexServers`: reconcilia
+   * los despachos que una caída o un cierre forzado dejó en vuelo. Lo llama
+   * `createBackend` una sola vez, apenas la base está migrada.
+   */
+  sweepUncertainCoordinationDispatches(): number {
+    return this.coordination.sweepUncertainDispatches();
   }
 
   // Internals ---------------------------------------------------------------
@@ -2313,6 +2378,20 @@ export class LatteService implements BackendApi {
     }
   }
 
+  /**
+   * Lo ultimo que el archivo de instrucciones de este Trabajo AFIRMO sobre las
+   * herramientas de engram. Es lo que deja a `refreshInstructionsAfterInjection`
+   * reescribir solo cuando la respuesta CAMBIO, en vez de pisar los archivos
+   * compartidos en cada apertura (juicio #2, ronda 4).
+   */
+  private readonly memoryClaimWritten = new Map<string, boolean>();
+
+  private recordMemoryClaim(workId: string): boolean {
+    const claim = this.deps.injection?.memoryToolsInjectedForWork(workId) ?? false;
+    this.memoryClaimWritten.set(workId, claim);
+    return claim;
+  }
+
   private refreshInstructions(brand: Brand, work: Work): void {
     this.renderAndWriteInstructions(brand, work);
   }
@@ -2323,6 +2402,11 @@ export class LatteService implements BackendApi {
    * elected work of an empty brand may draft it, and the others get a reason.
    */
   private renderAndWriteInstructions(brand: Brand, work: Work) {
+    // `memoryToolsInjected` (task 6.27) sale del planificador real, no de un
+    // `undefined`: esa bandera decide si el archivo lleva la frase que sostiene
+    // el aislamiento entre Marcas ("nunca pases un argumento `project`: uno
+    // explícito pisa el default fijado y podría leer o escribir la memoria de
+    // otra Marca"). Sin pasarla, esa frase no llegaba a NINGÚN agente.
     const decisions = this.deps.repo.listDecisions(work.id);
     const records = this.deps.repo.listDocuments(work.id);
     const byId = new Map(records.map((r) => [r.id, r]));
@@ -2349,7 +2433,7 @@ export class LatteService implements BackendApi {
       workId: work.id,
       ownerWorkId: electBrandContextOwner(this.deps.repo.listWorks(brand.id)),
     });
-    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation, brandMemory, brandContextNudge: nudge });
+    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), memoryToolsInjected: this.recordMemoryClaim(work.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation, brandMemory, brandContextNudge: nudge });
     return this.deps.files.writeInstructions(brand.id, work.id, bundle.text, bundle.files);
   }
 

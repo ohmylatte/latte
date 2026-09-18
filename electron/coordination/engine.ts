@@ -27,9 +27,17 @@ import type {
   CoordinationTaskRecord,
   LatteRepository,
 } from '../storage/repository';
-import { canAddTask, computeReadyTasks, computeTaskDepth, type DagEdge, type DagTask } from './dag';
+import { canAddTask, computeBlockedTasks, computeReadyTasks, computeTaskDepth, wouldCreateCycle, type DagEdge, type DagTask } from './dag';
 import { assertBudgetConfigured, BudgetUnsetError, requireCoordinationBudget, reserveDispatch, type BudgetUsage } from './budget';
-import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK, MAX_CHECK_WAIT_SECONDS } from './limits';
+import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK } from './limits';
+
+/**
+ * Los roles que la persona aprobo, por run. Una clave propia y no `plan_json`:
+ * ese campo lo reescribe `latte_plan_submit` (juicio #3, ronda 4). El
+ * precedente es `coordination_authority:` / `coordination_budget:` -- meta,
+ * nunca una columna nueva (SCHEMA_VERSION se queda en '12').
+ */
+const APPROVED_ROLES_META = 'coordination_approved_roles:';
 
 export type CoordinationRole = 'coordinator' | 'worker';
 
@@ -218,7 +226,17 @@ export class CoordinationEngine {
     return this.deps.repo.listCoordinationTasks(runId);
   }
 
-  /** "Pausar equipo": takes effect at the next boundary. In-flight dispatches finish and report; nothing new starts. */
+  /**
+   * "Pausar equipo": takes effect at the next boundary. In-flight dispatches
+   * finish and report; nothing new starts.
+   *
+   * Y por eso pausar NO liquida las reservas abiertas, a diferencia de
+   * `cancelRun`: el despacho en vuelo sigue vivo y su `latte_report` tiene que
+   * seguir entrando. Liquidarlo escribiría el gasto por adelantado y, peor,
+   * dejaría al despacho sin fila `dispatched`, con lo cual el reporte
+   * legítimo del miembro rebotaría con FORBIDDEN. Una pausa se reanuda; una
+   * cancelación no.
+   */
   pauseRun(runId: string): CoordinationRunRecord {
     const run = this.deps.repo.getCoordinationRun(runId);
     if (run.status !== 'running') return run;
@@ -241,7 +259,19 @@ export class CoordinationEngine {
     return updated;
   }
 
+  /**
+   * Cancelar es la salida de emergencia que la interfaz promete, así que tiene
+   * que dejar las cuentas cerradas: cambiar sólo `run.status` dejaba las
+   * reservas del run abiertas y, como el tope app-wide cuenta
+   * `state='reserved'`, cada run cancelado con despachos en vuelo erosionaba
+   * ese tope PARA SIEMPRE — usar el escape empeoraba la situación de forma
+   * permanente. Los despachos en vuelo se liquidan igual que en una caída (el
+   * miembro FUE despachado: el asiento se escribe), sin cobrar intento.
+   */
   cancelRun(runId: string): CoordinationRunRecord {
+    for (const dispatch of this.deps.repo.listCoordinationDispatches(runId)) {
+      if (dispatch.status === 'dispatched' || dispatch.status === 'running') this.settleUncertain(dispatch.id, { incrementAttempts: false });
+    }
     const updated = this.deps.repo.updateCoordinationRunStatus(runId, 'cancelled', this.deps.clock(), null);
     this.touch(updated.workId, updated.id);
     return updated;
@@ -339,14 +369,18 @@ export class CoordinationEngine {
    * `approve` performs SIX effects that must land together or not at all —
    * a failing `hub.addMember` must leave NO grant, NO budget, NO tasks
    * (task 6.10). `hub.addMember` is async and SQLite's own transaction is
-   * synchronous, so the two cannot literally share one `BEGIN`/`COMMIT`;
-   * atomicity is achieved by ORDERING instead: every hire is attempted
-   * FIRST, before any database write, so a failure there throws with
-   * nothing yet written. Once every hire has succeeded, the five remaining
-   * effects (grant, budget meta key, budget on the run row, authority,
-   * tasks + plan-approval + run status) land inside one real
-   * `repo.transaction()`, so a failure among THEM (e.g. the task/depth cap)
-   * cannot leave a partial result either.
+   * synchronous, so the two cannot literally share one `BEGIN`/`COMMIT`.
+   * El orden ayuda — las contrataciones van primero, antes de cualquier
+   * escritura — pero NO alcanza: protege del caso "una contratación falla",
+   * no del inverso. `hub.addMember` inserta la fila, mintea el token, ocupa
+   * un cupo de techo y spawnea un proceso real, y nada de eso vuelve atrás
+   * solo; con `[copywriter, designer]` donde el agente inventó `designer`, la
+   * primera quedaba spawneada para siempre. Por eso el conjunto de
+   * contrataciones es COMPENSABLE: se anotan a medida que entran y se
+   * deshacen con `hub.removeMember` si falla una posterior o si falla la
+   * transacción. Los cinco efectos restantes (grant, meta del presupuesto,
+   * presupuesto del run, autoridad, tareas + aprobación + estado) siguen
+   * cayendo juntos dentro de un `repo.transaction()` real.
    */
   private async resolveProposalGate(runId: string, decision: 'approve' | 'reject', editedProposalJson?: string): Promise<CoordinationRunRecord> {
     const run = this.deps.repo.getCoordinationRun(runId);
@@ -354,21 +388,86 @@ export class CoordinationEngine {
 
     const proposal: CoordinationProposal = editedProposalJson ? JSON.parse(editedProposalJson) : JSON.parse(run.planJson!);
     // "No implicit unlimited" re-asserted for an EDITED proposal too (task
-    // 6.11): the same validator `setCoordinationBudget` already uses.
-    const budget = requireCoordinationBudget({ maxDispatches: proposal.estimatedDispatches, unlimitedConfirmedAt: proposal.unlimitedConfirmedAt ?? null });
+    // 6.11): the same validator `setCoordinationBudget` already uses. La
+    // confirmación de ilimitado sólo cuenta si viene en el payload que la
+    // PERSONA mandó al aprobar; lo que el agente hubiera escrito en su
+    // propuesta ya se descartó al guardarla (ver `requestCoordination`).
+    const unlimitedConfirmedAt = editedProposalJson ? proposal.unlimitedConfirmedAt ?? null : null;
+    const budget = requireCoordinationBudget({ maxDispatches: proposal.estimatedDispatches, unlimitedConfirmedAt });
 
-    for (const hire of proposal.membersToHire ?? []) {
-      await this.deps.hub.addMember({ ...this.deps.memberContext(run.workId), roleId: hire.roleId });
+    // El run tiene que seguir en 'planning'. Sin esto, un segundo clic en
+    // "Aprobar" volvía a correr los seis efectos: contrataba de nuevo a TODO
+    // el equipo, recreaba las tareas, pisaba el presupuesto que la persona
+    // hubiera subido y forzaba la autoridad de vuelta a 'plan'. El chequeo
+    // autoritativo está adentro de la transacción; éste es sólo para fallar
+    // antes de gastar una contratación.
+    if (run.status !== 'planning') throw new LatteError('COORDINATION_NOT_APPROVED', `This proposal is already resolved (run is ${run.status})`);
+
+    // Las contrataciones se hacen de a una y se anotan: `hub.addMember`
+    // inserta la fila, mintea el token, ocupa un cupo de techo Y spawnea un
+    // proceso real, nada de lo cual vuelve atrás solo. Si una falla —o si
+    // falla la transacción de abajo— hay que deshacer las que ya entraron.
+    const hired: string[] = [];
+    try {
+      for (const hire of proposal.membersToHire ?? []) {
+        const session = await this.deps.hub.addMember({ ...this.deps.memberContext(run.workId), roleId: hire.roleId });
+        hired.push(session.id);
+      }
+      return this.commitProposal(run.id, proposal, budget);
+    } catch (error) {
+      for (const memberId of hired.reverse()) {
+        try { this.deps.hub.removeMember(memberId); } catch { /* el rollback nunca tapa el error original */ }
+      }
+      throw error;
     }
+  }
 
+  /** Los cinco efectos restantes de una propuesta aprobada, en una sola transacción real. */
+  private commitProposal(runId: string, proposal: CoordinationProposal, budget: CoordinationBudget): CoordinationRunRecord {
     const now = this.deps.clock();
     return this.deps.repo.transaction(() => {
+      // Releído acá adentro: es el único chequeo que dos aprobaciones
+      // concurrentes no pueden atravesar las dos (el precedente es
+      // `repo.setDecisionStatus`, que se guarda igual dentro de su transacción).
+      const run = this.deps.repo.getCoordinationRun(runId);
+      if (run.status !== 'planning') throw new LatteError('COORDINATION_NOT_APPROVED', `This proposal is already resolved (run is ${run.status})`);
       this.deps.repo.setMeta('coordination_coordinator:' + run.workId, run.coordinatorMemberId ?? '');
-      const budgetJson = JSON.stringify(budget);
+      // El presupuesto de la propuesta es SOLO la estimación de despachos: se
+      // funde sobre el que la persona ya había configurado en vez de pisarlo.
+      // Reemplazarlo entero normalizaba a `null` todos los topes secundarios,
+      // `maxConcurrent` incluido — el único limitador en vuelo que existe.
+      const existingBudget = this.readBudget(run.workId);
+      const merged: CoordinationBudget = {
+        ...budget,
+        maxTokens: existingBudget?.maxTokens ?? budget.maxTokens,
+        maxCostMicros: existingBudget?.maxCostMicros ?? budget.maxCostMicros,
+        maxWallMinutes: existingBudget?.maxWallMinutes ?? budget.maxWallMinutes,
+        maxConcurrent: existingBudget?.maxConcurrent ?? budget.maxConcurrent,
+      };
+      const budgetJson = JSON.stringify(merged);
       this.deps.repo.setMeta('coordination_budget:' + run.workId, budgetJson);
       this.deps.repo.updateActiveCoordinationRunBudget(run.workId, budgetJson, now); // the run is still 'planning' here — included in the active set
-      this.deps.repo.setMeta('coordination_authority:' + run.workId, 'plan');
+      // Aprobar NUNCA afloja la autoridad. `manual` es más estricto que
+      // `plan` (gatea cada despacho, uno por uno): pisarlo con 'plan' le
+      // sacaba en silencio TODOS los gates a quien lo había elegido a
+      // propósito, porque cada tarea de la propuesta entra con `inPlan:true`.
+      // Desde `auto`, en cambio, subir a 'plan' sí es endurecer.
+      // Se lee el meta CRUDO, no `readAuthority`: éste devuelve 'manual' tanto
+      // para "la persona lo eligió" como para "nunca se configuró", y preservar
+      // el segundo caso dejaría a todo Trabajo nuevo sin la autoridad 'plan'
+      // que la aprobación existe para conceder. Sólo la elección explícita manda.
+      if (this.deps.repo.getMeta('coordination_authority:' + run.workId) !== 'manual') {
+        this.deps.repo.setMeta('coordination_authority:' + run.workId, 'plan');
+      }
       this.deps.repo.setCoordinationPlan(run.id, JSON.stringify(proposal), now); // the approved (possibly edited) proposal, for the record
+      // La foto de los roles aprobados va a su PROPIA clave, no a `plan_json`:
+      // ese campo lo reescribe `latte_plan_submit`, una herramienta que el
+      // agente coordinador tiene en la mano (juicio #3). Esto es lo que la
+      // persona vio y aprobó, y nada alcanzable desde una tool lo toca.
+      const approvedRoles = new Set<string>();
+      for (const item of proposal.plan) approvedRoles.add(item.roleId);
+      for (const hire of proposal.membersToHire ?? []) approvedRoles.add(hire.roleId);
+      this.deps.repo.setMeta(APPROVED_ROLES_META + run.id, JSON.stringify([...approvedRoles]));
       const created: CoordinationTaskRecord[] = []; // index-based dependsOn, exactly like planSubmit's own loop
       for (const item of proposal.plan) {
         const dependsOnIds = (item.dependsOn ?? []).map((idx) => {
@@ -409,6 +508,16 @@ export class CoordinationEngine {
     return this.deps.repo.listCoordinationDispatches(runId).map((d) => ({
       id: d.id, taskId: d.taskId, memberId: d.memberId, status: d.status, createdAt: d.createdAt, startedAt: d.startedAt, settledAt: d.settledAt,
     }));
+  }
+
+  /**
+   * Las `latte_ask` todavía sin responder de un run. `listGates` excluye
+   * `all_blocked_on_ask` a propósito (una pregunta no es un gate de
+   * aprobar/rechazar), así que sin esta lista un run suspendido por una
+   * pregunta no tenía ninguna salida en la UI salvo cancelar.
+   */
+  listOpenAsks(runId: string): CoordinationAskRecord[] {
+    return this.deps.repo.listOpenCoordinationAsks(runId);
   }
 
   answerAsk(askId: string, answer: string): CoordinationAskRecord {
@@ -466,8 +575,14 @@ export class CoordinationEngine {
       workId: grant.workId,
       status: 'planning',
       coordinatorMemberId: grant.memberId,
-      budgetJson: JSON.stringify({ maxDispatches: proposal.estimatedDispatches, unlimitedConfirmedAt: proposal.unlimitedConfirmedAt ?? null }),
-      planJson: JSON.stringify(proposal),
+      // `unlimitedConfirmedAt` se DESCARTA acá, tanto del presupuesto como de
+      // la propuesta guardada: "un presupuesto ilimitado es siempre una
+      // elección humana, nunca un default implícito" se volvía satisfacible
+      // por el agente escribiendo su propio timestamp, y el único "Aprobar"
+      // de la persona — el mismo botón que para un plan acotado — lo
+      // concedía. La confirmación tiene que venir del payload de aprobación.
+      budgetJson: JSON.stringify({ maxDispatches: proposal.estimatedDispatches, unlimitedConfirmedAt: null }),
+      planJson: JSON.stringify({ ...proposal, unlimitedConfirmedAt: null }),
       planApprovedAt: null,
       suspendReason: null,
       createdAt: now,
@@ -514,6 +629,11 @@ export class CoordinationEngine {
    * → `hub.send()` → dispatched row.
    */
   async startDispatch(ctx: { grant: CoordinationGrant; taskId: string; approvedGateId?: string; editedPrompt?: string }): Promise<{ status: 'dispatched' | 'pending_approval'; taskId: string; dispatchId: string }> {
+    // El interruptor tiene que APAGAR, no sólo impedir encender: gateando
+    // únicamente `startRun`/`requestCoordination`, bajar la bandera a mitad de
+    // run no frenaba nada y los agentes seguían gastando plata. Acá, en el
+    // único choke point por el que pasa todo despacho, sí frena.
+    this.requireCoordinationEnabled();
     if (ctx.grant.role !== 'coordinator') throw new LatteError('FORBIDDEN', 'Only the coordinator may dispatch');
     if (ctx.grant.runId == null) throw new LatteError('RUN_NOT_ACTIVE', 'No active coordination run for this Work');
     const run = this.deps.repo.getCoordinationRun(ctx.grant.runId);
@@ -528,101 +648,233 @@ export class CoordinationEngine {
     const task = this.deps.repo.getCoordinationTask(ctx.taskId);
     if (task.runId !== run.id) throw new NotFoundError('CoordinationTask', ctx.taskId);
 
+    const now = this.deps.clock();
+    // EL RECLAMO, antes de cualquier `await`. Los chequeos de arriba y la
+    // reserva de abajo estaban a ambos lados de `resolveTargetMember` (que
+    // espera a `hub.openMember`/`addMember`), así que dos `latte_dispatch`
+    // simultáneos sobre la misma tarea lista — o dos clics en "Aprobar" sobre
+    // el mismo gate, cada uno un invoke IPC independiente — veían los dos
+    // `ready`/`pending_approval`, reservaban los dos y llegaban los dos a
+    // `hub.send`. Un compare-and-set de una sola sentencia hace que compitan
+    // por UNA fila: el que pierde aborta sin haber reservado ni despachado.
     let existingPending: CoordinationDispatchRecord | null = null;
     if (ctx.approvedGateId) {
       existingPending = this.deps.repo.getCoordinationDispatch(ctx.approvedGateId);
       if (existingPending.taskId !== task.id || existingPending.status !== 'pending_approval') {
         throw new LatteError('INVALID_GATE', 'Gate does not match a pending dispatch for this task');
       }
-    } else if (task.status !== 'ready') {
-      throw new LatteError('TASK_NOT_READY', `Task is ${task.status}, not ready`);
+      if (!this.deps.repo.claimCoordinationDispatchFromGate(existingPending.id, now)) {
+        throw new LatteError('INVALID_GATE', 'Gate does not match a pending dispatch for this task');
+      }
+    } else {
+      if (task.status !== 'ready') throw new LatteError('TASK_NOT_READY', `Task is ${task.status}, not ready`);
+      if (!this.deps.repo.claimCoordinationTaskForDispatch(task.id, now)) {
+        throw new LatteError('TASK_NOT_READY', 'Task was already claimed by another dispatch');
+      }
     }
 
-    const session = await this.resolveTargetMember(run.workId, task.roleId);
     const prompt = ctx.editedPrompt ?? existingPending?.prompt ?? task.spec;
-    const now = this.deps.clock();
     const authority = this.readAuthority(run.workId);
     const gated = !ctx.approvedGateId && this.isGated(authority, run, task);
 
+    // EL GATE VA PRIMERO, antes de resolver el miembro. `resolveTargetMember`
+    // llama a `hub.addMember`: inserta la fila, mintea el token, ocupa un cupo
+    // del techo de la app Y SPAWNEA UN PROCESO REAL. Hacerlo antes de evaluar
+    // la autoridad convertia el modo `manual` -- el mas estricto -- en via
+    // libre: un coordinador encadenando `latte_task_create` + `latte_dispatch`
+    // forzaba a Latte a contratar y spawnear un miembro por rol hasta el techo
+    // de la app, sin una sola aprobacion humana y sin cargo de presupuesto; y
+    // rechazar el gate devolvia la tarea a `ready` pero no despedia a nadie.
+    // La fila pendiente nace SIN miembro (`''`, el mismo "todavia nadie" que
+    // `settleDispatch` ya usa): recien al aprobar se resuelve y se contrata.
     if (gated) {
       const dispatchId = newId('cdp');
       const attempt = this.deps.repo.listCoordinationDispatches(run.id).filter((d) => d.taskId === task.id).length + 1;
       const dispatch = this.deps.repo.insertCoordinationDispatch({
-        id: dispatchId, runId: run.id, taskId: task.id, memberId: session.id, attempt, status: 'pending_approval',
+        id: dispatchId, runId: run.id, taskId: task.id, memberId: '', attempt, status: 'pending_approval',
         gateId: dispatchId, prompt, outcome: null, summary: null, filesJson: null, reservationId: null,
         createdAt: now, startedAt: null, settledAt: null,
       });
-      this.deps.repo.updateCoordinationTask(task.id, { status: 'dispatched', assignedMemberId: session.id }, now);
+      this.deps.repo.updateCoordinationTask(task.id, { status: 'dispatched', assignedMemberId: null }, now);
       this.touch(run.workId, run.id);
       return { status: 'pending_approval', taskId: task.id, dispatchId: dispatch.id };
     }
 
-    const usage = this.usageFor(run.id);
-    const budget = this.readRunBudget(run);
-    const inFlight = this.countInFlightDispatches(run.id);
-    if (budget.maxConcurrent != null && inFlight >= budget.maxConcurrent) {
-      this.writeLedgerDenied(run.id, 'max_concurrent');
-      if (existingPending) {
-        this.deps.repo.updateCoordinationTask(task.id, { status: 'ready', assignedMemberId: null }, now);
-        this.deps.repo.updateCoordinationDispatch(existingPending.id, { status: 'rejected', settledAt: now });
-      }
-      throw new LatteError('MAX_CONCURRENT', 'Too many dispatches are already in flight');
+    let session: Awaited<ReturnType<CoordinationEngine['resolveTargetMember']>>;
+    try {
+      session = await this.resolveTargetMember(run.workId, task.roleId, this.approvedRoleIds(run));
+    } catch (error) {
+      this.releaseDispatchClaim(task.id, existingPending, now);
+      throw error;
     }
 
-    const decision = reserveDispatch(budget, usage);
-    if (!decision.ok) {
-      this.writeLedgerDenied(run.id, decision.reason);
-      if (run.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, decision.reason);
-      if (existingPending) {
-        this.deps.repo.updateCoordinationTask(task.id, { status: 'ready', assignedMemberId: null }, now);
-        this.deps.repo.updateCoordinationDispatch(existingPending.id, { status: 'rejected', settledAt: now });
+    // La foto del gasto y la escritura de la reserva viven en UNA transacción
+    // sincrónica, sin ningún `await` en el medio: nadie puede leer el mismo
+    // `dispatchesUsed` dos veces. Una denegación NO tira desde adentro (eso
+    // haría rollback del asiento `denied` y de la suspensión, que son
+    // justamente lo que hay que dejar escrito): se devuelve y se tira afuera.
+    const runTransaction = (): { ok: true; dispatch: CoordinationDispatchRecord } | { ok: false; error: LatteError } => {
+      const budget = this.readRunBudget(run);
+      const inFlight = this.countInFlightDispatches(run.id, existingPending?.id);
+      if (budget.maxConcurrent != null && inFlight >= budget.maxConcurrent) {
+        this.writeLedgerDenied(run.id, 'max_concurrent');
+        this.abortDispatchClaim(task.id, existingPending, now, 'max_concurrent');
+        return { ok: false, error: new LatteError('MAX_CONCURRENT', 'Too many dispatches are already in flight') };
       }
-      throw new LatteError('BUDGET_EXCEEDED', `Coordination budget denied: ${decision.reason}`);
-    }
 
-    const reservationId = newId('crs');
-    this.deps.repo.insertCoordinationCostReservation({
-      id: reservationId, runId: run.id, dispatchId: existingPending?.id ?? null, memberId: session.id, runtime: session.provider, model: session.model ?? 'default',
-      maxInputTokens: 0, maxOutputTokens: 0, maxCostMicros: 0, state: 'reserved', usageJson: null, createdAt: now, settledAt: null,
-    });
+      const decision = reserveDispatch(budget, this.usageFor(run.id));
+      if (!decision.ok) {
+        this.writeLedgerDenied(run.id, decision.reason);
+        if (run.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, decision.reason);
+        this.abortDispatchClaim(task.id, existingPending, now, decision.reason);
+        return { ok: false, error: new LatteError('BUDGET_EXCEEDED', `Coordination budget denied: ${decision.reason}`) };
+      }
 
-    let dispatch: CoordinationDispatchRecord;
-    if (existingPending) {
-      dispatch = this.deps.repo.updateCoordinationDispatch(existingPending.id, { status: 'dispatched', prompt, reservationId, startedAt: now });
-    } else {
-      const dispatchId = newId('cdp');
-      const attempt = this.deps.repo.listCoordinationDispatches(run.id).filter((d) => d.taskId === task.id).length + 1;
-      dispatch = this.deps.repo.insertCoordinationDispatch({
-        id: dispatchId, runId: run.id, taskId: task.id, memberId: session.id, attempt, status: 'dispatched',
-        gateId: null, prompt, outcome: null, summary: null, filesJson: null, reservationId,
-        createdAt: now, startedAt: now, settledAt: null,
+      // El tope app-wide (task 6.35), en el MISMO choke point que el del
+      // Trabajo: se guardaba en meta y no lo leía nadie, así que la persona
+      // que ponía 40 no tenía tope ninguno. Suspende sólo al run que chocó.
+      const globalBudget = this.readGlobalBudget();
+      if (globalBudget) {
+        const globalDecision = reserveDispatch(globalBudget, this.globalUsage());
+        if (!globalDecision.ok) {
+          const reason = `global_${globalDecision.reason}`;
+          this.writeLedgerDenied(run.id, reason);
+          if (run.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
+          this.abortDispatchClaim(task.id, existingPending, now, reason);
+          return { ok: false, error: new LatteError('BUDGET_EXCEEDED', `Coordination budget denied: ${reason}`) };
+        }
+      }
+
+      const reservationId = newId('crs');
+      this.deps.repo.insertCoordinationCostReservation({
+        id: reservationId, runId: run.id, dispatchId: existingPending?.id ?? null, memberId: session.id, runtime: session.provider, model: session.model ?? 'default',
+        maxInputTokens: 0, maxOutputTokens: 0, maxCostMicros: 0, state: 'reserved', usageJson: null, createdAt: now, settledAt: null,
       });
+
+      let dispatch: CoordinationDispatchRecord;
+      if (existingPending) {
+        // `memberId` se escribe ACÁ: la fila pendiente nació sin miembro (el
+        // gate va antes de contratar), así que recién al aprobar se sabe
+        // contra quién queda anotado el despacho.
+        dispatch = this.deps.repo.updateCoordinationDispatch(existingPending.id, { status: 'dispatched', memberId: session.id, prompt, reservationId, startedAt: now });
+      } else {
+        const dispatchId = newId('cdp');
+        const attempt = this.deps.repo.listCoordinationDispatches(run.id).filter((d) => d.taskId === task.id).length + 1;
+        dispatch = this.deps.repo.insertCoordinationDispatch({
+          id: dispatchId, runId: run.id, taskId: task.id, memberId: session.id, attempt, status: 'dispatched',
+          gateId: null, prompt, outcome: null, summary: null, filesJson: null, reservationId,
+          createdAt: now, startedAt: now, settledAt: null,
+        });
+      }
+      this.deps.repo.updateCoordinationTask(task.id, { status: 'dispatched', assignedMemberId: session.id }, now);
+      return { ok: true, dispatch };
+    };
+    // El reclamo se tomo en autocommit ANTES de esta transaccion, asi que un
+    // throw de adentro (un `budget_json` corrupto, BUDGET_UNSET, cualquier
+    // constraint) hace rollback de la transaccion pero NO del reclamo: la
+    // tarea quedaba `dispatched` para siempre, sin reserva y sin despacho, y
+    // cada intento siguiente repetia el ciclo. Soltar y recien ahi relanzar.
+    let outcome: ReturnType<typeof runTransaction>;
+    try {
+      outcome = this.deps.repo.transaction(runTransaction);
+    } catch (error) {
+      this.releaseDispatchClaim(task.id, existingPending, now);
+      throw error;
     }
-    this.deps.repo.updateCoordinationTask(task.id, { status: 'dispatched', assignedMemberId: session.id }, now);
-    await this.deps.hub.send(session.id, prompt);
+    if (!outcome.ok) throw outcome.error;
+    const dispatched = outcome.dispatch;
+
+    // `hub.send` es el UNICO efecto real, y corre despues del commit: si el
+    // proceso del miembro se murio entre `resolveTargetMember` y aca,
+    // `AgentHub.route` tira NotFoundError y la transaccion ya escribio una
+    // reserva `reserved`, un despacho `dispatched` y una tarea `dispatched`
+    // que nadie deshacia. Nada se ejecuto, asi que la reserva se cierra SIN
+    // asiento de gasto: no se cobra un despacho que nunca salio.
+    try {
+      await this.deps.hub.send(session.id, prompt);
+    } catch (error) {
+      this.deps.repo.transaction(() => {
+        if (dispatched.reservationId) this.deps.repo.settleCoordinationCostReservation(dispatched.reservationId, null, now, false);
+        this.deps.repo.updateCoordinationDispatch(dispatched.id, {
+          status: 'cancelled', outcome: 'not_sent', summary: error instanceof Error ? error.message : String(error), settledAt: now,
+        });
+        this.deps.repo.updateCoordinationTask(task.id, { status: 'ready', assignedMemberId: null }, now);
+      });
+      this.touch(run.workId, run.id);
+      throw error;
+    }
     this.touch(run.workId, run.id);
-    return { status: 'dispatched', taskId: task.id, dispatchId: dispatch.id };
+    return { status: 'dispatched', taskId: task.id, dispatchId: dispatched.id };
+  }
+
+  /** El reclamo se suelta intacto: la tarea vuelve a `ready`, o el gate vuelve a la mesa tal como estaba. */
+  private releaseDispatchClaim(taskId: string, existingPending: CoordinationDispatchRecord | null, now: string): void {
+    if (existingPending) this.deps.repo.releaseCoordinationDispatchToGate(existingPending.id);
+    else this.deps.repo.updateCoordinationTask(taskId, { status: 'ready', assignedMemberId: null }, now);
+  }
+
+  /**
+   * El reclamo se suelta con el despacho ya resuelto en contra, y la bitácora
+   * dice QUIÉN dijo que no. `'rejected'` es la palabra del humano que aprieta
+   * "Rechazar"; acá la persona acaba de apretar "Aprobar" y fue el tope (o
+   * `maxConcurrent`) el que frenó. Anotarlo como rechazo hacía que la
+   * bitácora dijera que alguien negó un trabajo que en realidad autorizó.
+   */
+  private abortDispatchClaim(taskId: string, existingPending: CoordinationDispatchRecord | null, now: string, reason: string): void {
+    this.deps.repo.updateCoordinationTask(taskId, { status: 'ready', assignedMemberId: null }, now);
+    if (existingPending) this.deps.repo.updateCoordinationDispatch(existingPending.id, { status: 'cancelled', outcome: 'denied', summary: reason, settledAt: now });
   }
 
   /** `outcome:'succeeded'` unblocks dependents; `'failed'` returns the task to `ready`, or `blocked` at the attempt cap. Idempotent on an already-`done` task. */
   async report(grant: CoordinationGrant, taskId: string, outcome: 'succeeded' | 'failed', summary: string, filesJson: string | null = null): Promise<CoordinationTaskRecord> {
     if (grant.runId == null) throw new LatteError('NO_ACTIVE_RUN', 'This Work has no active coordination run');
     const task = this.deps.repo.getCoordinationTask(taskId);
+    // PRIMERO de todo: la tarea tiene que ser de ESTE run. `startDispatch` ya
+    // lo chequeaba y acá faltaba, así que un miembro de la Marca B con un
+    // token válido podía pasar un id de tarea de la Marca A y recibir su
+    // `spec`, su `resultSummary` y sus `resultFilesJson` de vuelta.
+    if (task.runId !== grant.runId) throw new NotFoundError('CoordinationTask', taskId);
     // The CURRENT dispatch: there is at most one `dispatched`/`running` row
     // for a task at a time (a new attempt is only ever created after the
     // previous one settled), so this is more robust than "last by
     // createdAt" — two attempts can legitimately share a timestamp.
     const current = this.deps.repo.listCoordinationDispatches(task.runId).find((d) => d.taskId === taskId && (d.status === 'dispatched' || d.status === 'running'));
-    if (task.status === 'done') return task; // idempotent: already settled, no duplicate row
+    if (task.status === 'done') {
+      // El atajo de idempotencia va DESPUÉS de autorizar, no antes: quien
+      // repite el reporte tiene que ser quien hizo la tarea. Ya no hay
+      // despacho vivo, así que el permiso se mide contra el último intento.
+      // Ronda 4, juicio #5: `.at(-1)` autorizaba POR POSICIÓN sobre un orden
+      // `created_at ASC, id ASC`, y `newId` es `randomBytes(10)` — no
+      // monotónico. Con un reintento rápido dentro del mismo tick de reloj los
+      // dos intentos empatan en `created_at` y el desempate por id es al azar:
+      // el miembro que hizo el trabajo podía recibir FORBIDDEN mientras el del
+      // intento anterior quedaba autorizado a leer el resumen y los archivos
+      // de la tarea `done`. El último intento es el de `attempt` más alto, que
+      // es un contador real, no un orden de fila.
+      const attemptsForTask = this.deps.repo.listCoordinationDispatches(task.runId).filter((d) => d.taskId === taskId);
+      const last = attemptsForTask.reduce<CoordinationDispatchRecord | null>((best, d) => (best === null || d.attempt > best.attempt ? d : best), null);
+      if (!last || last.memberId !== grant.memberId) {
+        throw new LatteError('FORBIDDEN', 'Only the member this task is currently dispatched to may report it');
+      }
+      return task; // idempotent: already settled, no duplicate row
+    }
     if (!current || current.memberId !== grant.memberId) {
       throw new LatteError('FORBIDDEN', 'Only the member this task is currently dispatched to may report it');
     }
     const now = this.deps.clock();
-    if (current.reservationId) {
-      this.deps.repo.settleCoordinationCostReservation(current.reservationId, null, now, false);
-      this.deps.repo.insertCoordinationCostLedger({ id: newId('cld'), runId: task.runId, reservationId: current.reservationId, kind: 'spend', dispatches: 1, costMicros: 0, detailJson: JSON.stringify({ taskId, outcome }), createdAt: now });
-    }
-    this.deps.repo.updateCoordinationDispatch(current.id, { status: 'reported', outcome, summary, filesJson, settledAt: now });
+    // Cerrar la reserva y asentar el gasto son UNA escritura: entre las dos,
+    // una caída dejaba la reserva cerrada sin asiento y el despacho se volvía
+    // invisible para `usageFor`/`globalUsage` — justo el sub-conteo que contar
+    // reservas abiertas existe para impedir. El estado del despacho entra en
+    // la misma transacción por lo mismo.
+    const reservationId = current.reservationId;
+    this.deps.repo.transaction(() => {
+      if (reservationId) {
+        this.deps.repo.settleCoordinationCostReservation(reservationId, null, now, false);
+        this.deps.repo.insertCoordinationCostLedger({ id: newId('cld'), runId: task.runId, reservationId, kind: 'spend', dispatches: 1, costMicros: 0, detailJson: JSON.stringify({ taskId, outcome }), createdAt: now });
+      }
+      this.deps.repo.updateCoordinationDispatch(current.id, { status: 'reported', outcome, summary, filesJson, settledAt: now });
+    });
 
     if (outcome === 'succeeded') {
       const updated = this.deps.repo.updateCoordinationTask(taskId, { status: 'done', resultSummary: summary, resultFilesJson: filesJson }, now);
@@ -633,7 +885,10 @@ export class CoordinationEngine {
     const attempts = task.attempts + 1;
     this.touch(grant.workId, task.runId);
     if (attempts >= MAX_ATTEMPTS_PER_TASK) {
-      return this.deps.repo.updateCoordinationTask(taskId, { status: 'blocked', attempts }, now);
+      const blocked = this.deps.repo.updateCoordinationTask(taskId, { status: 'blocked', attempts }, now);
+      // Y con él caen sus dependientes: nadie los va a destrabar nunca más.
+      this.recomputeReadiness(task.runId, now);
+      return this.deps.repo.getCoordinationTask(blocked.id);
     }
     return this.deps.repo.updateCoordinationTask(taskId, { status: 'ready', attempts, assignedMemberId: null }, now);
   }
@@ -660,9 +915,14 @@ export class CoordinationEngine {
     return this.report(grant, taskId, outcome, summary, filesJson);
   }
 
-  /** FIFO, single delivery, no real waiting: the cap on `wait` bounds a live server's long-poll (Phase 6); Phase 3 has no dispatcher loop, so it is a synchronous read. */
-  check(memberId: string, _wait?: number): CoordinationMessageRecord[] {
-    void _wait; // acknowledged, never actually slept on — see MAX_CHECK_WAIT_SECONDS note below.
+  /**
+   * FIFO, una sola entrega, lectura sincrónica. Nadie escribe todavía en
+   * `coordination_message` (`insertCoordinationMessage` no tiene ningún
+   * llamador de producción), así que esto devuelve `[]` siempre — y el
+   * esquema publicado de `latte_check` lo dice con todas las letras en vez de
+   * prometer un buzón y una espera que no existen.
+   */
+  check(memberId: string): CoordinationMessageRecord[] {
     const run = this.activeRunForMember(memberId);
     if (!run) return [];
     const messages = this.deps.repo.listUndeliveredCoordinationMessages(run.id, memberId);
@@ -696,13 +956,45 @@ export class CoordinationEngine {
   settleUncertain(dispatchId: string, opts: { incrementAttempts: boolean }): CoordinationDispatchRecord {
     const dispatch = this.deps.repo.getCoordinationDispatch(dispatchId);
     const now = this.deps.clock();
-    if (dispatch.reservationId) this.deps.repo.settleCoordinationCostReservation(dispatch.reservationId, null, now, true);
-    const settled = this.deps.repo.updateCoordinationDispatch(dispatchId, { status: 'cancelled', settledAt: now });
-    const task = this.deps.repo.getCoordinationTask(dispatch.taskId);
-    const attempts = opts.incrementAttempts ? task.attempts + 1 : task.attempts;
-    const status = opts.incrementAttempts && attempts >= MAX_ATTEMPTS_PER_TASK ? 'blocked' : 'ready';
-    this.deps.repo.updateCoordinationTask(task.id, { status, attempts, assignedMemberId: null }, now);
-    return settled;
+    // Las escrituras van juntas, por lo mismo que en `report`: cerrar la
+    // reserva sin asentar el gasto vuelve el despacho invisible para el tope.
+    return this.deps.repo.transaction(() => {
+      if (dispatch.reservationId) {
+        this.deps.repo.settleCoordinationCostReservation(dispatch.reservationId, null, now, true);
+        // El asiento se escribe igual que en `report`: el miembro FUE despachado
+        // y la persona lo pagó. Sin esto, cerrar la reserva volvía ese gasto
+        // invisible para siempre y el reintento estrenaba cupo.
+        this.deps.repo.insertCoordinationCostLedger({
+          id: newId('cld'), runId: dispatch.runId, reservationId: dispatch.reservationId, kind: 'spend', dispatches: 1, costMicros: 0,
+          detailJson: JSON.stringify({ taskId: dispatch.taskId, outcome: 'uncertain' }), createdAt: now,
+        });
+      }
+      const settled = this.deps.repo.updateCoordinationDispatch(dispatchId, { status: 'cancelled', settledAt: now });
+      const task = this.deps.repo.getCoordinationTask(dispatch.taskId);
+      const attempts = opts.incrementAttempts ? task.attempts + 1 : task.attempts;
+      const status = opts.incrementAttempts && attempts >= MAX_ATTEMPTS_PER_TASK ? 'blocked' : 'ready';
+      this.deps.repo.updateCoordinationTask(task.id, { status, attempts, assignedMemberId: null }, now);
+      return settled;
+    });
+  }
+
+  /**
+   * Reconcilia TODO despacho que quedó en vuelo, de toda la app.
+   * `settleUncertain` existía sin un solo llamador de producción: nadie
+   * barría al arrancar y `shutdown()` no liquidaba nada, así que salir de la
+   * app (o caerse) con tres despachos en vuelo dejaba esas tres tareas en
+   * `dispatched` y sus tres reservas en `reserved` para siempre. Como el tope
+   * cuenta reservas abiertas, cada una quemaba de forma irrecuperable un
+   * despacho del Trabajo Y del tope app-wide, y el run no podía terminar nunca.
+   *
+   * `incrementAttempts:false` a propósito: una salida o una caída de la app no
+   * es culpa del agente, y cobrarle un intento le acercaría la tarea al tope de
+   * reintentos por algo que no hizo.
+   */
+  sweepUncertainDispatches(): number {
+    const open = this.deps.repo.listOpenCoordinationDispatches();
+    for (const dispatch of open) this.settleUncertain(dispatch.id, { incrementAttempts: false });
+    return open.length;
   }
 
   // -- Envelope helpers for tools.ts -------------------------------------------
@@ -757,6 +1049,18 @@ export class CoordinationEngine {
 
   private createTaskRow(runId: string, roleId: string, spec: string, dependsOnIds: string[]): CoordinationTaskRecord {
     const existing = this.deps.repo.listCoordinationTasks(runId);
+    // Las dependencias tienen que ser de ESTE run: `getCoordinationTask` sola
+    // acepta cualquier id de la app, así que un coordinador podía colgar una
+    // tarea de otra Marca de la que nadie de acá va a enterarse nunca.
+    const known = new Set(existing.map((t) => t.id));
+    for (const depId of dependsOnIds) {
+      if (!known.has(depId)) throw new ValidationError(`Task dependency ${depId} does not belong to this coordination run`);
+    }
+    // `wouldCreateCycle` tampoco tenía llamador. Hoy ninguna ruta de producción
+    // puede cerrar un ciclo (una tarea recién creada no tiene dependientes),
+    // pero el guard vive donde las aristas se crean, que es el único lugar
+    // donde puede servir cuando esa ruta exista.
+    const edges: DagEdge[] = this.deps.repo.listCoordinationTaskDeps(runId);
     const depths = dependsOnIds.map((id) => this.deps.repo.getCoordinationTask(id).depth);
     const depth = computeTaskDepth(depths);
     const decision = canAddTask({ currentTaskCount: existing.length, proposedDepth: depth });
@@ -767,10 +1071,22 @@ export class CoordinationEngine {
       status: dependsOnIds.length === 0 ? 'ready' : 'pending', depth, attempts: 0, inPlan: false,
       assignedMemberId: null, resultSummary: null, resultFilesJson: null, createdAt: now, updatedAt: now,
     });
-    for (const dep of dependsOnIds) this.deps.repo.insertCoordinationTaskDep(task.id, dep);
+    for (const dep of dependsOnIds) {
+      if (wouldCreateCycle(edges, task.id, dep)) throw new ValidationError(`Task dependency ${dep} would create a dependency cycle`);
+      edges.push({ taskId: task.id, dependsOnId: dep });
+      this.deps.repo.insertCoordinationTaskDep(task.id, dep);
+    }
     return task;
   }
 
+  /**
+   * Las DOS mitades del módulo `dag.ts`, no una sola: promover lo que ya está
+   * listo Y bajar a `blocked` lo que depende de algo que nunca va a resolver.
+   * `computeBlockedTasks` no tenía ningún llamador de producción, así que una
+   * tarea cuya dependencia llegaba a `blocked` se quedaba `pending` para
+   * siempre — justo lo contrario de lo que promete el docstring de ese
+   * módulo ("a task never stalls `pending` forever") — y nada terminaba el run.
+   */
   private recomputeReadiness(runId: string, now: string): void {
     const tasks = this.deps.repo.listCoordinationTasks(runId);
     const edges: DagEdge[] = this.deps.repo.listCoordinationTaskDeps(runId);
@@ -778,6 +1094,12 @@ export class CoordinationEngine {
     const ready = new Set(computeReadyTasks(dagTasks, edges));
     for (const task of tasks) {
       if (task.status === 'pending' && ready.has(task.id)) this.deps.repo.updateCoordinationTask(task.id, { status: 'ready' }, now);
+    }
+    const blocked = new Set(computeBlockedTasks(dagTasks, edges));
+    for (const task of tasks) {
+      if ((task.status === 'pending' || task.status === 'ready') && blocked.has(task.id)) {
+        this.deps.repo.updateCoordinationTask(task.id, { status: 'blocked', assignedMemberId: null }, now);
+      }
     }
   }
 
@@ -810,10 +1132,28 @@ export class CoordinationEngine {
     try { return JSON.parse(raw) as CoordinationBudget; } catch { return null; }
   }
 
+  /**
+   * El MISMO validador que escribe el presupuesto. Leído a mano, un
+   * `{"maxDispatches": null}` sin `unlimitedConfirmedAt` entraba a
+   * `reserveDispatch` como "sin tope ninguno" — la inversión exacta de "no hay
+   * ilimitado implícito", decidida por un JSON que nadie confirmó. Un
+   * `budget_json` roto tira desde acá, y eso NIEGA el despacho (el llamador
+   * suelta el reclamo y relanza): nunca habilita.
+   */
   private readRunBudget(run: CoordinationRunRecord): CoordinationBudget {
-    return JSON.parse(run.budgetJson) as CoordinationBudget;
+    return requireCoordinationBudget(JSON.parse(run.budgetJson));
   }
 
+  /**
+   * El gasto de un run: lo liquidado MÁS lo reservado y todavía abierto. Esa
+   * suma es la corrección central del tope — una reserva se escribe al
+   * despachar, un `spend` se escribe al liquidar, y como liquidar también
+   * cierra la reserva, un despacho cuenta exactamente uno de punta a punta.
+   * Contando sólo el gasto liquidado, el tope no topaba nada: un agente que
+   * nunca llamara a `latte_report` tenía presupuesto infinito, que es
+   * justamente la inversión de la invariante que este diseño existe para
+   * sostener.
+   */
   private usageFor(runId: string): BudgetUsage {
     const ledger = this.deps.repo.listCoordinationCostLedger(runId);
     let dispatchesUsed = 0;
@@ -823,11 +1163,43 @@ export class CoordinationEngine {
       dispatchesUsed += row.dispatches;
       costMicrosUsed += row.costMicros;
     }
-    return { dispatchesUsed, costMicrosUsed };
+    return { dispatchesUsed: dispatchesUsed + this.deps.repo.countOpenCoordinationCostReservations(runId), costMicrosUsed };
   }
 
-  private countInFlightDispatches(runId: string): number {
-    return this.deps.repo.listCoordinationDispatches(runId).filter((d) => d.status === 'dispatched' || d.status === 'running').length;
+  /**
+   * El mismo cálculo que `usageFor`, pero de toda la app — y sólo sobre los
+   * runs VIVOS. Sumando el libro mayor entero, el tope app-wide era un contador
+   * de por vida: quien ponía 40 tenía 40 despachos para toda la vida de la
+   * instalación y después cada run de cada Marca se suspendía con
+   * `global_max_dispatches`; "Aprobar" llamaba a `resumeRun` y el despacho
+   * siguiente volvía a suspender, un bucle sin salida que la interfaz
+   * presentaba como una decisión resoluble. Un tope app-wide describe cuánto
+   * puede estar pasando A LA VEZ; el asiento igual queda retenido.
+   */
+  private globalUsage(): BudgetUsage {
+    return {
+      dispatchesUsed: this.deps.repo.sumActiveCoordinationSpentDispatches() + this.deps.repo.countOpenActiveCoordinationCostReservations(),
+      costMicrosUsed: 0,
+    };
+  }
+
+  /**
+   * El tope app-wide (`coordination_budget_global`, task 6.35), leído fresco
+   * en cada despacho tal como su propio doc comment promete. Ausente o
+   * ilegible ⇒ `null`: sin tope, nunca un tope inventado.
+   */
+  private readGlobalBudget(): CoordinationBudget | null {
+    const raw = this.deps.repo.getMeta('coordination_budget_global');
+    if (!raw) return null; // AUSENTE es un estado humano explícito: no hay tope.
+    // Ilegible NO es lo mismo que ausente: antes un tope corrupto desaparecía
+    // en silencio y el despacho pasaba sin cap. Acá tira, y tirar NIEGA.
+    return requireCoordinationBudget(JSON.parse(raw));
+  }
+
+  /** `excludeDispatchId` es el despacho que se está decidiendo ahora: ya reclamado, todavía no concedido. */
+  private countInFlightDispatches(runId: string, excludeDispatchId?: string): number {
+    return this.deps.repo.listCoordinationDispatches(runId)
+      .filter((d) => d.id !== excludeDispatchId && (d.status === 'dispatched' || d.status === 'running')).length;
   }
 
   private writeLedgerDenied(runId: string, reason: string): void {
@@ -843,12 +1215,55 @@ export class CoordinationEngine {
     return this.deps.repo.findActiveCoordinationRun(member.workId);
   }
 
-  /** Reuses an existing idle member for the role, or opens one — the exact `requestBrandContextDraft` precedent, never a new spawn mechanism. */
-  private async resolveTargetMember(workId: string, roleId: string) {
+  /**
+   * Los roles que la persona aprobó de verdad, congelados EN EL MOMENTO DE LA
+   * APROBACIÓN en su propia clave de meta.
+   *
+   * Ronda 4, juicio #3: antes se derivaban de `run.planJson`, y devolvía
+   * `null` — NINGUNA restricción — cuando ese campo no parseaba a un objeto
+   * con un array `plan`. Pero `planSubmit`, alcanzable por el agente
+   * coordinador como `latte_plan_submit`, pisa `plan_json` con una lista pelada
+   * de ids de tarea. O sea: la persona aprobaba `[strategist]`, el agente
+   * llamaba a `latte_plan_submit`, y a partir de ahí podía crear una tarea con
+   * CUALQUIER rol del catálogo y contratarlo sin que nadie lo viera. Una
+   * herramienta que el agente tiene no puede borrar el límite que lo acota.
+   *
+   * Sin propuesta aprobada (un run de `startRun` directo) el conjunto es
+   * VACÍO, no `null`: el alta automática queda acotada a los roles que ya
+   * están en el Trabajo — `resolveTargetMember` reutiliza a los presentes y
+   * sólo frena CONTRATAR a alguien nuevo.
+   */
+  private approvedRoleIds(run: CoordinationRunRecord): Set<string> {
+    const raw = this.deps.repo.getMeta(APPROVED_ROLES_META + run.id);
+    if (!raw) return new Set();
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return new Set();
+      return new Set(parsed.filter((role): role is string => typeof role === 'string'));
+    } catch {
+      // Ilegible NO es "sin restricción": es el caso más estricto.
+      return new Set();
+    }
+  }
+
+  /**
+   * Reuses an existing idle member for the role, or opens one — the exact
+   * `requestBrandContextDraft` precedent, never a new spawn mechanism.
+   *
+   * El alta automática está acotada a `approvedRoles`: la persona aprobó un
+   * equipo concreto, y sin esto un coordinador podía crear una tarea con
+   * cualquier `roleId` del catálogo y `latte_dispatch` la contrataba en
+   * silencio, sin ningún gate. Un rol ya presente en el Trabajo se reutiliza
+   * como siempre — esto sólo frena CONTRATAR a alguien nuevo.
+   */
+  private async resolveTargetMember(workId: string, roleId: string, approvedRoles: Set<string> | null = null) {
     const team = this.deps.hub.listTeam(workId);
     const candidates = team.filter((m) => m.roleId === roleId && m.status !== 'ended');
     const idle = candidates.find((m) => m.status !== 'working');
     if (candidates.length > 0 && !idle) throw new LatteError('MEMBER_BUSY', `Every ${roleId} member is already working`);
+    if (candidates.length === 0 && approvedRoles && !approvedRoles.has(roleId)) {
+      throw new LatteError('ROLE_NOT_APPROVED', `Hiring a ${roleId} was not part of the approved plan; it needs its own approval`);
+    }
     const context = this.deps.memberContext(workId);
     return idle ? this.deps.hub.openMember(idle.id, context) : this.deps.hub.addMember({ ...context, roleId });
   }

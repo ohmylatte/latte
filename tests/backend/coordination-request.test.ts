@@ -57,7 +57,10 @@ describe('latte_request_coordination: the sentence becomes a gate', () => {
 
       expect(run.status).toBe('planning');
       expect(run.coordinatorMemberId).toBe('mem_proposer');
-      expect(JSON.parse(run.planJson!)).toEqual(proposal());
+      // `unlimitedConfirmedAt` se guarda SIEMPRE en null: un presupuesto
+      // ilimitado es una eleccion humana, y el agente no puede firmarsela
+      // escribiendo su propio timestamp en la propuesta.
+      expect(JSON.parse(run.planJson!)).toEqual({ ...proposal(), unlimitedConfirmedAt: null });
       expect(JSON.parse(run.budgetJson)).toMatchObject({ maxDispatches: 8 });
 
       expect(b.repo.listCoordinationTasks(run.id)).toEqual([]);
@@ -101,7 +104,10 @@ describe('latte_request_coordination: the sentence becomes a gate', () => {
       const startIdx = engineSource.indexOf('async requestCoordination(');
       expect(startIdx).toBeGreaterThan(-1);
       const afterStart = engineSource.slice(startIdx);
-      const endMarker = afterStart.indexOf('\n  }\n'); // methods close at 2-space indent in this file
+      // El cierre de metodo a 2 espacios, sin atarse al fin de linea del
+      // archivo: con CRLF el literal no matcheaba NUNCA, el slice se quedaba
+      // en -1 y el cuerpo no se inspeccionaba jamas.
+      const endMarker = afterStart.search(/\r?\n  \}\r?\n/); // methods close at 2-space indent in this file
       expect(endMarker).toBeGreaterThan(-1);
       const body = afterStart.slice(0, endMarker);
       expect(body).not.toMatch(/hub\.send\(/);

@@ -78,6 +78,15 @@ export interface AdapterStartResult {
   session: ChatSession;
   /** Runtime-native id to persist for resume; empty when the runtime assigns it later. */
   runtimeSessionId: string;
+  /**
+   * Los nombres de los servidores MCP que este adaptador inyectó DE VERDAD en
+   * el proceso que acaba de arrancar. El planificador decide antes del spawn,
+   * pero los adaptadores se niegan después por su cuenta (Claude sin
+   * `promptDir`, Codex con su propio contador de procesos lleno), y sin este
+   * reporte la UI afirmaba capacidades que el proceso no tenía. `undefined`
+   * = este adaptador no inyecta nada (OpenCode): el reclamo queda intacto.
+   */
+  injectedMcpServers?: string[];
 }
 
 /**

@@ -67,6 +67,12 @@ export interface DecisionsViewProps {
    */
   gates?: readonly CoordinationGateView[];
   onResolveGate?: (gateId: string, decision: 'approve' | 'reject', editedPayload?: string | null) => void;
+  /**
+   * Acepta un handoff como TAREA de la coordinación (`acceptHandoffAsTask`).
+   * `undefined` deja la lista de sólo lectura, como estaba. Sin esto la función
+   * existía cableada en cinco lugares y no había forma humana de dispararla.
+   */
+  onAcceptHandoff?: (handoff: HandoffRequest) => void;
   /** A `latte_ask` is a separate surface (Phase 3): its one action is the answer itself, never an edit. */
   openAsks?: readonly CoordinationAskView[];
   onAnswerAsk?: (askId: string, answer: string) => void;
@@ -80,6 +86,16 @@ export interface DecisionsViewProps {
    * silent about either.
    */
   coordinationSupport?: readonly CoordinationMemberSupport[];
+  /**
+   * Additive, optional (juicio ronda 4, ítem 14): `useCoordination`'s
+   * per-action in-flight flags, keyed `gate:<gateId>` / `ask:<askId>`.
+   * `undefined` (an unwired caller) disables nothing — the same safe default
+   * every other additive coordination prop here follows. Wired, it disables
+   * the action buttons of the gate/ask that IS mutating right now, so a
+   * double click cannot fire the same mutation twice (a double click on a
+   * proposal gate ran `hub.addMember` — the hiring loop — twice).
+   */
+  pending?: Record<string, boolean>;
 }
 
 /** The coordinator's team member, resolved to a display name — never a raw id. */
@@ -124,39 +140,43 @@ function describeAggregate(mine: number | null, aggregate: CoordinationGateAggre
 }
 
 type ResolveGate = DecisionsViewProps['onResolveGate'];
+type Pending = DecisionsViewProps['pending'];
 
 /** The plan gate (task 7.4): approve/reject only — the engine ignores `editedPrompt` for this kind, so offering an edit here would be a capability that does not work. */
-function PlanGateCard({ gate, onResolveGate }: { gate: CoordinationGateView; onResolveGate?: ResolveGate }) {
+function PlanGateCard({ gate, onResolveGate, pending }: { gate: CoordinationGateView; onResolveGate?: ResolveGate; pending?: Pending }) {
+  const busy = Boolean(pending?.[`gate:${gate.id}`]);
   return <div className="decision-gate decision-gate-plan" data-gate-kind="plan">
     <h3>{t('coordination.gate.plan.title')}</h3>
     <div className="decision-gate-actions">
-      <button className="primary" onClick={() => onResolveGate?.(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
-      <button onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
+      <button className="primary" disabled={busy} onClick={() => onResolveGate?.(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
+      <button disabled={busy} onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
     </div>
   </div>;
 }
 
 /** The budget-exhausted gate (task 7.4): exactly 2 actions. `approve` resumes the run, `reject` cancels it — the three-action triple is a pattern, not a contract. */
-function BudgetGateCard({ gate, onResolveGate }: { gate: CoordinationGateView; onResolveGate?: ResolveGate }) {
+function BudgetGateCard({ gate, onResolveGate, pending }: { gate: CoordinationGateView; onResolveGate?: ResolveGate; pending?: Pending }) {
+  const busy = Boolean(pending?.[`gate:${gate.id}`]);
   return <div className="decision-gate decision-gate-budget" data-gate-kind="budget">
     <h3>{t('coordination.gate.budget.title')}</h3>
     <p>{t('coordination.gate.budget.body')}</p>
     <div className="decision-gate-actions">
-      <button className="primary" onClick={() => onResolveGate?.(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
-      <button onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
+      <button className="primary" disabled={busy} onClick={() => onResolveGate?.(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
+      <button disabled={busy} onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
     </div>
   </div>;
 }
 
 /** The dispatch gate (task 7.4): the task prompt is genuinely editable, so it gets all 3 actions — `editApprove` mirrors the Decision-domain `window.prompt` pattern verbatim. */
-function DispatchGateCard({ gate, onResolveGate }: { gate: CoordinationGateView; onResolveGate?: ResolveGate }) {
+function DispatchGateCard({ gate, onResolveGate, pending }: { gate: CoordinationGateView; onResolveGate?: ResolveGate; pending?: Pending }) {
+  const busy = Boolean(pending?.[`gate:${gate.id}`]);
   return <div className="decision-gate decision-gate-dispatch" data-gate-kind="dispatch">
     <h3>{t('coordination.gate.dispatch.title')}</h3>
     {gate.prompt && <p className="decision-gate-prompt">{gate.prompt}</p>}
     <div className="decision-gate-actions">
-      <button className="primary" onClick={() => onResolveGate?.(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
-      <button onClick={() => { const edited = window.prompt(t('coordination.gate.editApprove'), gate.prompt ?? ''); if (edited?.trim()) onResolveGate?.(gate.id, 'approve', edited.trim()); }}>{t('coordination.gate.editApprove')}</button>
-      <button onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
+      <button className="primary" disabled={busy} onClick={() => onResolveGate?.(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
+      <button disabled={busy} onClick={() => { const edited = window.prompt(t('coordination.gate.editApprove'), gate.prompt ?? ''); if (edited?.trim()) onResolveGate?.(gate.id, 'approve', edited.trim()); }}>{t('coordination.gate.editApprove')}</button>
+      <button disabled={busy} onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
     </div>
   </div>;
 }
@@ -172,23 +192,50 @@ function DispatchGateCard({ gate, onResolveGate }: { gate: CoordinationGateView;
  * `discard` (`reject`) grants nothing: it is the plain `cancelRun` path,
  * with no edited payload ever attached.
  */
-function ProposalGateCard({ gate, roles, team, onResolveGate }: {
-  gate: CoordinationGateView; roles: readonly AgentRole[]; team: readonly TeamMember[]; onResolveGate?: ResolveGate;
+function ProposalGateCard({ gate, roles, team, onResolveGate, pending }: {
+  gate: CoordinationGateView; roles: readonly AgentRole[]; team: readonly TeamMember[]; onResolveGate?: ResolveGate; pending?: Pending;
 }) {
   const proposal: CoordinationProposal | null = gate.proposalJson ? (JSON.parse(gate.proposalJson) as CoordinationProposal) : null;
+  // Los valores iniciales del formulario, derivados de la PROPUESTA — nunca al
+  // revés. `editCancel` vuelve a estos mismos valores: abrir la edición y
+  // cancelar tiene que dejar el formulario exactamente como lo encontró.
+  const initialDispatches = () => proposal?.estimatedDispatches != null ? String(proposal.estimatedDispatches) : '';
+  const initialIncluded = () => (proposal?.membersToHire ?? []).map(() => true);
   const [editing, setEditing] = useState(false);
-  const [dispatches, setDispatches] = useState(proposal?.estimatedDispatches != null ? String(proposal.estimatedDispatches) : '');
-  const [included, setIncluded] = useState<boolean[]>((proposal?.membersToHire ?? []).map(() => true));
+  const [dispatches, setDispatches] = useState(initialDispatches);
+  const [included, setIncluded] = useState<boolean[]>(initialIncluded);
+  const [unlimitedConfirmed, setUnlimitedConfirmed] = useState(false);
   if (!proposal) return null;
   const hires = proposal.membersToHire ?? [];
+  const busy = Boolean(pending?.[`gate:${gate.id}`]);
+  // Deriva del estado de la PROPUESTA, no del formulario de edición (juicio
+  // ronda 4, ítem 15): con el formulario, abrir la edición de una propuesta
+  // CON tope, borrar el número y Cancelar dejaba `dispatches` en '' para
+  // siempre -- el "Aprobar" simple desaparecía y el aviso de ilimitado
+  // aparecía sobre una propuesta que SÍ tenía tope. El motor
+  // (`resolveProposalGate`) descarta cualquier `unlimitedConfirmedAt` en un
+  // "Aprobar" simple (sin `editedProposalJson`) — sólo `estimatedDispatches`
+  // decide si ese botón puede tener éxito.
+  const needsUnlimitedConfirmation = proposal.estimatedDispatches == null && proposal.unlimitedConfirmedAt == null;
 
   const confirmEdit = () => {
     const edited: CoordinationProposal = {
       ...proposal,
       estimatedDispatches: dispatches.trim() === '' ? null : Number(dispatches),
       membersToHire: hires.filter((_, i) => included[i]),
+      // La ÚNICA fuente de un presupuesto ilimitado: esta casilla, acá, ahora.
+      unlimitedConfirmedAt: dispatches.trim() === '' && unlimitedConfirmed ? new Date().toISOString() : null,
     };
     onResolveGate?.(gate.id, 'approve', JSON.stringify(edited));
+    setEditing(false);
+  };
+
+  const editCancel = () => {
+    // Sin esto, cancelar no reseteaba nada: el formulario quedaba con
+    // ediciones a medio hacer que ni se aprobaron ni se descartaron.
+    setDispatches(initialDispatches());
+    setIncluded(initialIncluded());
+    setUnlimitedConfirmed(false);
     setEditing(false);
   };
 
@@ -215,6 +262,10 @@ function ProposalGateCard({ gate, roles, team, onResolveGate }: {
     {editing && <div className="decision-gate-edit">
       <label className="field-label">{t('coordination.proposal.editDispatches')}</label>
       <input type="number" value={dispatches} onChange={(e) => setDispatches(e.target.value)} />
+      {dispatches.trim() === '' && <label className="decision-gate-edit-unlimited">
+        <input type="checkbox" checked={unlimitedConfirmed} onChange={() => setUnlimitedConfirmed((v) => !v)} />
+        <span>{t('coordination.proposal.unlimitedConfirm')}</span>
+      </label>}
       {hires.length > 0 && <>
         <p className="field-label">{t('coordination.proposal.editHires')}</p>
         {hires.map((hire, i) => <label key={i} className="decision-gate-edit-hire">
@@ -223,14 +274,17 @@ function ProposalGateCard({ gate, roles, team, onResolveGate }: {
         </label>)}
       </>}
       <div className="decision-gate-edit-actions">
-        <button className="primary" onClick={confirmEdit}>{t('coordination.proposal.editConfirm')}</button>
-        <button onClick={() => setEditing(false)}>{t('coordination.proposal.editCancel')}</button>
+        <button className="primary" disabled={busy} onClick={confirmEdit}>{t('coordination.proposal.editConfirm')}</button>
+        <button onClick={editCancel}>{t('coordination.proposal.editCancel')}</button>
       </div>
     </div>}
+    {needsUnlimitedConfirmation && <p className="decision-gate-note decision-gate-unlimited-note">{t('coordination.proposal.unlimitedBlocked')}</p>}
     <div className="decision-gate-actions">
-      <button className="primary" onClick={() => onResolveGate?.(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
-      <button onClick={() => setEditing(true)}>{t('coordination.gate.editApprove')}</button>
-      <button onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
+      {/* El "Aprobar" simple no puede convivir con la edición abierta: tocarlo
+          mientras hay ediciones sin guardar las descartaba en silencio. */}
+      {!needsUnlimitedConfirmation && !editing && <button className="primary" disabled={busy} onClick={() => onResolveGate?.(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>}
+      <button disabled={busy} onClick={() => setEditing(true)}>{t('coordination.gate.editApprove')}</button>
+      <button disabled={busy} onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
     </div>
   </div>;
 }
@@ -243,6 +297,7 @@ const DEGRADED_KEY: Record<CoordinationDegradedReason, string> = {
   codex_process_ceiling: 'codexProcessCeiling',
   opencode_shared_server: 'opencodeSharedServer',
   engram_not_installed: 'engramMissing',
+  runtime_refused_injection: 'runtimeRefused',
 };
 
 /** The coordination line: nothing to flag when the member can propose; the reason's own sentence otherwise (it already says "dispatch manual"). */
@@ -276,13 +331,14 @@ function SupportRow({ row, team }: { row: CoordinationMemberSupport; team: reado
 }
 
 /** An open `latte_ask` (Phase 3): its one action is the answer itself, never an edit — a different surface from the approve/reject gates above. */
-function AskCard({ ask, formatDate, onAnswerAsk }: { ask: CoordinationAskView; formatDate: (value: string) => string; onAnswerAsk?: DecisionsViewProps['onAnswerAsk'] }) {
+function AskCard({ ask, formatDate, onAnswerAsk, pending }: { ask: CoordinationAskView; formatDate: (value: string) => string; onAnswerAsk?: DecisionsViewProps['onAnswerAsk']; pending?: Pending }) {
+  const busy = Boolean(pending?.[`ask:${ask.id}`]);
   return <div className="decision-ask">
     <h3>{t('coordination.ask.title')}</h3>
     <p>{ask.question}</p>
     <small>{t('coordination.ask.deadline', { date: formatDate(ask.deadlineAt) })}</small>
     <div className="decision-gate-actions">
-      <button className="primary" onClick={() => { const answer = window.prompt(t('coordination.ask.placeholder'), ''); if (answer?.trim()) onAnswerAsk?.(ask.id, answer.trim()); }}>{t('coordination.ask.answer')}</button>
+      <button className="primary" disabled={busy} onClick={() => { const answer = window.prompt(t('coordination.ask.placeholder'), ''); if (answer?.trim()) onAnswerAsk?.(ask.id, answer.trim()); }}>{t('coordination.ask.answer')}</button>
     </div>
   </div>;
 }
@@ -332,12 +388,12 @@ export function DecisionsView(props: DecisionsViewProps) {
     </div>
     {((props.gates?.length ?? 0) > 0 || (props.openAsks?.length ?? 0) > 0) && <section className="decision-gates">
       {props.gates?.map((gate) => {
-        if (gate.kind === 'proposal') return <ProposalGateCard key={gate.id} gate={gate} roles={props.roles} team={props.team} onResolveGate={props.onResolveGate} />;
-        if (gate.kind === 'dispatch') return <DispatchGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} />;
-        if (gate.kind === 'budget') return <BudgetGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} />;
-        return <PlanGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} />;
+        if (gate.kind === 'proposal') return <ProposalGateCard key={gate.id} gate={gate} roles={props.roles} team={props.team} onResolveGate={props.onResolveGate} pending={props.pending} />;
+        if (gate.kind === 'dispatch') return <DispatchGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} pending={props.pending} />;
+        if (gate.kind === 'budget') return <BudgetGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} pending={props.pending} />;
+        return <PlanGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} pending={props.pending} />;
       })}
-      {props.openAsks?.map((ask) => <AskCard key={ask.id} ask={ask} formatDate={props.formatDate} onAnswerAsk={props.onAnswerAsk} />)}
+      {props.openAsks?.map((ask) => <AskCard key={ask.id} ask={ask} formatDate={props.formatDate} onAnswerAsk={props.onAnswerAsk} pending={props.pending} />)}
     </section>}
     {(props.coordinationSupport?.length ?? 0) > 0 && <section className="decision-coordination-support">
       <div className="document-kicker">{t('coordination.teams.kicker')}</div>
@@ -351,7 +407,10 @@ export function DecisionsView(props: DecisionsViewProps) {
       <h2>{t('decision.permissions.handoffs')}</h2>
       {props.handoffs.length === 0
         ? <p className="decision-permissions-empty">{t('decision.permissions.handoffs.empty')}</p>
-        : <ul className="decision-handoff-list">{props.handoffs.map(h => <li key={h.fileName}><span>{h.roleName}</span><small>{h.fileName}</small></li>)}</ul>}
+        : <ul className="decision-handoff-list">{props.handoffs.map(h => <li key={h.fileName}>
+            <span>{h.roleName}</span><small>{h.fileName}</small>
+            {props.onAcceptHandoff && h.known && <button className="decision-handoff-accept" onClick={() => props.onAcceptHandoff!(h)}>{t('decision.permissions.handoffs.accept')}</button>}
+          </li>)}</ul>}
     </section>}
     {props.work && props.coordinationAuthority !== undefined && <section className="decision-coordination">
       <div className="document-kicker">{t('coordination.settings.kicker')}</div>

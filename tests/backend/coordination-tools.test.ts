@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CoordinationEngine } from '../../electron/coordination/engine';
 import { createCoordinationTools } from '../../electron/coordination/tools';
-import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
+import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 // Spec: "Non-Coordinator Tool Rejection" + "Dispatch Is Always Callable" +
 // "Gate cannot be bypassed by the caller". tools.ts is a thin (grant, args) =>
@@ -32,6 +32,11 @@ describe('coordination tools: grant enforcement and envelope stability', () => {
     });
     const run = await engine.startRun(workId, null);
     runId = run.id;
+    // Ronda 4, juicio #3: el alta automatica quedo acotada a lo que la
+    // persona aprobo. Este run nace de `startRun`, sin propuesta, asi que
+    // declara aca los roles que su persona hubiera aprobado -- lo que se
+    // esta probando es otra cosa.
+    approveCoordinationRoles(b, runId, 'strategist');
     tools = createCoordinationTools(engine);
   });
   afterEach(() => b.cleanup());

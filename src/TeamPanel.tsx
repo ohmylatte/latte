@@ -84,6 +84,24 @@ export interface TeamPanelProps {
    */
   coordinationRun?: CoordinationRunView | null;
   onPauseCoordination?: (runId: string) => void;
+  /**
+   * La vuelta de la pausa, en el MISMO control que la ofrece. Pausar hacía
+   * desaparecer su propio botón y dejaba el run `suspended` para siempre:
+   * `findActiveCoordinationRun` bloqueaba todo run futuro de ese Trabajo y el
+   * run seguía ocupando uno de los cuatro cupos app-wide, sin ninguna salida.
+   */
+  onResumeCoordination?: (runId: string) => void;
+  onCancelCoordination?: (runId: string) => void;
+  /**
+   * Additive, optional (juicio ronda 4, ítem 14): `useCoordination`'s
+   * per-action in-flight flags, keyed `run:<runId>` for the pause/resume/
+   * cancel trio. `undefined` disables nothing, same as every other additive
+   * coordination prop here. `busy` (the app-wide flag above) never covered
+   * this: a mutation issued through `useCoordination` does not touch it, so
+   * the run-control buttons stayed clickable for the whole time a pause/
+   * resume/cancel was in flight.
+   */
+  pending?: Record<string, boolean>;
 }
 
 const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex' };
@@ -127,7 +145,11 @@ export function TeamPanel(props: TeamPanelProps) {
         {workTotal > 0 && <span className="team-usage-total" title={t('usage.help')}>{t('usage.workTotal', { tokens: formatTokens(workTotal, currentLocale()) })}</span>}
         <button className="team-tab-add" aria-label={t('ui.auto.269')} title={t('ui.auto.269')} disabled={busy || !isDesktop} onClick={() => setAdding(true)}><UserPlus size={15} /></button>
         <button className="team-tab-add" aria-label="Proveedores de IA" title="Agentes y proveedores" onClick={props.onProviders}><Settings2 size={15} /></button>
-        {props.coordinationRun && props.coordinationRun.status === 'running' && <button className="team-pause-coordination" title={t('coordination.run.pauseHelp')} disabled={busy} onClick={() => props.onPauseCoordination?.(props.coordinationRun!.id)}><Pause size={13} />{t('coordination.run.pause')}</button>}
+        {props.coordinationRun && props.coordinationRun.status === 'running' && <button className="team-pause-coordination" title={t('coordination.run.pauseHelp')} disabled={busy || Boolean(props.pending?.[`run:${props.coordinationRun.id}`])} onClick={() => props.onPauseCoordination?.(props.coordinationRun!.id)}><Pause size={13} />{t('coordination.run.pause')}</button>}
+        {props.coordinationRun && props.coordinationRun.status === 'suspended' && <>
+          <button className="team-resume-coordination" title={t('coordination.run.resumeHelp')} disabled={busy || Boolean(props.pending?.[`run:${props.coordinationRun.id}`])} onClick={() => props.onResumeCoordination?.(props.coordinationRun!.id)}><Play size={13} />{t('coordination.run.resume')}</button>
+          <button className="team-cancel-coordination" title={t('coordination.run.cancelHelp')} disabled={busy || Boolean(props.pending?.[`run:${props.coordinationRun.id}`])} onClick={() => props.onCancelCoordination?.(props.coordinationRun!.id)}><X size={13} />{t('coordination.run.cancel')}</button>
+        </>}
         {selected && <div className="team-tab-actions">
           {mode === 'advanced' && <>
             <ModelPicker member={selected} busy={busy} onModel={props.onModel} />

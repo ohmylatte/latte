@@ -6,7 +6,6 @@ import {
   MAX_ACTIVE_COORDINATION_RUNS,
   MAX_ATTEMPTS_PER_TASK,
   MAX_BOOTSTRAP_CODEX_MEMBERS_PER_WORK,
-  MAX_CHECK_WAIT_SECONDS,
   MAX_CODEX_APP_SERVERS_TOTAL,
   MAX_COORDINATED_CODEX_MEMBERS_PER_RUN,
   MAX_COORDINATED_CODEX_PROCESSES,
@@ -27,9 +26,9 @@ describe('coordination structural limits', () => {
     expect(MAX_ATTEMPTS_PER_TASK).toBe(3);
   });
 
-  it('caps latte_check server-side wait at 30 seconds', () => {
-    expect(MAX_CHECK_WAIT_SECONDS).toBe(30);
-  });
+  // `MAX_CHECK_WAIT_SECONDS` se fue con el parámetro `wait` de `latte_check`:
+  // el servidor nunca esperó y el buzón todavía no tiene productor, así que
+  // ni la constante ni el parámetro se publican más.
 
   it('defaults an ask TTL to 30 minutes, capped at 1440', () => {
     expect(ASK_TTL_DEFAULT_MINUTES).toBe(30);

@@ -176,7 +176,9 @@ export function App() {
    * optional props only. `activeRuns` is global (every Brand); everything
    * else is scoped to whichever Work is currently open.
    */
-  const coordination = useCoordination(work?.id ?? null);
+  // El canal de error de la app, no una promesa sin manejar: un
+  // `BUDGET_EXCEEDED` o un `ValidationError` al resolver un gate se ve.
+  const coordination = useCoordination(work?.id ?? null, (e) => setError(displayError(e)));
   // The memory notice (task 7.10) is dismissed per Brand, for this session
   // only: this state is plain React state, never persisted, so it "returns
   // next launch while the condition holds" simply because a fresh launch
@@ -813,6 +815,25 @@ export function App() {
   const dropChat = (memberId: string) => { setChats(prev => { const next = { ...prev }; delete next[memberId]; return next; }); chatStore.forget(memberId); };
   const pauseMember = (memberId: string) => run(async () => { await api.pauseTeamMember(memberId); dropChat(memberId); if (work) await loadTeam(work.id); });
   const finishMember = (memberId: string) => run(async () => { await api.finishTeamMember(memberId); dropChat(memberId); if (work) await loadTeam(work.id); setNotice('Miembro marcado como finalizado'); });
+  /**
+   * Acepta un handoff como TAREA de la coordinación cuando el Trabajo tiene un
+   * run vivo: `acceptHandoffAsTask` estaba cableada de punta a punta (motor,
+   * IPC, contrato, preload, browser-api, tests) y no tenía un solo llamador en
+   * el renderer. Fuera de un run vivo devuelve `{bridged:false}` y cae al
+   * camino de siempre, el borrador de chat.
+   */
+  const acceptHandoffAsTask = (handoff: HandoffRequest) => run(async () => {
+    if (!work) return;
+    const result = await api.acceptHandoffAsTask(work.id, handoff.fileName);
+    if (!result.bridged) { await acceptHandoff(handoff); return; }
+    setHandoffs(await api.listHandoffs(work.id).catch(() => []));
+    // NO se abrio ninguna conversacion: se creo una `coordination_task` y
+    // `startDispatch` ya la mando (gastando un despacho, con `hub.send`
+    // incluido). Reusar la frase de la otra rama --"revisalo antes de
+    // enviarlo"-- le pedia a la persona revisar algo que no existe DESPUES de
+    // haber gastado. Clave semantica propia, en los dos idiomas.
+    setNotice(t('handoff.bridged.dispatched', { role: handoff.roleName }));
+  });
   const acceptHandoff = (handoff: HandoffRequest) => run(async () => {
     if (!work || startingChat) return;
     const existing = team.find(m => m.roleId === handoff.roleId);
@@ -968,12 +989,12 @@ export function App() {
         onReload={() => void reloadContext()}
         onOverride={() => void overrideContext()}
       />}
-      {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} coordinationAuthority={work ? coordination.authority : undefined} coordinationBudget={work ? coordination.budget : undefined} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} gates={work ? coordination.gates : undefined} onResolveGate={coordination.resolveGate} coordinationSupport={work ? coordination.support : undefined} />}
+      {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} coordinationAuthority={work ? coordination.authority : undefined} coordinationBudget={work ? coordination.budget : undefined} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} gates={work ? coordination.gates : undefined} onResolveGate={coordination.resolveGate} openAsks={work ? coordination.openAsks : undefined} onAnswerAsk={coordination.answerAsk} onAcceptHandoff={acceptHandoffAsTask} coordinationSupport={work ? coordination.support : undefined} pending={coordination.pending} />}
       {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice('Aprendizaje guardado en Engram'); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
       <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
     </main>
     <aside className="agent-panel">{focusChat && (error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}<button type="button" className={'panel-resizer' + (dragging ? ' dragging' : '')} aria-label={t('ui.auto.066')} title={t('ui.auto.067')} onPointerDown={startResize} />
-      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} />
+      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} />
       <details className="active-context">
         <summary><Bookmark size={12} />{t('ui.auto.035')}<span>{[brand?.context ? 'marca' : null, work ? 'trabajo' : null, decisions.length ? `${decisions.length} decisiones` : null].filter(Boolean).join(' · ') || t('ui.auto.068')}</span></summary>
         <div className="active-context-body">

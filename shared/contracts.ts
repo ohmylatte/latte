@@ -797,7 +797,15 @@ export type CoordinationDegradedReason =
   | 'codex_global_cap'
   | 'codex_process_ceiling'
   | 'opencode_shared_server'
-  | 'engram_not_installed';
+  | 'engram_not_installed'
+  /**
+   * El adaptador entregó MENOS de lo que el planificador había reclamado: el
+   * runtime se negó a inyectar después de la decisión (Claude sin `promptDir`
+   * o con el archivo de config MCP fallando; Codex con su propio contador de
+   * procesos lleno). La UI nunca puede afirmar una capacidad que el proceso
+   * no tiene.
+   */
+  | 'runtime_refused_injection';
 
 /**
  * One row per team member of the Work, from `coordinationRuntimeSupport`
@@ -1138,6 +1146,13 @@ export interface LatteAPI {
   resolveCoordinationGate(gateId: string, decision: 'approve' | 'reject', editedPrompt?: string | null): Promise<CoordinationRunView>;
   /** The bitácora: one entry per `coordination_dispatch` lifecycle event, oldest first. */
   listCoordinationLog(runId: string): Promise<CoordinationLogEntryView[]>;
+  /**
+   * Las `latte_ask` todavía sin responder de un run. `listCoordinationGates`
+   * excluye a propósito el motivo `all_blocked_on_ask` (una pregunta no es un
+   * gate de aprobar/rechazar), así que sin esta lista un run suspendido por
+   * una pregunta no tenía ninguna salida en la UI salvo cancelar.
+   */
+  listOpenCoordinationAsks(runId: string): Promise<CoordinationAskView[]>;
   answerCoordinationAsk(askId: string, answer: string): Promise<CoordinationAskView>;
   /** WHEN the Work has an active run, mints a `coordination_task` for the accepted handoff instead of only opening a chat draft. */
   acceptHandoffAsTask(workId: string, fileName: string): Promise<HandoffTaskBridgeResult>;
@@ -1161,9 +1176,10 @@ export interface LatteAPI {
   coordinationRuntimeSupport(workId: string): Promise<CoordinationMemberSupport[]>;
   /** The global "Equipos activos" strip: every active run across every Brand, newest-updated first. The only app-scoped read in this change. */
   listActiveCoordinationRuns(): Promise<CoordinationActiveRunSummary[]>;
-  /** The OPTIONAL advanced app-wide dispatch cap, on top of (never instead of) each Work's own budget. `null` = unset = no extra cap applied -- never an invented limit. */
+  /** The OPTIONAL advanced app-wide dispatch cap, on top of (never instead of) each Work's own budget. `null` = unset = no extra cap applied -- never an invented limit. It counts the dispatches of the runs that are CURRENTLY active, not the install's whole history. */
   getCoordinationGlobalBudget(): Promise<CoordinationBudget | null>;
-  setCoordinationGlobalBudget(budget: CoordinationBudget): Promise<CoordinationBudget>;
+  /** `null` clears the cap (back to unset, no extra cap) -- a cap you cannot take off is a trap, not a setting. Any other value goes through the same validator every coordination budget does. */
+  setCoordinationGlobalBudget(budget: CoordinationBudget | null): Promise<CoordinationBudget | null>;
   /** Fires on a run/task/dispatch/gate change, so the renderer can route an event from a Brand the person is not currently looking at (task 6.37). */
   onCoordinationEvent(callback: (event: CoordinationEvent) => void): () => void;
 }

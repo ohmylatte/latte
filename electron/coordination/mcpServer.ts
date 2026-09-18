@@ -154,13 +154,16 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'latte_check',
-    description: "Reads this member's mailbox for a message, without blocking the run.",
-    inputSchema: {
-      type: 'object',
-      properties: {
-        wait: { type: 'number', description: 'Seconds to wait for a message before returning empty, capped at roughly 30s.' },
-      },
-    },
+    // La verdad, no la promesa: hoy NADA en Latte escribe en el buzón
+    // (`insertCoordinationMessage` no tiene ningún llamador de producción), así
+    // que esta herramienta siempre devuelve una lista vacía. El parámetro
+    // `wait` se publicaba documentado como "hasta ~30s" mientras la
+    // implementación era `void _wait;`: se saca en vez de seguir anunciando un
+    // comportamiento que el servidor no implementa. La herramienta queda —
+    // AGENTS.md prohíbe sacar capacidades para simplificar — pero descripta
+    // por lo que hace, no por lo que va a hacer.
+    description: "Reads this member's mailbox. Latte has no producer of coordination messages yet, so this always returns an empty list; it never blocks and never waits.",
+    inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'latte_ask',
@@ -232,7 +235,7 @@ export interface ListenHandle {
 }
 
 /** A request listener shaped like `http.RequestListener` -- kept structural so this file needs no `node:http` types beyond this signature. */
-export type RequestListener = (req: { on: (event: 'data' | 'end', cb: (...args: never[]) => void) => void; headers: { authorization?: string }; socket: { remoteAddress?: string } }, res: { writeHead: (status: number, headers: Record<string, string>) => void; end: (body: string) => void }) => void;
+export type RequestListener = (req: { on: (event: 'data' | 'end' | 'error' | 'aborted', cb: (...args: never[]) => void) => void; headers: { authorization?: string }; socket: { remoteAddress?: string }; destroy: () => void }, res: { writeHead: (status: number, headers: Record<string, string>) => void; end: (body: string) => void }) => void;
 
 export type ListenFn = (requestListener: RequestListener) => Promise<ListenHandle>;
 
@@ -248,6 +251,9 @@ export interface CoordinationMcpServerDeps {
 }
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+/** Techo del cuerpo de un pedido, en bytes. Un `tools/call` real entra holgado; más que esto es un cliente roto o malicioso. */
+const MAX_MCP_BODY_BYTES = 1_000_000;
 
 /** At most one "rejected request" log line per this window, regardless of how many bad tokens arrive — a hammering caller must never flood the log. */
 const REJECTED_LOG_WINDOW_MS = 5_000;
@@ -267,6 +273,8 @@ export class CoordinationMcpServer {
   private readonly clock: () => number;
   private handle: ListenHandle | null = null;
   private lastRejectedLogAt = -Infinity;
+  /** The in-flight `listen` call, memoised (task 11) -- see `ensureStarted`. */
+  private pendingListen: Promise<ListenHandle> | null = null;
 
   constructor(private readonly deps: CoordinationMcpServerDeps) {
     this.tools = deps.tools ?? createCoordinationTools(deps.engine);
@@ -368,8 +376,14 @@ export class CoordinationMcpServer {
   private async handleToolsCall(id: string | number | null, params: unknown, grant: ReturnType<CoordinationEngine['resolveGrant']>): Promise<Record<string, unknown>> {
     const name = isRecord(params) && typeof params.name === 'string' ? params.name : '';
     const args = isRecord(params) && 'arguments' in params ? params.arguments : {};
-    const handler = name ? (this.tools as unknown as Record<string, (grant: ReturnType<CoordinationEngine['resolveGrant']>, args: unknown) => Promise<ToolEnvelope<unknown>>>)[name] : undefined;
-    if (!handler) {
+    // `name` es dato del que llama, nunca una llave al prototipo: sin el
+    // chequeo de propiedad propia, `"__proto__"` devolvía `Object.prototype`
+    // (verdadero, así que pasaba el `if` de abajo) y explotaba con "handler is
+    // not a function", y `"constructor"` devolvía el grant resuelto entero
+    // como `structuredContent`. Cualquiera con un token podía hacerlo.
+    const table = this.tools as unknown as Record<string, (grant: ReturnType<CoordinationEngine['resolveGrant']>, args: unknown) => Promise<ToolEnvelope<unknown>>>;
+    const handler = name && Object.prototype.hasOwnProperty.call(table, name) ? table[name] : undefined;
+    if (typeof handler !== 'function') {
       return { jsonrpc: '2.0', id, error: { code: -32602, message: `Unknown tool: ${name || '(missing name)'}` } };
     }
     const envelope = await handler(grant, args ?? {});
@@ -400,41 +414,105 @@ export class CoordinationMcpServer {
    * -- e.g. the loopback port never binds -- BEFORE returning to the
    * caller, so a run start that awaits this never tells any member
    * coordination exists when it in fact does not.
+   *
+   * Task 11: `if (this.handle) return;` then `await listen(...)` was a
+   * TOCTOU -- two concurrent callers both observe `handle === null` before
+   * either bind settles, so BOTH called `listen`, the second silently
+   * overwrote `this.handle`, and the first's socket leaked forever (never
+   * closed, unreachable from `stopIfIdle`, still serving `tools/call` on a
+   * port some member was handed). The in-flight promise is memoised so every
+   * concurrent caller awaits the SAME bind instead of racing their own.
    */
   async ensureStarted(): Promise<void> {
     if (this.handle) return;
+    if (!this.pendingListen) {
+      this.pendingListen = this.deps.listen((req, res) => this.onRequest(req, res));
+    }
+    const pending = this.pendingListen;
     try {
-      this.handle = await this.deps.listen((req, res) => this.onRequest(req, res));
+      this.handle = await pending;
     } catch (error) {
       this.handle = null;
       throw new UnavailableError(`Coordination MCP server could not bind a loopback port: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      // Clear the memo once THIS attempt settles (success or failure) so a
+      // later call mints a fresh bind instead of replaying a stale promise —
+      // guarded so a NEWER attempt (started after this one already cleared
+      // itself) never gets its own memo wiped out from under it.
+      if (this.pendingListen === pending) this.pendingListen = null;
     }
   }
 
   /**
-   * Stops ONLY when BOTH hold: the token registry is empty AND no
+   * Stops ONLY when BOTH hold: no DELIVERED token remains AND no
    * coordination run is active anywhere app-wide (task 6.19 -- the v1
    * rule's ambiguous "no run is active" fixed to be explicit and app-wide:
    * ending brand A's run while brand B's is still live must NOT stop the
    * transport brand B's members depend on). A no-op if not currently
    * listening, or if either condition still fails.
+   *
+   * Task 10: this used to check `tokens.size` -- every MINTED token, not
+   * every DELIVERED one. The injection planner mints a token unconditionally
+   * for every member of every Work of every Brand, regardless of
+   * coordination eligibility, so `size` was almost always non-zero and this
+   * server could never actually stop. Only a token a runtime actually
+   * received can justify keeping the loopback port open.
    */
   stopIfIdle(): void {
     if (!this.handle) return;
-    if (this.deps.tokens.size > 0) return;
+    if (this.deps.tokens.deliveredSize > 0) return;
     if (this.deps.repo.countActiveCoordinationRuns() > 0) return;
     this.handle.close();
     this.handle = null;
   }
 
+  /**
+   * El cuerpo se acumulaba en un `Buffer[]` sin techo: un cliente local podía
+   * hacer crecer la memoria del proceso principal sin límite. Un pedido MCP
+   * legítimo entra holgado en 1 MiB.
+   */
   private onRequest(req: Parameters<RequestListener>[0], res: Parameters<RequestListener>[1]): void {
     const chunks: Buffer[] = [];
-    req.on('data', ((chunk: Buffer) => chunks.push(chunk)) as never);
-    req.on('end', (() => {
-      void this.handleMcpRequest(Buffer.concat(chunks).toString('utf8'), req.headers.authorization, req.socket.remoteAddress).then((result) => {
-        res.writeHead(result.status, { 'Content-Type': 'application/json' });
-        res.end(result.body);
-      });
+    let size = 0;
+    let closed = false;
+    const write = (status: number, body: string): void => {
+      if (closed) return;
+      closed = true;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(body);
+    };
+    req.on('data', ((chunk: Buffer) => {
+      if (closed) return;
+      size += chunk.length;
+      if (size > MAX_MCP_BODY_BYTES) {
+        write(413, JSON.stringify({ error: 'payload_too_large' }));
+        // Sin esto, un cliente local podía seguir mandando datos para
+        // siempre hacia un handler ya descartado -- la respuesta ya salió,
+        // pero el socket del otro lado nunca se enteraba.
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
     }) as never);
+    req.on('end', (() => {
+      if (closed) return;
+      // `handleMcpRequest` es async y esto no tenía `.catch`: cualquier
+      // rechazo (una lectura de base que falla, un handler que explota) dejaba
+      // la respuesta sin escribir —el cliente colgado para siempre— y además
+      // levantaba un unhandled rejection en el proceso principal de Electron.
+      void this.handleMcpRequest(Buffer.concat(chunks).toString('utf8'), req.headers.authorization, req.socket.remoteAddress)
+        .then((result) => write(result.status, result.body))
+        .catch((error: unknown) => {
+          this.deps.log?.(`[coordination-mcp] request failed: ${error instanceof Error ? error.message : String(error)}`);
+          write(500, JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Internal error' } }));
+        });
+    }) as never);
+    // Un cliente que resetea la conexión a mitad del cuerpo dispara 'error' o
+    // 'aborted' en `req` -- sin manejador, es la misma excepción sin capturar
+    // que tumbaba el proceso principal de Electron. El socket ya está muerto
+    // acá: marcar cerrado alcanza para dejar de acumular Y para que 'data'/
+    // 'end' nunca intenten escribirle una respuesta a nadie del otro lado.
+    req.on('error', (() => { closed = true; }) as never);
+    req.on('aborted', (() => { closed = true; }) as never);
   }
 }

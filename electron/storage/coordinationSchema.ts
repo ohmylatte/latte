@@ -139,6 +139,18 @@ CREATE TABLE IF NOT EXISTS coordination_cost_reservations (
 );
 
 -- Column-for-column learning_cost_ledger, same immutability contract.
+--
+-- PELIGRO CONOCIDO, DEJADO A PROPÓSITO: esta FK en cascada más el trigger
+-- BEFORE DELETE de abajo convierten cualquier borrado en cascada
+-- (works -> coordination_run -> este libro) en un ABORT, y el Trabajo quedaría
+-- indeleble. Hoy es LATENTE: no existe ningún camino de borrado — las Marcas se
+-- archivan, no se borran — así que nadie puede toparse con esto. Quitar la FK
+-- exige reconstruir la tabla (SQLite no sabe hacer ALTER ... DROP CONSTRAINT),
+-- y una reconstrucción sin transacción ni respaldo forzado es un riesgo MAYOR
+-- que el que arregla: un corte en el medio deja la base sin poder abrirse o el
+-- libro mayor vacío. Cuando llegue una función de borrado de Trabajos, hay que
+-- resolverlo con una migración atómica y bump de SCHEMA_VERSION (para que
+-- prepareForMigration saque respaldo), no antes.
 CREATE TABLE IF NOT EXISTS coordination_cost_ledger (
   id             TEXT PRIMARY KEY,
   run_id         TEXT NOT NULL REFERENCES coordination_run(id) ON DELETE CASCADE,

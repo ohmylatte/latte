@@ -82,7 +82,7 @@ const METHODS = [
   'getDecisionAuthority','setDecisionAuthority','approveDecision','rejectDecision','archiveDecision',
   'listBrandContextProposals','saveBrandContext','clearBrandContext','approveBrandContextProposal','rejectBrandContextProposal','requestBrandContextDraft','brandContextStatus','listBrandContextRevisions','restoreBrandContextRevision',
   'getCoordinationAuthority','setCoordinationAuthority','getCoordinationBudget','setCoordinationBudget','getCoordinatorGrant','setCoordinatorGrant',
-  'startCoordinationRun','pauseCoordinationRun','resumeCoordinationRun','cancelCoordinationRun','getCoordinationRun','listCoordinationGates','resolveCoordinationGate','listCoordinationLog','answerCoordinationAsk','acceptHandoffAsTask','settleCoordinationDispatch',
+  'startCoordinationRun','pauseCoordinationRun','resumeCoordinationRun','cancelCoordinationRun','getCoordinationRun','listCoordinationGates','resolveCoordinationGate','listCoordinationLog','listOpenCoordinationAsks','answerCoordinationAsk','acceptHandoffAsTask','settleCoordinationDispatch',
   'coordinationRuntimeSupport','listActiveCoordinationRuns','getCoordinationGlobalBudget','setCoordinationGlobalBudget',
   'runtimeStatus',
   'startAgent',

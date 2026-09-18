@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CoordinationEngine } from '../../electron/coordination/engine';
 import { createCoordinationTools } from '../../electron/coordination/tools';
 import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
-import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from '../backend/helpers';
+import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from '../backend/helpers';
 
 /**
  * End-to-end: `latte_plan_submit → latte_dispatch → latte_report → done`
@@ -43,6 +43,9 @@ describe('coordination run: plan_submit -> dispatch -> report -> done (manual au
     // 1. A human starts the run through the real IPC surface.
     const run = await b.service.startCoordinationRun(workId);
     expect(run.status).toBe('running');
+    // Ronda 4, juicio #3: la persona arranco el run y aprobo este equipo. Un
+    // run sin propuesta ya no contrata roles que nadie vio; aca los declara.
+    approveCoordinationRoles(b, run.id, 'strategist', 'copywriter');
 
     const coordinatorGrant = { workId, runId: run.id, memberId: 'mem_coordinator', role: 'coordinator' as const };
 

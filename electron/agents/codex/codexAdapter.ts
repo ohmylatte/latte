@@ -94,6 +94,10 @@ export class CodexChatAdapter implements RuntimeAdapter {
   private readonly coordinatedServerKeys = new Set<string>();
   private readonly chats = new Map<string, LiveChat>();
   private readonly byThread = new Map<string, string>();
+  /** Los chatIds que estan arrancando ahora mismo: el guard de `start()` vive antes de varios `await` y el `set` recien despues (juicio #7, ronda 4). */
+  private readonly starting = new Set<string>();
+  /** `serverKey` -> resolucion EN VUELO. `serverFor` fallaba el `get` y hacia el `set` despues de un `await`: dos aperturas concurrentes spawneaban dos app-servers y el segundo pisaba al primero, dejando un proceso vivo que nadie podia parar. */
+  private readonly startingServers = new Map<string, Promise<CodexAppServer>>();
   private readonly env: NodeJS.ProcessEnv;
   private readonly platform: NodeJS.Platform;
   private readonly maxChats: number;
@@ -139,7 +143,11 @@ export class CodexChatAdapter implements RuntimeAdapter {
   }
 
   async listMcpStatus(accountId: string): Promise<Array<{ name: string; authStatus: string }>> {
-    const server = await this.serverFor(accountId);
+    return this.mcpStatusOn(await this.serverFor(accountId));
+  }
+
+  /** `mcpServerStatus/list` sobre UN app-server concreto: lo que ESE proceso conoce de verdad. */
+  private async mcpStatusOn(server: CodexAppServer): Promise<Array<{ name: string; authStatus: string }>> {
     let result: unknown;
     try {
       result = await server.request('mcpServerStatus/list', { detail: 'toolsAndAuthOnly' });
@@ -160,7 +168,16 @@ export class CodexChatAdapter implements RuntimeAdapter {
   async start(input: AdapterStartInput): Promise<AdapterStartResult> {
     if (this.chats.size >= this.maxChats) throw new ValidationError(`Too many open Codex chats (max ${this.maxChats})`);
     const chatId = input.chatId ?? newId('ses');
-    if (this.chats.has(chatId)) throw new ValidationError('This chat is already open');
+    if (this.chats.has(chatId) || this.starting.has(chatId)) throw new ValidationError('This chat is already open');
+    this.starting.add(chatId);
+    try {
+      return await this.startChat(chatId, input);
+    } finally {
+      this.starting.delete(chatId);
+    }
+  }
+
+  private async startChat(chatId: string, input: AdapterStartInput): Promise<AdapterStartResult> {
     const accountId = input.accountId ?? SYSTEM_ACCOUNT_ID;
     // Coordination MCP (sdd/autonomous-coordination, Phase 5). A coordinated
     // member gets its own app-server, re-keyed by account+fingerprint so its
@@ -220,7 +237,28 @@ export class CodexChatAdapter implements RuntimeAdapter {
     return {
       session: { ...sessionFrom(input, 'codex', input.model ?? null, accountId, input.label, resumed), id: chatId },
       runtimeSessionId: threadId,
+      injectedMcpServers: await this.reportInjected(server, mcpServers),
     };
+  }
+
+  /**
+   * Lo que este app-server CONOCE de verdad, no lo que Latte le paso (juicio
+   * #1, ronda 4). `mcpServers` ya viene DEGRADADO por el tope de procesos de
+   * este adaptador, pero eso sigue siendo una decision de Latte: si el
+   * proceso arranco y un servidor no levanto, el runtime es el unico que lo
+   * sabe, y lo dice en `mcpServerStatus/list`. Un Codex viejo que no conoce
+   * ese metodo no puede desmentir nada: ahi se reporta la decision de Latte,
+   * que es la unica evidencia que hay -- nunca una afirmacion nueva.
+   */
+  private async reportInjected(server: CodexAppServer, mcpServers: AdapterMcpServer[] | undefined): Promise<string[]> {
+    const requested = (mcpServers ?? []).map((entry) => entry.name);
+    if (requested.length === 0) return requested;
+    try {
+      const known = new Set((await this.mcpStatusOn(server)).map((entry) => entry.name));
+      return requested.filter((name) => known.has(name));
+    } catch {
+      return requested;
+    }
   }
 
   listMessages(chatId: string): ChatMessage[] {
@@ -318,7 +356,7 @@ export class CodexChatAdapter implements RuntimeAdapter {
     if (!live) return;
     this.settlePending(live, 'Chat closed in Latte');
     this.chats.delete(chatId);
-    this.byThread.delete(live.threadId);
+    if (this.byThread.get(live.threadId) === chatId) this.byThread.delete(live.threadId);
     this.deps.emit({ chatId, type: 'closed', reason: 'stopped' });
     // Keyed by serverKey, not accountId: two coordinated members of the same
     // account own DIFFERENT app-servers (task 5.3/5.4). Stopping one must
@@ -396,7 +434,17 @@ export class CodexChatAdapter implements RuntimeAdapter {
    * overrides on the PROCESS argv (verified on 0.154.0, spike
    * sdd/autonomous-coordination/spike-mcp-injection) -- never per-thread.
    */
-  private async serverFor(accountId: string, serverKey: string = `${accountId}|`, mcpServers?: AdapterMcpServer[]): Promise<CodexAppServer> {
+  private serverFor(accountId: string, serverKey: string = `${accountId}|`, mcpServers?: AdapterMcpServer[]): Promise<CodexAppServer> {
+    const inFlight = this.startingServers.get(serverKey);
+    if (inFlight) return inFlight;
+    const started = this.resolveServer(accountId, serverKey, mcpServers);
+    this.startingServers.set(serverKey, started);
+    const clear = () => { if (this.startingServers.get(serverKey) === started) this.startingServers.delete(serverKey); };
+    started.then(clear, clear);
+    return started;
+  }
+
+  private async resolveServer(accountId: string, serverKey: string, mcpServers?: AdapterMcpServer[]): Promise<CodexAppServer> {
     let server = this.servers.get(serverKey);
     if (!server) {
       const runtime = await this.deps.resolveExecutable();
@@ -430,7 +478,9 @@ export class CodexChatAdapter implements RuntimeAdapter {
           this.settlePending(live, reason);
           if (live.busy) this.deps.emit({ chatId: live.chatId, type: 'error', message: reason });
           this.chats.delete(live.chatId);
-          this.byThread.delete(live.threadId);
+          // Identidad, no clave: un hilo huerfano de un spawn duplicado no
+          // puede borrar el mapeo que hoy es de OTRO chat vivo (juicio #7).
+          if (this.byThread.get(live.threadId) === live.chatId) this.byThread.delete(live.threadId);
           this.deps.emit({ chatId: live.chatId, type: 'closed', reason });
         }
         this.servers.delete(serverKey);

@@ -151,6 +151,20 @@ const fakeSessionFor = (m: FakeTeamMember): ChatSession => ({
  * calls). `addMember` appends a fresh working member and returns it, mirroring
  * the real hub's "adding opens it" contract.
  */
+/**
+ * Los roles que la persona aprobo para ESTE run, escritos donde el motor los
+ * lee (`coordination_approved_roles:<runId>`).
+ *
+ * Ronda 4, juicio #3: el alta automatica dejo de derivarse de `plan_json` --
+ * un campo que `latte_plan_submit` reescribe -- y pasa por esta foto, que
+ * solo escribe la aprobacion humana. Un run de `startRun` directo no tiene
+ * ninguna, asi que no contrata a nadie nuevo. Los escenarios que no estan
+ * probando la contratacion declaran aca lo que su persona hubiera aprobado.
+ */
+export function approveCoordinationRoles(b: TestBackend, runId: string, ...roleIds: string[]): void {
+  b.repo.setMeta('coordination_approved_roles:' + runId, JSON.stringify(roleIds));
+}
+
 export function fakeCoordinationHub(b: TestBackend, members: FakeTeamMember[]) {
   const send = vi.spyOn(b.hub, 'send').mockResolvedValue(undefined);
   vi.spyOn(b.hub, 'listTeam').mockImplementation((workId: string) => members.filter((m) => m.workId === workId).map(fakeTeamMemberShape));
