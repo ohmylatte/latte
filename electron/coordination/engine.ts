@@ -483,9 +483,23 @@ export class CoordinationEngine {
       // ese campo lo reescribe `latte_plan_submit`, una herramienta que el
       // agente coordinador tiene en la mano (juicio #3). Esto es lo que la
       // persona vio y aprobó, y nada alcanzable desde una tool lo toca.
+      //
+      // Y se arma SÓLO desde los `membersToHire` que llegaron en la resolución
+      // del gate (editados o no) más los roles que YA son miembros del
+      // Trabajo. Nunca desde `proposal.plan`: cada contratación existe porque
+      // el plan la pide, así que derivar la foto del plan hacía que destildar
+      // una contratación en la interfaz no impidiera absolutamente nada — el
+      // rol quedaba aprobado igual y el primer despacho lo contrataba y le
+      // levantaba un proceso, sin un solo gate. La interfaz renderizaba un
+      // rechazo que el motor ignoraba.
       const approvedRoles = new Set<string>();
-      for (const item of proposal.plan) approvedRoles.add(item.roleId);
       for (const hire of proposal.membersToHire ?? []) approvedRoles.add(hire.roleId);
+      // Un rol que ya está en el equipo no necesita aprobación: nadie lo
+      // contrata de nuevo, se lo reutiliza (`resolveTargetMember`). Los
+      // terminados no cuentan: re-abrir uno ES una contratación.
+      for (const member of this.deps.repo.listMembers(run.workId)) {
+        if (!member.done) approvedRoles.add(member.roleId);
+      }
       this.deps.repo.setMeta(APPROVED_ROLES_META + run.id, JSON.stringify([...approvedRoles]));
       const created: CoordinationTaskRecord[] = []; // index-based dependsOn, exactly like planSubmit's own loop
       for (const item of proposal.plan) {
@@ -741,7 +755,15 @@ export class CoordinationEngine {
     try {
       session = await this.resolveTargetMember(run.workId, task.roleId, this.approvedRoleIds(run));
     } catch (error) {
-      this.releaseDispatchClaim(task.id, existingPending, now);
+      // Un rol que la persona no aprobó no vuelve a la cola a reintentarse
+      // eternamente ni desaparece en silencio: la tarea queda `blocked` con la
+      // razón escrita en la bitácora, para que la persona la vea y el
+      // coordinador pueda re-planificar con `latte_plan_submit`.
+      if (error instanceof LatteError && error.code === 'ROLE_NOT_APPROVED') {
+        this.blockOnUnapprovedRole(run, task, existingPending, prompt, now, error.message);
+      } else {
+        this.releaseDispatchClaim(task.id, existingPending, now);
+      }
       throw error;
     }
 
@@ -857,6 +879,40 @@ export class CoordinationEngine {
    * `maxConcurrent`) el que frenó. Anotarlo como rechazo hacía que la
    * bitácora dijera que alguien negó un trabajo que en realidad autorizó.
    */
+  /**
+   * La tarea de un rol sin aprobar: `blocked`, con la razón anotada donde se
+   * anotan todas — una fila de `coordination_dispatch` resuelta en contra,
+   * exactamente como `abortDispatchClaim` anota una denegación de presupuesto
+   * y como `startDispatch` anota un `hub.send` que rebotó. Nada de esto
+   * contrata ni gasta: `memberId` vacío, sin reserva, `settled_at` en el acto.
+   */
+  private blockOnUnapprovedRole(
+    run: CoordinationRunRecord,
+    task: CoordinationTaskRecord,
+    existingPending: CoordinationDispatchRecord | null,
+    prompt: string,
+    now: string,
+    reason: string,
+  ): void {
+    this.deps.repo.transaction(() => {
+      this.deps.repo.updateCoordinationTask(task.id, { status: 'blocked', assignedMemberId: null }, now);
+      if (existingPending) {
+        this.deps.repo.updateCoordinationDispatch(existingPending.id, { status: 'cancelled', outcome: 'role_not_approved', summary: reason, settledAt: now });
+      } else {
+        const attempt = this.deps.repo.listCoordinationDispatches(run.id).filter((d) => d.taskId === task.id).length + 1;
+        this.deps.repo.insertCoordinationDispatch({
+          id: newId('cdp'), runId: run.id, taskId: task.id, memberId: '', attempt, status: 'cancelled',
+          gateId: null, prompt, outcome: 'role_not_approved', summary: reason, filesJson: null, reservationId: null,
+          createdAt: now, startedAt: null, settledAt: now,
+        });
+      }
+    });
+    // Y con ella caen sus dependientes, igual que con cualquier otra tarea que
+    // no va a resolverse sola.
+    this.recomputeReadiness(run.id, now);
+    this.touch(run.workId, run.id);
+  }
+
   private abortDispatchClaim(taskId: string, existingPending: CoordinationDispatchRecord | null, now: string, reason: string): void {
     this.deps.repo.updateCoordinationTask(taskId, { status: 'ready', assignedMemberId: null }, now);
     if (existingPending) this.deps.repo.updateCoordinationDispatch(existingPending.id, { status: 'cancelled', outcome: 'denied', summary: reason, settledAt: now });
