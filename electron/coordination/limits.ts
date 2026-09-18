@@ -62,3 +62,23 @@ export const MAX_COORDINATED_CODEX_PROCESSES = 6;
  * needs Work/run knowledge the adapter does not have.
  */
 export const MAX_BOOTSTRAP_CODEX_MEMBERS_PER_WORK = 1;
+
+/**
+ * App-wide ceiling on SIMULTANEOUSLY ACTIVE coordination runs (`planning`/
+ * `running`/`suspended`), across every Work and every Brand. Never a silent
+ * queue (task 6.15): a 5th `startRun` or `latte_request_coordination`
+ * rejects `TOO_MANY_ACTIVE_RUNS` naming the busy Works, rather than
+ * accepting the attempt and leaving it waiting invisibly for a slot.
+ */
+export const MAX_ACTIVE_COORDINATION_RUNS = 4;
+
+/**
+ * App-wide ceiling on `codex app-server` processes Latte itself spawns, of
+ * EITHER kind: coordination-injected (bounded by
+ * `MAX_COORDINATED_CODEX_PROCESSES` above) or engram-only (memory ships to
+ * every Codex member by default once Phase 6e/6f wires it, independent of
+ * coordination). At most `MAX_COORDINATED_CODEX_PROCESSES` of these ten may
+ * carry a coordination injection; the rest are memory-only, sharing one
+ * process per Brand+account (task 6.30).
+ */
+export const MAX_CODEX_APP_SERVERS_TOTAL = 10;

@@ -28,7 +28,7 @@ import type {
 } from '../storage/repository';
 import { canAddTask, computeReadyTasks, computeTaskDepth, type DagEdge, type DagTask } from './dag';
 import { assertBudgetConfigured, BudgetUnsetError, requireCoordinationBudget, reserveDispatch, type BudgetUsage } from './budget';
-import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, MAX_ATTEMPTS_PER_TASK, MAX_CHECK_WAIT_SECONDS } from './limits';
+import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK, MAX_CHECK_WAIT_SECONDS } from './limits';
 
 export type CoordinationRole = 'coordinator' | 'worker';
 
@@ -136,6 +136,7 @@ export class CoordinationEngine {
   async startRun(workId: string, coordinatorMemberId: string | null): Promise<CoordinationRunRecord> {
     const existing = this.deps.repo.findActiveCoordinationRun(workId);
     if (existing) throw new LatteError('RUN_ALREADY_ACTIVE', 'This Work already has an active coordination run');
+    this.assertRunCeiling();
     const budget = this.readBudget(workId);
     assertBudgetConfigured(budget);
     const now = this.deps.clock();
@@ -401,6 +402,7 @@ export class CoordinationEngine {
   async requestCoordination(grant: CoordinationGrant, proposal: CoordinationProposal): Promise<CoordinationRunRecord> {
     const existing = this.deps.repo.findActiveCoordinationRun(grant.workId);
     if (existing) throw new LatteError('RUN_ALREADY_ACTIVE', `This Work already has an active coordination run (${existing.id}, ${existing.status})`);
+    this.assertRunCeiling();
     const now = this.deps.clock();
     return this.deps.repo.insertCoordinationRun({
       id: newId('crn'),
@@ -660,6 +662,31 @@ export class CoordinationEngine {
   }
 
   // -- Internals ---------------------------------------------------------------
+
+  /**
+   * The app-wide ceiling on simultaneously active runs (task 6.15): checked
+   * AFTER the per-Work `RUN_ALREADY_ACTIVE` check (a Work with its own
+   * active run never reaches this — that is a different, older error), so
+   * this only ever fires for a genuinely NEW run competing for one of
+   * `MAX_ACTIVE_COORDINATION_RUNS` app-wide slots. Never a silent queue: the
+   * caller is rejected immediately, and the message names every busy Work so
+   * a human knows exactly what to close to make room.
+   */
+  private assertRunCeiling(): void {
+    const active = this.deps.repo.listActiveCoordinationRuns();
+    if (active.length < MAX_ACTIVE_COORDINATION_RUNS) return;
+    const busyWorkTitles = active.map((run) => {
+      try {
+        return this.deps.repo.getWork(run.workId).title;
+      } catch {
+        return run.workId; // a Work looked up mid-deletion race: fall back to its id rather than throwing here.
+      }
+    });
+    throw new LatteError(
+      'TOO_MANY_ACTIVE_RUNS',
+      `Too many coordination runs are active app-wide (limit ${MAX_ACTIVE_COORDINATION_RUNS}): ${busyWorkTitles.join(', ')}`,
+    );
+  }
 
   private createTaskRow(runId: string, roleId: string, spec: string, dependsOnIds: string[]): CoordinationTaskRecord {
     const existing = this.deps.repo.listCoordinationTasks(runId);

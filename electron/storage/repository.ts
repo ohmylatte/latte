@@ -1125,6 +1125,17 @@ export class LatteRepository {
       .map(toCoordinationRun);
   }
 
+  /**
+   * The same app-wide active set `listActiveCoordinationRuns` returns, but a
+   * bare count — no row materialization. Feeds the `MAX_ACTIVE_COORDINATION_RUNS`
+   * ceiling (task 6.15) and the coordination MCP server's stop-when-idle rule
+   * (task 6.19), both of which only need "how many", not "which ones".
+   */
+  countActiveCoordinationRuns(): number {
+    const row = this.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM coordination_run WHERE status IN ('planning','running','suspended')");
+    return row?.count ?? 0;
+  }
+
   updateCoordinationRunStatus(id: string, status: CoordinationRunStatus, updatedAt: string, suspendReason: string | null = null): CoordinationRunRecord {
     this.getCoordinationRun(id);
     this.db.run('UPDATE coordination_run SET status = ?, suspend_reason = ?, updated_at = ? WHERE id = ?', [status, suspendReason, updatedAt, id]);

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CoordinationEngine, type CoordinationGrant } from '../../electron/coordination/engine';
+import { MAX_ACTIVE_COORDINATION_RUNS } from '../../electron/coordination/limits';
 import { createCoordinationTools } from '../../electron/coordination/tools';
 import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
@@ -525,6 +526,90 @@ describe('CoordinationEngine — the dispatch choke point', () => {
       const grant: CoordinationGrant = { workId, runId: null, memberId: 'mem_no_run', role: 'worker' };
       await expect(engine.report(grant, 'ctk_whatever', 'succeeded', 'x')).rejects.toMatchObject({ code: 'NO_ACTIVE_RUN' });
       expect(() => engine.ask(grant, '¿Qué hago?')).toThrowError(expect.objectContaining({ code: 'NO_ACTIVE_RUN' }));
+    });
+  });
+
+  // --- 6.15: the app-wide active-run ceiling — never a silent queue ----------
+  // With MAX_ACTIVE_COORDINATION_RUNS active runs spread across several
+  // Brands, a 5th attempt (either a plain startRun OR a worker's proposal)
+  // must FAIL naming the busy Works, never queue invisibly.
+
+  describe('the app-wide active-run ceiling (task 6.15)', () => {
+    async function fillCeilingWithBusyWorks(): Promise<Array<{ workId: string; title: string }>> {
+      // The outer beforeEach already started ONE active run (runId, on
+      // `workId`) — cancel it first so the arithmetic below is exact: after
+      // this, filling MAX_ACTIVE_COORDINATION_RUNS more active runs reaches
+      // the ceiling precisely.
+      engine.cancelRun(runId);
+      const busy: Array<{ workId: string; title: string }> = [];
+      for (let i = 0; i < MAX_ACTIVE_COORDINATION_RUNS; i += 1) {
+        const brand = await b.service.createBrand(`Marca ocupada ${i}`);
+        const work = await b.service.createWork(brand.id, `Trabajo ocupado ${i}`);
+        await b.service.setCoordinationBudget(work.id, { maxDispatches: 5 });
+        await engine.startRun(work.id, null);
+        busy.push({ workId: work.id, title: work.title });
+      }
+      return busy;
+    }
+
+    it('a 5th startRun fails TOO_MANY_ACTIVE_RUNS, naming every busy Work', async () => {
+      const busy = await fillCeilingWithBusyWorks();
+      const brandN = await b.service.createBrand('Marca nueva');
+      const workN = await b.service.createWork(brandN.id, 'Trabajo nuevo');
+      await b.service.setCoordinationBudget(workN.id, { maxDispatches: 5 });
+
+      let caught: unknown;
+      try {
+        await engine.startRun(workN.id, null);
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toMatchObject({ code: 'TOO_MANY_ACTIVE_RUNS' });
+      const message = (caught as Error).message;
+      for (const w of busy) expect(message).toContain(w.title);
+      // And nothing was written for the rejected 5th Work.
+      expect(b.repo.findActiveCoordinationRun(workN.id)).toBeNull();
+    });
+
+    it('a 5th requestCoordination (a worker\'s proposal) fails identically, naming every busy Work', async () => {
+      const busy = await fillCeilingWithBusyWorks();
+      const brandN = await b.service.createBrand('Marca nueva 2');
+      const workN = await b.service.createWork(brandN.id, 'Trabajo nuevo 2');
+      const proposerGrant: CoordinationGrant = { workId: workN.id, runId: null, memberId: 'mem_proposer', role: 'worker' };
+
+      let caught: unknown;
+      try {
+        await engine.requestCoordination(proposerGrant, { plan: [], estimatedDispatches: 1, rationale: 'Propongo coordinar' });
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toMatchObject({ code: 'TOO_MANY_ACTIVE_RUNS' });
+      const message = (caught as Error).message;
+      for (const w of busy) expect(message).toContain(w.title);
+      expect(b.repo.findActiveCoordinationRun(workN.id)).toBeNull();
+    });
+
+    it('does not reject a Work at exactly the ceiling minus one busy Work — only the (N+1)th attempt fails', async () => {
+      // MAX_ACTIVE_COORDINATION_RUNS - 1 busy Works, plus the outer
+      // beforeEach's own already-active run on `workId`, is exactly the
+      // ceiling: a 5th Work should still start cleanly.
+      engine.cancelRun(runId);
+      for (let i = 0; i < MAX_ACTIVE_COORDINATION_RUNS - 1; i += 1) {
+        const brand = await b.service.createBrand(`Marca llena ${i}`);
+        const work = await b.service.createWork(brand.id, `Trabajo lleno ${i}`);
+        await b.service.setCoordinationBudget(work.id, { maxDispatches: 5 });
+        await engine.startRun(work.id, null);
+      }
+      const brandLast = await b.service.createBrand('Marca justo a tiempo');
+      const workLast = await b.service.createWork(brandLast.id, 'Trabajo justo a tiempo');
+      await b.service.setCoordinationBudget(workLast.id, { maxDispatches: 5 });
+
+      const run = await engine.startRun(workLast.id, null);
+
+      expect(run.status).toBe('running');
+      expect(b.repo.countActiveCoordinationRuns()).toBe(MAX_ACTIVE_COORDINATION_RUNS);
     });
   });
 });
