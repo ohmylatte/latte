@@ -96,13 +96,19 @@ export function requireCoordinationBudget(value: unknown): CoordinationBudget {
  * tope": ausente es una elección humana explícita (no hay cap extra),
  * ilegible es un dato roto que hay que mirar. Este parser es el único lugar
  * donde esos bytes se interpretan, y los dos lectores lo llaman.
+ *
+ * El mismo defecto vivía un nivel más abajo, en el presupuesto de CADA
+ * Trabajo (`coordination_budget:<workId>`): otros dos `JSON.parse` a mano,
+ * otros dos `null` que decían "sin presupuesto configurado" sobre un dato
+ * roto. Por eso el parser no es "el global": es EL parser de un presupuesto
+ * guardado, y lo llaman los cuatro lectores.
  */
-export type CoordinationGlobalBudgetRead =
+export type StoredCoordinationBudgetRead =
   | { kind: 'unset' }
   | { kind: 'set'; budget: CoordinationBudget }
   | { kind: 'invalid'; raw: string };
 
-export function readCoordinationGlobalBudget(raw: string | null | undefined): CoordinationGlobalBudgetRead {
+export function readStoredCoordinationBudget(raw: string | null | undefined): StoredCoordinationBudgetRead {
   if (raw == null || raw.trim().length === 0) return { kind: 'unset' };
   try {
     return { kind: 'set', budget: requireCoordinationBudget(JSON.parse(raw)) };

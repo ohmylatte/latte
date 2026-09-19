@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
-import type { CoordinationActiveRunSummary, CoordinationAuthorityMode, CoordinationBudget, CoordinationEvent, CoordinationGateView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationRunView, CoordinatorGrant } from '../shared/contracts';
+import type { CoordinationActiveRunSummary, CoordinationAuthorityMode, CoordinationBudget, CoordinationBudgetView, CoordinationEvent, CoordinationGateView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationRunView, CoordinatorGrant } from '../shared/contracts';
 
 /**
  * `useCoordination(workId)` (autonomous-coordination Phase 7 task 7.11):
@@ -14,7 +14,7 @@ import type { CoordinationActiveRunSummary, CoordinationAuthorityMode, Coordinat
 
 const mocks = vi.hoisted(() => ({
   getCoordinationAuthority: vi.fn<(workId: string) => Promise<CoordinationAuthorityMode>>(),
-  getCoordinationBudget: vi.fn<(workId: string) => Promise<CoordinationBudget | null>>(),
+  getCoordinationBudget: vi.fn<(workId: string) => Promise<CoordinationBudgetView>>(),
   getCoordinatorGrant: vi.fn<(workId: string) => Promise<CoordinatorGrant>>(),
   coordinationRuntimeSupport: vi.fn<(workId: string) => Promise<CoordinationMemberSupport[]>>(),
   getCoordinationRun: vi.fn<(workId: string) => Promise<CoordinationRunView | null>>(),
@@ -46,7 +46,7 @@ let coordinationEventCallback: ((event: CoordinationEvent) => void) | null = nul
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getCoordinationAuthority.mockResolvedValue('manual');
-  mocks.getCoordinationBudget.mockResolvedValue(null);
+  mocks.getCoordinationBudget.mockResolvedValue({ state: 'unset' });
   mocks.getCoordinatorGrant.mockResolvedValue(null);
   mocks.coordinationRuntimeSupport.mockResolvedValue([]);
   mocks.getCoordinationRun.mockResolvedValue(null);
@@ -64,7 +64,7 @@ describe('useCoordination(workId): no Work open', () => {
   it('defaults everything to a safe, honest shape and fetches no per-work data', async () => {
     const { result } = renderHook(() => useCoordination(null));
     await waitFor(() => expect(result.current.authority).toBe('manual'));
-    expect(result.current.budget).toBeNull();
+    expect(result.current.budget).toEqual({ state: 'unset' });
     expect(result.current.coordinatorGrant).toBeNull();
     expect(result.current.run).toBeNull();
     expect(result.current.gates).toEqual([]);
@@ -84,12 +84,12 @@ describe('useCoordination(workId): no Work open', () => {
 describe('useCoordination(workId): a Work is open', () => {
   it('fetches authority, budget, coordinator grant and runtime support for that Work', async () => {
     mocks.getCoordinationAuthority.mockResolvedValue('plan');
-    mocks.getCoordinationBudget.mockResolvedValue({ maxDispatches: 20, unlimitedConfirmedAt: null });
+    mocks.getCoordinationBudget.mockResolvedValue({ state: 'set', budget: { maxDispatches: 20, unlimitedConfirmedAt: null } });
     mocks.getCoordinatorGrant.mockResolvedValue('m1');
     mocks.coordinationRuntimeSupport.mockResolvedValue([{ memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true }]);
     const { result } = renderHook(() => useCoordination('w1'));
     await waitFor(() => expect(result.current.authority).toBe('plan'));
-    expect(result.current.budget).toEqual({ maxDispatches: 20, unlimitedConfirmedAt: null });
+    expect(result.current.budget).toEqual({ state: 'set', budget: { maxDispatches: 20, unlimitedConfirmedAt: null } });
     expect(result.current.coordinatorGrant).toBe('m1');
     expect(result.current.support).toEqual([{ memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true }]);
     expect(mocks.getCoordinationAuthority).toHaveBeenCalledWith('w1');

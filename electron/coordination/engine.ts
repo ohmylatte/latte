@@ -29,7 +29,7 @@ import type {
   LatteRepository,
 } from '../storage/repository';
 import { canAddTask, computeBlockedTasks, computeReadyTasks, computeTaskDepth, wouldCreateCycle, type DagEdge, type DagTask } from './dag';
-import { assertBudgetConfigured, BudgetUnsetError, readCoordinationGlobalBudget, requireCoordinationBudget, reserveDispatch, type BudgetUsage, type CoordinationGlobalBudgetRead } from './budget';
+import { assertBudgetConfigured, BudgetUnsetError, readStoredCoordinationBudget, requireCoordinationBudget, reserveDispatch, type BudgetUsage, type StoredCoordinationBudgetRead } from './budget';
 import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK } from './limits';
 
 /**
@@ -232,7 +232,7 @@ export class CoordinationEngine {
     const existing = this.deps.repo.findActiveCoordinationRun(workId);
     if (existing) throw new LatteError('RUN_ALREADY_ACTIVE', 'This Work already has an active coordination run');
     this.assertRunCeiling();
-    const budget = this.readBudget(workId);
+    const budget = this.requireReadableBudget(workId);
     assertBudgetConfigured(budget);
     const now = this.deps.clock();
     const run = this.deps.repo.insertCoordinationRun({
@@ -500,7 +500,7 @@ export class CoordinationEngine {
       // funde sobre el que la persona ya había configurado en vez de pisarlo.
       // Reemplazarlo entero normalizaba a `null` todos los topes secundarios,
       // `maxConcurrent` incluido — el único limitador en vuelo que existe.
-      const existingBudget = this.readBudget(run.workId);
+      const existingBudget = this.requireReadableBudget(run.workId);
       const merged: CoordinationBudget = {
         ...budget,
         maxTokens: existingBudget?.maxTokens ?? budget.maxTokens,
@@ -867,7 +867,21 @@ export class CoordinationEngine {
         this.abortDispatchOnRunNotRunning(run, task, existingPending, prompt, now, live.status);
         return { ok: false, error: new LatteError('RUN_NOT_ACTIVE', `Run is ${live.status}`) };
       }
-      const budget = this.readRunBudget(run);
+      // Del run RELEÍDO, igual que su estado: un `setCoordinationBudget` que
+      // entró mientras se levantaba el proceso ya escribió el snapshot nuevo,
+      // y despachar contra la foto vieja es la misma causa raíz de siempre.
+      const budgetRead = readStoredCoordinationBudget(live.budgetJson);
+      if (budgetRead.kind !== 'set') {
+        // Ilegible NO es "sin presupuesto", y tampoco es una excepción opaca
+        // desde el fondo de la pila: es una denegación con nombre, que se lee
+        // en la bitácora y en la suspensión como cualquier otra (crítico 8).
+        const reason = 'budget_invalid';
+        this.writeLedgerDenied(run.id, reason);
+        if (live.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
+        this.abortDispatchClaim(task.id, existingPending, now, reason);
+        return { ok: false, error: new LatteError('COORDINATION_BUDGET_INVALID', "This run's budget cannot be read; set the Work's budget again before dispatching.") };
+      }
+      const budget = budgetRead.budget;
       const inFlight = this.countInFlightDispatches(run.id, existingPending?.id);
       if (budget.maxConcurrent != null && inFlight >= budget.maxConcurrent) {
         this.writeLedgerDenied(run.id, 'max_concurrent');
@@ -1450,10 +1464,23 @@ export class CoordinationEngine {
     return raw === 'plan' || raw === 'auto' ? raw : 'manual';
   }
 
-  private readBudget(workId: string): CoordinationBudget | null {
-    const raw = this.deps.repo.getMeta('coordination_budget:' + workId);
-    if (!raw) return null;
-    try { return JSON.parse(raw) as CoordinationBudget; } catch { return null; }
+  /**
+   * El presupuesto de ESTE Trabajo, por el MISMO parser que alimenta la
+   * pantalla. Antes hacía `JSON.parse` a mano y devolvía `null` ante bytes
+   * ilegibles: "no se pudo leer" salía por la misma puerta que "nunca se
+   * configuró", así que `startRun` fallaba con `BUDGET_UNSET` —"no hay
+   * presupuesto"— sobre un presupuesto que SÍ existe y está roto, y la
+   * pantalla decía lo mismo. Tres estados, uno por cada cosa que puede pasar.
+   */
+  private readBudget(workId: string): StoredCoordinationBudgetRead {
+    return readStoredCoordinationBudget(this.deps.repo.getMeta('coordination_budget:' + workId));
+  }
+
+  /** El presupuesto configurado, o `null` si no hay ninguno. Ilegible TIRA: nunca se degrada a "no hay". */
+  private requireReadableBudget(workId: string): CoordinationBudget | null {
+    const read = this.readBudget(workId);
+    if (read.kind === 'invalid') throw new LatteError('COORDINATION_BUDGET_INVALID', "This Work's budget cannot be read; set it again before coordinating.");
+    return read.kind === 'set' ? read.budget : null;
   }
 
   /**
@@ -1526,8 +1553,8 @@ export class CoordinationEngine {
    * se caía. Un solo parser, tres estados, el mismo veredicto en los dos
    * lados.
    */
-  private readGlobalBudget(): CoordinationGlobalBudgetRead {
-    return readCoordinationGlobalBudget(this.deps.repo.getMeta('coordination_budget_global'));
+  private readGlobalBudget(): StoredCoordinationBudgetRead {
+    return readStoredCoordinationBudget(this.deps.repo.getMeta('coordination_budget_global'));
   }
 
   /** `excludeDispatchId` es el despacho que se está decidiendo ahora: ya reclamado, todavía no concedido. */

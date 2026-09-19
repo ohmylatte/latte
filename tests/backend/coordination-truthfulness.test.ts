@@ -384,8 +384,7 @@ describe('CoordinationEngine — la propuesta aprobada es el equipo que se contr
     await b.service.setCoordinationBudget(workId, { maxDispatches: 4, maxConcurrent: 1 });
     await approvedRun();
     const budget = await b.service.getCoordinationBudget(workId);
-    expect(budget?.maxConcurrent).toBe(1);
-    expect(budget?.maxDispatches).toBe(5);
+    expect(budget).toMatchObject({ state: 'set', budget: { maxConcurrent: 1, maxDispatches: 5 } });
   });
 
   // --- #9: sólo se contrata lo aprobado ------------------------------------

@@ -678,10 +678,13 @@ export type CoordinatorGrant = string | null;
  * que pasaba. `invalid` existe para que la interfaz pueda decir "el tope no
  * se pudo leer, revisalo" en vez de "sin tope".
  */
-export type CoordinationGlobalBudgetView =
+export type CoordinationBudgetView =
   | { state: 'unset' }
   | { state: 'set'; budget: CoordinationBudget }
   | { state: 'invalid' };
+
+/** El tope app-wide. Mismo contrato de tres estados que el presupuesto de un Trabajo, porque es el mismo dato guardado del mismo modo. */
+export type CoordinationGlobalBudgetView = CoordinationBudgetView;
 
 /**
  * Phase 3: the run/task/dispatch surface, reachable only through IPC in this
@@ -1181,8 +1184,13 @@ export interface LatteAPI {
   // run/task/dispatch surface arrives in a later phase.
   getCoordinationAuthority(workId: string): Promise<CoordinationAuthorityMode>;
   setCoordinationAuthority(workId: string, mode: CoordinationAuthorityMode): Promise<CoordinationAuthorityMode>;
-  /** `null` means unset (`BUDGET_UNSET`) — never an implicit unlimited default. */
-  getCoordinationBudget(workId: string): Promise<CoordinationBudget | null>;
+  /**
+   * `unset` means no budget was ever configured (`BUDGET_UNSET`) — never an
+   * implicit unlimited default; `invalid` means the stored bytes cannot be
+   * read, which is NOT "unset" (the dispatch path denies against those same
+   * bytes). Writing a valid budget over an `invalid` one repairs it.
+   */
+  getCoordinationBudget(workId: string): Promise<CoordinationBudgetView>;
   setCoordinationBudget(workId: string, budget: CoordinationBudget): Promise<CoordinationBudget>;
   getCoordinatorGrant(workId: string): Promise<CoordinatorGrant>;
   /** `memberId: null` revokes the grant outright; granting to a new member implicitly revokes whoever held it before. */

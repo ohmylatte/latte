@@ -34,6 +34,7 @@ import type {
   CoordinationAskView,
   CoordinationAuthorityMode,
   CoordinationBudget,
+  CoordinationBudgetView,
   CoordinationGlobalBudgetView,
   CoordinationEvent,
   CoordinationGateView,
@@ -102,7 +103,7 @@ import { EngramClient, memoryProjectFor } from '../memory/engram';
 import { AccountStore } from '../agents/accounts';
 import { isAccountRuntime, isChatRuntime, type AgentHub, type MemberContext } from '../agents/hub';
 import { CoordinationEngine } from '../coordination/engine';
-import { readCoordinationGlobalBudget, requireCoordinationBudget } from '../coordination/budget';
+import { readStoredCoordinationBudget, requireCoordinationBudget } from '../coordination/budget';
 import type { CoordinationInjectionPlanner } from '../coordination/injection';
 import type { McpCatalog } from '../agents/mcp';
 import { RoleCatalog } from '../agents/roles';
@@ -1497,22 +1498,20 @@ export class LatteService implements BackendApi {
   }
 
   /**
-   * `null` when unset or when the stored JSON fails validation — `BUDGET_UNSET`
-   * is a real state (see `electron/coordination/budget.ts`), never an implicit
-   * unlimited default, so an unreadable value degrades to "unset", not to some
-   * invented budget.
+   * TRES estados, por el MISMO parser que usa el motor. Antes esto devolvía
+   * `null` tanto para "nunca se configuró" como para "los bytes guardados no
+   * se pueden leer", y la pantalla renderiza ese `null` como "sin presupuesto
+   * configurado" — mientras el motor deniega cada despacho contra esos mismos
+   * bytes. Es el crítico 8 un nivel más abajo.
    */
-  private readCoordinationBudget(workId: string): CoordinationBudget | null {
-    const raw = this.deps.repo.getMeta('coordination_budget:' + workId);
-    if (!raw) return null;
-    try {
-      return requireCoordinationBudget(JSON.parse(raw));
-    } catch {
-      return null;
-    }
+  private readCoordinationBudget(workId: string): CoordinationBudgetView {
+    const read = readStoredCoordinationBudget(this.deps.repo.getMeta('coordination_budget:' + workId));
+    if (read.kind === 'unset') return { state: 'unset' };
+    if (read.kind === 'set') return { state: 'set', budget: read.budget };
+    return { state: 'invalid' }; // los bytes crudos no cruzan IPC: no son dato de la persona, son basura
   }
 
-  async getCoordinationBudget(workId: string): Promise<CoordinationBudget | null> {
+  async getCoordinationBudget(workId: string): Promise<CoordinationBudgetView> {
     const id = requireId(workId, 'workId');
     this.deps.repo.getWork(id);
     return this.readCoordinationBudget(id);
@@ -1762,7 +1761,7 @@ export class LatteService implements BackendApi {
     // EL MISMO parser que usa el camino de despacho (crítico 8). Devolver
     // `null` ante bytes ilegibles hacía que la pantalla dijera "sin tope
     // global" mientras cada despacho se denegaba contra ese mismo valor.
-    const read = readCoordinationGlobalBudget(this.deps.repo.getMeta('coordination_budget_global'));
+    const read = readStoredCoordinationBudget(this.deps.repo.getMeta('coordination_budget_global'));
     if (read.kind === 'unset') return { state: 'unset' };
     if (read.kind === 'set') return { state: 'set', budget: read.budget };
     return { state: 'invalid' }; // los bytes crudos no cruzan IPC: no son dato de la persona, son basura

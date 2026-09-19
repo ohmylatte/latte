@@ -92,7 +92,7 @@ describe('the proposal gate', () => {
 
       expect((resolved as CoordinationRunRecord).status).toBe('running');
       expect(await b.service.getCoordinatorGrant(workId)).toBe('mem_proposer');
-      expect(await b.service.getCoordinationBudget(workId)).toMatchObject({ maxDispatches: 8 });
+      expect(await b.service.getCoordinationBudget(workId)).toMatchObject({ state: 'set', budget: { maxDispatches: 8 } });
       expect(JSON.parse(b.repo.getCoordinationRun(run.id).budgetJson)).toMatchObject({ maxDispatches: 8 });
       expect(await b.service.getCoordinationAuthority(workId)).toBe('plan');
       expect(members.some((m) => m.roleId === 'copywriter')).toBe(true);
@@ -109,7 +109,7 @@ describe('the proposal gate', () => {
       await expect(engine.resolveGate(gate.id, 'approve')).rejects.toThrow('boom');
 
       expect(await b.service.getCoordinatorGrant(workId)).toBeNull();
-      expect(await b.service.getCoordinationBudget(workId)).toBeNull();
+      expect(await b.service.getCoordinationBudget(workId)).toEqual({ state: 'unset' });
       expect(await b.service.getCoordinationAuthority(workId)).toBe('manual');
       expect(b.repo.listCoordinationTasks(run.id)).toEqual([]);
       expect(b.repo.getCoordinationRun(run.id).status).toBe('planning');
@@ -126,7 +126,7 @@ describe('the proposal gate', () => {
 
       await engine.resolveGate(gate.id, 'approve', JSON.stringify(edited));
 
-      expect(await b.service.getCoordinationBudget(workId)).toMatchObject({ maxDispatches: 3 });
+      expect(await b.service.getCoordinationBudget(workId)).toMatchObject({ state: 'set', budget: { maxDispatches: 3 } });
       expect(members.some((m) => m.roleId === 'copywriter')).toBe(false);
       expect(b.repo.listCoordinationTasks(run.id)).toHaveLength(1); // the plan's own task still lands
     });
@@ -154,7 +154,7 @@ describe('the proposal gate', () => {
 
       expect((resolved as CoordinationRunRecord).status).toBe('cancelled');
       expect(await b.service.getCoordinatorGrant(workId)).toBeNull();
-      expect(await b.service.getCoordinationBudget(workId)).toBeNull();
+      expect(await b.service.getCoordinationBudget(workId)).toEqual({ state: 'unset' });
       expect(await b.service.getCoordinationAuthority(workId)).toBe('manual');
       expect(b.hub.listTeam(workId)).toEqual(teamBefore);
       expect(b.repo.listCoordinationTasks(run.id)).toEqual([]);

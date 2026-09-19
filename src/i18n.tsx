@@ -491,6 +491,7 @@ const es = {
   'coordination.budget.unset': 'Sin presupuesto configurado',
   'coordination.budget.unlimited': 'Sin límite de despachos (confirmado)',
   'coordination.budget.limited': 'Hasta {count} despachos',
+  'coordination.budget.invalid': 'El presupuesto de este trabajo no se pudo leer, revisalo: hasta que lo escribas de nuevo, cada despacho se deniega',
   'coordination.coordinator.none': 'Sin coordinador asignado',
   'coordination.coordinator.assigned': 'Coordinador: {name}',
   // --- Coordinación: gates (autonomous-coordination, Phase 7) ------------
@@ -1079,6 +1080,7 @@ const en: Record<MessageKey, string> = {
   'coordination.budget.unset': 'No budget configured',
   'coordination.budget.unlimited': 'No dispatch limit (confirmed)',
   'coordination.budget.limited': 'Up to {count} dispatches',
+  'coordination.budget.invalid': 'This work’s budget could not be read, check it: until you set it again, every dispatch is denied',
   'coordination.coordinator.none': 'No coordinator assigned',
   'coordination.coordinator.assigned': 'Coordinator: {name}',
   // --- Coordination: gates (autonomous-coordination, Phase 7) ------------

@@ -191,7 +191,7 @@ describe('the coordination settings summary (additive, Phase 2 of autonomous-coo
   it('renders a read-only summary of authority, budget and coordinator grant, offering no control, without touching the other two settings', () => {
     const { container } = renderView('es-AR', {
       coordinationAuthority: 'auto',
-      coordinationBudget: { maxDispatches: 10, unlimitedConfirmedAt: null },
+      coordinationBudget: { state: 'set', budget: { maxDispatches: 10, unlimitedConfirmedAt: null } },
       coordinatorGrant: 'm1',
       team: [member({ id: 'm1', roleId: 'strategist', roleName: 'Estratega' })],
       permissions: 'ask',
@@ -212,7 +212,7 @@ describe('the coordination settings summary (additive, Phase 2 of autonomous-coo
   it('shows the unset/no-coordinator state honestly instead of inventing a value', () => {
     const { container } = renderView('es-AR', {
       coordinationAuthority: 'manual',
-      coordinationBudget: null,
+      coordinationBudget: { state: 'unset' },
       coordinatorGrant: null,
     });
     const section = container.querySelector('.decision-coordination');
@@ -220,10 +220,37 @@ describe('the coordination settings summary (additive, Phase 2 of autonomous-coo
     expect(section!.textContent).toContain('Sin coordinador asignado');
   });
 
+  // Crítico 8, nivel Trabajo: `invalid` llegaba como `null` y se leía "sin
+  // presupuesto configurado" — que manda a la persona a buscar un campo vacío
+  // que en realidad tiene bytes rotos adentro, mientras cada despacho se
+  // deniega contra esos mismos bytes.
+  it('un presupuesto ILEGIBLE se dice con su propia frase, nunca como "sin presupuesto configurado"', () => {
+    const { container } = renderView('es-AR', {
+      coordinationAuthority: 'manual',
+      coordinationBudget: { state: 'invalid' },
+      coordinatorGrant: null,
+    });
+    const line = container.querySelector('.decision-coordination-budget')!;
+    expect(line).not.toBeNull();
+    expect(line.textContent).not.toContain('Sin presupuesto configurado');
+    expect(line.textContent).toContain('no se pudo leer');
+  });
+
+  it('el mismo presupuesto ilegible en inglés, sin nada en castellano', () => {
+    const { container } = renderView('en-US', {
+      coordinationAuthority: 'manual',
+      coordinationBudget: { state: 'invalid' },
+      coordinatorGrant: null,
+    });
+    const line = container.querySelector('.decision-coordination-budget')!;
+    expect(line.textContent).toContain('could not be read');
+    expect(line.textContent).not.toContain('no se pudo leer');
+  });
+
   it('renders the same summary in English, with nothing left in Spanish', () => {
     const { container } = renderView('en-US', {
       coordinationAuthority: 'plan',
-      coordinationBudget: { maxDispatches: null, unlimitedConfirmedAt: '2026-01-01T00:00:00.000Z' },
+      coordinationBudget: { state: 'set', budget: { maxDispatches: null, unlimitedConfirmedAt: '2026-01-01T00:00:00.000Z' } },
       coordinatorGrant: null,
     });
     const section = container.querySelector('.decision-coordination');

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './browser-api';
 import { shouldRefreshWork } from './coordination-event-routing';
 import type {
-  CoordinationActiveRunSummary, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudget,
+  CoordinationActiveRunSummary, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
   CoordinationGateView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationRunView, CoordinatorGrant,
 } from '../shared/contracts';
 
@@ -10,7 +10,7 @@ export { shouldRefreshWork } from './coordination-event-routing';
 
 export interface CoordinationState {
   authority: CoordinationAuthorityMode;
-  budget: CoordinationBudget | null;
+  budget: CoordinationBudgetView;
   coordinatorGrant: CoordinatorGrant;
   run: CoordinationRunView | null;
   gates: CoordinationGateView[];
@@ -67,7 +67,7 @@ export interface CoordinationState {
  */
 export function useCoordination(workId: string | null, onError?: (error: unknown) => void): CoordinationState {
   const [authority, setAuthority] = useState<CoordinationAuthorityMode>('manual');
-  const [budget, setBudget] = useState<CoordinationBudget | null>(null);
+  const [budget, setBudget] = useState<CoordinationBudgetView>({ state: 'unset' });
   const [coordinatorGrant, setCoordinatorGrant] = useState<CoordinatorGrant>(null);
   const [run, setRun] = useState<CoordinationRunView | null>(null);
   const [gates, setGates] = useState<CoordinationGateView[]>([]);
@@ -107,7 +107,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     const n = ++generation.current;
     const fresh = () => n === generation.current;
     void api.getCoordinationAuthority(id).then((v) => { if (fresh()) setAuthority(v); }).catch(() => { if (fresh()) setAuthority('manual'); });
-    void api.getCoordinationBudget(id).then((v) => { if (fresh()) setBudget(v); }).catch(() => { if (fresh()) setBudget(null); });
+    void api.getCoordinationBudget(id).then((v) => { if (fresh()) setBudget(v); }).catch(() => { if (fresh()) setBudget({ state: 'unset' }); });
     void api.getCoordinatorGrant(id).then((v) => { if (fresh()) setCoordinatorGrant(v); }).catch(() => { if (fresh()) setCoordinatorGrant(null); });
     void api.coordinationRuntimeSupport(id).then((v) => { if (fresh()) setSupport(v); }).catch(() => { if (fresh()) setSupport([]); });
     void api.getCoordinationRun(id).then((current) => {
@@ -128,7 +128,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
   useEffect(() => {
     if (!workId) {
       generation.current += 1; // toda respuesta en vuelo queda huérfana
-      setAuthority('manual'); setBudget(null); setCoordinatorGrant(null);
+      setAuthority('manual'); setBudget({ state: 'unset' }); setCoordinatorGrant(null);
       setRun(null); setGates([]); setLog([]); setSupport([]); setOpenAsks([]);
       return;
     }

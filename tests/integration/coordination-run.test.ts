@@ -171,7 +171,7 @@ describe('conversational entry: latte_request_coordination -> proposal gate -> a
     // authority + hires + tasks.
     await b.service.resolveCoordinationGate(gates[0].id, 'approve');
     expect(await b.service.getCoordinatorGrant(workId)).toBe('mem_proposer');
-    expect(await b.service.getCoordinationBudget(workId)).toMatchObject({ maxDispatches: 6 });
+    expect(await b.service.getCoordinationBudget(workId)).toMatchObject({ state: 'set', budget: { maxDispatches: 6 } });
     expect(await b.service.getCoordinationAuthority(workId)).toBe('plan');
     expect(members.some((m) => m.roleId === 'copywriter')).toBe(true);
     const runAfter = await b.service.getCoordinationRun(workId);

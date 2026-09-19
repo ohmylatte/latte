@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CoordinationEngine, type CoordinationGrant } from '../../electron/coordination/engine';
-import { readCoordinationGlobalBudget } from '../../electron/coordination/budget';
+import { readStoredCoordinationBudget } from '../../electron/coordination/budget';
 import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
@@ -113,7 +113,7 @@ describe('el tope global ilegible se muestra y deniega, no se disfraza de sin to
 
     for (const caso of casos) {
       it(`${caso.label}: el parser dice ${caso.kind} y el getter IPC dice lo mismo`, async () => {
-        expect(readCoordinationGlobalBudget(caso.raw).kind).toBe(caso.kind);
+        expect(readStoredCoordinationBudget(caso.raw).kind).toBe(caso.kind);
         if (caso.raw == null) b.repo.deleteMeta('coordination_budget_global');
         else b.repo.setMeta('coordination_budget_global', caso.raw);
         expect((await b.service.getCoordinationGlobalBudget()).state).toBe(caso.kind);

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { KnowledgeOrigin } from './KnowledgeScope';
 import type {
-  AgentRole, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudget, CoordinationDegradedReason, CoordinationGateAggregate,
+  AgentRole, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView, CoordinationDegradedReason, CoordinationGateAggregate,
   CoordinationGateView, CoordinationMemberSupport, CoordinationProposal, Decision, DecisionAuthorityMode, HandoffRequest, TeamMember, Work, WorkPermissionMode,
 } from '../shared/contracts';
 
@@ -55,7 +55,7 @@ export interface DecisionsViewProps {
    * editing arrives with the coordination gate UI in a later phase.
    */
   coordinationAuthority?: CoordinationAuthorityMode;
-  coordinationBudget?: CoordinationBudget | null;
+  coordinationBudget?: CoordinationBudgetView;
   coordinatorGrant?: string | null;
   /**
    * Additive, optional (autonomous-coordination Phase 7 tasks 7.4-7.6):
@@ -329,6 +329,19 @@ function describeMemorySupport(row: CoordinationMemberSupport): string {
   return t('coordination.memory.unavailable');
 }
 
+/**
+ * El presupuesto de este Trabajo, con sus TRES estados separados. `invalid`
+ * no es `unset`: decir "sin presupuesto configurado" sobre bytes rotos manda
+ * a la persona a buscar un campo vacío que en realidad tiene algo adentro,
+ * mientras el motor deniega cada despacho contra esos mismos bytes.
+ */
+function describeWorkBudget(view: CoordinationBudgetView | undefined): string {
+  if (view == null || view.state === 'unset') return t('coordination.budget.unset');
+  if (view.state === 'invalid') return t('coordination.budget.invalid');
+  if (view.budget.maxDispatches == null) return t('coordination.budget.unlimited');
+  return t('coordination.budget.limited', { count: view.budget.maxDispatches });
+}
+
 /** One row per team member (task 7.9): coordination and memory status, rendered independently — never a single combined verdict. */
 function SupportRow({ row, team }: { row: CoordinationMemberSupport; team: readonly TeamMember[] }) {
   const name = team.find((m) => m.id === row.memberId)?.roleName ?? row.memberId;
@@ -425,11 +438,7 @@ export function DecisionsView(props: DecisionsViewProps) {
       <div className="document-kicker">{t('coordination.settings.kicker')}</div>
       <p className="decision-coordination-authority">{t(`coordination.authority.${props.coordinationAuthority}` as 'coordination.authority.manual')}</p>
       <p className="decision-coordination-budget">
-        {props.coordinationBudget == null
-          ? t('coordination.budget.unset')
-          : props.coordinationBudget.maxDispatches == null
-            ? t('coordination.budget.unlimited')
-            : t('coordination.budget.limited', { count: props.coordinationBudget.maxDispatches })}
+        {describeWorkBudget(props.coordinationBudget)}
       </p>
       <p className="decision-coordination-grant">
         {props.coordinatorGrant

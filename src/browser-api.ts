@@ -206,7 +206,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   // MCP server); the preview has neither, so it reports the safe defaults and
   // refuses writes, exactly like getWorkPermissions/setWorkPermissions above.
   getCoordinationAuthority:async()=>'manual' as const,setCoordinationAuthority:unavailable,
-  getCoordinationBudget:async()=>null,setCoordinationBudget:unavailable,
+  getCoordinationBudget:async()=>({state:'unset'}),setCoordinationBudget:unavailable,
   getCoordinatorGrant:async()=>null,setCoordinatorGrant:unavailable,
   // Phase 3: run lifecycle, gates, bitácora, asks and the handoff bridge —
   // same desktop-only reasoning as above. No run ever exists in the preview.

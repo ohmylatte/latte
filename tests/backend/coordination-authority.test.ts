@@ -46,14 +46,14 @@ describe('coordination budget (per-Work meta, JSON round-trip, no implicit unlim
   });
   afterEach(() => b.cleanup());
 
-  it('is unset (null) until a human configures it — never a default unlimited', async () => {
-    expect(await b.service.getCoordinationBudget(workId)).toBeNull();
+  it('is unset until a human configures it — never a default unlimited', async () => {
+    expect(await b.service.getCoordinationBudget(workId)).toEqual({ state: 'unset' });
   });
 
   it('round-trips a budget with only the primary cap', async () => {
     const saved = await b.service.setCoordinationBudget(workId, { maxDispatches: 10 });
     expect(saved.maxDispatches).toBe(10);
-    expect(await b.service.getCoordinationBudget(workId)).toEqual(saved);
+    expect(await b.service.getCoordinationBudget(workId)).toEqual({ state: 'set', budget: saved });
   });
 
   it('round-trips every secondary cap', async () => {
@@ -61,23 +61,23 @@ describe('coordination budget (per-Work meta, JSON round-trip, no implicit unlim
     const saved = await b.service.setCoordinationBudget(workId, budget);
     // Normalized: every optional field is present, explicitly `null` when omitted.
     expect(saved).toEqual({ ...budget, unlimitedConfirmedAt: null });
-    expect(await b.service.getCoordinationBudget(workId)).toEqual(saved);
+    expect(await b.service.getCoordinationBudget(workId)).toEqual({ state: 'set', budget: saved });
   });
 
   it('rejects an implicit unlimited (maxDispatches:null without confirmation)', async () => {
     await expect(b.service.setCoordinationBudget(workId, { maxDispatches: null } as never)).rejects.toThrow();
-    expect(await b.service.getCoordinationBudget(workId)).toBeNull();
+    expect(await b.service.getCoordinationBudget(workId)).toEqual({ state: 'unset' });
   });
 
   it('accepts an explicit unlimited confirmation', async () => {
     const saved = await b.service.setCoordinationBudget(workId, { maxDispatches: null, unlimitedConfirmedAt: '2026-01-01T00:00:00.000Z' });
     expect(saved.maxDispatches).toBeNull();
-    expect(await b.service.getCoordinationBudget(workId)).toEqual(saved);
+    expect(await b.service.getCoordinationBudget(workId)).toEqual({ state: 'set', budget: saved });
   });
 
   it('rejects an invalid budget without touching the previously stored value', async () => {
     await b.service.setCoordinationBudget(workId, { maxDispatches: 10 });
     await expect(b.service.setCoordinationBudget(workId, { maxDispatches: 0 } as never)).rejects.toThrow();
-    expect((await b.service.getCoordinationBudget(workId))!.maxDispatches).toBe(10);
+    expect(await b.service.getCoordinationBudget(workId)).toMatchObject({ state: 'set', budget: { maxDispatches: 10 } });
   });
 });
