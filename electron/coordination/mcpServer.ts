@@ -54,7 +54,7 @@
  * implements the lifecycle rules themselves (`ensureStarted`/`stopIfIdle`),
  * tested directly.
  */
-import { UnavailableError } from '../core/errors';
+import { LatteError, UnavailableError } from '../core/errors';
 import type { CoordinationEngine } from './engine';
 import { createCoordinationTools, type ToolEnvelope } from './tools';
 import type { CoordinationTokenRegistry } from './tokens';
@@ -346,12 +346,50 @@ export class CoordinationMcpServer {
       case 'tools/call': {
         // Fresh every request, never cached: the same rule `tokens.ts` and
         // `resolveGrant` establish for the rest of the coordination surface.
-        const grant = this.deps.engine.resolveGrant(entry.workId, entry.memberId);
+        //
+        // F12: ADENTRO del try. `resolveGrant` lee la base —el run activo del
+        // Trabajo, el meta del coordinador—, y si esa lectura tira, la
+        // excepción escapaba de `handleMcpRequest` entero y el transporte la
+        // devolvía como HTTP 500. Un cliente MCP lee un 500 como "el servidor
+        // está roto", no como "esta llamada falló": es el mismo crítico que
+        // `wrap` ya resolvió una capa más arriba para las dos lecturas del
+        // sobre. Un fallo de UNA llamada sale como el resultado de esa llamada.
+        let grant: ReturnType<CoordinationEngine['resolveGrant']>;
+        try {
+          grant = this.deps.engine.resolveGrant(entry.workId, entry.memberId);
+        } catch (error) {
+          return { status: 200, body: JSON.stringify(this.toolFailure(id, error)) };
+        }
         return { status: 200, body: JSON.stringify(await this.handleToolsCall(id, parsed.params, grant)) };
       }
       default:
         return { status: 200, body: JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method || '(missing method)'}` } }) };
     }
+  }
+
+  /**
+   * El fallo de una llamada, con la MISMA forma que el de cualquier tool
+   * (F12): un `result` con `isError:true` y un `ToolEnvelope` adentro, nunca
+   * un error de protocolo ni un 500. El bloque de presupuesto va en ceros y
+   * `null` —el mismo "no se pudo leer" que usa `tools.ts`—, porque sin grant
+   * no hay run del cual leer un número honesto.
+   */
+  private toolFailure(id: string | number | null, error: unknown): Record<string, unknown> {
+    const envelope: ToolEnvelope<never> = {
+      ok: false,
+      authority: 'manual',
+      budget: { dispatchesUsed: 0, maxDispatches: null, inFlight: 0, maxConcurrent: null },
+      data: null,
+      error: {
+        code: error instanceof LatteError ? error.code : 'INTERNAL',
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: { content: [{ type: 'text', text: JSON.stringify(envelope) }], structuredContent: envelope, isError: true },
+    };
   }
 
   /** `initialize` (task 6.20b): version negotiation collapses to "always this server's one version" — see the module header. */

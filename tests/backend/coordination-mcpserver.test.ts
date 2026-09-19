@@ -605,10 +605,17 @@ describe('CoordinationMcpServer', () => {
       const listen: ListenFn = async (requestListener) => { listener.current = requestListener as never; return { port: 4242, close: () => {} }; };
       const server = new CoordinationMcpServer({ repo: b.repo, engine, tokens, listen });
       await captureListener(server, listener);
-      // `resolveGrant` es la lectura que `tools/call` hace FUERA de cualquier
-      // try: una base caída acá colgaba al cliente y tiraba un unhandled
-      // rejection en el proceso principal de Electron.
-      vi.spyOn(engine, 'resolveGrant').mockImplementation(() => { throw new Error('database is locked'); });
+      // El fallo se induce en `tokens.verify`, la PRIMERA lectura del camino y
+      // la única que queda fuera de todo try por diseño: la autenticación se
+      // decide antes de que exista ningún sobre que devolver.
+      //
+      // Antes se inducía en `resolveGrant`, pero desde F12 esa lectura vive
+      // adentro del try y sale como `ok:false` con HTTP 200 —lo correcto para
+      // un fallo de UNA llamada, que un cliente MCP no puede leer de un 500—;
+      // ese camino lo cubre `coordination-mcp-grant-failure.test.ts`. Lo que
+      // este test protege es otra cosa y sigue viva: que un fallo INESPERADO
+      // escriba una respuesta en vez de dejar la conexión abierta para siempre.
+      vi.spyOn(tokens, 'verify').mockImplementation(() => { throw new Error('database is locked'); });
       b.repo.insertMember({ id: 'mem_coordinator', workId, roleId: 'strategist', roleName: 'Strategist', initial: 'S', runtime: 'codex', model: null, accountId: null, sessionId: '', done: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
       const token = tokens.mint(workId, 'mem_coordinator');
       const { req, res, flush } = fakeReqRes(rpc('tools/call', { name: 'latte_team_list', arguments: {} }), `Bearer ${token}`);
