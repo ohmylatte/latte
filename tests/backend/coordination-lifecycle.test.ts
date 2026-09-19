@@ -104,9 +104,20 @@ describe('CoordinationEngine — ciclo de vida del despacho', () => {
 
       expect(b.repo.getCoordinationTask(task.id).status).toBe('ready');
       expect(b.repo.countOpenCoordinationCostReservations(runId)).toBe(0);
-      expect(b.repo.listCoordinationDispatches(runId).every((d) => d.status !== 'dispatched')).toBe(true);
+      const dispatches = b.repo.listCoordinationDispatches(runId);
+      expect(dispatches).toHaveLength(1);
+      expect(dispatches.every((d) => d.status !== 'dispatched')).toBe(true);
       // Nada se ejecutó: el cupo no se cobra.
       expect(engine.budgetBlockForEnvelope(runId).dispatchesUsed).toBe(0);
+      // Y la reserva queda `settled`, NO `uncertain`. La diferencia no es
+      // cosmética: `uncertain` es la palabra que usa `settleUncertain` para
+      // "el proceso se murió y no sabemos si llegó a correr", y ahí sí se
+      // asienta el gasto. Acá `hub.send` TIRÓ: no salió nada, se sabe con
+      // certeza, y el registro tiene que decir eso. Medido: cerrar esta
+      // reserva como `uncertain` pasaba la suite entera en verde.
+      const reservationId = dispatches[0].reservationId;
+      expect(reservationId).toBeTruthy();
+      expect(b.repo.getCoordinationCostReservation(reservationId!)?.state).toBe('settled');
     });
   });
 
