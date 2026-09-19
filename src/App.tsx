@@ -128,6 +128,25 @@ export function App() {
    * consumed once by the same effect.
    */
   const pendingViewRef = useRef<View | null>(null);
+  /**
+   * R5: el Trabajo que LA PERSONA abrió, por su id.
+   *
+   * Marcar la visita al abrir un Trabajo (F13) chocaba con que la app abre uno
+   * SOLA: `works[0]` al arrancar y en cada cambio de Marca. Con eso, "desde tu
+   * última visita" se consumía sin que nadie mirara nada — el arranque se
+   * comía la novedad que existía para avisarle a la persona.
+   *
+   * Sólo los caminos de navegación EXPLÍCITA escriben acá: `selectWork` (la
+   * lista de Trabajos, las filas de Inicio, `openWorkDecisions`, la cola de
+   * revisión) y el `pendingWorkRef` que resuelve una acción de la persona
+   * (abrir un run de otra Marca desde la tira, o terminar el onboarding). La
+   * autoselección de `list[0]` NO lo escribe, y por eso no cuenta como visita.
+   *
+   * Es un id y no un booleano a propósito: un `true` del Trabajo anterior
+   * sobreviviría a un cambio de Marca y volvería a marcar visto lo que la app
+   * eligió sola del otro lado.
+   */
+  const humanOpenedWorkRef = useRef<string | null>(null);
   // The brand effect re-reads works when the id changes. Finishing the walk on
   // the already-selected brand (the demo) changes nothing, so it needs its own
   // reason to run; the ref above is only honoured if the effect runs.
@@ -196,8 +215,13 @@ export function App() {
   // TRABAJO, no Decisiones— no marcaba nada: la novedad seguía en la tira y el
   // run terminado seguía en la tira global hasta que alguien se acordara de
   // entrar a Decisiones de ese Trabajo. Abrirlo ES mirarlo.
+  // R5: y SÓLO si el Trabajo lo abrió la persona. `App` autoselecciona
+  // `works[0]` al arrancar y en cada cambio de Marca; con F13 eso anotaba la
+  // visita sin un solo acto humano y se comía la fila "tu equipo terminó" —
+  // la novedad que existe justamente para avisarle. `humanOpenedWorkRef` lo
+  // escriben los caminos de navegación explícita, nunca la autoselección.
   useEffect(() => {
-    if (work?.id && coordinationLoaded) markSeen();
+    if (work?.id && coordinationLoaded && humanOpenedWorkRef.current === work.id) markSeen();
   }, [work?.id, coordinationLoaded]);
   // The memory notice (task 7.10) is dismissed per Brand, for this session
   // only: this state is plain React state, never persisted, so it "returns
@@ -417,7 +441,7 @@ export function App() {
     void api.getDecisionAuthority(work.id).then(value => { if (active) setDecisionAuthority(value); }).catch(() => { if (active) setDecisionAuthority('suggest'); });
     return () => { active = false; };
   }, [work?.id]);
-  useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setKnowledgeScope(ALL_BRAND_SCOPE); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); const preferred = list.find(w => w.id === pendingWorkRef.current) ?? list[0] ?? null; pendingWorkRef.current = null; setWork(preferred); if (preferred && pendingViewRef.current) setView(pendingViewRef.current); pendingViewRef.current = null; }).catch(e => setError(displayError(e))); }, [brand?.id, brandEpoch]);
+  useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setKnowledgeScope(ALL_BRAND_SCOPE); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); const requested = list.find(w => w.id === pendingWorkRef.current) ?? null; const preferred = requested ?? list[0] ?? null; pendingWorkRef.current = null; /* R5: sólo el Trabajo PEDIDO por una acción de la persona cuenta como abierto por ella; `list[0]` lo elige la app sola y no es ninguna visita. */ if (requested) humanOpenedWorkRef.current = requested.id; setWork(preferred); if (preferred && pendingViewRef.current) setView(pendingViewRef.current); pendingViewRef.current = null; }).catch(e => setError(displayError(e))); }, [brand?.id, brandEpoch]);
   useEffect(() => {
     if (!brand) { setDocuments([]); setDecisions([]); return; }
     let active = true;
@@ -504,6 +528,10 @@ export function App() {
    */
   const selectWork = (w: Work, target: 'brief' | 'decisions' = 'brief', as: 'conversation' | 'review' = 'conversation') => {
     if (!guard()) return;
+    // R5: TODO camino que pasa por acá es un acto de la persona — un clic en la
+    // lista de Trabajos, una fila de Inicio, la cola de revisión. La visita se
+    // anota sólo por estos, nunca por la autoselección del arranque.
+    humanOpenedWorkRef.current = w.id;
     setWork(w);
     setContext(brand?.context ?? '');
     setView(target);
