@@ -26,6 +26,17 @@ export interface AppServerOptions {
    * `turn/start` forever on the installed 0.154.0 (openai/codex#45361).
    */
   extraArgs?: string[];
+  /**
+   * El pid del hijo, EN CUANTO existe — antes de `initialize`, no después de
+   * que `ensure()` salió bien. El barrido de arranque
+   * (`sweepStrayCodexServers`) sólo puede reapear lo que alguien anotó, y el
+   * camino que más procesos huérfanos dejaba era justamente el del arranque
+   * fallido: el hijo ya estaba spawneado y el pid se grababa recién al final,
+   * así que nunca se grababa. `serverKey` lleva un token aleatorio adentro, así
+   * que nadie puede recomputar esa clave nunca: sin el pid file, ese proceso
+   * quedaba inalcanzable para siempre.
+   */
+  onSpawn?: (pid: number) => void;
 }
 
 interface Pending { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -162,6 +173,11 @@ export class CodexAppServer {
       throw new Error(`Could not start Codex: ${describe(error)}`);
     }
     this.child = child;
+    // Antes de `initialize`: a partir de acá el proceso EXISTE, y todo lo que
+    // sigue puede fallar. Ver `onSpawn`.
+    if (typeof child.pid === 'number') {
+      try { this.options.onSpawn?.(child.pid); } catch { /* anotar el pid nunca puede tumbar un arranque */ }
+    }
     this.buffer = '';
     child.stdout?.on('data', (chunk: Buffer) => this.onData(chunk));
     child.stderr?.on('data', (chunk: Buffer) => this.options.log?.(`[codex] ${chunk.toString('utf8').trim().slice(0, 300)}`));

@@ -202,43 +202,77 @@ export class CodexChatAdapter implements RuntimeAdapter {
       serverKey = `${accountId}|${mcpFingerprint(mcpServers)}`;
     }
     const server = await this.serverFor(accountId, serverKey, mcpServers);
-    // The role personality rides as developer instructions on the thread (start and resume alike).
-    const instructions = input.instructions?.trim() ?? '';
-    const threadOptions = { cwd: input.directory, approvalPolicy: 'on-request', sandbox: 'workspace-write', ...(input.model ? { model: input.model } : {}), ...(instructions ? { developerInstructions: instructions } : {}) };
-    let threadId: string | null = null;
-    let resumed = false;
-    if (input.previousSessionId) {
-      try {
-        const result = await server.request('thread/resume', { threadId: input.previousSessionId, ...threadOptions });
-        const thread = isRecord(result) && isRecord(result.thread) ? result.thread : null;
-        if (thread && typeof thread.id === 'string') {
-          threadId = thread.id;
-          resumed = true;
+    // Todo lo que sigue corre sobre un proceso QUE YA EXISTE. Si algo falla
+    // —`thread/start` es el caso real— el server se quedaba en `this.servers`
+    // sin un solo chat que lo pudiera liberar: `stop(chatId)` es el único que
+    // lo apaga, y nunca hubo un chat. Como el `serverKey` lleva un token
+    // aleatorio adentro, tampoco se podía recomputar la clave para alcanzarlo
+    // (crítico 9). Por eso el cuerpo entero está compensado.
+    try {
+      // The role personality rides as developer instructions on the thread (start and resume alike).
+      const instructions = input.instructions?.trim() ?? '';
+      const threadOptions = { cwd: input.directory, approvalPolicy: 'on-request', sandbox: 'workspace-write', ...(input.model ? { model: input.model } : {}), ...(instructions ? { developerInstructions: instructions } : {}) };
+      let threadId: string | null = null;
+      let resumed = false;
+      if (input.previousSessionId) {
+        try {
+          const result = await server.request('thread/resume', { threadId: input.previousSessionId, ...threadOptions });
+          const thread = isRecord(result) && isRecord(result.thread) ? result.thread : null;
+          if (thread && typeof thread.id === 'string') {
+            threadId = thread.id;
+            resumed = true;
+          }
+        } catch (error) {
+          this.deps.log?.(`[codex] resume failed, starting fresh: ${describe(error)}`);
         }
-      } catch (error) {
-        this.deps.log?.(`[codex] resume failed, starting fresh: ${describe(error)}`);
       }
-    }
-    if (!threadId) {
-      let result: unknown;
-      try {
-        result = await server.request('thread/start', threadOptions);
-      } catch (error) {
-        throw new UnavailableError(`Could not start a Codex thread: ${describe(error)}`);
+      if (!threadId) {
+        let result: unknown;
+        try {
+          result = await server.request('thread/start', threadOptions);
+        } catch (error) {
+          throw new UnavailableError(`Could not start a Codex thread: ${describe(error)}`);
+        }
+        const thread = isRecord(result) && isRecord(result.thread) ? result.thread : null;
+        if (!thread || typeof thread.id !== 'string') throw new UnavailableError('Codex returned no thread id');
+        threadId = thread.id;
       }
-      const thread = isRecord(result) && isRecord(result.thread) ? result.thread : null;
-      if (!thread || typeof thread.id !== 'string') throw new UnavailableError('Codex returned no thread id');
-      threadId = thread.id;
+      const live: LiveChat = { chatId, workId: input.workId, accountId, serverKey, threadId, directory: input.directory, turnId: null, assistantId: null, messages: new Map(), order: [], pending: new Map(), busy: false, tier: input.tier ?? DEFAULT_EFFORT_TIER, usage: EMPTY_USAGE, usageSoFar: null, usageTurnId: null };
+      this.chats.set(chatId, live);
+      this.byThread.set(threadId, chatId);
+      if (resumed) await this.loadHistory(live, server);
+      return {
+        session: { ...sessionFrom(input, 'codex', input.model ?? null, accountId, input.label, resumed), id: chatId },
+        runtimeSessionId: threadId,
+        injectedMcpServers: await this.reportInjected(server, mcpServers),
+      };
+    } catch (error) {
+      this.forgetPartialChat(chatId);
+      this.releaseServerIfUnused(serverKey);
+      throw error;
     }
-    const live: LiveChat = { chatId, workId: input.workId, accountId, serverKey, threadId, directory: input.directory, turnId: null, assistantId: null, messages: new Map(), order: [], pending: new Map(), busy: false, tier: input.tier ?? DEFAULT_EFFORT_TIER, usage: EMPTY_USAGE, usageSoFar: null, usageTurnId: null };
-    this.chats.set(chatId, live);
-    this.byThread.set(threadId, chatId);
-    if (resumed) await this.loadHistory(live, server);
-    return {
-      session: { ...sessionFrom(input, 'codex', input.model ?? null, accountId, input.label, resumed), id: chatId },
-      runtimeSessionId: threadId,
-      injectedMcpServers: await this.reportInjected(server, mcpServers),
-    };
+  }
+
+  /** Un chat que no llegó a nacer no puede quedar a medias en los mapas. */
+  private forgetPartialChat(chatId: string): void {
+    const live = this.chats.get(chatId);
+    if (!live) return;
+    this.chats.delete(chatId);
+    if (this.byThread.get(live.threadId) === chatId) this.byThread.delete(live.threadId);
+  }
+
+  /**
+   * Apaga el app-server que ya no tiene dueño. Un server que todavía sirve a
+   * otro chat vivo no se toca: dos miembros coordinados de la misma cuenta
+   * viven en servers DISTINTOS (task 5.3/5.4), pero dos chats comunes comparten
+   * uno solo y el fallo de uno no puede llevarse puesto al otro.
+   */
+  private releaseServerIfUnused(serverKey: string): void {
+    if ([...this.chats.values()].some((c) => c.serverKey === serverKey)) return;
+    this.servers.get(serverKey)?.stop();
+    this.servers.delete(serverKey);
+    this.coordinatedServerKeys.delete(serverKey);
+    forgetServerPid(this.deps.serverCwd, serverKey);
   }
 
   /**
@@ -484,6 +518,10 @@ export class CodexChatAdapter implements RuntimeAdapter {
         requestTimeoutMs: this.deps.requestTimeoutMs,
         log: this.deps.log,
         extraArgs: hasMcp ? codexMcpConfigOverrides(mcpServers) : [],
+        // El pid se anota EN CUANTO el hijo existe, no después de `ensure()`:
+        // el camino que dejaba procesos huérfanos era justamente el del
+        // arranque fallido, y ahí la línea de abajo nunca se alcanzaba.
+        onSpawn: (pid) => recordServerPid(this.deps.serverCwd, serverKey, pid),
       });
       server.notifications.add((method, params) => this.onNotification(method, params));
       server.serverRequests.add((method, params, respond, fail) => this.onServerRequest(method, params, respond, fail));
@@ -510,8 +548,16 @@ export class CodexChatAdapter implements RuntimeAdapter {
     try {
       await server.ensure();
     } catch (error) {
+      // El hijo YA está spawneado: `launch()` lo crea y recién después habla
+      // `initialize`. Borrar los mapas no lo mataba, y como el `serverKey`
+      // lleva un token aleatorio adentro nadie podía recomputar esa clave
+      // nunca: el proceso quedaba vivo, inalcanzable y contando contra el cupo
+      // (crítico 9). `stop()` lo mata; el pid file se olvida porque ya no hay
+      // nada que reapear.
+      server.stop();
       this.servers.delete(serverKey);
       this.coordinatedServerKeys.delete(serverKey);
+      forgetServerPid(this.deps.serverCwd, serverKey);
       throw new UnavailableError(describe(error));
     }
     // Recorded on every resolution (new or reused), so the pid file always

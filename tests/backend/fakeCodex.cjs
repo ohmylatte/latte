@@ -33,6 +33,12 @@ rl.on('line', (line) => {
   const reply = (result) => out({ jsonrpc: '2.0', id, result });
   switch (method) {
     case 'initialize':
+      // El arranque que falla DESPUES del spawn: el proceso ya existe, y ese es
+      // exactamente el camino que dejaba huerfanos (critico 9).
+      if (process.env.FAKE_CODEX_FAIL_INITIALIZE) {
+        out({ jsonrpc: '2.0', id, error: { code: -32000, message: 'initialize refused by the fake' } });
+        return;
+      }
       reply({ userAgent: 'fake-codex', codexHome: process.env.CODEX_HOME || 'default-home', platformFamily: 'test' });
       return;
     case 'model/list':
@@ -75,6 +81,12 @@ rl.on('line', (line) => {
       });
       return;
     case 'thread/start': {
+      // `initialize` anduvo y el server quedo vivo: sin un chat que lo libere,
+      // este es el otro camino que dejaba un app-server sin duenio (critico 9).
+      if (process.env.FAKE_CODEX_FAIL_THREAD_START) {
+        out({ jsonrpc: '2.0', id, error: { code: -32000, message: 'thread/start refused by the fake' } });
+        return;
+      }
       const threadId = `thr_${++counter}`;
       threads.set(threadId, { cwd: params.cwd, turns: [], dev: params.developerInstructions || '' });
       reply({ thread: { id: threadId, cwd: params.cwd, createdAt: Date.now() / 1000 }, model: params.model || 'gpt-fake', modelProvider: 'openai', approvalPolicy: params.approvalPolicy, cwd: params.cwd });
