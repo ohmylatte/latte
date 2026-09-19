@@ -724,6 +724,20 @@ export interface CoordinationRunView {
    * la persona no vio, y ninguno de los dos reescribe la fila del run.
    */
   lastEventAt: string;
+  /**
+   * Cómo le fue a este run, contado sobre sus propias tareas y nunca guardado
+   * como frase: `tasksDone` las que terminaron bien, `tasksFailed` las que
+   * fracasaron y `tasksPending` todo lo demás (lo que quedó sin terminar).
+   *
+   * La interfaz los necesita para poder decir "este equipo terminó: N listas,
+   * M fallidas" en vez de un "terminado" pelado que no dice si salió bien.
+   * Un run cancelado no hace fracasar a nadie: ahí lo que importa es
+   * `tasksPending`, y por eso las tres cuentas viajan separadas en vez de
+   * colapsar `failed` dentro de "sin terminar".
+   */
+  tasksDone: number;
+  tasksFailed: number;
+  tasksPending: number;
 }
 
 /**

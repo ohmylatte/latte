@@ -4,7 +4,7 @@ import { Plus } from 'lucide-react';
 import { KnowledgeOrigin } from './KnowledgeScope';
 import type {
   AgentRole, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView, CoordinationDegradedReason, CoordinationGateAggregate,
-  CoordinationGateView, CoordinationMemberSupport, CoordinationProposal, Decision, DecisionAuthorityMode, HandoffRequest, TeamMember, Work, WorkPermissionMode,
+  CoordinationGateView, CoordinationMemberSupport, CoordinationProposal, CoordinationRunView, Decision, DecisionAuthorityMode, HandoffRequest, TeamMember, Work, WorkPermissionMode,
 } from '../shared/contracts';
 
 /**
@@ -65,6 +65,21 @@ export interface DecisionsViewProps {
    * exactly: there is no separate "editApprove" decision, an edit is the
    * SAME `'approve'` carrying an edited payload alongside it.
    */
+  /**
+   * El run de coordinación de este Trabajo, o `null` cuando no hay ninguno.
+   * `undefined` es un llamador sin cablear y deja la pantalla exactamente como
+   * estaba, igual que el resto de las props aditivas de acá.
+   *
+   * Sin esto, Decisiones —la pantalla donde la persona aprueba y rechaza— no
+   * tenía forma de saber si el equipo seguía vivo: un run TERMINADO se dibujaba
+   * idéntico a uno trabajando, con sus tarjetas de gate y sus botones sobre
+   * algo que el motor no va a ejecutar nunca más. El backend ya devuelve gates
+   * vacíos para un run no activo, pero la interfaz NO depende de eso: `active`
+   * se lee acá, explícito, para que la promesa "un run terminado no puede
+   * parecer vivo" sea una propiedad de esta pantalla y no una consecuencia de
+   * otra capa.
+   */
+  coordinationRun?: CoordinationRunView | null;
   gates?: readonly CoordinationGateView[];
   onResolveGate?: (gateId: string, decision: 'approve' | 'reject', editedPayload?: string | null) => void;
   /**
@@ -192,10 +207,48 @@ function DispatchGateCard({ gate, onResolveGate, pending }: { gate: Coordination
  * `discard` (`reject`) grants nothing: it is the plain `cancelRun` path,
  * with no edited payload ever attached.
  */
+/**
+ * Una propuesta que no se puede leer, leída sin tirar.
+ *
+ * `JSON.parse` a pelo hacía que un `proposalJson` roto tumbara el render de
+ * TODA la pantalla de Decisiones, y un JSON válido pero sin `plan` llegaba
+ * hasta `proposal.plan.map` sobre `undefined`. Las dos cosas son el mismo
+ * hecho para la persona: la propuesta llegó rota. Se dice, no se finge un plan
+ * vacío — un plan vacío es una propuesta que no pide nada, que es otra cosa.
+ */
+function readProposal(raw: string | null | undefined): CoordinationProposal | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return null; }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const candidate = parsed as Partial<CoordinationProposal>;
+  if (!Array.isArray(candidate.plan)) return null;
+  return candidate as CoordinationProposal;
+}
+
+/** La propuesta ilegible: se nombra el hecho y queda UNA sola acción — descartarla. Aprobar algo que no se puede leer no es aprobar nada. */
+function UnreadableProposalCard({ gate, onResolveGate, pending }: { gate: CoordinationGateView; onResolveGate?: ResolveGate; pending?: Pending }) {
+  const busy = Boolean(pending?.[`gate:${gate.id}`]);
+  return <div className="decision-gate decision-gate-proposal" data-gate-kind="proposal">
+    <div className="document-kicker">{t('coordination.proposal.kicker')}</div>
+    <p className="decision-gate-unreadable">{t('coordination.proposal.unreadable')}</p>
+    <div className="decision-gate-actions">
+      <button disabled={busy} onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
+    </div>
+  </div>;
+}
+
 function ProposalGateCard({ gate, roles, team, onResolveGate, pending }: {
   gate: CoordinationGateView; roles: readonly AgentRole[]; team: readonly TeamMember[]; onResolveGate?: ResolveGate; pending?: Pending;
 }) {
-  const proposal: CoordinationProposal | null = gate.proposalJson ? (JSON.parse(gate.proposalJson) as CoordinationProposal) : null;
+  const proposal = readProposal(gate.proposalJson);
+  if (!proposal) return <UnreadableProposalCard gate={gate} onResolveGate={onResolveGate} pending={pending} />;
+  return <ReadableProposalGateCard gate={gate} proposal={proposal} roles={roles} team={team} onResolveGate={onResolveGate} pending={pending} />;
+}
+
+function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, pending }: {
+  gate: CoordinationGateView; proposal: CoordinationProposal; roles: readonly AgentRole[]; team: readonly TeamMember[]; onResolveGate?: ResolveGate; pending?: Pending;
+}) {
   // Los valores iniciales del formulario, derivados de la PROPUESTA — nunca al
   // revés. `editCancel` vuelve a estos mismos valores: abrir la edición y
   // cancelar tiene que dejar el formulario exactamente como lo encontró.
@@ -205,7 +258,6 @@ function ProposalGateCard({ gate, roles, team, onResolveGate, pending }: {
   const [dispatches, setDispatches] = useState(initialDispatches);
   const [included, setIncluded] = useState<boolean[]>(initialIncluded);
   const [unlimitedConfirmed, setUnlimitedConfirmed] = useState(false);
-  if (!proposal) return null;
   const hires = proposal.membersToHire ?? [];
   const busy = Boolean(pending?.[`gate:${gate.id}`]);
   // Deriva del estado de la PROPUESTA, no del formulario de edición (juicio
@@ -378,7 +430,29 @@ function AskCard({ ask, formatDate, onAnswerAsk, pending }: { ask: CoordinationA
   </div>;
 }
 
+/**
+ * Cómo terminó este equipo, dicho con las cuentas separadas.
+ *
+ * `done` y `cancelled` son dos finales distintos y no comparten frase: un run
+ * cancelado no "terminó", y sus tareas sin empezar no son fracasos de nadie.
+ * Las tres cuentas viajan aparte por eso mismo — colapsar `failed` dentro de
+ * "sin terminar" borraba la única diferencia que importa.
+ */
+function FinishedRunBanner({ run }: { run: CoordinationRunView }) {
+  const text = run.status === 'cancelled'
+    ? t('coordination.run.finished.cancelled', { done: run.tasksDone, failed: run.tasksFailed, pending: run.tasksPending })
+    : t('coordination.run.finished.done', { done: run.tasksDone, failed: run.tasksFailed });
+  return <p className="decision-coordination-finished" data-run-status={run.status} role="status">{text}</p>;
+}
+
 export function DecisionsView(props: DecisionsViewProps) {
+  // Un run que cerró no ofrece NADA de un run vivo. `active` se lee explícito
+  // (no se deduce de que la lista de gates venga vacía): que el backend ya
+  // devuelva cero gates para un run terminado es una segunda defensa, no la
+  // razón por la que esto funciona.
+  const runFinished = props.coordinationRun != null && !props.coordinationRun.active;
+  const gates = runFinished ? [] : props.gates;
+  const openAsks = runFinished ? [] : props.openAsks;
   return <div className="document-scroll">
     <div className="document-kicker">CRITERIO QUE PERMANECE</div>
     <h1>No empezar<br />de cero otra vez.</h1>
@@ -421,14 +495,15 @@ export function DecisionsView(props: DecisionsViewProps) {
       })}
       {!props.decisions.filter(d => d.status === 'approved' || d.status === 'pending').length && <p className="footnote">{t('ui.auto.056')}</p>}
     </div>
-    {((props.gates?.length ?? 0) > 0 || (props.openAsks?.length ?? 0) > 0) && <section className="decision-gates">
-      {props.gates?.map((gate) => {
+    {runFinished && <FinishedRunBanner run={props.coordinationRun!} />}
+    {((gates?.length ?? 0) > 0 || (openAsks?.length ?? 0) > 0) && <section className="decision-gates">
+      {gates?.map((gate) => {
         if (gate.kind === 'proposal') return <ProposalGateCard key={gate.id} gate={gate} roles={props.roles} team={props.team} onResolveGate={props.onResolveGate} pending={props.pending} />;
         if (gate.kind === 'dispatch') return <DispatchGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} pending={props.pending} />;
         if (gate.kind === 'budget') return <BudgetGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} pending={props.pending} />;
         return <PlanGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} pending={props.pending} />;
       })}
-      {props.openAsks?.map((ask) => <AskCard key={ask.id} ask={ask} formatDate={props.formatDate} onAnswerAsk={props.onAnswerAsk} pending={props.pending} />)}
+      {openAsks?.map((ask) => <AskCard key={ask.id} ask={ask} formatDate={props.formatDate} onAnswerAsk={props.onAnswerAsk} pending={props.pending} />)}
     </section>}
     {(props.coordinationSupport?.length ?? 0) > 0 && <section className="decision-coordination-support">
       <div className="document-kicker">{t('coordination.teams.kicker')}</div>

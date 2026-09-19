@@ -1569,6 +1569,18 @@ export class LatteService implements BackendApi {
   // dispatch choke point; nothing here reaches `hub.send` a second way.
 
   private toCoordinationRunView(run: CoordinationRunRecord): CoordinationRunView {
+    // Contado acá, sobre las tareas del run, cada vez: la misma regla que la
+    // bitácora ya usa para sus entradas de cierre. Una fila ilegible no puede
+    // tumbar la vista del run, así que el conteo cae a ceros — y ceros es lo
+    // que la interfaz muestra, nunca un número inventado.
+    let tasksDone = 0, tasksFailed = 0, tasksPending = 0;
+    try {
+      for (const task of this.deps.repo.listCoordinationTasks(run.id)) {
+        if (task.status === 'done') tasksDone += 1;
+        else if (task.status === 'failed') tasksFailed += 1;
+        else tasksPending += 1;
+      }
+    } catch { /* una bitácora ilegible no puede romper la vista del run */ }
     return {
       id: run.id,
       workId: run.workId,
@@ -1583,6 +1595,7 @@ export class LatteService implements BackendApi {
       // `done`/`cancelled` quedan afuera, y por eso se marcan como no activos.
       active: run.status === 'planning' || run.status === 'running' || run.status === 'suspended',
       lastEventAt: this.lastCoordinationEventAt(run),
+      tasksDone, tasksFailed, tasksPending,
     };
   }
 

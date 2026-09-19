@@ -1,4 +1,4 @@
-import { currentLocale, translate as t } from './i18n';
+import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Check, CircleAlert, CircleCheck, FolderCheck, FolderLock, Forward, LoaderCircle, MessageSquare, MessageSquarePlus, Pause, Play, Plug, Plus, Settings2, Trash2, UserPlus, X, Zap } from 'lucide-react';
 import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
@@ -130,9 +130,15 @@ export function TeamPanel(props: TeamPanelProps) {
   const workTotal = useTeamUsageTotal(team);
 
   return <div className="team">
+    {/* FUERA del guard `team.length > 0`: un run `planning` es exactamente el
+        momento en el que el equipo todavía no tiene un solo miembro, y ahí los
+        controles del run desaparecían enteros — la persona se quedaba sin
+        ninguna salida justo cuando la coordinación recién arranca. */}
+    <CoordinationRunControls run={props.coordinationRun ?? null} busy={busy} pending={props.pending}
+      onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination} />
     {work && props.handoffs.map(handoff => <div key={handoff.fileName} className="doc-banner handoff" role="status">
       <UserPlus size={14} />
-      <span>{t('ui.auto.266')} <strong>{handoff.roleName}</strong> vea esto: <em>{handoff.request.split(/\r?\n/)[0].slice(0, 140)}</em>{handoff.known ? '' : ' — ese rol no existe en Latte.'}</span>
+      <span>{t('ui.auto.266')} <strong>{handoff.roleName}</strong> {t('handoff.wants')} <em>{handoff.request.split(/\r?\n/)[0].slice(0, 140)}</em>{handoff.known ? '' : t('handoff.unknownRole')}</span>
       {handoff.known && <button className="primary" disabled={busy} onClick={() => void props.onAcceptHandoff(handoff)}>{t('ui.auto.267')}</button>}
       <button disabled={busy} onClick={() => void props.onDismissHandoff(handoff)}>{t('ui.auto.379')}</button>
     </div>)}
@@ -144,17 +150,7 @@ export function TeamPanel(props: TeamPanelProps) {
         {activity && <span className={'team-activity' + (activity.needsAttention ? ' attention' : '')} role="status" title={activity.detail}>{activity.label}</span>}
         {workTotal > 0 && <span className="team-usage-total" title={t('usage.help')}>{t('usage.workTotal', { tokens: formatTokens(workTotal, currentLocale()) })}</span>}
         <button className="team-tab-add" aria-label={t('ui.auto.269')} title={t('ui.auto.269')} disabled={busy || !isDesktop} onClick={() => setAdding(true)}><UserPlus size={15} /></button>
-        <button className="team-tab-add" aria-label="Proveedores de IA" title="Agentes y proveedores" onClick={props.onProviders}><Settings2 size={15} /></button>
-        {/* Un run TERMINADO ya no ofrece ninguna acción de run vivo: se dice
-            cómo terminó y nada más. `active` es explícito a propósito — un
-            `status` nuevo no puede volver a colar botones de pausar o cancelar
-            sobre algo que ya cerró. */}
-        {props.coordinationRun && !props.coordinationRun.active && <span className="team-finished-coordination" role="status">{t(`coordination.teams.status.${props.coordinationRun.status}` as 'coordination.teams.status.done')}</span>}
-        {props.coordinationRun?.active && props.coordinationRun.status === 'running' && <button className="team-pause-coordination" title={t('coordination.run.pauseHelp')} disabled={busy || Boolean(props.pending?.[`run:${props.coordinationRun.id}`])} onClick={() => props.onPauseCoordination?.(props.coordinationRun!.id)}><Pause size={13} />{t('coordination.run.pause')}</button>}
-        {props.coordinationRun?.active && props.coordinationRun.status === 'suspended' && <>
-          <button className="team-resume-coordination" title={t('coordination.run.resumeHelp')} disabled={busy || Boolean(props.pending?.[`run:${props.coordinationRun.id}`])} onClick={() => props.onResumeCoordination?.(props.coordinationRun!.id)}><Play size={13} />{t('coordination.run.resume')}</button>
-          <button className="team-cancel-coordination" title={t('coordination.run.cancelHelp')} disabled={busy || Boolean(props.pending?.[`run:${props.coordinationRun.id}`])} onClick={() => props.onCancelCoordination?.(props.coordinationRun!.id)}><X size={13} />{t('coordination.run.cancel')}</button>
-        </>}
+        <button className="team-tab-add" aria-label={t('team.providers.label')} title={t('team.providers.title')} onClick={props.onProviders}><Settings2 size={15} /></button>
         {selected && <div className="team-tab-actions">
           {mode === 'advanced' && <>
             <ModelPicker member={selected} busy={busy} onModel={props.onModel} />
@@ -179,6 +175,65 @@ export function TeamPanel(props: TeamPanelProps) {
     {!work && <div className="agent-idle"><div className="agent-symbol"><MessageSquare size={27} /></div><h3>{t('ui.auto.276')}<br />{t('ui.auto.277')}</h3><p className="footnote">{t('ui.auto.278')}</p></div>}
     {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} onAttachFiles={props.onAttachFiles} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}
     {!showPicker && !selected && team.length > 0 && <p className="chat-empty">{t('ui.auto.279')}</p>}
+  </div>;
+}
+
+/**
+ * Qué controles tiene un run, decidido UNA vez y de forma exhaustiva.
+ *
+ * Antes cada botón traía su propia condición suelta y "Cancelar" viajaba
+ * pegado a "Reanudar": un run `planning` o `running` no tenía NINGUNA salida —
+ * para cancelar había que pausar primero, y pausar un run que todavía no
+ * despachó nada es una instrucción que no le cabe en la cabeza a nadie.
+ *
+ * El `switch` es exhaustivo contra `CoordinationRunStatus` (`never` en el
+ * default): un estado nuevo en el contrato no compila hasta que alguien
+ * decida, mirando el producto, qué salida le corresponde. Es exactamente la
+ * clase de decisión que no puede quedar en un `else` implícito.
+ */
+interface RunControlPlan { cancel: boolean; pause: boolean; resume: boolean; statusKey: MessageKey | null }
+
+function planRunControls(run: CoordinationRunView): RunControlPlan {
+  switch (run.status) {
+    // Planificando: nada que pausar todavía (no hay despacho en vuelo), pero
+    // sí hay algo que cancelar — el run ocupa un cupo desde que nace.
+    case 'planning': return { cancel: true, pause: false, resume: false, statusKey: 'coordination.run.planning' };
+    case 'running': return { cancel: true, pause: true, resume: false, statusKey: null };
+    case 'suspended': return { cancel: true, pause: false, resume: true, statusKey: 'coordination.teams.status.suspended' };
+    // Los dos finales: se dice cómo terminó y nada más. Ninguna acción de run
+    // vivo sobre algo que el motor ya cerró.
+    case 'done': return { cancel: false, pause: false, resume: false, statusKey: 'coordination.teams.status.done' };
+    case 'cancelled': return { cancel: false, pause: false, resume: false, statusKey: 'coordination.teams.status.cancelled' };
+    default: {
+      const exhaustive: never = run.status;
+      return exhaustive;
+    }
+  }
+}
+
+function CoordinationRunControls({ run, busy, pending, onPause, onResume, onCancel }: {
+  run: CoordinationRunView | null;
+  busy: boolean;
+  pending?: Record<string, boolean>;
+  onPause?: (runId: string) => void;
+  onResume?: (runId: string) => void;
+  onCancel?: (runId: string) => void;
+}) {
+  if (!run) return null;
+  const plan = planRunControls(run);
+  // `active` se cruza con el plan a propósito: dos candados, no uno. Un
+  // `status` que alguien marque mal en el backend no puede devolverle botones
+  // de run vivo a algo que ya cerró.
+  const live = run.active;
+  const inFlight = busy || Boolean(pending?.[`run:${run.id}`]);
+  return <div className="team-coordination-controls">
+    {/* `team-finished-coordination` se conserva como segunda clase para los
+        dos finales: es el gancho con el que el resto del producto ya
+        distingue "este equipo cerró" de "este equipo está en un estado". */}
+    {plan.statusKey && <span className={'team-coordination-status' + (live ? '' : ' team-finished-coordination')} data-run-status={run.status} role="status">{t(plan.statusKey)}</span>}
+    {live && plan.pause && <button className="team-pause-coordination" title={t('coordination.run.pauseHelp')} disabled={inFlight} onClick={() => onPause?.(run.id)}><Pause size={13} />{t('coordination.run.pause')}</button>}
+    {live && plan.resume && <button className="team-resume-coordination" title={t('coordination.run.resumeHelp')} disabled={inFlight} onClick={() => onResume?.(run.id)}><Play size={13} />{t('coordination.run.resume')}</button>}
+    {live && plan.cancel && <button className="team-cancel-coordination" title={t('coordination.run.cancelHelp')} disabled={inFlight} onClick={() => onCancel?.(run.id)}><X size={13} />{t('coordination.run.cancel')}</button>}
   </div>;
 }
 
