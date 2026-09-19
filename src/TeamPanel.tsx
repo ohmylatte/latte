@@ -158,7 +158,7 @@ export function TeamPanel(props: TeamPanelProps) {
           </>}
           <button className="icon-button" aria-label={t('continue.action')} title={t('continue.actionHelp')} disabled={busy || !isDesktop} onClick={() => setContinuing(selected.id)}><Forward size={13} /></button>
           {selectedLive && <button className="icon-button" aria-label={t('ui.auto.087')} title={t('ui.auto.270')} disabled={busy} onClick={() => void props.onPause(selected.id)}><Pause size={13} /></button>}
-          {selectedStatus !== 'ended' && <button className="icon-button" aria-label="Marcar como finalizado" title={t('ui.auto.271')} disabled={busy} onClick={() => void props.onFinish(selected.id)}><CircleCheck size={13} /></button>}
+          {selectedStatus !== 'ended' && <button className="icon-button" aria-label={t('team.finish.label')} title={t('ui.auto.271')} disabled={busy} onClick={() => void props.onFinish(selected.id)}><CircleCheck size={13} /></button>}
           <button className="icon-button" aria-label={t('ui.auto.272')} title={t('ui.auto.273')} disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.401', { p0: selected.roleName, p1: selected.roleName }))) void props.onRestart(selected.id); }}><MessageSquarePlus size={13} /></button>
           <button className="icon-button" aria-label={t('ui.auto.274')} title={t('ui.auto.274')} disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.402', { p0: selected.roleName }))) void props.onRemove(selected.id); }}><Trash2 size={13} /></button>
         </div>}
@@ -377,12 +377,12 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', onSel
 }
 
 function statusLabel(status: TeamMemberStatus, attention: boolean) {
-  if (attention) return <><i className="busy-dot" />Te necesita</>;
+  if (attention) return <><i className="busy-dot" />{t('team.status.attention')}</>;
   switch (status) {
     case 'working': return <><Loading size={16} />{t('ui.auto.403')}</>;
     case 'idle': return <><i className="live-dot" />{t('ui.auto.404')}</>;
     case 'ended': return <>{t('ui.auto.285')}<CircleCheck size={13} /></>;
-    default: return <>En pausa<Pause size={12} /></>;
+    default: return <>{t('team.status.paused')}<Pause size={12} /></>;
   }
 }
 
@@ -393,7 +393,7 @@ function ResumeCard({ member, origin, busy, isDesktop, onOpen, onRestart, onRemo
     <span className="team-avatar large" data-role={member.roleId} aria-hidden="true">{member.initial}</span>
     <h3>{member.roleName}<br /><small>{member.label}</small>{origin && <small>{t('continue.from', { role: origin.roleName })}</small>}</h3>
     <p>{member.status === 'ended' ? t('ui.auto.286') : t('ui.auto.287')}</p>
-    <button className="primary" disabled={busy || opening} onClick={() => void open()}>{opening ? <Loading size={16} /> : <Play size={15} />}{opening ? 'Abriendo…' : member.status === 'ended' ? t('ui.auto.288') : t('ui.auto.289')}</button>
+    <button className="primary" disabled={busy || opening} onClick={() => void open()}>{opening ? <Loading size={16} /> : <Play size={15} />}{opening ? t('team.opening') : member.status === 'ended' ? t('ui.auto.288') : t('ui.auto.289')}</button>
     {/* A paused or finished member is where an exhausted account usually leaves you: continuing elsewhere belongs right here. */}
     <button className="subtle" title={t('continue.actionHelp')} disabled={busy || opening || !isDesktop} onClick={onContinue}><Forward size={13} />{t('continue.action')}</button>
     <button className="subtle" disabled={busy || opening} onClick={() => { if (window.confirm(t('ui.auto.401', { p0: member.roleName, p1: member.roleName }))) void onRestart(); }}><MessageSquarePlus size={13} />{t('ui.auto.272')}</button>
@@ -419,7 +419,7 @@ function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady,
   return <div className="role-picker">
     <div className="role-picker-head"><span className="field-label">{canCancel ? t('ui.auto.290') : t('ui.auto.291')}</span>{canCancel && <button className="icon-button" aria-label={t('ui.auto.241')} onClick={onCancel}><X size={15} /></button>}</div>
     <p className="agent-explanation">{t('ui.auto.292')}</p>
-    <div className="role-list" role="radiogroup" aria-label="Rol">
+    <div className="role-list" role="radiogroup" aria-label={t('team.rolePicker.group')}>
       {roles.map(role => <button key={role.id} role="radio" aria-checked={roleId === role.id} className={'role-card' + (roleId === role.id ? ' selected' : '')} onClick={() => setRoleId(role.id)}><span className="team-avatar" data-role={role.id} aria-hidden="true">{role.initial}</span><span><strong>{role.name}</strong><small>{role.summary}</small></span>{roleId === role.id && <Check size={14} />}</button>)}
     </div>
     <TierPicker tier={tier} busy={busy || opening} onChange={setTier} />
@@ -439,9 +439,9 @@ function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady,
     </select>
     {choice === 'primary' && <small className="runtime-detail">{checking ? t('ui.auto.296') : primaryDetail}</small>}
     <div className="chat-card-actions">
-      <button className="primary" disabled={busy || opening || checking || !ready || !isDesktop} onClick={() => void add()}>{opening || checking ? <Loading size={16} /> : <Plus size={15} />}{opening ? 'Abriendo…' : checking ? 'Buscando agentes…' : t('ui.auto.297')}</button>
+      <button className="primary" disabled={busy || opening || checking || !ready || !isDesktop} onClick={() => void add()}>{opening || checking ? <Loading size={16} /> : <Plus size={15} />}{opening ? t('team.opening') : checking ? t('team.checkingAgents') : t('ui.auto.297')}</button>
       {isDesktop && !checking && <button className="subtle" onClick={onProviders}><Plug size={13} />{primaryReady ? t('ui.auto.298') : t('ui.auto.299')}</button>}
-      {isDesktop && !checking && !primaryReady && <button className="subtle" onClick={onRecheck}>Volver a comprobar</button>}
+      {isDesktop && !checking && !primaryReady && <button className="subtle" onClick={onRecheck}>{t('team.recheck')}</button>}
     </div>
     {!isDesktop && <small className="preview-note">{t('ui.auto.300')}</small>}
   </div>;
@@ -591,7 +591,7 @@ function modelListFor(runtime: ChatRuntime, accountId: string | null): Promise<A
   return runtime === 'opencode'
     ? api.chatStatus().then((status): AgentModelList => ({
       source: 'catalog',
-      detail: `Modelos configurados en OpenCode${status.defaultModel ? ` · por defecto ${status.defaultModel}` : ''}.`,
+      detail: t('team.model.openCodeDetail', { suffix: status.defaultModel ? t('team.model.openCodeDefault', { model: status.defaultModel }) : '' }),
       models: status.models.map(id => ({ id, label: id, description: '', isDefault: id === status.defaultModel })),
     }))
     : api.listAccountModels(runtime, accountId ?? 'system');
@@ -616,7 +616,7 @@ function ModelPicker({ member, busy, onModel }: { member: TeamMember; busy: bool
     groups.set(group, [...(groups.get(group) ?? []), model]);
   }
   const grouped = groups.size > 1 || (groups.size === 1 && !groups.has(''));
-  const option = (m: AgentModelList['models'][number]) => <option key={m.id} value={m.id}>{m.label}{m.isDefault ? ' · por defecto' : ''}</option>;
+  const option = (m: AgentModelList['models'][number]) => <option key={m.id} value={m.id}>{m.label}{m.isDefault ? t('team.model.isDefault') : ''}</option>;
 
   return <select
     className="team-model"
@@ -626,7 +626,7 @@ function ModelPicker({ member, busy, onModel }: { member: TeamMember; busy: bool
     disabled={busy || !list}
     onChange={e => onModel(member.id, e.target.value || null)}
   >
-    <option value="">{list ? t('ui.auto.302') : 'Buscando modelos…'}</option>
+    <option value="">{list ? t('ui.auto.302') : t('team.checkingModels')}</option>
     {current !== '' && !models.some(m => m.id === current) && <option value={current}>{current}</option>}
     {grouped
       ? [...groups.entries()].map(([group, items]) => group ? <optgroup key={group} label={group}>{items.map(option)}</optgroup> : items.map(option))

@@ -43,7 +43,9 @@ const runDone: CoordinationLogEntryView = {
   kind: 'run_done', id: 'run-done:r1', runId: 'r1', tasksDone: 2, tasksFailed: 1, createdAt: '2026-09-01T00:02:00.000Z',
 };
 const runCancelled: CoordinationLogEntryView = {
-  kind: 'run_cancelled', id: 'run-cancelled:r1', runId: 'r1', tasksDone: 2, tasksPending: 3, createdAt: '2026-09-01T00:02:00.000Z',
+  // U9: las tres cuentas separadas. `tasksPending` ya no se traga las
+  // `failed`: una tarea que se intento y no salio no es una que nunca empezo.
+  kind: 'run_cancelled', id: 'run-cancelled:r1', runId: 'r1', tasksDone: 2, tasksFailed: 1, tasksPending: 3, createdAt: '2026-09-01T00:02:00.000Z',
 };
 
 function render(locale: 'es-AR' | 'en-US', log: CoordinationLogEntryView[]): string {
@@ -64,7 +66,7 @@ describe('la bitácora dibuja los DOS finales del run, no sólo el feliz', () =>
   it('un run cancelado cierra con su propia línea, en castellano', () => {
     const html = render('es-AR', [dispatch, runCancelled]);
     expect(rows(html)).toHaveLength(2);
-    expect(html).toContain('Se canceló la coordinación: 2 tareas listas, 3 sin terminar');
+    expect(html).toContain('Se canceló la coordinación: 2 tareas listas, 1 fallidas, 3 sin empezar');
     // Nunca la del otro final: cancelar no es terminar.
     expect(html).not.toContain('El equipo terminó');
   });
@@ -72,7 +74,7 @@ describe('la bitácora dibuja los DOS finales del run, no sólo el feliz', () =>
   it('un run cancelado cierra con su propia línea, en inglés', () => {
     const html = render('en-US', [dispatch, runCancelled]);
     expect(rows(html)).toHaveLength(2);
-    expect(html).toContain('Coordination was cancelled: 2 tasks done, 3 unfinished');
+    expect(html).toContain('Coordination was cancelled: 2 tasks done, 1 failed, 3 never started');
     expect(html).not.toContain('The team finished');
     // Y nada quedó en castellano.
     expect(html).not.toContain('Se canceló');
@@ -107,10 +109,10 @@ describe('la bitácora dibuja los DOS finales del run, no sólo el feliz', () =>
 
 /** El contrato de la fila: nada de esto se guarda, todo se deriva. */
 describe('bitacoraRows traduce la entrada derivada sin inventar nada', () => {
-  it('mapea `run_cancelled` a una fila `runCancelled` con sus dos cuentas', async () => {
+  it('mapea `run_cancelled` a una fila `runCancelled` con sus TRES cuentas', async () => {
     const { bitacoraRows } = await import('./resumen-summary');
     const out = bitacoraRows([runCancelled], []);
-    expect(out).toEqual([{ kind: 'runCancelled', id: 'run-cancelled:r1', tasksDone: 2, tasksPending: 3, at: '2026-09-01T00:02:00.000Z' }]);
+    expect(out).toEqual([{ kind: 'runCancelled', id: 'run-cancelled:r1', tasksDone: 2, tasksFailed: 1, tasksPending: 3, at: '2026-09-01T00:02:00.000Z' }]);
   });
 
   it('ordena el cierre por cancelación después de los despachos, como cualquier otra fila', async () => {

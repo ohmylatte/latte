@@ -65,15 +65,22 @@ describe('un run terminado se sigue viendo, con su bitácora (crítico: la UI bo
       const run = await engine.startRun(workId, 'mem_coordinator');
       approveCoordinationRoles(b, run.id, 'strategist'); // U10: crear una tarea exige el rol aprobado
       const done = engine.taskCreate(run.id, { roleId: 'strategist', spec: 'a' });
-      const pending = engine.taskCreate(run.id, { roleId: 'strategist', spec: 'b' });
+      const failed = engine.taskCreate(run.id, { roleId: 'strategist', spec: 'b' });
+      const pending = engine.taskCreate(run.id, { roleId: 'strategist', spec: 'c' });
       b.repo.updateCoordinationTask(done.id, { status: 'done' }, new Date().toISOString());
+      b.repo.updateCoordinationTask(failed.id, { status: 'failed' }, new Date().toISOString());
 
       engine.cancelRun(run.id);
 
       const log = await b.service.listCoordinationLog(run.id);
       const closing = log.filter((entry) => entry.kind === 'run_cancelled');
       expect(closing).toHaveLength(1);
-      expect(closing[0]).toMatchObject({ runId: run.id, tasksDone: 1, tasksPending: 1 });
+      // U9: las TRES cuentas separadas. Meter las `failed` adentro de "sin
+      // terminar" borraba la única diferencia que importa: una tarea que
+      // fracasó no es lo mismo que una que nunca empezó, y sobre un run
+      // cancelado eso es justo lo que la persona necesita para decidir si
+      // vuelve a intentarlo.
+      expect(closing[0]).toMatchObject({ runId: run.id, tasksDone: 1, tasksFailed: 1, tasksPending: 1 });
       expect(closing[0].createdAt).toBe(b.repo.getCoordinationRun(run.id).updatedAt);
       // Y NO la del otro final: un run cancelado no "terminó".
       expect(log.filter((entry) => entry.kind === 'run_done')).toEqual([]);

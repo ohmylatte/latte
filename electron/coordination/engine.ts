@@ -152,15 +152,19 @@ export interface CoordinationRunDoneLogEntry {
  * siguiera trabajando. Se deriva igual que `run_done`, del estado del run y del
  * de sus tareas, así que tampoco puede divergir de lo que dice la base.
  *
- * `tasksPending` en vez de `tasksFailed`: cancelar no hace fracasar a nadie,
- * deja tareas sin terminar, y decir "fallidas" sobre trabajo que nunca se
- * intentó sería la bitácora mintiendo.
+ * Las TRES cuentas, separadas (U9). `tasksPending` juntaba antes todo lo que
+ * no llegó a `done`, con las `failed` adentro: decir "sin terminar" sobre una
+ * tarea que se intentó tres veces y no salió es tan falso como decir "fallida"
+ * sobre una que nunca se despachó. Cancelar no hace fracasar a nadie, pero
+ * tampoco borra el fracaso de quien ya había fracasado antes del corte.
  */
 export interface CoordinationRunCancelledLogEntry {
   kind: 'run_cancelled';
   id: string;
   runId: string;
   tasksDone: number;
+  tasksFailed: number;
+  /** Ni `done` ni `failed`: lo que quedó sin terminar cuando se cortó. */
   tasksPending: number;
   createdAt: string;
 }
@@ -714,15 +718,18 @@ export class CoordinationEngine {
     if (run.status === 'cancelled') {
       const tasks = this.deps.repo.listCoordinationTasks(runId);
       const done = tasks.filter((t) => t.status === 'done').length;
+      const failed = tasks.filter((t) => t.status === 'failed').length;
       entries.push({
         kind: 'run_cancelled',
         id: `run-cancelled:${run.id}`,
         runId: run.id,
         tasksDone: done,
-        // Todo lo que no llegó a `done` quedó sin terminar, incluidas las
-        // `failed`: desde el punto de vista de quien lee la bitácora de un run
-        // cancelado, lo que importa es cuánto quedó sin hacer.
-        tasksPending: tasks.length - done,
+        // Las `failed` van APARTE (U9). Contarlas como "sin terminar" borraba
+        // la diferencia entre una tarea que se intentó y no salió y una que
+        // nunca empezó — que es exactamente lo que quien lee la bitácora de un
+        // run cancelado necesita para decidir si vuelve a intentarlo.
+        tasksFailed: failed,
+        tasksPending: tasks.length - done - failed,
         createdAt: run.updatedAt,
       });
     }

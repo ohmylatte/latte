@@ -69,14 +69,6 @@ export interface DecisionsViewProps {
   onSetCoordinationBudget?: (maxDispatches: number) => void;
   coordinatorGrant?: string | null;
   /**
-   * Additive, optional (autonomous-coordination Phase 7 tasks 7.4-7.6):
-   * `undefined` means the caller has not wired gate state yet — the section
-   * does not render, same as an empty list. `onResolveGate` mirrors
-   * `resolveCoordinationGate(gateId, decision, editedPayload?)`'s own verb
-   * exactly: there is no separate "editApprove" decision, an edit is the
-   * SAME `'approve'` carrying an edited payload alongside it.
-   */
-  /**
    * El run de coordinación de este Trabajo, o `null` cuando no hay ninguno.
    * `undefined` es un llamador sin cablear y deja la pantalla exactamente como
    * estaba, igual que el resto de las props aditivas de acá.
@@ -91,6 +83,14 @@ export interface DecisionsViewProps {
    * otra capa.
    */
   coordinationRun?: CoordinationRunView | null;
+  /**
+   * Additive, optional (autonomous-coordination Phase 7 tasks 7.4-7.6):
+   * `undefined` means the caller has not wired gate state yet — the section
+   * does not render, same as an empty list. `onResolveGate` mirrors
+   * `resolveCoordinationGate(gateId, decision, editedPayload?)`'s own verb
+   * exactly: there is no separate "editApprove" decision, an edit is the
+   * SAME `'approve'` carrying an edited payload alongside it.
+   */
   gates?: readonly CoordinationGateView[];
   onResolveGate?: (gateId: string, decision: 'approve' | 'reject', editedPayload?: string | null) => void;
   /**
@@ -512,8 +512,8 @@ export function DecisionsView(props: DecisionsViewProps) {
   const gates = runFinished ? [] : props.gates;
   const openAsks = runFinished ? [] : props.openAsks;
   return <div className="document-scroll">
-    <div className="document-kicker">CRITERIO QUE PERMANECE</div>
-    <h1>No empezar<br />de cero otra vez.</h1>
+    <div className="document-kicker">{t('decision.kicker')}</div>
+    <h1>{t('decision.headline.first')}<br />{t('decision.headline.second')}</h1>
     <p className="intro">{t('ui.auto.053')}</p>
     {props.work && <>
       <label className="field-label">{t('decision.authority.label')}</label>
@@ -524,7 +524,7 @@ export function DecisionsView(props: DecisionsViewProps) {
       </select>
       <p className="footnote">{t('decision.authority.help')}</p>
       <form className="decision-form" onSubmit={e => { e.preventDefault(); props.onAdd(props.draft); }}>
-        <textarea aria-label={t('ui.auto.054')} placeholder="Elegimos? porque?" value={props.draft} onChange={e => props.onDraftChange(e.target.value)} />
+        <textarea aria-label={t('ui.auto.054')} placeholder={t('decision.draftPlaceholder')} value={props.draft} onChange={e => props.onDraftChange(e.target.value)} />
         <button className="primary" disabled={!props.draft.trim() || props.busy}><Plus size={15} />{t('ui.auto.055')}</button>
       </form>
     </>}

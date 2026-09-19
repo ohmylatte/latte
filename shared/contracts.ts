@@ -835,14 +835,20 @@ export interface CoordinationRunDoneLogEntryView {
  * line at all: the last thing on screen was the dispatch that got cut off, as
  * if the team were still working. Derived the same way, never stored.
  *
- * `tasksPending` rather than `tasksFailed`: cancelling does not make anyone
- * fail, it leaves work unfinished.
+ * Las TRES cuentas van separadas. `tasksPending` contaba antes todo lo que no
+ * llegó a `done`, las `failed` adentro: eso borraba la única diferencia que
+ * importa acá. Una tarea que FRACASÓ (se intentó, no salió) y una que nunca
+ * empezó son dos hechos distintos, y son justo los que la persona necesita
+ * para decidir si vuelve a intentarlo. Cancelar no hace fracasar a nadie —
+ * pero tampoco des-fracasa a quien ya había fracasado antes del corte.
  */
 export interface CoordinationRunCancelledLogEntryView {
   kind: 'run_cancelled';
   id: string;
   runId: string;
   tasksDone: number;
+  tasksFailed: number;
+  /** Ni `done` ni `failed`: lo que quedó sin terminar cuando se cortó. */
   tasksPending: number;
   createdAt: string;
 }
