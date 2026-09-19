@@ -174,7 +174,13 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'latte_ask',
-    description: 'Asks the human (or the coordinator) a question and suspends this task until it is answered or the TTL expires. Returns an `askId`: poll it with latte_ask_status. When the question names a `taskId`, the answer also comes back inside that task\'s next dispatch prompt.',
+    // Q5: LA DESCRIPCIÓN DICE LOS DOS CASOS, porque el motor tiene dos y esta
+    // frase decía uno. "Suspends this task until it is answered" es cierto sólo
+    // para una tarea que todavía está en la cola; la tarea que vos estás
+    // haciendo AHORA no se suspende —tu reporte tiene que poder entrar— y el
+    // equipo tampoco se detiene por ella. Un agente que lea la frase vieja se
+    // queda esperando una respuesta que nunca va a llegar como interrupción.
+    description: 'Asks the human (or the coordinator) a question. Returns an `askId`: poll it with latte_ask_status. If the task is still queued it is suspended until the answer arrives or the TTL expires. If the task is already in flight — you are working on it right now — nothing is suspended: keep working and poll latte_ask_status, because the answer is only injected into the prompt if that task is re-dispatched.',
     inputSchema: {
       type: 'object',
       properties: {

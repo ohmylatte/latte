@@ -1817,7 +1817,26 @@ export class CoordinationEngine {
     // "esperando una respuesta", que es justo lo que este chequeo mide. Sin
     // incluirlo, la tarea que la pregunta acaba de trabar desaparecía del
     // conjunto y el run nunca se auto-suspendía.
-    const readyEligible = tasks.filter((t) => t.status === 'ready' || t.status === 'blocked' || t.status === 'dispatched' || t.status === 'running');
+    // Q5: UNA TAREA EN VUELO NO ESTÁ ESPERANDO NADA — hay alguien haciéndola.
+    //
+    // `ask()` no mueve a `blocked` una tarea ya despachada, y con razón: su
+    // reporte tiene que poder entrar. Pero acá esa misma tarea entraba igual en
+    // `readyEligible` y su pregunta la marcaba como bloqueada, así que el caso
+    // REAL —el worker pregunta MIENTRAS trabaja, que es cuando le aparece la
+    // duda— suspendía el run entero con `all_blocked_on_ask` teniendo a un
+    // miembro trabajando. El run quedaba detenido por un bloqueo que no existía.
+    //
+    // La señal es el despacho vivo, no el estado de la tarea: es el mismo
+    // conjunto que `finishRunIfComplete` ya mira para no cerrar un run con
+    // trabajo en el aire.
+    const inFlight = new Set(
+      this.deps.repo.listCoordinationDispatches(runId)
+        .filter((d) => d.status === 'dispatched' || d.status === 'running')
+        .map((d) => d.taskId),
+    );
+    const readyEligible = tasks.filter((t) =>
+      (t.status === 'ready' || t.status === 'blocked' || t.status === 'dispatched' || t.status === 'running')
+      && !inFlight.has(t.id));
     return readyEligible.length > 0 && readyEligible.every((t) => blockedTaskIds.has(t.id));
   }
 
