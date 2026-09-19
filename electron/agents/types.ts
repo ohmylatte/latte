@@ -115,6 +115,21 @@ export interface RuntimeAdapter {
   readonly runtime: ChatRuntime;
   /** Whether this runtime can receive a coordination MCP server scoped to one chat. */
   readonly mcpInjection: 'per-member' | 'none';
+  /**
+   * Si este adaptador puede DECIR qué servidores MCP levantó de verdad, alguna
+   * vez. Claude lo reporta en su `system/init` y Codex lo pregunta por
+   * `mcpStatus`; OpenCode no tiene ningún endpoint que los liste (mirá
+   * `electron/opencode/client.ts`: hay sesión, permisos, proveedores y nada
+   * más), así que para él la confirmación NUNCA va a llegar.
+   *
+   * Es una capacidad distinta de `mcpInjection`: aquélla dice si Latte puede
+   * inyectar, ésta dice si el runtime puede confirmar. La UI las necesita
+   * separadas porque "todavía no confirmó" (transitorio, puede cambiar en un
+   * segundo) y "este runtime no informa" (permanente, no va a cambiar nunca)
+   * son dos frases distintas, y decir la primera cuando la verdad es la
+   * segunda deja a la persona esperando algo que no va a pasar.
+   */
+  readonly confirmsMcpInjection: boolean;
   start(input: AdapterStartInput): Promise<AdapterStartResult>;
   owns(chatId: string): boolean;
   /** True while the runtime is answering on this chat. */

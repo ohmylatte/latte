@@ -60,6 +60,56 @@ describe('LatteService.coordinationRuntimeSupport (task 6.33)', () => {
     expect(rows[0].memoryInjected).toBe(false);
   });
 
+  /**
+   * La capacidad viaja desde el ADAPTADOR hasta la fila, sin listas paralelas
+   * en el medio. Claude reporta lo que conectó en su `system/init` y Codex lo
+   * pregunta por `mcpStatus`; el servidor de OpenCode no expone ningún
+   * endpoint que liste servidores MCP, así que para él la confirmación no
+   * llega nunca — y "sin confirmar" (que promete que va a llegar) sería una
+   * espera eterna disfrazada de transitorio.
+   */
+  describe('la fila dice si el runtime PUEDE confirmar, no sólo si confirmó', () => {
+    it('OpenCode declara que no informa la conexión; Claude y Codex, que sí', async () => {
+      b = await makeBackend({ runner: claudeResolvable('2.1.263') });
+      // `b.chat` ES el adaptador de OpenCode (el `ChatManager`).
+      expect(b.chat.confirmsMcpInjection).toBe(false);
+      expect(b.claude.confirmsMcpInjection).toBe(true);
+      expect(b.codex).not.toBeNull();
+      expect(b.codex!.confirmsMcpInjection).toBe(true);
+      // Y es una capacidad DISTINTA de poder inyectar: OpenCode tampoco
+      // inyecta, pero las dos cosas se declaran por separado a propósito.
+      expect(b.chat.mcpInjection).toBe('none');
+    });
+
+    it('un miembro de OpenCode llega a la UI con `runtimeReportsInjection:false`', async () => {
+      b = await makeBackend({ runner: claudeResolvable('2.1.263') });
+      // Sin spawnear: OpenCode no está instalado en este worktree, y lo que se
+      // prueba es la fila, no el proceso.
+      vi.spyOn(b.chat, 'start').mockResolvedValue({ session: { ...fakeSession('mem_oc'), provider: 'opencode' }, runtimeSessionId: '' });
+      const brand = await b.service.createBrand('Marca');
+      const work = await b.service.createWork(brand.id, 'Trabajo');
+      await b.service.addTeamMember(work.id, 'strategist', { runtime: 'opencode' });
+
+      const rows = await b.service.coordinationRuntimeSupport(work.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].runtimeReportsInjection).toBe(false);
+      // Y nunca confirmado: no hay quien confirme.
+      expect(rows[0].runtimeConfirmed).toBe(false);
+    });
+
+    it('un miembro de Claude llega con `runtimeReportsInjection:true`, aunque todavía no haya confirmado', async () => {
+      b = await makeBackend({ runner: claudeResolvable('2.1.263') });
+      vi.spyOn(b.claude, 'start').mockResolvedValue({ session: fakeSession('mem_x'), runtimeSessionId: '' });
+      const brand = await b.service.createBrand('Marca');
+      const work = await b.service.createWork(brand.id, 'Trabajo');
+      await b.service.addTeamMember(work.id, 'strategist', { runtime: 'claude' });
+
+      const rows = await b.service.coordinationRuntimeSupport(work.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].runtimeReportsInjection).toBe(true);
+    });
+  });
+
   it('with zero members, the row list is simply empty, never a throw', async () => {
     b = await makeBackend();
     const brand = await b.service.createBrand('Marca');

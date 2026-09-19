@@ -183,7 +183,7 @@ describe('DecisionsView: un handoff se puede aceptar (juicio #14)', () => {
 
 describe('DecisionsView: el adaptador que se negó se dice con su propia frase (juicio #5)', () => {
   it('`runtime_refused_injection` nunca se lee como "sin restricciones" ni como "la función está apagada"', () => {
-    const support: CoordinationMemberSupport[] = [{ memberId: 'm1', canPropose: false, memoryInjected: false, reason: 'runtime_refused_injection', runtimeConfirmed: true }];
+    const support: CoordinationMemberSupport[] = [{ memberId: 'm1', canPropose: false, memoryInjected: false, reason: 'runtime_refused_injection', runtimeConfirmed: true, runtimeReportsInjection: true }];
     const { container } = renderDecisions({ coordinationSupport: support });
     const row = container.querySelector('.decision-support-coordination');
     expect(row).not.toBeNull();

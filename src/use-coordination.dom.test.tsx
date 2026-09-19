@@ -88,12 +88,12 @@ describe('useCoordination(workId): a Work is open', () => {
     mocks.getCoordinationAuthority.mockResolvedValue('plan');
     mocks.getCoordinationBudget.mockResolvedValue({ state: 'set', budget: { maxDispatches: 20, unlimitedConfirmedAt: null } });
     mocks.getCoordinatorGrant.mockResolvedValue('m1');
-    mocks.coordinationRuntimeSupport.mockResolvedValue([{ memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true }]);
+    mocks.coordinationRuntimeSupport.mockResolvedValue([{ memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true, runtimeReportsInjection: true }]);
     const { result } = renderHook(() => useCoordination('w1'));
     await waitFor(() => expect(result.current.authority).toBe('plan'));
     expect(result.current.budget).toEqual({ state: 'set', budget: { maxDispatches: 20, unlimitedConfirmedAt: null } });
     expect(result.current.coordinatorGrant).toBe('m1');
-    expect(result.current.support).toEqual([{ memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true }]);
+    expect(result.current.support).toEqual([{ memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true, runtimeReportsInjection: true }]);
     expect(mocks.getCoordinationAuthority).toHaveBeenCalledWith('w1');
   });
 

@@ -89,6 +89,9 @@ export class CodexChatAdapter implements RuntimeAdapter {
   // coordinationRuntimeSupport), so the flip has zero behavioural effect
   // today.
   readonly mcpInjection = 'per-member' as const;
+  // `mcpStatus` sobre el app-server: se le pregunta y contesta (ver
+  // `reportInjected`). Que una llamada puntual falle no cambia la capacidad.
+  readonly confirmsMcpInjection = true;
   private readonly servers = new Map<string, CodexAppServer>();
   /** serverKeys whose live server carries a `latte_coordination` (`kind:'http'`) entry -- what `countCoordinatedServers()` counts. A memory-only (`stdio`, `latte_memory`) server's key is never added here, even though its fingerprint half is non-empty too (task 6.39). */
   private readonly coordinatedServerKeys = new Set<string>();

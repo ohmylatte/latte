@@ -726,6 +726,21 @@ export class AgentHub {
     if (this.deps.repo.findMember(chatId)) this.deps.repo.setMemberSession(chatId, sessionId, this.clock());
   }
 
+  /**
+   * Si el runtime de este miembro puede confirmar alguna vez lo que levantó.
+   * Lo pregunta al adaptador, que es quien lo sabe: sin esto la UI tendría que
+   * llevar su propia lista de runtimes, y una lista paralela es una lista que
+   * se desactualiza. Un runtime que este build no trae se lee como "no
+   * informa" — que es exactamente la verdad: no hay nadie que informe.
+   */
+  confirmsMcpInjection(runtime: ChatRuntime): boolean {
+    try {
+      return this.adapterFor(runtime).confirmsMcpInjection;
+    } catch {
+      return false;
+    }
+  }
+
   private adapters(): RuntimeAdapter[] {
     return [this.deps.opencode, this.deps.claude, ...(this.deps.codex ? [this.deps.codex] : [])];
   }

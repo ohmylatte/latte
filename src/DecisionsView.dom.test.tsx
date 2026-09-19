@@ -39,7 +39,7 @@ const askView = (patch: Partial<CoordinationAskView> = {}): CoordinationAskView 
   answer: null, deadlineAt: '2026-09-02T00:00:00.000Z', answeredAt: null, createdAt: '2026-09-01T00:00:00.000Z', ...patch,
 });
 const support = (patch: Partial<CoordinationMemberSupport> = {}): CoordinationMemberSupport => ({
-  memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true, ...patch,
+  memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true, runtimeReportsInjection: true, ...patch,
 });
 const proposal = (patch: Partial<CoordinationProposal> = {}): CoordinationProposal => ({
   plan: [{ roleId: 'copywriter', spec: 'Escribir 3 posts para el lanzamiento' }],
@@ -604,6 +604,82 @@ describe('coordination support badges (additive, autonomous-coordination Phase 7
     });
     expect(container.textContent).toContain('The runtime has not confirmed');
     expect(container.textContent).not.toContain('El runtime todavía no confirmó');
+  });
+
+  /**
+   * Los TRES estados de la confirmación, que hasta acá eran dos. "Sin
+   * confirmar" promete que la confirmación puede llegar; para un runtime que
+   * no tiene forma de informarla nunca —OpenCode: su servidor no expone
+   * ningún endpoint que liste servidores MCP— esa frase deja a la persona
+   * esperando algo que no va a pasar. `runtimeReportsInjection` separa
+   * "todavía no" de "nunca", y ninguno de los dos habilita decir "conectado".
+   */
+  describe('confirmado / sin confirmar / no informa: los tres estados, nunca dos', () => {
+    const notReporting = { canPropose: true, reason: null, memoryInjected: true, runtimeConfirmed: false, runtimeReportsInjection: false } as const;
+
+    it('CONFIRMADO: el runtime habló, y recién ahí se afirma que anda', () => {
+      const { container } = renderView('es-AR', {
+        team: [member({ id: 'm1', roleName: 'Estratega' })],
+        coordinationSupport: [support({ memberId: 'm1', canPropose: true, reason: null, memoryInjected: true, runtimeConfirmed: true, runtimeReportsInjection: true })],
+      });
+      const row = container.querySelector('.decision-support-row')!;
+      expect(row.textContent).toContain('Sin restricciones para coordinar');
+      expect(row.textContent).toContain('Memoria disponible');
+      expect(row.textContent).not.toContain('no informa la conexión');
+    });
+
+    it('SIN CONFIRMAR: el runtime puede hablar y todavía no lo hizo', () => {
+      const { container } = renderView('es-AR', {
+        team: [member({ id: 'm1', roleName: 'Estratega' })],
+        coordinationSupport: [support({ memberId: 'm1', canPropose: true, reason: null, memoryInjected: true, runtimeConfirmed: false, runtimeReportsInjection: true })],
+      });
+      const row = container.querySelector('.decision-support-row')!;
+      expect(row.textContent).toContain('El runtime todavía no confirmó');
+      expect(row.textContent).toContain('sin confirmar');
+      expect(row.textContent).not.toContain('no informa la conexión');
+      expect(row.textContent).not.toContain('Sin restricciones para coordinar');
+      expect(row.textContent).not.toContain('Memoria disponible');
+    });
+
+    it('NO INFORMA: el runtime no tiene forma de confirmar, y se dice así — nunca "todavía"', () => {
+      const { container } = renderView('es-AR', {
+        team: [member({ id: 'm1', roleName: 'Estratega' })],
+        coordinationSupport: [support({ memberId: 'm1', ...notReporting })],
+      });
+      const row = container.querySelector('.decision-support-row')!;
+      const coordination = row.querySelector('.decision-support-coordination')!.textContent ?? '';
+      const memory = row.querySelector('.decision-support-memory')!.textContent ?? '';
+      expect(coordination).toContain('Este runtime no informa la conexión');
+      expect(memory).toContain('no informa la conexión');
+      // Ni la promesa de que va a llegar...
+      expect(row.textContent).not.toContain('todavía no confirmó');
+      // ...ni la afirmación de que anda.
+      expect(row.textContent).not.toContain('Sin restricciones para coordinar');
+      expect(row.textContent).not.toContain('Memoria disponible');
+    });
+
+    it('NO INFORMA, en inglés, sin nada en castellano', () => {
+      const { container } = renderView('en-US', {
+        team: [member({ id: 'm1', roleName: 'Estratega' })],
+        coordinationSupport: [support({ memberId: 'm1', ...notReporting })],
+      });
+      expect(container.textContent).toContain('This runtime does not report the connection');
+      expect(container.textContent).toContain('Memory requested; this runtime does not report the connection');
+      expect(container.textContent).not.toContain('no informa la conexión');
+      expect(container.textContent).not.toContain('has not confirmed');
+    });
+
+    it('un runtime que no informa PERO ya está degradado dice su degradación, no la falta de reporte', () => {
+      // `canPropose:false` gana: la razón concreta explica más que "no
+      // informa", y decir las dos a la vez sería ruido.
+      const { container } = renderView('es-AR', {
+        team: [member({ id: 'm1', roleName: 'Estratega' })],
+        coordinationSupport: [support({ memberId: 'm1', canPropose: false, reason: 'opencode_shared_server', memoryInjected: false, runtimeConfirmed: false, runtimeReportsInjection: false })],
+      });
+      const row = container.querySelector('.decision-support-row')!;
+      expect(row.textContent).toContain('OpenCode comparte un solo servidor');
+      expect(row.textContent).not.toContain('Este runtime no informa la conexión');
+    });
   });
 
   it('renders the same badges in English, with nothing left in Spanish', () => {

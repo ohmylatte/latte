@@ -900,6 +900,18 @@ export interface CoordinationMemberSupport {
    * (crítico 7). A closed member's hypothetical preview is never confirmed.
    */
   runtimeConfirmed: boolean;
+  /**
+   * Whether this member's runtime is CAPABLE of reporting what it actually
+   * connected — ever. Claude reports it in `system/init`, Codex answers
+   * `mcpStatus`; OpenCode's server exposes no such endpoint, so for it
+   * `runtimeConfirmed` can never turn true.
+   *
+   * Without this field the UI could only say "not confirmed yet", which reads
+   * as "wait a moment" about something that is never going to arrive. Never a
+   * reason to claim it works: `false` here only changes the SENTENCE, never
+   * the verdict.
+   */
+  runtimeReportsInjection: boolean;
 }
 
 /**

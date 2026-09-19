@@ -306,7 +306,15 @@ function describeCoordinationSupport(row: CoordinationMemberSupport): string {
   // Crítico 7c: "sin restricciones" es una afirmación sobre un proceso que
   // está andando. Mientras el runtime no diga qué levantó, lo único que Latte
   // sabe es lo que PIDIÓ, y eso se dice con esas palabras — no como un verde.
-  if (row.canPropose && !row.runtimeConfirmed) return t('coordination.support.unconfirmed');
+  // "Sin confirmar" promete que la confirmación puede llegar. Cuando el
+  // runtime no tiene forma de informarla NUNCA (OpenCode: su servidor no
+  // expone ningún endpoint que liste servidores MCP), esa frase deja a la
+  // persona esperando algo que no va a pasar. Se dice lo que es. Lo que NO
+  // cambia en ninguno de los dos casos: sin confirmación no se afirma que
+  // anda.
+  if (row.canPropose && !row.runtimeConfirmed) {
+    return row.runtimeReportsInjection ? t('coordination.support.unconfirmed') : t('coordination.support.notReported');
+  }
   if (row.canPropose) return t('coordination.support.available');
   // `reason` is one of the six ceiling/floor causes -- name it honestly. A
   // member that cannot propose with NO reason attached (task 8.1) means the
@@ -323,7 +331,12 @@ function describeMemorySupport(row: CoordinationMemberSupport): string {
   // Mismo criterio que la línea de coordinación: la confirmación del runtime
   // es UNA sola y viene del mismo reporte, así que una memoria reclamada y no
   // confirmada tampoco se puede anunciar como disponible.
-  if (row.memoryInjected && !row.runtimeConfirmed) return t('coordination.memory.unconfirmed');
+  // Misma distinción que arriba: "sin confirmar" (todavía) contra "este
+  // runtime no informa la conexión" (nunca). Ninguna de las dos afirma que la
+  // memoria esté andando.
+  if (row.memoryInjected && !row.runtimeConfirmed) {
+    return row.runtimeReportsInjection ? t('coordination.memory.unconfirmed') : t('coordination.memory.notReported');
+  }
   if (row.memoryInjected) return t('coordination.memory.available');
   if (row.reason === 'engram_not_installed') return t('coordination.degraded.engramMissing');
   return t('coordination.memory.unavailable');

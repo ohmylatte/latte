@@ -134,6 +134,9 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
   // eligibility rules from here — that stays hub wiring's job (6f/6.29+);
   // this field only says the adapter CAN translate whatever it is given.
   readonly mcpInjection = 'per-member' as const;
+  // El `system/init` del propio CLI lista los servidores que CONECTO, con su
+  // `status`; `deps.onMcpServers` lo trae apenas el proceso habla.
+  readonly confirmsMcpInjection = true;
   private readonly chats = new Map<string, LiveChat>();
   /**
    * Los chatIds que estan ARRANCANDO ahora mismo (juicio #7, ronda 4). El

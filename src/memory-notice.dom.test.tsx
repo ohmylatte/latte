@@ -14,7 +14,7 @@ import type { CoordinationMemberSupport } from '../shared/contracts';
  */
 
 const row = (patch: Partial<CoordinationMemberSupport> = {}): CoordinationMemberSupport => ({
-  memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true, ...patch,
+  memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true, runtimeReportsInjection: true, ...patch,
 });
 
 const mount = (support: readonly CoordinationMemberSupport[], patch: Record<string, unknown> = {}) => {

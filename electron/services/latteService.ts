@@ -1727,12 +1727,20 @@ export class LatteService implements BackendApi {
     const work = this.deps.repo.getWork(id);
     const members = this.deps.hub.listTeam(id);
     if (!this.deps.injection) {
-      return members.map((m) => ({ memberId: m.id, canPropose: false, memoryInjected: false, reason: null, runtimeConfirmed: false }));
+      return members.map((m) => ({
+        memberId: m.id, canPropose: false, memoryInjected: false, reason: null, runtimeConfirmed: false,
+        runtimeReportsInjection: this.deps.hub.confirmsMcpInjection(m.runtime),
+      }));
     }
     const out: CoordinationMemberSupport[] = [];
     for (const m of members) {
       const status = await this.deps.injection.preview({ memberId: m.id, workId: id, brandId: work.brandId, runtime: m.runtime, accountId: m.accountId });
-      out.push({ memberId: m.id, canPropose: status.canPropose, memoryInjected: status.memoryInjected, reason: status.reason, runtimeConfirmed: status.runtimeConfirmed });
+      out.push({
+        memberId: m.id, canPropose: status.canPropose, memoryInjected: status.memoryInjected, reason: status.reason,
+        runtimeConfirmed: status.runtimeConfirmed,
+        // La capacidad la declara el adaptador, no una lista paralela acá.
+        runtimeReportsInjection: this.deps.hub.confirmsMcpInjection(m.runtime),
+      });
     }
     return out;
   }
