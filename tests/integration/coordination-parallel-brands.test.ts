@@ -150,6 +150,13 @@ describe('coordination parallel brands: two Brands, two Works, two active runs, 
     expect(listB.ok).toBe(true);
     const idsA = (listA.data as Array<{ id: string; workId: string }>).map((m) => m.id);
     const idsB = (listB.data as Array<{ id: string; workId: string }>).map((m) => m.id);
+    // EL LARGO PRIMERO. `.every()` sobre una lista vacía es `true` y
+    // `.some()` es `false`: con las dos listas vacías las tres aserciones de
+    // abajo pasaban juntas, y el test que prueba que la marca A no ve a la B
+    // pasaba sin haber visto NADA. Cada despacho de arriba abrió un miembro,
+    // así que cada lista tiene que traer al menos uno.
+    expect(idsA.length).toBeGreaterThan(0);
+    expect(idsB.length).toBeGreaterThan(0);
     expect((listA.data as Array<{ workId: string }>).every((m) => m.workId === workA)).toBe(true);
     expect((listB.data as Array<{ workId: string }>).every((m) => m.workId === workB)).toBe(true);
     expect(idsA.some((id) => idsB.includes(id))).toBe(false);

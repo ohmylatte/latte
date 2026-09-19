@@ -381,7 +381,14 @@ describe('CoordinationMcpServer', () => {
 
     it('the handler instance declares no mutable per-run field: only `server`/`port`/rate-limit bookkeeping', () => {
       const source = fs.readFileSync(path.resolve(__dirname, '../../electron/coordination/mcpServer.ts'), 'utf8');
-      const classBody = source.slice(source.indexOf('class CoordinationMcpServer'));
+      // El ancla, ANTES de cortar: un `indexOf` que no encuentra devuelve -1 y
+      // `slice(-1)` deja UN carácter — el último del archivo —, contra el que
+      // la aserción negada de abajo pasa por vacío. Medido: con la clase
+      // renombrada y un `private currentRunId` adentro, este test seguía verde.
+      const classStart = source.indexOf('class CoordinationMcpServer');
+      expect(classStart).toBeGreaterThan(-1);
+      const classBody = source.slice(classStart);
+      expect(classBody.split(/\r?\n/).length).toBeGreaterThan(50);
       // No field caches a workId/runId/grant/session across requests.
       expect(classBody).not.toMatch(/private\s+(current|active|last|session)(Work|Run|Grant|Protocol)/i);
     });

@@ -155,7 +155,12 @@ describe('explicit browser preview', () => {
     expect(await api.getOnboardingDraft()).toBeNull();
   });
   it('does not pretend to run an agent or memory server', async () => {
-    expect((await api.runtimeStatus()).every(r => !r.available)).toBe(true);
+    // El largo primero: `.every()` sobre una lista vacía es `true`, así que
+    // una `runtimeStatus()` que no devolviera NINGÚN runtime pasaba este test
+    // diciendo que ninguno está disponible. Son los tres de siempre.
+    const runtimes = await api.runtimeStatus();
+    expect(runtimes.map(r => r.provider).sort()).toEqual(['claude', 'codex', 'opencode']);
+    expect(runtimes.every(r => !r.available)).toBe(true);
     await expect(api.startAgent('demo-work', 'claude')).rejects.toThrow('escritorio');
     expect((await api.readMemory('demo')).available).toBe(false);
     // No disk in a browser tab: no deliverables to list, and no file to open.

@@ -40,6 +40,10 @@ describe('workspace views', () => {
 
   it('renders a branch for each of them inside <main>', () => {
     expect(main, '<main> not found in App.tsx').not.toBe('');
+    // El largo primero: si el `matchAll` de `VIEWS` dejara de matchear, este
+    // `for … of` no correría una sola aserción y el guard de ramas de render
+    // pasaría en verde sin haber mirado ninguna vista.
+    expect(listed.length).toBeGreaterThan(0);
     for (const view of listed) {
       expect(main, `${view} has no render branch`).toMatch(new RegExp(`view === '${view}'[^\\n]*&&\\s*<`));
     }

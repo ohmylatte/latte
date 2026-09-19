@@ -97,6 +97,10 @@ describe('coordination run: plan_submit -> dispatch -> report -> done (manual au
     // Both tasks done; nothing left pending. Zero real spawns: the fake
     // runner/pty from `makeBackend()` were never touched by any of this.
     const tasks = b.repo.listCoordinationTasks(run.id);
+    // El largo primero, igual que el test de abajo: `.every()` sobre una lista
+    // vacía es `true`, y "todas las tareas terminaron" sobre cero tareas no
+    // afirma nada.
+    expect(tasks).toHaveLength(2);
     expect(tasks.every((t) => t.status === 'done')).toBe(true);
     expect(await b.service.listCoordinationGates(run.id)).toEqual([]);
   });
