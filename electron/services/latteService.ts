@@ -1659,12 +1659,20 @@ export class LatteService implements BackendApi {
         else tasksPending += 1;
       }
     } catch { /* una bitácora ilegible no puede romper la vista del run */ }
+    // Q10: por el MISMO parser discriminado que usan la tira global, el getter
+    // del presupuesto del Trabajo y el camino de despacho. Acá había un
+    // `JSON.parse` a pelo, y con él una fila rota tiraba desde el fondo de
+    // `getCoordinationRun` y de `cancelCoordinationRun`: la persona se quedaba
+    // sin ver el run Y sin la única salida que le queda, que es cancelarlo.
+    // Ilegible no es "sin tope": se dice que está roto.
+    const budgetRead = readStoredCoordinationBudget(run.budgetJson);
     return {
       id: run.id,
       workId: run.workId,
       status: run.status,
       coordinatorMemberId: run.coordinatorMemberId,
-      budget: JSON.parse(run.budgetJson) as CoordinationBudget,
+      budget: budgetRead.kind === 'set' ? budgetRead.budget : null,
+      budgetInvalid: budgetRead.kind === 'invalid',
       planApproved: run.planApprovedAt != null,
       suspendReason: run.suspendReason,
       createdAt: run.createdAt,

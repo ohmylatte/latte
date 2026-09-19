@@ -45,7 +45,7 @@ const { TeamPanel } = await import('./TeamPanel');
 
 const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => ({
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'm1',
-  budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, planApproved: true, suspendReason: null, active: true,
+  budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true, suspendReason: null, active: true,
   createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', lastEventAt: '2026-09-01T00:00:00.000Z', tasksDone: 0, tasksFailed: 0, tasksPending: 0, ...patch,
 });
 

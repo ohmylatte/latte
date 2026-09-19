@@ -700,7 +700,16 @@ export interface CoordinationRunView {
   workId: string;
   status: CoordinationRunStatus;
   coordinatorMemberId: string | null;
-  budget: CoordinationBudget;
+  /**
+   * Q10: `null` cuando los bytes de `budget_json` no se pueden leer, nunca un
+   * presupuesto inventado. Acá se hacía un `JSON.parse` a pelo mientras todos
+   * sus vecinos —la tira global, el getter del Trabajo, el camino de despacho—
+   * ya toleraban una fila rota: una sola fila ilegible tumbaba `getCoordinationRun`
+   * y con él la única salida que la persona tenía, que es cancelar ese run.
+   */
+  budget: CoordinationBudget | null;
+  /** Q10: los bytes están rotos, que NO es lo mismo que "sin tope". Igual que en la tira global. */
+  budgetInvalid: boolean;
   planApproved: boolean;
   suspendReason: string | null;
   createdAt: string;
