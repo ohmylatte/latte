@@ -416,6 +416,11 @@ export class CoordinationEngine {
     // una suspensión que ya no existe.
     this.refreshAsks(runId, this.deps.clock());
     const run = this.deps.repo.getCoordinationRun(runId);
+    // R4: el barrido puede haber CERRADO el run (una pregunta vencida era lo
+    // último que lo retenía). El chequeo de arriba se hizo sobre la foto
+    // anterior, así que se repite sobre la de ahora: un run terminado no tiene
+    // ninguna decisión pendiente.
+    if (run.status === 'done' || run.status === 'cancelled') return [];
     const gates: CoordinationGate[] = [];
     // The proposal gate (task 6.9): a 'planning' run holds an unapproved
     // `latte_request_coordination` proposal. Unlike the 'plan' gate below,
@@ -837,17 +842,25 @@ export class CoordinationEngine {
     this.assertRunMutable(this.deps.repo.getCoordinationRun(pending.runId));
     const now = this.deps.clock();
     const answered = this.deps.repo.answerCoordinationAsk(askId, answer, now);
-    // Answering may un-suspend a run that self-suspended on "all blocked on asks".
-    const run = this.deps.repo.getCoordinationRun(answered.runId);
-    if (run.status === 'suspended' && run.suspendReason === 'all_blocked_on_ask') {
-      this.deps.repo.updateCoordinationRunStatus(run.id, 'running', now, null);
-    }
     // D1: la tarea que esperaba esta respuesta vuelve a la cola. `blocked` es
     // exactamente esto y nada más — "bloqueada por una pregunta" — así que
     // contestarla es su única salida, y tiene que existir de punta a punta.
+    // Va PRIMERO: la suspensión se decide sobre el estado de después, no el de
+    // antes.
     if (answered.taskId) {
       const task = this.deps.repo.getCoordinationTask(answered.taskId);
       if (task.status === 'blocked') this.deps.repo.updateCoordinationTask(task.id, { status: 'ready', assignedMemberId: null }, now);
+    }
+    // R4: la suspensión se levanta cuando su MOTIVO deja de ser cierto, con el
+    // MISMO cálculo que la decidió (`allBlockedOnAsks`), no por el mero hecho
+    // de que alguien contestara algo. Con tres preguntas abiertas, contestar la
+    // que no traba ninguna tarea devolvía el run a `running` con todas sus
+    // tareas todavía `blocked`: un equipo que dice estar trabajando y no tiene
+    // una sola tarea que pueda despachar. Dos fórmulas distintas para entrar y
+    // salir del mismo estado es exactamente cómo un run queda atrapado en él.
+    const run = this.deps.repo.getCoordinationRun(answered.runId);
+    if (run.status === 'suspended' && run.suspendReason === 'all_blocked_on_ask' && !this.allBlockedOnAsks(run.id, now)) {
+      this.deps.repo.updateCoordinationRunStatus(run.id, 'running', now, null);
     }
     // Y con la pregunta cerrada, el cierre se re-evalúa: puede haber sido lo
     // único que quedaba en pie (D2).
@@ -1716,14 +1729,17 @@ export class CoordinationEngine {
    * hubiera tareas `ready` para despachar. Se cierra sin respuesta: nadie
    * contestó, y eso es exactamente lo que queda escrito.
    */
-  private expireOverdueAsks(runId: string, now: string): void {
+  private expireOverdueAsks(runId: string, now: string): number {
+    let expired = 0;
     for (const ask of this.deps.repo.listOpenCoordinationAsks(runId)) {
       if (ask.deadlineAt > now) continue;
       this.deps.repo.expireCoordinationAsk(ask.id, now);
+      expired += 1;
       if (!ask.taskId) continue;
       const task = this.deps.repo.getCoordinationTask(ask.taskId);
       if (task.status === 'blocked') this.deps.repo.updateCoordinationTask(task.id, { status: 'ready', assignedMemberId: null }, now);
     }
+    return expired;
   }
 
   /**
@@ -1740,16 +1756,29 @@ export class CoordinationEngine {
    * momentos en los que alguien vuelve a mirar ese run.
    *
    * Es idempotente y barato: sin preguntas abiertas no escribe una sola fila.
+   *
+   * R4: devuelve CUÁNTAS cerró, y si cerró alguna vuelve a preguntarse si el
+   * run terminó. Vencer una pregunta es un cambio de estado como cualquier
+   * otro: un run con todas sus tareas terminales y una única pregunta abierta
+   * se queda `running` justamente PORQUE esa pregunta lo retiene, así que el
+   * momento en que deja de retenerlo es exactamente el momento en que hay que
+   * volver a mirar. Sin esto, el run seguía `running` hasta el próximo
+   * arranque de la app — ocupando un cupo app-wide, con todo su trabajo hecho.
    */
-  private refreshAsks(runId: string, now: string): void {
-    this.expireOverdueAsks(runId, now);
+  private refreshAsks(runId: string, now: string): number {
+    const expired = this.expireOverdueAsks(runId, now);
     const run = this.deps.repo.getCoordinationRun(runId);
-    if (run.status !== 'suspended' || run.suspendReason !== 'all_blocked_on_ask') return;
     // La suspensión se levanta cuando su MOTIVO deja de ser cierto, no sólo
     // cuando no queda ninguna pregunta: con una pregunta vigente sobre una
     // tarea y otra tarea `ready` para despachar, "todo bloqueado" ya es falso.
-    if (this.allBlockedOnAsks(runId, now)) return;
-    this.deps.repo.updateCoordinationRunStatus(runId, 'running', now, null);
+    if (run.status === 'suspended' && run.suspendReason === 'all_blocked_on_ask' && !this.allBlockedOnAsks(runId, now)) {
+      this.deps.repo.updateCoordinationRunStatus(runId, 'running', now, null);
+    }
+    // Y el cierre. La recursión termina en un paso: `finishRunIfComplete`
+    // vuelve a entrar acá, pero ya no queda nada vencido que cerrar, así que
+    // `expired` es cero y no reentra.
+    if (expired > 0) this.finishRunIfComplete(runId, now);
+    return expired;
   }
 
   /**
