@@ -1,4 +1,4 @@
-import { currentLocale, translate as t } from './i18n';
+import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -54,7 +54,36 @@ const AGENT_MIN = 320, SIDEBAR = 232, WORKSPACE_MIN = 360;
 const maxAgentWidth = () => Math.max(AGENT_MIN, window.innerWidth - SIDEBAR - WORKSPACE_MIN);
 const clampAgentWidth = (value: number) => Math.min(maxAgentWidth(), Math.max(AGENT_MIN, Math.round(value)));
 const readAgentWidth = () => { try { const raw = localStorage.getItem(AGENT_WIDTH_KEY); const n = raw ? Number(raw) : NaN; return Number.isFinite(n) ? clampAgentWidth(n) : 355; } catch { return 355; } };
-const displayError = (e: unknown) => e instanceof Error ? e.message : String(e);
+/**
+ * Q8: LOS ERRORES DE COORDINACIÓN HABLAN EL IDIOMA DE LA PERSONA.
+ *
+ * `displayError` era `e.message`, y los mensajes del motor están escritos para
+ * quien lee el código: `ASK_CLOSED` llega en castellano desde `repository.ts` y
+ * `RUN_NOT_RUNNING` en inglés desde `engine.ts`, en la misma pantalla y a veces
+ * en la misma sesión. El código SÍ cruza la frontera IPC (`preload.cjs` lo
+ * copia sobre el `Error`), así que traducir es mirar el código, que es lo que
+ * la app ya hace con `permission.error` y `continue.sendFailed`.
+ *
+ * Sólo los que la persona puede ver de verdad. Un código sin entrada acá cae al
+ * `message` del motor: inventarle una frase genérica a un error desconocido
+ * sería tapar información que alguien va a necesitar.
+ */
+const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
+  ASK_CLOSED: 'error.coordination.askClosed',
+  RUN_NOT_RUNNING: 'error.coordination.runNotRunning',
+  RUN_NOT_ACTIVE: 'error.coordination.runNotActive',
+  MEMBER_BUSY: 'error.coordination.memberBusy',
+  ROLE_NOT_APPROVED: 'error.coordination.roleNotApproved',
+  COORDINATION_BUDGET_INVALID: 'error.coordination.budgetInvalid',
+  PLAN_HAS_UNAPPROVED_ROLES: 'error.coordination.planHasUnapprovedRoles',
+  INVALID_ARGUMENT: 'error.coordination.invalidArgument',
+};
+const displayError = (e: unknown) => {
+  const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
+  const key = COORDINATION_ERROR_KEYS[code];
+  if (key) return t(key);
+  return e instanceof Error ? e.message : String(e);
+};
 
 /**
  * The window is frameless, so Latte draws its own controls. The title bar area

@@ -484,6 +484,17 @@ const es = {
   'decision.permissions.handoffs': 'Solicitudes de permiso',
   'decision.permissions.handoffs.empty': 'Sin solicitudes de permiso',
   // --- Coordinación autónoma: resumen de solo lectura (autonomous-coordination, Phase 2) --
+  // Q8: los errores del motor que la persona puede ver, en castellano. Antes
+  // llegaban crudos: `ASK_CLOSED` en castellano desde la base y
+  // `RUN_NOT_RUNNING` en inglés desde el motor, en la misma pantalla.
+  'error.coordination.askClosed': 'Esa pregunta ya está cerrada: o alguien la contestó, o se le pasó el plazo.',
+  'error.coordination.runNotRunning': 'Ese equipo no está en curso, así que no hay nada que pausar.',
+  'error.coordination.runNotActive': 'Ese equipo ya terminó o se canceló: no acepta trabajo nuevo.',
+  'error.coordination.memberBusy': 'Ese rol está ocupado ahora mismo. Probá de nuevo cuando termine lo que está haciendo.',
+  'error.coordination.roleNotApproved': 'Ese rol no está en el equipo que aprobaste: necesita su propia aprobación.',
+  'error.coordination.budgetInvalid': 'El presupuesto de este trabajo no se pudo leer: escribilo de nuevo antes de seguir.',
+  'error.coordination.planHasUnapprovedRoles': 'El plan todavía tiene tareas para roles que nadie va a poder hacer. Sacá esas tareas, o aprobá su contratación.',
+  'error.coordination.invalidArgument': 'Lo que se mandó no es válido. Revisalo y probá de nuevo.',
   'coordination.settings.kicker': 'COORDINACIÓN AUTÓNOMA',
   'coordination.authority.manual': 'Manual: cada despacho pide tu aprobación',
   'coordination.authority.plan': 'Por plan: aprobás el plan una vez y después despacha solo',
@@ -1124,6 +1135,14 @@ const en: Record<MessageKey, string> = {
   'decision.permissions.handoffs': 'Permission requests',
   'decision.permissions.handoffs.empty': 'No permission requests',
   // --- Autonomous coordination: read-only summary (autonomous-coordination, Phase 2) --
+  'error.coordination.askClosed': 'That question is already closed: either someone answered it, or its deadline passed.',
+  'error.coordination.runNotRunning': 'That team is not running, so there is nothing to pause.',
+  'error.coordination.runNotActive': 'That team already finished or was cancelled: it takes no new work.',
+  'error.coordination.memberBusy': 'That role is busy right now. Try again once it finishes what it is doing.',
+  'error.coordination.roleNotApproved': 'That role is not part of the team you approved: it needs its own approval.',
+  'error.coordination.budgetInvalid': "This project's budget could not be read: write it again before going on.",
+  'error.coordination.planHasUnapprovedRoles': 'The plan still has tasks for roles nobody can do. Remove those tasks, or approve their hire.',
+  'error.coordination.invalidArgument': 'What was sent is not valid. Check it and try again.',
   'coordination.settings.kicker': 'AUTONOMOUS COORDINATION',
   'coordination.authority.manual': 'Manual: every dispatch asks for your approval',
   'coordination.authority.plan': 'By plan: approve the plan once, then it dispatches on its own',
