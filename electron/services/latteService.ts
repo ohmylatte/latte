@@ -1749,8 +1749,26 @@ export class LatteService implements BackendApi {
         maxDispatches,
         pendingGates,
         budgetInvalid,
+        updatedAt: run.updatedAt,
+        lastSeenAt: this.deps.repo.getMeta('coordination_last_seen:' + run.workId),
       };
     });
+  }
+
+  /**
+   * Deja constancia de que la persona está mirando la coordinación de ESTE
+   * Trabajo ahora mismo. Es el dato que faltaba: "Desde tu última visita" no
+   * medía ninguna visita — no había timestamp persistido en ningún lado, así
+   * que la tarjeta mostraba el estado ACTUAL bajo un título que habla del
+   * pasado. Meta key namespaced, como `decisionAuthority`: sin subir de
+   * versión de esquema.
+   */
+  async markCoordinationSeen(workId: string): Promise<string> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id); // un Trabajo que no existe no tiene visitas
+    const at = this.clock();
+    this.deps.repo.setMeta('coordination_last_seen:' + id, at);
+    return at;
   }
 
   /**

@@ -904,6 +904,16 @@ export interface CoordinationActiveRunSummary {
    * significa que no se pudo leer, y por eso existe este campo.
    */
   budgetInvalid: boolean;
+  /** When this run last changed — the instant "since your last visit" is measured against. */
+  updatedAt: string;
+  /**
+   * When the person last opened this Work's coordination panel
+   * (`markCoordinationSeen`), or `null` if never. Inicio's "since your last
+   * visit" card used to measure NO visit at all: it rendered the CURRENT state
+   * under a title that speaks about the past. With `null`, the card must say
+   * what it is really reporting from, never invent a visit.
+   */
+  lastSeenAt: string | null;
 }
 
 /**
@@ -1256,6 +1266,14 @@ export interface LatteAPI {
   getCoordinationGlobalBudget(): Promise<CoordinationGlobalBudgetView>;
   /** `null` clears the cap (back to unset, no extra cap) -- a cap you cannot take off is a trap, not a setting. Any other value goes through the same validator every coordination budget does. */
   setCoordinationGlobalBudget(budget: CoordinationBudget | null): Promise<CoordinationBudget | null>;
+  /**
+   * Records that the person is looking at this Work's coordination panel right
+   * now, and answers with the ISO instant stored. That instant is what
+   * "since your last visit" is measured against — before this existed, that
+   * card measured no visit at all. Calling it again overwrites the previous
+   * visit: the last visit is the last one.
+   */
+  markCoordinationSeen(workId: string): Promise<string>;
   /** Fires on a run/task/dispatch/gate change, so the renderer can route an event from a Brand the person is not currently looking at (task 6.37). */
   onCoordinationEvent(callback: (event: CoordinationEvent) => void): () => void;
 }

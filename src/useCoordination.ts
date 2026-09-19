@@ -39,6 +39,13 @@ export interface CoordinationState {
   /** La vuelta de la pausa: sin esto, "Pausar equipo" era una trampa de ida. */
   resumeRun: (runId: string) => void;
   cancelRun: (runId: string) => void;
+  /**
+   * Deja constancia de que la persona está mirando la coordinación de ESTE
+   * Trabajo ahora. Es lo que "Desde tu última visita" mide: antes no había
+   * ninguna visita registrada en ningún lado, y la tarjeta mostraba el estado
+   * actual bajo un título que habla del pasado.
+   */
+  markSeen: () => void;
 }
 
 /**
@@ -179,5 +186,6 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     pauseRun: (runId) => mutate(`run:${runId}`, api.pauseCoordinationRun(runId)),
     resumeRun: (runId) => mutate(`run:${runId}`, api.resumeCoordinationRun(runId)),
     cancelRun: (runId) => mutate(`run:${runId}`, api.cancelCoordinationRun(runId)),
+    markSeen: () => { if (workId) mutate(`seen:${workId}`, api.markCoordinationSeen(workId)); },
   };
 }

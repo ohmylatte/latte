@@ -220,18 +220,18 @@ describe('the since-last-visit card (additive, autonomous-coordination Phase 7)'
     const summary = homeSummary(input({
       works: [{ id: 'w1', title: 'Lanzamiento', updatedAt: '' }],
       coordinationSinceLastVisit: [
-        { id: 'e1', workId: 'w1', kind: 'done' },
-        { id: 'e2', workId: 'w1', kind: 'awaitingYou' },
+        { id: 'e1', workId: 'w1', kind: 'done', sinceVisit: true },
+        { id: 'e2', workId: 'w1', kind: 'awaitingYou', sinceVisit: true },
       ],
     }));
     expect(summary.sinceLastVisitRows).toEqual([
-      { id: 'e1', workId: 'w1', workTitle: 'Lanzamiento', kind: 'done' },
-      { id: 'e2', workId: 'w1', workTitle: 'Lanzamiento', kind: 'awaitingYou' },
+      { id: 'e1', workId: 'w1', workTitle: 'Lanzamiento', kind: 'done', sinceVisit: true },
+      { id: 'e2', workId: 'w1', workTitle: 'Lanzamiento', kind: 'awaitingYou', sinceVisit: true },
     ]);
   });
 
   it('leaves the work title empty instead of inventing one for an unknown work', () => {
-    const summary = homeSummary(input({ coordinationSinceLastVisit: [{ id: 'e1', workId: 'nope', kind: 'failed' }] }));
+    const summary = homeSummary(input({ coordinationSinceLastVisit: [{ id: 'e1', workId: 'nope', kind: 'failed', sinceVisit: true }] }));
     expect(summary.sinceLastVisitRows[0].workTitle).toBe('');
   });
 });
@@ -249,7 +249,8 @@ describe('the since-last-visit card (additive, autonomous-coordination Phase 7)'
 describe('sinceLastVisitFromActiveRuns: honest, no extra IPC call', () => {
   const run = (patch: Partial<CoordinationActiveRunSummary> = {}): CoordinationActiveRunSummary => ({
     runId: 'run1', workId: 'w1', workTitle: 'Lanzamiento', brandId: 'b1', brandName: 'Casa Oliva',
-    status: 'running', dispatchesUsed: 3, maxDispatches: 10, pendingGates: 0, budgetInvalid: false, ...patch,
+    status: 'running', dispatchesUsed: 3, maxDispatches: 10, pendingGates: 0, budgetInvalid: false,
+    updatedAt: '2026-09-02T00:00:00.000Z', lastSeenAt: null, ...patch,
   });
 
   it('reports nothing for a brand with no active runs', () => {
@@ -262,12 +263,12 @@ describe('sinceLastVisitFromActiveRuns: honest, no extra IPC call', () => {
 
   it('reports awaitingYou when the run has pending gates', () => {
     const rows = sinceLastVisitFromActiveRuns([run({ pendingGates: 2 })], 'b1');
-    expect(rows).toEqual([{ id: 'run1:gates', workId: 'w1', kind: 'awaitingYou' }]);
+    expect(rows).toEqual([{ id: 'run1:gates', workId: 'w1', kind: 'awaitingYou', sinceVisit: false }]);
   });
 
   it('reports budgetConsumed once dispatchesUsed reaches the cap', () => {
     const rows = sinceLastVisitFromActiveRuns([run({ dispatchesUsed: 10, maxDispatches: 10 })], 'b1');
-    expect(rows).toEqual([{ id: 'run1:budget', workId: 'w1', kind: 'budgetConsumed' }]);
+    expect(rows).toEqual([{ id: 'run1:budget', workId: 'w1', kind: 'budgetConsumed', sinceVisit: false }]);
   });
 
   it('never reports budgetConsumed for an explicitly unlimited run, no matter how many dispatches ran', () => {
@@ -278,5 +279,37 @@ describe('sinceLastVisitFromActiveRuns: honest, no extra IPC call', () => {
   it('can report both kinds for the same run at once', () => {
     const rows = sinceLastVisitFromActiveRuns([run({ pendingGates: 1, dispatchesUsed: 5, maxDispatches: 5 })], 'b1');
     expect(rows.map((r) => r.kind).sort()).toEqual(['awaitingYou', 'budgetConsumed']);
+  });
+
+  // La tarjeta se llamaba "Desde tu última visita" sin medir ninguna visita:
+  // no había timestamp persistido en ningún lado, así que mostraba el estado
+  // ACTUAL con un título que hablaba del pasado. Ahora hay
+  // `coordination_last_seen:<workId>`, y el run que no cambió desde esa visita
+  // no es novedad.
+  it('un run que NO cambió desde la última visita no es novedad', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({
+      pendingGates: 2, updatedAt: '2026-09-01T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
+    })], 'b1');
+    expect(rows).toEqual([]);
+  });
+
+  it('un run que cambió DESPUÉS de la última visita sí lo es, y se declara medido contra una visita real', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({
+      pendingGates: 2, updatedAt: '2026-09-03T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
+    })], 'b1');
+    expect(rows).toEqual([{ id: 'run1:gates', workId: 'w1', kind: 'awaitingYou', sinceVisit: true }]);
+  });
+
+  it('sin ninguna visita registrada la fila se muestra, pero NO se afirma que sea desde una visita', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({ pendingGates: 1, lastSeenAt: null })], 'b1');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sinceVisit).toBe(false);
+  });
+
+  it('el instante exacto de la visita no es novedad: se pide cambio ESTRICTAMENTE posterior', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({
+      pendingGates: 1, updatedAt: '2026-09-02T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
+    })], 'b1');
+    expect(rows).toEqual([]);
   });
 });

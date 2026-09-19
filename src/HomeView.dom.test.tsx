@@ -197,8 +197,8 @@ describe('the since-last-visit card (additive, autonomous-coordination Phase 7)'
     const input = props({
       works: [work({ id: 'w1', title: 'Lanzamiento' })],
       coordinationSinceLastVisit: [
-        { id: 'e1', workId: 'w1', kind: 'done' },
-        { id: 'e2', workId: 'w1', kind: 'awaitingYou' },
+        { id: 'e1', workId: 'w1', kind: 'done', sinceVisit: true },
+        { id: 'e2', workId: 'w1', kind: 'awaitingYou', sinceVisit: true },
       ],
     });
     const { container } = mount(input);
@@ -213,11 +213,55 @@ describe('the since-last-visit card (additive, autonomous-coordination Phase 7)'
     expect(input.onOpenDecisions).toHaveBeenCalledWith('w1');
   });
 
+  // La tarjeta prometía "desde tu última visita" sin ninguna visita medida.
+  // Con una visita registrada el título se sostiene; sin ella, el copy tiene
+  // que decir desde CUÁNDO habla de verdad.
+  it('con una visita registrada, el título habla de la visita', () => {
+    const { container } = mount(props({
+      works: [work({ id: 'w1', title: 'Lanzamiento' })],
+      coordinationSinceLastVisit: [{ id: 'e1', workId: 'w1', kind: 'awaitingYou', sinceVisit: true }],
+    }));
+    expect(container.querySelector('.home-since')!.textContent).toContain('Desde tu última visita');
+  });
+
+  it('SIN ninguna visita registrada, el título no inventa una visita', () => {
+    const { container } = mount(props({
+      works: [work({ id: 'w1', title: 'Lanzamiento' })],
+      coordinationSinceLastVisit: [{ id: 'e1', workId: 'w1', kind: 'awaitingYou', sinceVisit: false }],
+    }));
+    const card = container.querySelector('.home-since')!;
+    expect(card.textContent).not.toContain('Desde tu última visita');
+    expect(card.textContent).toContain('Desde que empezó la coordinación');
+  });
+
+  it('una sola fila sin visita alcanza para que el título no afirme una visita', () => {
+    const { container } = mount(props({
+      works: [work({ id: 'w1', title: 'Lanzamiento' })],
+      coordinationSinceLastVisit: [
+        { id: 'e1', workId: 'w1', kind: 'awaitingYou', sinceVisit: true },
+        { id: 'e2', workId: 'w1', kind: 'budgetConsumed', sinceVisit: false },
+      ],
+    }));
+    expect(container.querySelector('.home-since')!.textContent).toContain('Desde que empezó la coordinación');
+  });
+
+  it('el título sin visita, en inglés', async () => {
+    localStorage.setItem('latte-ui-locale', 'en-US');
+    const input = props({
+      works: [work({ id: 'w1', title: 'Launch' })],
+      coordinationSinceLastVisit: [{ id: 'e1', workId: 'w1', kind: 'awaitingYou', sinceVisit: false }],
+    });
+    const { container } = render(<I18nProvider><HomeView {...input} /></I18nProvider>);
+    await waitFor(() => expect(container.textContent).toContain('Since coordination started'));
+    expect(container.textContent).not.toContain('Since your last visit');
+    localStorage.removeItem('latte-ui-locale');
+  });
+
   it('renders the same card in English, with nothing left in Spanish', async () => {
     localStorage.setItem('latte-ui-locale', 'en-US');
     const input = props({
       works: [work({ id: 'w1', title: 'Launch' })],
-      coordinationSinceLastVisit: [{ id: 'e1', workId: 'w1', kind: 'budgetConsumed' }],
+      coordinationSinceLastVisit: [{ id: 'e1', workId: 'w1', kind: 'budgetConsumed', sinceVisit: true }],
     });
     const { container } = render(<I18nProvider><HomeView {...input} /></I18nProvider>);
     await waitFor(() => expect(container.textContent).toContain('Since your last visit'));

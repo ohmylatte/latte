@@ -77,6 +77,7 @@ export function HomeView(props: HomeViewProps) {
   const showDecisions = Boolean(props.brand) && (summary.decisionRows.length > 0 || props.pendingContextProposals > 0);
   const showReview = Boolean(props.brand) && summary.reviewRows.length > 0;
   const showSinceLastVisit = Boolean(props.brand) && summary.sinceLastVisitRows.length > 0;
+  const sinceTitleKey = summary.sinceLastVisitRows.every((row) => row.sinceVisit) ? 'home.since.title' : 'home.since.titleNoVisit';
 
   return <section className="home-view" role="region" aria-label={t('home.region')}>
     <div className="home-next" data-step={summary.step}>
@@ -121,8 +122,12 @@ export function HomeView(props: HomeViewProps) {
       </button>)}</div>
     </section>}
 
-    {showSinceLastVisit && <section className="home-card home-since" aria-label={t('home.since.title')}>
-      <h2 className="home-card-title">{t('home.since.title')}</h2>
+    {/* El título se elige por la EVIDENCIA que hay: "desde tu última visita"
+        sólo se puede afirmar si TODA fila se mide contra una visita real. Una
+        sola sin visita registrada y la tarjeta dice desde cuándo habla de
+        verdad — prometer una visita que nunca se midió era la mentira. */}
+    {showSinceLastVisit && <section className="home-card home-since" aria-label={t(sinceTitleKey)}>
+      <h2 className="home-card-title">{t(sinceTitleKey)}</h2>
       <div className="home-rows">{summary.sinceLastVisitRows.map((row) => <button type="button" className="home-row" key={row.id} onClick={() => row.kind === 'awaitingYou' ? props.onOpenDecisions(row.workId) : props.onOpenWork(row.workId)}>
         <span className="home-row-title">{t(`home.since.kind.${row.kind}` as 'home.since.kind.done', { workTitle: row.workTitle })}</span>
       </button>)}</div>

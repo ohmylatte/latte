@@ -538,6 +538,7 @@ const es = {
   'memory.notice.installLink': 'Cómo instalarlo',
   // --- Inicio: desde tu última visita (autonomous-coordination, Phase 7) --
   'home.since.title': 'Desde tu última visita',
+  'home.since.titleNoVisit': 'Desde que empezó la coordinación',
   'home.since.kind.done': '{workTitle}: el equipo terminó su trabajo',
   'home.since.kind.failed': '{workTitle}: un despacho falló',
   'home.since.kind.awaitingYou': '{workTitle}: espera tu aprobación',
@@ -1127,6 +1128,7 @@ const en: Record<MessageKey, string> = {
   'memory.notice.installLink': 'How to install it',
   // --- Inicio: since your last visit (autonomous-coordination, Phase 7) --
   'home.since.title': 'Since your last visit',
+  'home.since.titleNoVisit': 'Since coordination started',
   'home.since.kind.done': '{workTitle}: the team finished its work',
   'home.since.kind.failed': '{workTitle}: a dispatch failed',
   'home.since.kind.awaitingYou': '{workTitle}: waiting on your approval',

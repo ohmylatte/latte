@@ -179,6 +179,14 @@ export function App() {
   // El canal de error de la app, no una promesa sin manejar: un
   // `BUDGET_EXCEEDED` o un `ValidationError` al resolver un gate se ve.
   const coordination = useCoordination(work?.id ?? null, (e) => setError(displayError(e)));
+  // La visita a la coordinación se marca cuando la persona ABRE el panel de
+  // coordinación de un Trabajo (Decisiones: gates, autoridad, presupuesto,
+  // coordinador) o vuelve a él. Es lo único que hace honesto el "Desde tu
+  // última visita" de Inicio: antes no se medía ninguna visita.
+  const markSeen = coordination.markSeen;
+  useEffect(() => {
+    if (view === 'decisions' && work?.id) markSeen();
+  }, [view, work?.id]);
   // The memory notice (task 7.10) is dismissed per Brand, for this session
   // only: this state is plain React state, never persisted, so it "returns
   // next launch while the condition holds" simply because a fresh launch

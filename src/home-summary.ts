@@ -115,6 +115,13 @@ export interface HomeSinceLastVisitInput {
   id: string;
   workId: string;
   kind: SinceLastVisitKind;
+  /**
+   * Si esta fila se mide contra una visita REAL (`markCoordinationSeen`) o
+   * contra el arranque de la coordinación, porque nunca se registró ninguna.
+   * El título de la tarjeta se elige con esto: prometer "desde tu última
+   * visita" sin ninguna visita medida era la mentira original.
+   */
+  sinceVisit: boolean;
 }
 
 export interface HomeSinceLastVisitRow {
@@ -123,6 +130,7 @@ export interface HomeSinceLastVisitRow {
   /** '' when the work is not in the list handed over: never an invented title. */
   workTitle: string;
   kind: SinceLastVisitKind;
+  sinceVisit: boolean;
 }
 
 export interface HomeSummary {
@@ -174,8 +182,13 @@ export function sinceLastVisitFromActiveRuns(runs: readonly CoordinationActiveRu
   const rows: HomeSinceLastVisitInput[] = [];
   for (const run of runs) {
     if (run.brandId !== brandId) continue;
-    if (run.pendingGates > 0) rows.push({ id: `${run.runId}:gates`, workId: run.workId, kind: 'awaitingYou' });
-    if (run.maxDispatches != null && run.dispatchesUsed >= run.maxDispatches) rows.push({ id: `${run.runId}:budget`, workId: run.workId, kind: 'budgetConsumed' });
+    // La visita, por fin medida. Un run que no cambió DESPUÉS de la última
+    // visita no es novedad: la persona ya lo vio. Se pide estrictamente
+    // posterior — el instante exacto de la visita es lo que se miró.
+    const sinceVisit = run.lastSeenAt != null;
+    if (sinceVisit && !(run.updatedAt > run.lastSeenAt!)) continue;
+    if (run.pendingGates > 0) rows.push({ id: `${run.runId}:gates`, workId: run.workId, kind: 'awaitingYou', sinceVisit });
+    if (run.maxDispatches != null && run.dispatchesUsed >= run.maxDispatches) rows.push({ id: `${run.runId}:budget`, workId: run.workId, kind: 'budgetConsumed', sinceVisit });
   }
   return rows;
 }
@@ -223,6 +236,7 @@ export function homeSummary(input: HomeInput): HomeSummary {
       workId: event.workId,
       workTitle: titles.get(event.workId) ?? '',
       kind: event.kind,
+      sinceVisit: event.sinceVisit,
     })),
   };
 }
