@@ -4,7 +4,7 @@ import type { ArtifactCheck, DeliveryEvidence, GenerationReceipt } from '../../s
 import { GenerationContractError } from '../generation/errors';
 import { hashGenerationContext } from '../generation/canon';
 import { newId } from '../core/ids';
-import { NotFoundError, ValidationError } from '../core/errors';
+import { LatteError, NotFoundError, ValidationError } from '../core/errors';
 import { addUsage, parseUsage, serializeUsage } from '../core/usage';
 import type { SqlDriver, SqlRow } from './driver';
 import { BrandingRepository } from './brandingRepository';
@@ -1412,9 +1412,20 @@ export class LatteRepository {
     this.db.run('UPDATE coordination_ask SET answered_at = ? WHERE id = ? AND answered_at IS NULL', [expiredAt, id]);
   }
 
+  /**
+   * R9: un COMPARE-AND-SET, no una escritura a ciegas.
+   *
+   * Sin el `AND answered_at IS NULL`, dos respuestas a la misma pregunta —dos
+   * personas, dos pestañas, dos clics— se pisaban en silencio, y una pregunta
+   * CERRADA POR VENCIMIENTO se "contestaba" igual: el vencimiento ya había
+   * devuelto la tarea a la cola, así que la persona escribía una respuesta que
+   * no iba a leer nadie y la interfaz le decía que había salido bien. Cero
+   * filas es un error con nombre, no un éxito silencioso.
+   */
   answerCoordinationAsk(id: string, answer: string, answeredAt: string): CoordinationAskRecord {
-    this.getCoordinationAsk(id);
-    this.db.run('UPDATE coordination_ask SET answer = ?, answered_at = ? WHERE id = ?', [answer, answeredAt, id]);
+    this.getCoordinationAsk(id); // que exista es un NotFound, no un ASK_CLOSED: son dos cosas distintas
+    const changed = this.db.run('UPDATE coordination_ask SET answer = ?, answered_at = ? WHERE id = ? AND answered_at IS NULL', [answer, answeredAt, id]);
+    if (changed === 0) throw new LatteError('ASK_CLOSED', 'Esa pregunta ya no esperaba respuesta: se contestó o se venció.');
     return this.getCoordinationAsk(id);
   }
 

@@ -344,7 +344,13 @@ export class CoordinationEngine {
    */
   pauseRun(runId: string): CoordinationRunRecord {
     const run = this.assertRunMutable(this.deps.repo.getCoordinationRun(runId));
-    if (run.status !== 'running') return run;
+    // R10: y lo DICE. Devolver el run tal cual era responder que sí sin hacer
+    // nada: sobre un `planning` no hay nada que pausar —la propuesta sigue
+    // esperando una decisión— y sobre uno ya suspendido tampoco, y en los dos
+    // casos quien apretó "Pausar" se quedaba creyendo que el equipo había
+    // quedado detenido. La interfaz hoy no ofrece el botón ahí, pero el motor
+    // no puede depender de eso: es público, y `resolveGate` está a un salto.
+    if (run.status !== 'running') throw new LatteError('RUN_NOT_RUNNING', `Only a running team can be paused (this one is ${run.status})`);
     const updated = this.deps.repo.updateCoordinationRunStatus(runId, 'suspended', this.deps.clock(), 'paused_by_human');
     this.touch(updated.workId, updated.id);
     return updated;
