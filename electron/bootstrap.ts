@@ -71,6 +71,8 @@ export interface BackendOptions {
   brandContext?: BrandContextPort;
   /** Tests inject a fake taskkill for the startup stray-codex-app-server sweep (sdd/autonomous-coordination, task 5.8), so no real OS process is ever touched in a test. */
   taskkillImpl?: TaskkillExecFile;
+  /** Q7: los tests inyectan su propio timer del barrido periódico de coordinación y disparan el tick a mano, en vez de esperar treinta segundos reales. */
+  sweepTimer?: (tick: () => void, everyMs: number) => () => void;
 }
 
 export interface Backend {
@@ -332,6 +334,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     openExternal: options.openExternal,
     brandContext: options.brandContext,
     emitCoordination: options.emitCoordination,
+    sweepTimer: options.sweepTimer,
   });
 
   // sdd/autonomous-coordination, tasks 6.28-6.32/6.37: the coordination MCP

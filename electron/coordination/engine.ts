@@ -414,19 +414,21 @@ export class CoordinationEngine {
     // gates de algo que ya terminó es pedirle a la persona que decida sobre un
     // equipo que no existe, y cada clic rebotaba con un error desde el fondo.
     if (terminal.status === 'done' || terminal.status === 'cancelled') return [];
-    // F5: mirar las decisiones de un run es uno de los tres momentos en que
-    // alguien vuelve a mirarlo, y un run suspendido por preguntas vencidas no
-    // tiene ningún otro camino de vuelta a `running` hasta el próximo arranque.
-    // El run se RELEE después: el barrido puede haberlo devuelto a `running`, y
-    // un gate de presupuesto derivado de la foto vieja sería una decisión sobre
-    // una suspensión que ya no existe.
-    this.refreshAsks(runId, this.deps.clock());
+    // Q7: ESTO ES UNA LECTURA Y NO ESCRIBE UNA SOLA FILA.
+    //
+    // Acá vivía un `refreshAsks(runId, clock())`, puesto por F5 con un motivo
+    // real: a un run suspendido por preguntas vencidas no lo llama nadie, y
+    // abrir Decisiones era uno de los pocos momentos en que alguien lo miraba.
+    // Pero `refreshAsks` llama a `finishRunIfComplete`, que llama a `closeRun`,
+    // que BORRA el permiso del coordinador: abrir la pantalla de decisiones
+    // podía terminar el equipo. Y la tira global publicaba el `status` de la
+    // foto que había tomado ANTES de este llamado, así que decía "en curso"
+    // sobre un run que esta misma lectura acababa de cerrar.
+    //
+    // El motivo de F5 sigue siendo cierto, y por eso ahora tiene dueño propio:
+    // `LatteService.sweepCoordination()`, un tick periódico que corre sin que
+    // nadie mire. Una lectura informa; escribir es de quien decide.
     const run = this.deps.repo.getCoordinationRun(runId);
-    // R4: el barrido puede haber CERRADO el run (una pregunta vencida era lo
-    // último que lo retenía). El chequeo de arriba se hizo sobre la foto
-    // anterior, así que se repite sobre la de ahora: un run terminado no tiene
-    // ninguna decisión pendiente.
-    if (run.status === 'done' || run.status === 'cancelled') return [];
     const gates: CoordinationGate[] = [];
     // The proposal gate (task 6.9): a 'planning' run holds an unapproved
     // `latte_request_coordination` proposal. Unlike the 'plan' gate below,
@@ -826,10 +828,10 @@ export class CoordinationEngine {
    * pregunta no tenía ninguna salida en la UI salvo cancelar.
    */
   listOpenAsks(runId: string): CoordinationAskRecord[] {
-    // F5: se vence lo vencido ANTES de publicar la lista. Sin esto la pantalla
-    // ofrecía preguntas cuyo plazo ya había pasado, y contestarlas no
-    // destrababa a nadie.
-    this.refreshAsks(runId, this.deps.clock());
+    // Q7: y ésta también es una lectura pura. Acá también vivía un
+    // `refreshAsks`, con el mismo efecto colateral: publicar la lista de
+    // preguntas podía cerrar el run. El barrido lo corre el tick del servicio
+    // (`sweepCoordination`), que es quien puede escribir sin que nadie mire.
     return this.deps.repo.listOpenCoordinationAsks(runId);
   }
 
@@ -1764,9 +1766,14 @@ export class CoordinationEngine {
    * `suspended` por `all_blocked_on_ask` no lo llama nadie: ni un reporte (no
    * hay despachos en vuelo), ni un despacho (el run no está `running`). El
    * equipo quedaba detenido hasta el próximo arranque de la app, con sus tareas
-   * listas y su plazo vencido hacía horas. Por eso corre también en las
-   * lecturas por IPC (`listGates`, `listOpenAsks`) y al reanudar: son los tres
-   * momentos en los que alguien vuelve a mirar ese run.
+   * listas y su plazo vencido hacía horas.
+   *
+   * Q7: quien lo corre sin que nadie mire es `sweepActiveRuns` —el tick
+   * periódico del servicio—, más los caminos que YA escriben (`report`,
+   * `answerAsk`, `resumeRun`, `noteTurnEnded`, el barrido de arranque). Las
+   * lecturas por IPC (`listGates`, `listOpenAsks`) lo corrían y dejaron de
+   * hacerlo: cerrar un run es una escritura, y una lectura que cierra runs le
+   * saca el permiso al coordinador por el solo hecho de abrir una pantalla.
    *
    * Es idempotente y barato: sin preguntas abiertas no escribe una sola fila.
    *
@@ -1821,6 +1828,36 @@ export class CoordinationEngine {
    * barrido puede devolver tareas a `ready`, y ésas no cierran nada).
    * Idempotente: la segunda corrida no encuentra nada que escribir.
    */
+  /**
+   * Q7: EL BARRIDO PERIÓDICO. Lo llama el tick del servicio
+   * (`LatteService.sweepCoordination`, cada 30 s) y nadie más.
+   *
+   * Existe porque las lecturas dejaron de escribir: `listGates` y
+   * `listOpenAsks` corrían `refreshAsks` —y con él `finishRunIfComplete` y
+   * `closeRun`— así que abrir Decisiones podía terminar un equipo y borrarle el
+   * permiso al coordinador. El motivo por el que ese barrido tenía que correr
+   * seguía siendo válido: un run `suspended` por `all_blocked_on_ask` no
+   * recibe ninguna otra llamada. La diferencia es que ahora lo corre algo que
+   * escribe a propósito, en vez de algo que la persona creía que sólo miraba.
+   *
+   * Tres pasos por run activo, todos idempotentes y baratos: vencer lo vencido
+   * (que ya levanta la suspensión cuyo motivo dejó de ser cierto), volver a
+   * preguntarse si el run terminó, y re-evaluar la auto-suspensión. Un run que
+   * se cierra en el primer paso no se toca en los siguientes: los dos releen su
+   * estado y salen. Nunca tira hacia afuera: un run roto no puede impedir que
+   * los demás se barran.
+   */
+  sweepActiveRuns(): void {
+    const now = this.deps.clock();
+    for (const run of this.deps.repo.listActiveCoordinationRuns()) {
+      try {
+        this.refreshAsks(run.id, now);
+        this.finishRunIfComplete(run.id, now);
+        this.maybeSelfSuspendOnAsks(run.id, now);
+      } catch { /* una fila rota no puede dejar sin barrer a las demás */ }
+    }
+  }
+
   sweepFinishedRuns(): number {
     const now = this.deps.clock();
     let finished = 0;

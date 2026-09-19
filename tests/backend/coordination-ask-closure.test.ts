@@ -65,7 +65,14 @@ describe('R4: el cierre y la suspensión se re-evalúan cuando las preguntas cam
   });
   afterEach(() => { vi.restoreAllMocks(); b.cleanup(); });
 
-  it('todo terminado y una pregunta sin tarea que vence: la lectura por IPC cierra el run', async () => {
+  // Q7: estas dos entraban por `listCoordinationGates`/`listOpenCoordinationAsks`
+  // porque el barrido de vencimientos vivía adentro de esas LECTURAS. Vivía
+  // mal: `refreshAsks` llama a `finishRunIfComplete`, que llama a `closeRun`,
+  // que le borra el permiso al coordinador — o sea que abrir Decisiones podía
+  // terminar el equipo. El barrido ahora tiene dueño propio, el tick periódico
+  // del servicio, y es por ahí por donde estos escenarios entran. Lo que se
+  // prueba no cambió: una pregunta vencida deja de retener y el run cierra.
+  it('todo terminado y una pregunta sin tarea que vence: el tick cierra el run', async () => {
     const task = engine.taskCreate(runId, { roleId: 'role_a', spec: 'a' });
     const outcome = await engine.startDispatch({ grant: coordinator(), taskId: task.id });
     const memberId = b.repo.getCoordinationDispatch(outcome.dispatchId).memberId;
@@ -76,14 +83,14 @@ describe('R4: el cierre y la suspensión se re-evalúan cuando las preguntas cam
     expect(b.repo.listCoordinationTasks(runId).every((t) => t.status === 'done')).toBe(true);
     expect(b.repo.getCoordinationRun(runId).status).toBe('running'); // la pregunta lo retiene
 
-    // Diez minutos después, la persona abre Decisiones. El plazo ya pasó.
-    await b.service.listCoordinationGates(runId);
+    // Diez minutos después corre el tick. El plazo ya pasó.
+    b.service.sweepCoordination();
 
     expect(await b.service.listOpenCoordinationAsks(runId)).toEqual([]);
     expect(b.repo.getCoordinationRun(runId).status).toBe('done');
   });
 
-  it('lo mismo entrando por la lista de preguntas abiertas', async () => {
+  it('y abrir Decisiones NO lo cierra: leer es leer', async () => {
     const task = engine.taskCreate(runId, { roleId: 'role_a', spec: 'a' });
     const outcome = await engine.startDispatch({ grant: coordinator(), taskId: task.id });
     const memberId = b.repo.getCoordinationDispatch(outcome.dispatchId).memberId;
@@ -91,8 +98,16 @@ describe('R4: el cierre y la suspensión se re-evalúan cuando las preguntas cam
     await engine.report(worker(memberId), task.id, 'succeeded', 'listo');
     expect(b.repo.getCoordinationRun(runId).status).toBe('running');
 
+    // Las dos lecturas que antes escribían, una detrás de la otra: el run sigue
+    // vivo y el permiso del coordinador sigue en su lugar.
+    await b.service.listCoordinationGates(runId);
     await b.service.listOpenCoordinationAsks(runId);
 
+    expect(b.repo.getCoordinationRun(runId).status).toBe('running');
+    expect(b.repo.getMeta('coordination_coordinator:' + workId)).not.toBe('');
+
+    // Y el tick, que es el que sí escribe, lo cierra.
+    b.service.sweepCoordination();
     expect(b.repo.getCoordinationRun(runId).status).toBe('done');
   });
 

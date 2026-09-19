@@ -76,7 +76,11 @@ describe('F5: preguntas vencidas', () => {
     expect(b.repo.getCoordinationTask(task.id).status).toBe('blocked');
 
     advanceMinutes(5);
-    // Por la capa real: la lista que alimenta la pantalla.
+    // Q7: el vencimiento lo corre el TICK, no la lectura. Vivía adentro de
+    // `listOpenAsks`/`listGates`, y eso convertía abrir Decisiones en algo que
+    // podía cerrar el run y borrarle el permiso al coordinador. Se barre, y
+    // recién después se mira por la capa real: la lista que alimenta la pantalla.
+    b.service.sweepCoordination();
     const open = await b.service.listOpenCoordinationAsks(runId);
 
     expect(open).toEqual([]);
@@ -102,14 +106,20 @@ describe('F5: preguntas vencidas', () => {
     expect(b.repo.getCoordinationTask(blocked.id).status).toBe('ready');
   });
 
-  it('un run suspendido por preguntas vencidas vuelve a correr al listar los gates por IPC', () => {
+  it('un run suspendido por preguntas vencidas vuelve a correr con el tick, sin que nadie mire', async () => {
     const task = engine.taskCreate(runId, { roleId: 'role_a', spec: 'a' });
     engine.ask(worker(), '¿Seguimos?', 1, task.id);
     expect(b.repo.getCoordinationRun(runId).status).toBe('suspended');
     expect(b.repo.getCoordinationRun(runId).suspendReason).toBe('all_blocked_on_ask');
 
     advanceMinutes(5);
-    void b.service.listCoordinationGates(runId);
+    // Q7: y abrir Decisiones NO lo destraba, porque leer no escribe. Ésta era
+    // la razón por la que el barrido vivía en la lectura; la razón era buena y
+    // el lugar era malo. El dueño correcto es el tick del servicio.
+    await b.service.listCoordinationGates(runId);
+    expect(b.repo.getCoordinationRun(runId).status).toBe('suspended');
+
+    b.service.sweepCoordination();
 
     expect(b.repo.getCoordinationRun(runId).status).toBe('running');
     expect(b.repo.getCoordinationTask(task.id).status).toBe('ready');

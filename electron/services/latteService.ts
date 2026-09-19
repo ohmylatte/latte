@@ -199,6 +199,14 @@ export interface LatteServiceDeps {
   /** The running app's version, sourced from `app.getVersion()`; tests pass a fixed string. */
   version: string;
   clock?: () => string;
+  /**
+   * Q7: el timer del barrido periódico de coordinación. Devuelve su propio
+   * cancelador, que `shutdown` llama. El default es un `setInterval`
+   * desreferenciado (`unref`), que no puede retener el proceso ni un
+   * milisegundo más de lo que la app vive; un test pasa el suyo y dispara el
+   * tick cuando quiere, sin esperar treinta segundos reales.
+   */
+  sweepTimer?: (tick: () => void, everyMs: number) => () => void;
   /** Brand-kit worktree owns the real adapter; default is a no-op (neutral, no kit). */
   brandContext?: BrandContextPort;
   /** Learned-skills worktree owns the real adapter; default returns no learned refs. */
@@ -222,6 +230,22 @@ function fsExistsSafe(target: string): boolean {
 }
 function fsCopySafe(source: string, target: string): void {
   nodeFs.copyFileSync(source, target, nodeFs.constants.COPYFILE_EXCL);
+}
+
+/**
+ * Q7: cada treinta segundos. Es un barrido idempotente y barato —sin preguntas
+ * abiertas no escribe una sola fila—, así que el número lo fija la otra punta:
+ * cuánto puede tardar la persona en enterarse de que su equipo terminó o de que
+ * una pregunta venció. Medio minuto es tan seguido como para que no se note y
+ * tan espaciado como para no ser trabajo de fondo.
+ */
+const COORDINATION_SWEEP_INTERVAL_MS = 30_000;
+
+/** El timer de verdad: desreferenciado, para que un barrido pendiente nunca sea el motivo por el que el proceso no cierra. */
+function defaultSweepTimer(tick: () => void, everyMs: number): () => void {
+  const handle = setInterval(tick, everyMs);
+  handle.unref?.();
+  return () => clearInterval(handle);
 }
 
 const FOLDER_TRUST_KEY = 'trust-folder:';
@@ -276,6 +300,8 @@ export class LatteService implements BackendApi {
   private readonly brandContextPort: BrandContextPort;
   private readonly skillResolverPort: SkillResolverPort;
   private readonly coordination: CoordinationEngine;
+  /** Q7: el cancelador del tick periódico; lo llama `shutdown`, una sola vez. */
+  private readonly stopSweepTimer: () => void;
 
   constructor(private readonly deps: LatteServiceDeps) {
     this.clock = deps.clock ?? nowIso;
@@ -303,6 +329,29 @@ export class LatteService implements BackendApi {
     });
     this.brandContextPort = deps.brandContext ?? brandContextAdapter(this.branding);
     this.skillResolverPort = deps.skillResolver ?? skillResolverAdapter(this.learningService);
+    // Q7: el tick arranca con el servicio. Un fallo adentro del barrido no
+    // puede tumbar el loop de eventos de la app, así que se traga acá: el
+    // siguiente tick lo vuelve a intentar treinta segundos después.
+    const startTimer = deps.sweepTimer ?? defaultSweepTimer;
+    this.stopSweepTimer = startTimer(() => {
+      try { this.sweepCoordination(); } catch { /* el próximo tick lo reintenta */ }
+    }, COORDINATION_SWEEP_INTERVAL_MS);
+  }
+
+  /**
+   * Q7: EL BARRIDO PERIÓDICO DE COORDINACIÓN, el dueño que le faltaba al
+   * trabajo que las lecturas estaban haciendo a escondidas.
+   *
+   * `listGates` y `listOpenAsks` corrían `refreshAsks` —y con él
+   * `finishRunIfComplete` y `closeRun`, que le borra el permiso al
+   * coordinador—, así que abrir Decisiones podía terminar el equipo que la
+   * persona estaba yendo a mirar. Las lecturas volvieron a ser puras; esto
+   * corre solo, cada treinta segundos, escribiendo a propósito.
+   *
+   * Público porque un test necesita poder adelantar el tick sin esperar.
+   */
+  sweepCoordination(): void {
+    this.coordination.sweepActiveRuns();
   }
 
   /**
@@ -2431,6 +2480,9 @@ export class LatteService implements BackendApi {
   // Lifecycle ---------------------------------------------------------------
 
   shutdown(): void {
+    // Q7: el tick primero. Un barrido que arranque mientras la base se está
+    // cerrando escribiría contra un repo muerto, y nada de lo que haga sirve ya.
+    try { this.stopSweepTimer(); } catch { /* cerrar los recursos manda */ }
     // Antes de soltar los procesos: lo que quedó en vuelo se liquida acá, o
     // no se liquida nunca. Un fallo barriendo no puede impedir que la app
     // cierre sus recursos, así que se registra y se sigue.
