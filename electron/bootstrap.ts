@@ -178,7 +178,19 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     // un solo llamador; éste es. Va DESPUÉS de `hub.stop` a propósito: primero
     // se suelta lo del proceso, después se cierran las cuentas.
     if (event.type === 'closed') {
-      hub.stop(event.chatId);
+      // R8: CADA LLAMADA EN SU PROPIO TRY, Y EL AVISO SIEMPRE. Las tres cosas
+      // que pasan acá antes de reenviar el evento escriben en la base, y
+      // ninguna estaba protegida: si cualquiera tiraba —la base trabada, una
+      // fila que ya no está, un constraint— el `forward(event)` de abajo no
+      // corría, y el renderer no se enteraba NUNCA de que el miembro se había
+      // muerto. La persona se quedaba mirando un agente "trabajando" que ya no
+      // existe. Contabilidad y aviso son independientes: que las cuentas no
+      // cierren no puede ser razón para ocultarle a la persona que su agente se
+      // cayó, y cada paso tampoco puede quedar rehén del anterior.
+      const guard = (what: string, fn: () => void): void => {
+        try { fn(); } catch (error) { options.log?.(`[latte] closed handling (${what}) failed: ${error instanceof Error ? error.message : String(error)}`); }
+      };
+      guard('hub.stop', () => hub.stop(event.chatId));
       // D5: cerrar A PROPÓSITO no es morirse. Pausar, terminar, reiniciar,
       // quitar o cambiarle el modelo/esfuerzo a un miembro pasan todos por
       // `hub.stop` -> `adapter.stop` -> `closed` con `reason:'stopped'`, y
@@ -186,7 +198,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
       // reintentos por una decisión de la PERSONA. La tarea vuelve a `ready`
       // igual, sin cargo. Una muerte real (cualquier otro motivo) sigue
       // contando como el fracaso que es.
-      service.settleCoordinationDispatchesForMember(event.chatId, { incrementAttempts: event.reason !== 'stopped' });
+      guard('settleCoordinationDispatchesForMember', () => service.settleCoordinationDispatchesForMember(event.chatId, { incrementAttempts: event.reason !== 'stopped' }));
       // F1: un turno también termina MURIÉNDOSE. El cierre que `finishRunIfComplete`
       // dejó aparcado esperando al coordinador (D17) se destrababa SÓLO con un
       // `status:'idle'`, y un proceso que se cae —o que la persona pausa— no
@@ -195,7 +207,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
       // ocupando un cupo app-wide. Va después de liquidar, por lo mismo que
       // `hub.stop` va primero: se cierran las cuentas y recién ahí se evalúa el
       // final.
-      service.noteCoordinationTurnEnded(event.chatId);
+      guard('noteCoordinationTurnEnded', () => service.noteCoordinationTurnEnded(event.chatId));
       forward(event);
       return;
     }
