@@ -54,6 +54,13 @@ export interface CoordinationState {
   resumeRun: (runId: string) => void;
   cancelRun: (runId: string) => void;
   /**
+   * Escribe el tope de despachos del Trabajo abierto. Pasa por `mutate` como
+   * cualquier otra mutación: refresca, reporta su error y marca su propio
+   * `pending`. Sin Trabajo abierto no hace nada — no hay presupuesto de nadie
+   * que escribir.
+   */
+  setBudget: (maxDispatches: number) => void;
+  /**
    * Deja constancia de que la persona está mirando la coordinación de ESTE
    * Trabajo ahora. Es lo que "Desde tu última visita" mide: antes no había
    * ninguna visita registrada en ningún lado, y la tarjeta mostraba el estado
@@ -127,16 +134,16 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
   const refreshActiveRuns = () => {
     const n = ++activeRunsGeneration.current;
     const fresh = () => n === activeRunsGeneration.current;
-    void api.listActiveCoordinationRuns().then((v) => { if (fresh()) setActiveRuns(v); }).catch(() => { if (fresh()) setActiveRuns([]); });
+    void api.listActiveCoordinationRuns().then((v) => { if (fresh()) setActiveRuns(v); }).catch((e) => { report(e); if (fresh()) setActiveRuns([]); });
   };
 
   const refreshWork = (id: string) => {
     const n = ++generation.current;
     const fresh = () => n === generation.current;
-    void api.getCoordinationAuthority(id).then((v) => { if (fresh()) setAuthority(v); }).catch(() => { if (fresh()) setAuthority('manual'); });
-    void api.getCoordinationBudget(id).then((v) => { if (fresh()) setBudget(v); }).catch(() => { if (fresh()) setBudget({ state: 'unset' }); });
-    void api.getCoordinatorGrant(id).then((v) => { if (fresh()) setCoordinatorGrant(v); }).catch(() => { if (fresh()) setCoordinatorGrant(null); });
-    void api.coordinationRuntimeSupport(id).then((v) => { if (fresh()) setSupport(v); }).catch(() => { if (fresh()) setSupport([]); });
+    void api.getCoordinationAuthority(id).then((v) => { if (fresh()) setAuthority(v); }).catch((e) => { report(e); if (fresh()) setAuthority('manual'); });
+    void api.getCoordinationBudget(id).then((v) => { if (fresh()) setBudget(v); }).catch((e) => { report(e); if (fresh()) setBudget({ state: 'unset' }); });
+    void api.getCoordinatorGrant(id).then((v) => { if (fresh()) setCoordinatorGrant(v); }).catch((e) => { report(e); if (fresh()) setCoordinatorGrant(null); });
+    void api.coordinationRuntimeSupport(id).then((v) => { if (fresh()) setSupport(v); }).catch((e) => { report(e); if (fresh()) setSupport([]); });
     // `loaded()` marca el recorte de ESTE `id` como cargado, y sólo si sigue
     // siendo el vigente. Es lo que `markSeen` espera: hasta acá la pantalla
     // de Decisiones no tiene un solo gate dibujado.
@@ -220,6 +227,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     pauseRun: (runId) => mutate(`run:${runId}`, api.pauseCoordinationRun(runId)),
     resumeRun: (runId) => mutate(`run:${runId}`, api.resumeCoordinationRun(runId)),
     cancelRun: (runId) => mutate(`run:${runId}`, api.cancelCoordinationRun(runId)),
+    setBudget: (maxDispatches) => { if (workId) mutate(`budget:${workId}`, api.setCoordinationBudget(workId, { maxDispatches })); },
     markSeen: () => { if (workId) mutate(`seen:${workId}`, api.markCoordinationSeen(workId)); },
   };
 }

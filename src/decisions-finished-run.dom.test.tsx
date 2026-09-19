@@ -8,7 +8,7 @@ vi.mock('./i18n', async (importOriginal) => {
 });
 
 const { createElement } = await import('react');
-const { render, screen } = await import('@testing-library/react');
+const { fireEvent, render, screen } = await import('@testing-library/react');
 const { DecisionsView } = await import('./DecisionsView');
 import type { DecisionsViewProps } from './DecisionsView';
 import type { CoordinationGateView, CoordinationRunView, Work } from '../shared/contracts';
@@ -135,5 +135,52 @@ describe('una propuesta que no se puede leer', () => {
     expect(screen.queryAllByRole('button', { name: /^Editar y aprobar$/ })).toHaveLength(0);
     // Rechazar SÍ: descartar una propuesta rota es la salida.
     expect(screen.queryAllByRole('button', { name: /^Rechazar$/ }).length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * U4: el presupuesto de este Trabajo se puede ESCRIBIR.
+ *
+ * `setCoordinationBudget` existia en la IPC y no tenia un solo llamador en el
+ * renderer. Peor: el copy del estado `invalid` promete "hasta que lo escribas
+ * de nuevo, cada despacho se deniega" y no habia donde escribirlo. La persona
+ * quedaba encerrada, con cada despacho denegado y una frase que la mandaba a
+ * un campo que no existia.
+ */
+describe('el presupuesto de este Trabajo, editable', () => {
+  const budgetEditor = (container: HTMLElement) => container.querySelector('.decision-coordination-budget-edit');
+  const input = (container: HTMLElement) => container.querySelector('.decision-coordination-budget-input') as HTMLInputElement;
+  const save = (container: HTMLElement) => container.querySelector('.decision-coordination-budget-save') as HTMLButtonElement;
+
+  for (const state of ['unset', 'set', 'invalid'] as const) {
+    it(`el editor esta disponible en \`${state}\``, () => {
+      const budget = state === 'set' ? { state, budget: { maxDispatches: 5, unlimitedConfirmedAt: null } } as const : { state } as const;
+      const { container } = mount({ coordinationAuthority: 'manual', coordinationBudget: budget, onSetCoordinationBudget: () => {} });
+      expect(budgetEditor(container)).not.toBeNull();
+    });
+  }
+
+  it('desde `invalid`, guardar manda el numero que la persona escribio', () => {
+    const onSetCoordinationBudget = vi.fn();
+    const { container } = mount({ coordinationAuthority: 'manual', coordinationBudget: { state: 'invalid' }, onSetCoordinationBudget });
+    fireEvent.change(input(container), { target: { value: '12' } });
+    fireEvent.click(save(container));
+    expect(onSetCoordinationBudget).toHaveBeenCalledWith(12);
+  });
+
+  it('un valor que no es un entero positivo no manda nada: el boton esta deshabilitado', () => {
+    const onSetCoordinationBudget = vi.fn();
+    const { container } = mount({ coordinationAuthority: 'manual', coordinationBudget: { state: 'unset' }, onSetCoordinationBudget });
+    expect(save(container).disabled).toBe(true); // vacio
+    for (const bad of ['0', '-3', '2.5', 'hola']) {
+      fireEvent.change(input(container), { target: { value: bad } });
+      fireEvent.click(save(container));
+    }
+    expect(onSetCoordinationBudget).not.toHaveBeenCalled();
+  });
+
+  it('sin `onSetCoordinationBudget` (un llamador sin cablear) no aparece ningun editor', () => {
+    const { container } = mount({ coordinationAuthority: 'manual', coordinationBudget: { state: 'invalid' } });
+    expect(budgetEditor(container)).toBeNull();
   });
 });

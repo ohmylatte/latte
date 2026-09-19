@@ -56,6 +56,17 @@ export interface DecisionsViewProps {
    */
   coordinationAuthority?: CoordinationAuthorityMode;
   coordinationBudget?: CoordinationBudgetView;
+  /**
+   * Escribe el tope de despachos de ESTE Trabajo (`setCoordinationBudget`).
+   * `undefined` deja la sección de sólo lectura, como estaba.
+   *
+   * Sin esto, `setCoordinationBudget` existía en la IPC y no tenía un solo
+   * llamador en el renderer — y el copy del estado `invalid` prometía "hasta
+   * que lo escribas de nuevo, cada despacho se deniega" sin ningún lugar
+   * donde escribirlo. La persona quedaba encerrada, con cada despacho
+   * denegado, leyendo una instrucción imposible de cumplir.
+   */
+  onSetCoordinationBudget?: (maxDispatches: number) => void;
   coordinatorGrant?: string | null;
   /**
    * Additive, optional (autonomous-coordination Phase 7 tasks 7.4-7.6):
@@ -226,6 +237,23 @@ function readProposal(raw: string | null | undefined): CoordinationProposal | nu
   return candidate as CoordinationProposal;
 }
 
+/**
+ * Una huella estable del contenido de la propuesta, para la `key` de su
+ * tarjeta. No es criptografía ni pretende serlo: lo único que tiene que
+ * cumplir es que dos propuestas distintas den huellas distintas con
+ * probabilidad abrumadora, y que la MISMA propuesta dé siempre la misma —
+ * porque si cambiara sola, cada render tiraría la edición en curso.
+ */
+function proposalVersion(raw: string | null | undefined): string {
+  if (!raw) return 'none';
+  let hash = 2166136261;
+  for (let i = 0; i < raw.length; i += 1) {
+    hash ^= raw.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${raw.length}-${(hash >>> 0).toString(36)}`;
+}
+
 /** La propuesta ilegible: se nombra el hecho y queda UNA sola acción — descartarla. Aprobar algo que no se puede leer no es aprobar nada. */
 function UnreadableProposalCard({ gate, onResolveGate, pending }: { gate: CoordinationGateView; onResolveGate?: ResolveGate; pending?: Pending }) {
   const busy = Boolean(pending?.[`gate:${gate.id}`]);
@@ -313,7 +341,12 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
     <p className="decision-gate-note">{t('coordination.proposal.noSettingsNote')}</p>
     {editing && <div className="decision-gate-edit">
       <label className="field-label">{t('coordination.proposal.editDispatches')}</label>
-      <input type="number" value={dispatches} onChange={(e) => setDispatches(e.target.value)} />
+      {/* Tocar el campo INVALIDA la confirmación de ilimitado. Sin esto,
+          tildar la casilla, escribir un tope y volver a borrarlo dejaba viva
+          una confirmación que la persona dio sobre otro estado del campo: el
+          único consentimiento que vale es el que se da sobre lo que hay
+          ahora. */}
+      <input type="number" value={dispatches} onChange={(e) => { setDispatches(e.target.value); setUnlimitedConfirmed(false); }} />
       {dispatches.trim() === '' && <label className="decision-gate-edit-unlimited">
         <input type="checkbox" checked={unlimitedConfirmed} onChange={() => setUnlimitedConfirmed((v) => !v)} />
         <span>{t('coordination.proposal.unlimitedConfirm')}</span>
@@ -407,6 +440,31 @@ function describeWorkBudget(view: CoordinationBudgetView | undefined): string {
   return t('coordination.budget.limited', { count: view.budget.maxDispatches });
 }
 
+/**
+ * El editor del tope de este Trabajo, con el MISMO patrón que Ajustes usa para
+ * el tope global: un `number`, un botón, y ninguna forma de guardar algo que
+ * el validador vaya a rechazar.
+ *
+ * Se ofrece en los TRES estados a propósito. `unset` es obvio; `set` porque un
+ * tope que no se puede cambiar es una trampa, no un ajuste; e `invalid` sobre
+ * todo — ése es el estado donde cada despacho ya se está denegando y la
+ * pantalla promete que escribirlo de nuevo lo arregla.
+ *
+ * No hay "sin tope" acá: un presupuesto ilimitado se confirma en la propuesta,
+ * con su casilla, y no se cuela por un campo vacío.
+ */
+function WorkBudgetEditor({ onSave }: { onSave: (maxDispatches: number) => void }) {
+  const [draft, setDraft] = useState('');
+  const parsed = Number(draft);
+  const valid = draft.trim() !== '' && Number.isInteger(parsed) && parsed > 0;
+  return <div className="decision-coordination-budget-edit">
+    <label className="field-label">{t('coordination.budget.editLabel')}
+      <input className="decision-coordination-budget-input" type="number" min={1} value={draft} onChange={(e) => setDraft(e.target.value)} />
+    </label>
+    <button className="decision-coordination-budget-save" disabled={!valid} onClick={() => { if (valid) { onSave(parsed); setDraft(''); } }}>{t('coordination.budget.save')}</button>
+  </div>;
+}
+
 /** One row per team member (task 7.9): coordination and memory status, rendered independently — never a single combined verdict. */
 function SupportRow({ row, team }: { row: CoordinationMemberSupport; team: readonly TeamMember[] }) {
   const name = team.find((m) => m.id === row.memberId)?.roleName ?? row.memberId;
@@ -498,7 +556,14 @@ export function DecisionsView(props: DecisionsViewProps) {
     {runFinished && <FinishedRunBanner run={props.coordinationRun!} />}
     {((gates?.length ?? 0) > 0 || (openAsks?.length ?? 0) > 0) && <section className="decision-gates">
       {gates?.map((gate) => {
-        if (gate.kind === 'proposal') return <ProposalGateCard key={gate.id} gate={gate} roles={props.roles} team={props.team} onResolveGate={props.onResolveGate} pending={props.pending} />;
+        // La key lleva la VERSIÓN de la propuesta, no sólo el id del gate. Un
+        // agente que re-envía la propuesta reusa el mismo gate, y con una key
+        // estable los `useState` del formulario —inicializados una sola vez—
+        // se quedaban con el plan y el tope VIEJOS: el bloque de lectura
+        // mostraba el tope nuevo y `confirmEdit` mandaba el anterior. Cambiar
+        // la key remonta la tarjeta, que es exactamente "esta ya es otra
+        // propuesta".
+        if (gate.kind === 'proposal') return <ProposalGateCard key={`${gate.id}:${proposalVersion(gate.proposalJson)}`} gate={gate} roles={props.roles} team={props.team} onResolveGate={props.onResolveGate} pending={props.pending} />;
         if (gate.kind === 'dispatch') return <DispatchGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} pending={props.pending} />;
         if (gate.kind === 'budget') return <BudgetGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} pending={props.pending} />;
         return <PlanGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} pending={props.pending} />;
@@ -528,6 +593,7 @@ export function DecisionsView(props: DecisionsViewProps) {
       <p className="decision-coordination-budget">
         {describeWorkBudget(props.coordinationBudget)}
       </p>
+      {props.onSetCoordinationBudget && <WorkBudgetEditor onSave={props.onSetCoordinationBudget} />}
       <p className="decision-coordination-grant">
         {props.coordinatorGrant
           ? t('coordination.coordinator.assigned', { name: resolveCoordinatorName(props.coordinatorGrant, props.team) ?? props.coordinatorGrant })

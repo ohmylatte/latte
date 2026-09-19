@@ -85,3 +85,39 @@ describe('the global coordination budget cap in advanced settings (task 7.13)', 
     expect(mocks.getCoordinationGlobalBudget).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * U7: "Sacar el tope" tenia un guard muerto.
+ *
+ * `disabled={saving || budget == null}` quedo de cuando el getter devolvia
+ * `CoordinationBudget | null`. Desde que devuelve `CoordinationGlobalBudgetView`
+ * -- un objeto con `state`, nunca `null` -- esa condicion es SIEMPRE falsa: el
+ * boton quedaba habilitado incluso sin ningun tope configurado, ofreciendo
+ * sacar algo que no existe. Lo que la condicion queria decir es
+ * `budget.state === 'unset'`.
+ */
+describe('U7: el boton de sacar el tope, habilitado solo cuando hay algo que sacar', () => {
+  beforeEach(() => { mocks.getCoordinationGlobalBudget.mockReset(); mocks.setCoordinationGlobalBudget.mockReset(); });
+
+  const clearButton = (container: HTMLElement) => container.querySelector('.coordination-global-budget-clear') as HTMLButtonElement;
+
+  it('sin tope configurado esta DESHABILITADO: no hay nada que sacar', async () => {
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'unset' });
+    const { container } = mount();
+    await waitFor(() => expect(clearButton(container)).not.toBeNull());
+    expect(clearButton(container).disabled).toBe(true);
+  });
+
+  it('con un tope puesto esta habilitado', async () => {
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'set', budget: { maxDispatches: 40, unlimitedConfirmedAt: null } });
+    await waitFor(() => expect(mocks.getCoordinationGlobalBudget).toBeDefined());
+    const { container } = mount();
+    await waitFor(() => expect(clearButton(container).disabled).toBe(false));
+  });
+
+  it('con un tope ILEGIBLE tambien: es justo el estado del que hay que poder salir', async () => {
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'invalid' });
+    const { container } = mount();
+    await waitFor(() => expect(clearButton(container).disabled).toBe(false));
+  });
+});

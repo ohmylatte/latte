@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
-import type { CoordinationActiveRunSummary, CoordinationAuthorityMode, CoordinationBudget, CoordinationBudgetView, CoordinationEvent, CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationRunView, CoordinatorGrant } from '../shared/contracts';
+import type { CoordinationActiveRunSummary, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudget, CoordinationBudgetView, CoordinationEvent, CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationRunView, CoordinatorGrant } from '../shared/contracts';
 
 /**
  * `useCoordination(workId)` (autonomous-coordination Phase 7 task 7.11):
@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   listCoordinationLog: vi.fn<(runId: string) => Promise<CoordinationLogEntryView[]>>(),
   listCoordinationHires: vi.fn<(runId: string) => Promise<CoordinationHireView[]>>(),
   listActiveCoordinationRuns: vi.fn<() => Promise<CoordinationActiveRunSummary[]>>(),
+  listOpenCoordinationAsks: vi.fn<(runId: string) => Promise<CoordinationAskView[]>>(),
   resolveCoordinationGate: vi.fn(),
   answerCoordinationAsk: vi.fn(),
   settleCoordinationDispatch: vi.fn(),
@@ -55,6 +56,7 @@ beforeEach(() => {
   mocks.listCoordinationLog.mockResolvedValue([]);
   mocks.listCoordinationHires.mockResolvedValue([]);
   mocks.listActiveCoordinationRuns.mockResolvedValue([]);
+  mocks.listOpenCoordinationAsks.mockResolvedValue([]);
   mocks.resolveCoordinationGate.mockResolvedValue(run());
   mocks.answerCoordinationAsk.mockResolvedValue({ id: 'ask1', runId: 'run1', taskId: null, memberId: 'm1', question: '', answer: 'Sí', deadlineAt: '', answeredAt: '', createdAt: '' });
   mocks.settleCoordinationDispatch.mockResolvedValue({ id: 'task1', runId: 'run1', roleId: 'strategist', spec: '', status: 'done', attempts: 1, resultSummary: 'Listo' });
@@ -361,5 +363,73 @@ describe('useCoordination: `workLoaded`, la senal de que ya hay algo que mirar',
 
     releaseRun(null);
     await waitFor(() => expect(result.current.workLoaded).toBe(true));
+  });
+});
+
+/**
+ * U6: el hook no puede tragarse los errores.
+ *
+ * Cada `.catch()` de las lecturas degradaba en silencio a un default seguro
+ * -- `manual`, `unset`, `[]` -- y no llamaba a `report()` NUNCA. El estado
+ * seguro esta bien; el silencio no: la persona veia "sin presupuesto
+ * configurado" sobre un Trabajo cuyo presupuesto no se pudo leer, con cada
+ * despacho denegandose por detras y sin una sola senal de que algo fallo. Es
+ * la misma mentira que el resto de este slice arregla, del lado del renderer.
+ *
+ * El canal es el que las mutaciones ya usan: `onError`.
+ */
+describe('useCoordination: una lectura que falla se REPORTA, sin dejar de degradar', () => {
+  const boom = (name: string) => new Error(`falla de ${name}`);
+
+  it('cada lectura del recorte por-Trabajo que rechaza llega a `onError`, y el estado queda en su default seguro', async () => {
+    mocks.getCoordinationAuthority.mockRejectedValue(boom('authority'));
+    mocks.getCoordinationBudget.mockRejectedValue(boom('budget'));
+    mocks.getCoordinatorGrant.mockRejectedValue(boom('grant'));
+    mocks.coordinationRuntimeSupport.mockRejectedValue(boom('support'));
+    mocks.getCoordinationRun.mockRejectedValue(boom('run'));
+    const onError = vi.fn();
+
+    const { result } = renderHook(() => useCoordination('w1', onError));
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(5));
+    const reported = onError.mock.calls.map(([e]) => (e as Error).message).sort();
+    expect(reported).toEqual(['falla de authority', 'falla de budget', 'falla de grant', 'falla de run', 'falla de support']);
+    // Y sigue degradando: reportar no puede costar el estado seguro.
+    expect(result.current.authority).toBe('manual');
+    expect(result.current.budget).toEqual({ state: 'unset' });
+    expect(result.current.coordinatorGrant).toBeNull();
+    expect(result.current.support).toEqual([]);
+    expect(result.current.run).toBeNull();
+    expect(result.current.gates).toEqual([]);
+  });
+
+  it('las cuatro lecturas de adentro del run tambien se reportan', async () => {
+    mocks.getCoordinationRun.mockResolvedValue(run());
+    mocks.listCoordinationGates.mockRejectedValue(boom('gates'));
+    mocks.listCoordinationLog.mockRejectedValue(boom('log'));
+    mocks.listCoordinationHires.mockRejectedValue(boom('hires'));
+    mocks.listOpenCoordinationAsks.mockRejectedValue(boom('asks'));
+    const onError = vi.fn();
+
+    const { result } = renderHook(() => useCoordination('w1', onError));
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(4));
+    expect(onError.mock.calls.map(([e]) => (e as Error).message).sort())
+      .toEqual(['falla de asks', 'falla de gates', 'falla de hires', 'falla de log']);
+    expect(result.current.gates).toEqual([]);
+    expect(result.current.log).toEqual([]);
+    // Y la pantalla igual termino de cargar: un error no puede dejar la
+    // visita colgada para siempre.
+    expect(result.current.workLoaded).toBe(true);
+  });
+
+  it('la tira global tambien reporta, y se queda vacia en vez de vieja', async () => {
+    mocks.listActiveCoordinationRuns.mockRejectedValue(boom('strip'));
+    const onError = vi.fn();
+
+    const { result } = renderHook(() => useCoordination(null, onError));
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'falla de strip' })));
+    expect(result.current.activeRuns).toEqual([]);
   });
 });
