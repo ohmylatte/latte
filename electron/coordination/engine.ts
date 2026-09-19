@@ -867,7 +867,11 @@ export class CoordinationEngine {
    * dispatch, and authority gating (manual/plan/auto) applies exactly as it
    * would to a coordinator-originated dispatch.
    */
-  async bridgeHandoffToTask(workId: string, roleId: string, spec: string): Promise<{ bridged: false } | { bridged: true; task: CoordinationTaskRecord; dispatch: { status: 'dispatched' | 'pending_approval'; dispatchId: string } }> {
+  async bridgeHandoffToTask(workId: string, roleId: string, spec: string): Promise<
+    | { bridged: false }
+    | { bridged: true; task: CoordinationTaskRecord; dispatch: { status: 'dispatched' | 'pending_approval'; dispatchId: string }; reason: null }
+    | { bridged: true; task: CoordinationTaskRecord; dispatch: null; reason: string }
+  > {
     // Crítico 6: `startDispatch` ya chequeaba la bandera, pero ACÁ abajo —
     // después de que `createTaskRow` ya había escrito la tarea. Con la
     // bandera baja quedaba una tarea huérfana en el run por cada handoff
@@ -875,6 +879,18 @@ export class CoordinationEngine {
     this.requireCoordinationEnabled();
     const run = this.deps.repo.findActiveCoordinationRun(workId);
     if (!run) return { bridged: false };
+    // R3: Y EL ESTADO DEL RUN, ANTES DE ESCRIBIR NADA. "Activo" incluye
+    // `planning` (una propuesta que la persona todavía no aprobó) y
+    // `suspended` (un equipo pausado o sin presupuesto). Sobre cualquiera de
+    // los dos, `createTaskRow` corría igual y `startDispatch` rebotaba tres
+    // saltos más adentro con `COORDINATION_NOT_APPROVED`/`RUN_NOT_ACTIVE`,
+    // dejando una tarea `ready` colada en un run que nadie aprobó — que con
+    // autoridad `auto` se despacha sola en cuanto el run arranque — y una
+    // excepción subiendo hasta la interfaz por haber aceptado un pedido. Sólo
+    // un run CORRIENDO acepta trabajo nuevo; con cualquier otro estado esto
+    // degrada al borrador de chat, que es exactamente lo que este método
+    // promete cuando no hay run.
+    if (run.status !== 'running') return { bridged: false };
     // EL MISMO chequeo que `taskCreate` y `planSubmit` (F7). Este camino
     // llamaba a `createTaskRow` directo: la tarea nacía, el despacho moría con
     // `ROLE_NOT_APPROVED` tres saltos más adentro, quedaba una tarea `failed`
@@ -889,9 +905,26 @@ export class CoordinationEngine {
       throw error;
     }
     const task = this.createTaskRow(run.id, roleId, spec, []);
-    const outcome = await this.startDispatch({ grant: { workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id });
-    this.touch(workId, run.id);
-    return { bridged: true, task: this.deps.repo.getCoordinationTask(task.id), dispatch: { status: outcome.status, dispatchId: outcome.dispatchId } };
+    // R3: EL PUENTE NO TIRA. La tarea ya está escrita —el run está vivo y la
+    // persona la pidió—, así que un despacho denegado (presupuesto agotado,
+    // concurrencia al tope, el run que se cayó durante el spawn) no puede
+    // salir como excepción hacia la interfaz: el pedido se aceptó de verdad y
+    // lo que falló es el paso siguiente. Se devuelve el hecho, con su razón,
+    // para que la pantalla diga "tarea creada, todavía sin despachar" en vez de
+    // anunciar un despacho que no pasó — o peor, romperse.
+    try {
+      const outcome = await this.startDispatch({ grant: { workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id });
+      this.touch(workId, run.id);
+      return { bridged: true, task: this.deps.repo.getCoordinationTask(task.id), dispatch: { status: outcome.status, dispatchId: outcome.dispatchId }, reason: null };
+    } catch (error) {
+      this.touch(workId, run.id);
+      return {
+        bridged: true,
+        task: this.deps.repo.getCoordinationTask(task.id),
+        dispatch: null,
+        reason: error instanceof LatteError ? error.code : 'INTERNAL',
+      };
+    }
   }
 
   /**

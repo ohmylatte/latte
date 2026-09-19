@@ -36,7 +36,10 @@ describe('acceptHandoffAsTask: the handoff-to-coordination bridge', () => {
     writeHandoff('para-strategist.md', 'strategist', 'Draft the Q3 brief.');
     const before = await b.service.listHandoffs(workId);
     const result = await b.service.acceptHandoffAsTask(workId, 'para-strategist.md');
-    expect(result).toEqual({ bridged: false, task: null });
+    // R3: el resultado dice además si el despacho salió. Sin puente no hay
+    // despacho del cual hablar, así que las dos cosas son `null` — no `false`,
+    // que sería afirmar que algo se intentó y no salió.
+    expect(result).toEqual({ bridged: false, task: null, dispatched: null, reason: null });
     // Untouched: still there, unconsumed, exactly like before this change.
     expect(await b.service.listHandoffs(workId)).toEqual(before);
     expect(fs.existsSync(path.join(dir, 'para-strategist.md'))).toBe(true);

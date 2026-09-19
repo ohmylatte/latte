@@ -111,7 +111,7 @@ describe('lo que una aprobación concede, y las salidas que la bandera no frena'
 
     const result = await b.service.acceptHandoffAsTask(workId, 'no-existe.md');
 
-    expect(result).toEqual({ bridged: false, task: null });
+    expect(result).toEqual({ bridged: false, task: null, dispatched: null, reason: null }); // R3: sin puente no hay despacho del cual hablar
     expect(b.repo.listCoordinationTasks(run.id)).toHaveLength(tasksBefore);
     expect(b.hub.send).not.toHaveBeenCalled();
   });

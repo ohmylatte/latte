@@ -212,7 +212,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   // same desktop-only reasoning as above. No run ever exists in the preview.
   startCoordinationRun:unavailable,pauseCoordinationRun:unavailable,resumeCoordinationRun:unavailable,cancelCoordinationRun:unavailable,
   getCoordinationRun:async()=>null,listCoordinationGates:async()=>[],resolveCoordinationGate:unavailable,listCoordinationLog:async()=>[],listOpenCoordinationAsks:async()=>[],answerCoordinationAsk:unavailable,
-  acceptHandoffAsTask:async()=>({bridged:false,task:null}),
+  acceptHandoffAsTask:async()=>({bridged:false,task:null,dispatched:null,reason:null}),
   // Task 3.19: manual settlement is desktop-only too — same reasoning as the
   // rest of this section, no run and no dispatch ever exist in the preview.
   settleCoordinationDispatch:unavailable,

@@ -1750,20 +1750,28 @@ export class LatteService implements BackendApi {
   async acceptHandoffAsTask(workId: string, fileName: string): Promise<HandoffTaskBridgeResult> {
     const id = requireId(workId, 'workId');
     this.deps.repo.getWork(id);
-    if (!this.deps.repo.findActiveCoordinationRun(id)) return { bridged: false, task: null };
+    if (!this.deps.repo.findActiveCoordinationRun(id)) return { bridged: false, task: null, dispatched: null, reason: null };
     // D4: con la bandera baja esto DEGRADA, no tira. El docstring de arriba
     // promete "el llamador cae al borrador de chat exactamente como antes", y
     // dejar escapar `FEATURE_DISABLED` rompía esa promesa justo donde importa:
     // la persona apagaba coordinación y aceptar un pedido pasaba a fallar en
     // vez de abrirle el chat que tenía antes de que coordinación existiera.
-    if (!featureEnabled((key) => this.deps.repo.getMeta(key), 'coordination')) return { bridged: false, task: null };
+    if (!featureEnabled((key) => this.deps.repo.getMeta(key), 'coordination')) return { bridged: false, task: null, dispatched: null, reason: null };
     const pending = await this.listHandoffs(id);
     const handoff = pending.find((h) => h.fileName === fileName);
     if (!handoff) throw new ValidationError('Ese pedido ya no está en la carpeta');
     const result = await this.coordination.bridgeHandoffToTask(id, handoff.roleId, handoff.request);
-    if (!result.bridged) return { bridged: false, task: null };
+    if (!result.bridged) return { bridged: false, task: null, dispatched: null, reason: null };
     await this.dismissHandoff(id, fileName).catch(() => undefined);
-    return { bridged: true, task: { id: result.task.id, roleId: result.task.roleId, spec: result.task.spec, status: result.task.status } };
+    // R3: el pedido se consumió igual — la tarea existe — pero el despacho pudo
+    // no salir. Se dice cuál de las dos cosas pasó, para que la interfaz no
+    // anuncie un despacho que no hubo.
+    return {
+      bridged: true,
+      task: { id: result.task.id, roleId: result.task.roleId, spec: result.task.spec, status: result.task.status },
+      dispatched: result.dispatch != null,
+      reason: result.reason,
+    };
   }
 
   /**

@@ -1016,6 +1016,19 @@ export interface CoordinationEvent {
 export interface HandoffTaskBridgeResult {
   bridged: boolean;
   task: { id: string; roleId: string; spec: string; status: string } | null;
+  /**
+   * R3: si el despacho que sigue al puente SALIÓ (o quedó esperando una
+   * aprobación). `null` cuando no hubo puente y no hay nada que despachar.
+   *
+   * Aceptar un pedido no puede explotarle en la cara a la persona: cuando el
+   * despacho se deniega —presupuesto agotado, concurrencia al tope— el puente
+   * ya creó la tarea y eso no se deshace, así que el fallo se DEVUELVE acá en
+   * vez de subir como excepción. La interfaz necesita saberlo para no anunciar
+   * un despacho que no pasó.
+   */
+  dispatched: boolean | null;
+  /** El código del motor cuando `dispatched` es `false` (`BUDGET_EXCEEDED`, `MAX_CONCURRENT`, …). Nunca un texto inventado. */
+  reason: string | null;
 }
 
 export interface LatteAPI {

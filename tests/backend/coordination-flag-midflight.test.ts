@@ -155,7 +155,7 @@ describe('el interruptor apagado también frena las aprobaciones (crítico 6)', 
 
     const result = await b.service.acceptHandoffAsTask(workId, 'pedido-que-no-existe.md');
 
-    expect(result).toEqual({ bridged: false, task: null });
+    expect(result).toEqual({ bridged: false, task: null, dispatched: null, reason: null }); // R3: sin puente no hay despacho del cual hablar
     expect(b.repo.listCoordinationTasks(runId)).toHaveLength(tasksBefore);
     expect(b.hub.send).not.toHaveBeenCalled();
   });

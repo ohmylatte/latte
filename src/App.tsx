@@ -852,6 +852,10 @@ export function App() {
     // incluido). Reusar la frase de la otra rama --"revisalo antes de
     // enviarlo"-- le pedia a la persona revisar algo que no existe DESPUES de
     // haber gastado. Clave semantica propia, en los dos idiomas.
+    // R3: el puente ya no tira cuando el despacho se deniega, lo devuelve. Y
+    // entonces la frase no puede ser la misma: la tarea existe pero nadie la
+    // está haciendo, y decir "despachada" sería anunciar algo que no pasó.
+    if (result.dispatched === false) { setNotice(t('handoff.bridged.queued', { role: handoff.roleName, reason: result.reason ?? '' })); return; }
     setNotice(t('handoff.bridged.dispatched', { role: handoff.roleName }));
   });
   const acceptHandoff = (handoff: HandoffRequest) => run(async () => {
