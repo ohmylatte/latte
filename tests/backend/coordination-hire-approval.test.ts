@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CoordinationEngine, type CoordinationGrant, type CoordinationProposal } from '../../electron/coordination/engine';
+import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
 import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
@@ -71,6 +72,13 @@ describe('la contratación que la persona destildó', () => {
     });
     members = [];
     ({ send } = fakeCoordinationHub(b, members));
+    // Crítico 6: `resolveGate` ahora consulta `feature:coordination` PRIMERO —
+    // el interruptor tiene que apagar también lo que ya está andando, no sólo
+    // impedir encender. Este escenario aprueba por IPC, así que la bandera
+    // tiene que estar arriba, igual que en una instalación donde la persona
+    // la prendió.
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON);
+
     engine = new CoordinationEngine({
       repo: b.repo,
       hub: b.hub,

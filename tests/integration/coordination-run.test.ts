@@ -128,6 +128,12 @@ describe('conversational entry: latte_request_coordination -> proposal gate -> a
     b.repo.insertMember({ id: 'mem_proposer', workId, roleId: 'strategist', roleName: 'Strategist', initial: 'S', runtime: 'codex', model: null, accountId: null, sessionId: '', done: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
     members = [];
     fakeCoordinationHub(b, members);
+    // Crítico 6: `resolveGate` ahora consulta `feature:coordination` PRIMERO —
+    // el interruptor tiene que apagar también lo que ya está andando, no sólo
+    // impedir encender. Este escenario aprueba por IPC, así que la bandera
+    // tiene que estar arriba, igual que en una instalación donde la persona
+    // la prendió.
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON);
     engine = new CoordinationEngine({
       repo: b.repo,
       hub: b.hub,

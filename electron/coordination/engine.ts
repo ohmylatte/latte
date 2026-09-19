@@ -339,6 +339,18 @@ export class CoordinationEngine {
 
   /** Approves or rejects a proposal/plan/dispatch/budget gate. The dispatch branch re-enters `startDispatch` — the same choke point `latte_dispatch` uses. Task 6.37: fires the coordination event once, after the fact, for every branch. */
   async resolveGate(gateId: string, decision: 'approve' | 'reject', editedPrompt?: string | null): Promise<CoordinationGate | CoordinationDispatchRecord | CoordinationRunRecord> {
+    // PRIMERO, antes de leer una sola fila (crítico 6). `resolveProposalGate`
+    // es el efecto más caro del motor: contrata gente, levanta procesos y
+    // escribe permiso, presupuesto y autoridad. Sin este chequeo, bajar la
+    // bandera a mitad de vuelo no frenaba NADA de eso — sólo el despacho
+    // siguiente, o sea después de que el equipo ya estaba contratado y
+    // andando. Un interruptor que sólo impide encender no es un interruptor.
+    //
+    // Se rechaza antes de tocar nada, así que el gate NO se consume: queda
+    // pendiente, y cuando la persona vuelve a prender la bandera la decisión
+    // sigue sobre la mesa, tal cual estaba. La salida de emergencia con la
+    // bandera baja es `cancelCoordinationRun`, que apaga en vez de encender.
+    this.requireCoordinationEnabled();
     const result = await this.resolveGateInternal(gateId, decision, editedPrompt);
     const workId = 'workId' in result ? result.workId : this.deps.repo.getCoordinationRun(result.runId).workId;
     const runId = 'runId' in result ? result.runId : result.id;
@@ -572,6 +584,16 @@ export class CoordinationEngine {
     return this.deps.repo.listOpenCoordinationAsks(runId);
   }
 
+  /**
+   * Crítico 6, revisado y DEJADO sin gatear a propósito: responder una
+   * pregunta no contrata a nadie, no levanta ningún proceso y no escribe
+   * permiso, presupuesto ni autoridad — sólo guarda lo que la persona
+   * contestó, y a lo sumo saca al run de un `all_blocked_on_ask` del que no
+   * puede salir despachando igual (`startDispatch` sí tiene el chequeo). Con
+   * la bandera baja, cerrarle esta puerta a la persona la dejaría con un
+   * agente esperando una respuesta que nadie le puede dar, y sin ganar una
+   * sola garantía a cambio.
+   */
   answerAsk(askId: string, answer: string): CoordinationAskRecord {
     const answered = this.deps.repo.answerCoordinationAsk(askId, answer, this.deps.clock());
     // Answering may un-suspend a run that self-suspended on "all blocked on asks".
@@ -595,6 +617,11 @@ export class CoordinationEngine {
    * would to a coordinator-originated dispatch.
    */
   async bridgeHandoffToTask(workId: string, roleId: string, spec: string): Promise<{ bridged: false } | { bridged: true; task: CoordinationTaskRecord; dispatch: { status: 'dispatched' | 'pending_approval'; dispatchId: string } }> {
+    // Crítico 6: `startDispatch` ya chequeaba la bandera, pero ACÁ abajo —
+    // después de que `createTaskRow` ya había escrito la tarea. Con la
+    // bandera baja quedaba una tarea huérfana en el run por cada handoff
+    // aceptado. El chequeo va antes de escribir, no después.
+    this.requireCoordinationEnabled();
     const run = this.deps.repo.findActiveCoordinationRun(workId);
     if (!run) return { bridged: false };
     const task = this.createTaskRow(run.id, roleId, spec, []);
