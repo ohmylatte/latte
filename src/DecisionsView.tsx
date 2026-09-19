@@ -157,6 +157,51 @@ function resolveRoleName(roleId: string, roles: readonly AgentRole[], team: read
   return roleId;
 }
 
+/**
+ * Q4: DESTILDAR UNA CONTRATACIÓN RECORTA EL PLAN, A LA VISTA.
+ *
+ * `confirmEdit` filtraba `membersToHire` y mandaba `proposal.plan` intacto. Las
+ * tareas de ese rol quedaban en el plan aprobado, nacían `ready`, el primer
+ * despacho moría con `ROLE_NOT_APPROVED`, la tarea quedaba `failed` y
+ * `recomputeReadiness` derribaba a todas las que dependían de ella: la persona
+ * destildaba UNA contratación y se le caía media planificación, sin que nada se
+ * lo dijera.
+ *
+ * Acá se calcula lo que el motor va a poder cumplir: una tarea cuyo rol no se
+ * contrata NI está ya en el equipo se cae, y con ella todo lo que dependía de
+ * ella, transitivamente. Los índices de `dependsOn` se remapean al plan nuevo,
+ * porque son posiciones en ESTE array y correrlos sin remapear apuntaría a otra
+ * tarea.
+ */
+export function trimPlanWithoutRoles(
+  plan: readonly { roleId: string; spec: string; dependsOn?: number[] }[],
+  removedRoleIds: ReadonlySet<string>,
+): { plan: { roleId: string; spec: string; dependsOn?: number[] }[]; removed: number } {
+  // Sólo lo que la persona SACÓ, nunca lo que la propuesta ya traía. Recortar
+  // por "qué roles quedan disponibles" haría que una propuesta que nadie editó
+  // —cuyos roles el motor igual va a juzgar— apareciera recortada sola: la
+  // pantalla estaría decidiendo por su cuenta sobre algo que la persona no tocó.
+  const dropped = plan.map((item) => removedRoleIds.has(item.roleId));
+  // Punto fijo: una tarea que depende de una caída también se cae, y eso puede
+  // arrastrar a la que dependía de ella. Se repite hasta que nada más cambia.
+  for (let pass = 0; pass < plan.length; pass += 1) {
+    let changed = false;
+    plan.forEach((item, i) => {
+      if (dropped[i]) return;
+      if ((item.dependsOn ?? []).some((idx) => dropped[idx] !== false)) { dropped[i] = true; changed = true; }
+    });
+    if (!changed) break;
+  }
+  const remap = new Map<number, number>();
+  plan.forEach((_, i) => { if (!dropped[i]) remap.set(i, remap.size); });
+  const kept = plan.flatMap((item, i) => {
+    if (dropped[i]) return [];
+    const deps = (item.dependsOn ?? []).map((idx) => remap.get(idx)).filter((idx): idx is number => idx !== undefined);
+    return [item.dependsOn === undefined ? { ...item } : { ...item, dependsOn: deps }];
+  });
+  return { plan: kept, removed: plan.length - kept.length };
+}
+
 /** The aggregate sentence (task 7.6): honest "can't sum this" the moment any input is null, never a fabricated total. */
 function describeAggregate(mine: number | null, aggregate: CoordinationGateAggregate): string {
   if (mine == null || aggregate.otherCommittedDispatches == null || aggregate.totalIfApproved == null) {
@@ -318,11 +363,27 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
   // decide si ese botón puede tener éxito.
   const needsUnlimitedConfirmation = proposal.estimatedDispatches == null && proposal.unlimitedConfirmedAt == null;
 
+  // Q4: los roles que la persona SACÓ y que nadie más puede cubrir. Un rol que
+  // YA está en el equipo no se contrata, se reutiliza —es la misma regla que
+  // aplica el motor—, así que destildar su alta no le quita a nadie el trabajo.
+  // Un miembro terminado no cuenta: re-abrirlo SÍ es una contratación.
+  const keptHires = hires.filter((_, i) => included[i]);
+  const keptRoleIds = new Set(keptHires.map((hire) => hire.roleId));
+  const inTeam = new Set(team.filter((m) => m.status !== 'ended').map((m) => m.roleId));
+  const removedRoleIds = new Set(
+    hires.filter((hire, i) => !included[i] && !keptRoleIds.has(hire.roleId) && !inTeam.has(hire.roleId)).map((hire) => hire.roleId),
+  );
+  const trimmed = trimPlanWithoutRoles(proposal.plan, removedRoleIds);
+
   const confirmEdit = () => {
     const edited: CoordinationProposal = {
       ...proposal,
+      // Q4: el plan RECORTADO. Mandarlo entero dejaba tareas de un rol que la
+      // persona acababa de rechazar, y el motor las mataba una por una al
+      // despacharlas, arrastrando a sus dependientes.
+      plan: trimmed.plan,
       estimatedDispatches: dispatches.trim() === '' ? null : Number(dispatches),
-      membersToHire: hires.filter((_, i) => included[i]),
+      membersToHire: keptHires,
       // La ÚNICA fuente de un presupuesto ilimitado: esta casilla, acá, ahora.
       unlimitedConfirmedAt: dispatches.trim() === '' && unlimitedConfirmed ? new Date().toISOString() : null,
     };
@@ -378,8 +439,13 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
           <span>{resolveRoleName(hire.roleId, roles, team)}</span>
         </label>)}
       </>}
+      {/* Q4: lo que se va del plan al destildar, ANTES de aprobar. Sin esta
+          línea la persona sacaba una contratación y no tenía forma de saber que
+          con ella se iban tareas — ni cuáles, ni cuántas. */}
+      {trimmed.removed > 0 && <p className="decision-gate-edit-dropped">{t('coordination.proposal.editDropsTasks', { count: trimmed.removed })}</p>}
+      {trimmed.plan.length === 0 && <p className="decision-gate-edit-dropped decision-gate-edit-empty">{t('coordination.proposal.editDropsAll')}</p>}
       <div className="decision-gate-edit-actions">
-        <button className="primary" disabled={busy} onClick={confirmEdit}>{t('coordination.proposal.editConfirm')}</button>
+        <button className="primary" disabled={busy || trimmed.plan.length === 0} onClick={confirmEdit}>{t('coordination.proposal.editConfirm')}</button>
         <button onClick={editCancel}>{t('coordination.proposal.editCancel')}</button>
       </div>
     </div>}

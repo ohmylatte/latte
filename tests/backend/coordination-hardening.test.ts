@@ -182,7 +182,13 @@ describe('CoordinationEngine — endurecimiento (plata y seguridad)', () => {
     });
 
     it('una contratación que falla a mitad deshace las que ya habían entrado', async () => {
+      // Q4: el plan nombra a los dos roles que se contratan. Antes decía
+      // `role_a` —un rol que esta propuesta ya no contrata— y eso hoy es una
+      // aprobación incumplible que se rechaza ANTES de contratar a nadie, así
+      // que no habría ninguna contratación a medias que deshacer y el test
+      // pasaría sin haber probado la compensación.
       const proposalRunId = await openProposal({
+        plan: [{ roleId: 'role_ok', spec: 'a' }, { roleId: 'role_inventado', spec: 'b' }],
         membersToHire: [{ roleId: 'role_ok', why: 'existe' }, { roleId: 'role_inventado', why: 'no existe' }],
       });
       const removed: string[] = [];

@@ -49,9 +49,26 @@ describe('la contratación que la persona destildó', () => {
     };
   }
 
-  /** Exactamente lo que manda `DecisionsView.confirmEdit`: el plan INTACTO, un hire menos. */
+  /**
+   * Exactamente lo que manda `DecisionsView.confirmEdit`: un hire menos Y el
+   * plan RECORTADO.
+   *
+   * Q4: antes esto mandaba el plan INTACTO, porque eso era lo que la interfaz
+   * hacía. Era el bug: las tareas del rol destildado quedaban en el plan
+   * aprobado, nacían `ready`, el primer despacho las mataba con
+   * `ROLE_NOT_APPROVED` y `recomputeReadiness` derribaba a sus dependientes —
+   * media planificación caída en silencio después de haber aprobado. Hoy la
+   * interfaz recorta y el motor rechaza la aprobación que no puede cumplir
+   * (`coordination-unapproved-plan-roles.test.ts` cubre ese rechazo). Lo que
+   * ESTE archivo protege no cambia: al designer no lo contrata nadie, por
+   * ninguna puerta.
+   */
   function editedWithoutDesigner(): string {
-    return JSON.stringify({ ...proposal(), membersToHire: [{ roleId: 'copywriter', why: 'Nadie escribe todavía' }] });
+    return JSON.stringify({
+      ...proposal(),
+      plan: [{ roleId: 'copywriter', spec: 'Escribir los textos' }],
+      membersToHire: [{ roleId: 'copywriter', why: 'Nadie escribe todavía' }],
+    });
   }
 
   function taskFor(runId: string, roleId: string): string {
@@ -91,7 +108,7 @@ describe('la contratación que la persona destildó', () => {
 
   // --- 1: aprobar editando y quitar un hire ----------------------------------
 
-  it('aprobar editando sin la contratación deja la tarea de ese rol `blocked`, sin miembro y sin proceso', async () => {
+  it('aprobar editando sin la contratación no contrata a nadie de ese rol, y su trabajo no queda colgado', async () => {
     const run = await engine.requestCoordination(proposerGrant(), proposal());
 
     await b.service.resolveCoordinationGate(`proposal:${run.id}`, 'approve', editedWithoutDesigner());
@@ -103,41 +120,23 @@ describe('la contratación que la persona destildó', () => {
     expect(approved).toContain('copywriter');
     expect(approved).not.toContain('designer');
 
-    const designerTask = taskFor(run.id, 'designer');
-    await expect(engine.startDispatch({ grant: coordinator(run.id), taskId: designerTask })).rejects.toMatchObject({ code: 'ROLE_NOT_APPROVED' });
-
-    // Ni miembro nuevo, ni proceso levantado, ni tarea que desaparece en silencio.
-    expect(members.map((m) => m.roleId)).toEqual(['copywriter']);
+    // Q4: y la tarea del designer NO existe. Antes existía, `ready`, condenada:
+    // al despacharla moría `failed` con `role_not_approved` y arrastraba a sus
+    // dependientes. Una tarea que el motor sabe que no puede correr no se
+    // escribe; la persona destildó esa contratación y eso se respeta entero.
+    expect(b.repo.listCoordinationTasks(run.id).map((t) => t.roleId)).toEqual(['copywriter']);
     expect(send.mock.calls).toHaveLength(0);
-    // `failed`, no `blocked` (D1): la persona ya decidió que ese rol no se
-    // contrata en este run, así que esa tarea no va a correr acá. `blocked`
-    // dejaba el run vivo para siempre esperando una intervención que ya ocurrió.
-    expect(b.repo.getCoordinationTask(designerTask).status).toBe('failed');
-    // Y la razón queda escrita en la bitácora, no sólo en el error que se tiró.
-    // `'taskId' in entry` en vez de enumerar las entradas de cierre: la
-    // bitácora ya tiene dos (`run_done`, `run_cancelled`) y cada nueva rompía
-    // este filtro. Sólo las de despacho tienen tarea.
-    const entries = engine.listLog(run.id).filter((entry) => 'taskId' in entry && entry.taskId === designerTask);
-    expect(entries).toHaveLength(1);
-    const row = b.repo.listCoordinationDispatches(run.id).find((d) => d.taskId === designerTask);
-    expect(row).toBeDefined();
-    expect(row!.outcome).toBe('role_not_approved');
-    expect(row!.summary ?? '').toMatch(/designer/);
   });
 
-  // --- 2: el plan no puede reintroducir el rol -------------------------------
+  // --- 2: el plan aprobado es el recortado, y la foto de roles lo acompaña ----
 
-  it('el rol sigue en `proposal.plan` intacto y aun así no se contrata: el plan no aprueba nada', async () => {
+  it('el plan que queda guardado es el que la persona aprobó, sin el rol destildado', async () => {
     const run = await engine.requestCoordination(proposerGrant(), proposal());
 
     await b.service.resolveCoordinationGate(`proposal:${run.id}`, 'approve', editedWithoutDesigner());
 
-    // El plan que la persona aprobó SIGUE nombrando al designer — la interfaz no lo toca.
     const saved = JSON.parse(b.repo.getCoordinationRun(run.id).planJson ?? '{}') as CoordinationProposal;
-    expect(saved.plan.map((t) => t.roleId)).toContain('designer');
-    // Y la tarea existe, con su rol: no se borra, se bloquea.
-    const designerTask = taskFor(run.id, 'designer');
-    expect(b.repo.getCoordinationTask(designerTask).roleId).toBe('designer');
+    expect(saved.plan.map((t) => t.roleId)).toEqual(['copywriter']);
     const approved = JSON.parse(b.repo.getMeta(`coordination_approved_roles:${run.id}`) ?? '[]') as string[];
     expect(approved).not.toContain('designer');
   });

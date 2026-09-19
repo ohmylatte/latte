@@ -518,6 +518,11 @@ const es = {
   'coordination.proposal.noSettingsNote': 'No hay ningún formulario de configuración: leé el plan y decidí.',
   'coordination.proposal.editDispatches': 'Tope de despachos',
   'coordination.proposal.editHires': 'Incluir en la contratación',
+  // Q4: destildar una contratación se lleva puestas tareas, y las que dependían
+  // de ellas. Se dice cuántas antes de aprobar, no después de que el motor las
+  // haya matado una por una.
+  'coordination.proposal.editDropsTasks': '{count, plural, one {Sin esas contrataciones se quita # tarea del plan, contando las que dependían de ella.} other {Sin esas contrataciones se quitan # tareas del plan, contando las que dependían de ellas.}}',
+  'coordination.proposal.editDropsAll': 'Sin esas contrataciones no queda ninguna tarea en el plan. Volvé a incluir alguna, o rechazá la propuesta.',
   'coordination.proposal.editConfirm': 'Confirmar edición y aprobar',
   'coordination.proposal.editCancel': 'Cancelar edición',
   // --- Coordinación: equipos activos, global (Phase 7, slice 7-B) --------
@@ -1153,6 +1158,8 @@ const en: Record<MessageKey, string> = {
   'coordination.proposal.noSettingsNote': 'There is no settings form anywhere in this flow: read the plan and decide.',
   'coordination.proposal.editDispatches': 'Dispatch cap',
   'coordination.proposal.editHires': 'Include in the hire',
+  'coordination.proposal.editDropsTasks': '{count, plural, one {Without those hires, # task is dropped from the plan, counting the ones that depended on it.} other {Without those hires, # tasks are dropped from the plan, counting the ones that depended on them.}}',
+  'coordination.proposal.editDropsAll': 'Without those hires the plan has no tasks left. Put one back, or reject the proposal.',
   'coordination.proposal.editConfirm': 'Confirm edit and approve',
   'coordination.proposal.editCancel': 'Cancel edit',
   // --- Coordination: active teams, global (Phase 7, slice 7-B) -----------

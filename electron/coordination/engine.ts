@@ -602,6 +602,12 @@ export class CoordinationEngine {
     // antes de gastar una contratación.
     if (run.status !== 'planning') throw new LatteError('COORDINATION_NOT_APPROVED', `This proposal is already resolved (run is ${run.status})`);
 
+    // Q4: Y EL PLAN TIENE QUE SER CUMPLIBLE, antes de contratar a nadie. La
+    // versión autoritativa vive adentro de la transacción de `commitProposal`;
+    // ésta corre acá para no levantar procesos de un equipo que igual no va a
+    // arrancar.
+    this.assertPlanIsFulfillable(run.workId, proposal);
+
     // Las contrataciones se hacen de a una y se anotan: `hub.addMember`
     // inserta la fila, mintea el token, ocupa un cupo de techo Y spawnea un
     // proceso real, nada de lo cual vuelve atrás solo. Si una falla —o si
@@ -621,6 +627,47 @@ export class CoordinationEngine {
     }
   }
 
+  /**
+   * Q4: TODA TAREA DEL PLAN TIENE QUIÉN LA HAGA, o la aprobación no pasa.
+   *
+   * El lookup es el mismo que `assertRoleCreatable` hace en todos los demás
+   * caminos (`taskCreate`, `planSubmit`, el puente de handoff) — la foto de
+   * contratables más el equipo vivo de hoy —, con la única diferencia de que
+   * acá la foto todavía no está escrita: se deriva de los `membersToHire` que
+   * llegaron en ESTA resolución, que es exactamente lo que `commitProposal`
+   * está por congelar.
+   *
+   * Sin esto, destildar una contratación en la interfaz —que filtra
+   * `membersToHire` y manda `proposal.plan` intacto— dejaba tareas de un rol
+   * que nadie aprobó: nacían `ready`, el primer despacho moría con
+   * `ROLE_NOT_APPROVED`, la tarea quedaba `failed` y `recomputeReadiness`
+   * derribaba a sus dependientes. Un rechazo de la persona se convertía en
+   * media planificación caída, en silencio, después de haber aprobado.
+   *
+   * La forma de la propuesta no tiene nada de malo, así que esto NO vive en
+   * `assertCoordinationProposal`: qué roles existen lo sabe el motor.
+   */
+  private assertPlanIsFulfillable(workId: string, proposal: CoordinationProposal): void {
+    const approved = new Set((proposal.membersToHire ?? []).map((hire) => hire.roleId));
+    // El equipo de HOY cuenta por sus dos fuentes: la tabla de miembros (la que
+    // `assertRoleCreatable` mira) y el equipo vivo del hub (la que
+    // `reserveTargetMember` mira de verdad cuando llega el despacho). Divergen
+    // —el hub puede tener a alguien que la tabla todavía no, y al revés— y esta
+    // función decide si ALGUIEN va a poder hacer la tarea: negar por una de las
+    // dos vistas sería rechazar una aprobación que el despacho sí podría
+    // cumplir, que es el error caro en esta dirección.
+    let live: Set<string>;
+    try { live = new Set(this.deps.hub.listTeam(workId).filter((m) => m.status !== 'ended').map((m) => m.roleId)); }
+    catch { live = new Set(); }
+    const orphans = [...new Set(proposal.plan.map((item) => item.roleId))]
+      .filter((roleId) => !approved.has(roleId) && !live.has(roleId) && !this.workHasMemberForRole(workId, roleId));
+    if (orphans.length === 0) return;
+    throw new LatteError(
+      'PLAN_HAS_UNAPPROVED_ROLES',
+      `The plan still has tasks for roles nobody approved and this Work has no member for: ${orphans.join(', ')}. Remove those tasks or approve their hire.`,
+    );
+  }
+
   /** Los cinco efectos restantes de una propuesta aprobada, en una sola transacción real. */
   private commitProposal(runId: string, proposal: CoordinationProposal, budget: CoordinationBudget, hired: Array<{ memberId: string; roleId: string }> = []): CoordinationRunRecord {
     const now = this.deps.clock();
@@ -630,6 +677,12 @@ export class CoordinationEngine {
       // `repo.setDecisionStatus`, que se guarda igual dentro de su transacción).
       const run = this.deps.repo.getCoordinationRun(runId);
       if (run.status !== 'planning') throw new LatteError('COORDINATION_NOT_APPROVED', `This proposal is already resolved (run is ${run.status})`);
+      // Q4: el chequeo AUTORITATIVO, antes de la primera escritura de la
+      // transacción. El de `resolveProposalGate` corre antes de contratar —
+      // para no levantar procesos de un equipo que no va a arrancar— pero entre
+      // aquél y éste hay un spawn entero, y en esos segundos alguien pudo
+      // borrar el miembro que hacía cumplible una tarea. Cero filas escritas.
+      this.assertPlanIsFulfillable(run.workId, proposal);
       this.deps.repo.setMeta('coordination_coordinator:' + run.workId, run.coordinatorMemberId ?? '');
       // El presupuesto de la propuesta es SOLO la estimación de despachos: se
       // funde sobre el que la persona ya había configurado en vez de pisarlo.
