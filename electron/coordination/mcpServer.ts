@@ -126,9 +126,13 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
     description: 'Coordinator only. Starts a ready task on its assigned member, subject to the Work\'s authority mode and budget.',
     inputSchema: {
       type: 'object',
+      // `approvedGateId` se publicaba acá y el handler de `tools.ts` lo
+      // DESCARTABA: un agente que lo mandara creía estar presentando una
+      // aprobación humana y no estaba presentando nada. Lo que se publica
+      // existe. La aprobación de un gate entra por `resolveCoordinationGate`,
+      // la interfaz de la persona, nunca por una herramienta del agente.
       properties: {
         taskId: { type: 'string' },
-        approvedGateId: { type: 'string', description: 'The gate id a human already approved for this exact dispatch, if any.' },
       },
       required: ['taskId'],
     },

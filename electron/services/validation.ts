@@ -65,6 +65,20 @@ export function requireGateId(value: unknown): string {
   return value;
 }
 
+/**
+ * El texto con el que la persona EDITA antes de aprobar un gate de
+ * coordinación: el prompt de un despacho, o el JSON de la propuesta editada.
+ *
+ * Llegaba sin validar de ninguna clase hasta `hub.send`, o sea hasta un
+ * agente levantado: un megabyte entraba entero, y una cadena vacía se
+ * despachaba como "edición" pisando la especificación de la tarea. El tope es
+ * el mismo que el repo le aplica al otro texto libre que la persona escribe y
+ * que termina en un runtime, el mensaje de chat.
+ */
+export function requireEditedPrompt(value: unknown): string {
+  return requireText(value, 'editedPrompt', LIMITS.chatMessage);
+}
+
 /** Brand context and rationale may include newlines and tabs, never other C0/C1 controls. */
 export const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/;
 

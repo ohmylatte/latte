@@ -76,9 +76,11 @@ export function createCoordinationTools(engine: CoordinationEngine) {
         return { taskId: task.id, status: task.status };
       }, true),
 
-    latte_dispatch: (grant: CoordinationGrant, args: { taskId: string; approvedGateId?: string }) =>
-      // Caller-supplied bypass fields (e.g. a claimed `approved`/`status`) are
-      // dropped here at the schema boundary: only `taskId` is read from `args`.
+    latte_dispatch: (grant: CoordinationGrant, args: { taskId: string }) =>
+      // Caller-supplied bypass fields (e.g. a claimed `approved`/`status`, o
+      // el `approvedGateId` que el esquema publicaba y este handler nunca
+      // leyó) are dropped here at the schema boundary: only `taskId` is read
+      // from `args`.
       wrap(engine, grant, true, () => engine.startDispatch({ grant, taskId: args.taskId })),
 
     latte_team_list: (grant: CoordinationGrant, _args: Record<string, never>) =>

@@ -181,11 +181,23 @@ function isDagStatus(status: CoordinationTaskRecord['status']): DagTask['status'
 export class CoordinationEngine {
   constructor(private readonly deps: CoordinationEngineDeps) {}
 
-  /** Task 6.37's own trigger. `brandId` comes from `memberContext` -- the same source every other Work->Brand lookup in this file uses. Never throws: a broken `emit` dep must not break coordination itself. */
+  /**
+   * Task 6.37's own trigger. Nunca tira: el fallo de un listener no es
+   * problema de este motor.
+   *
+   * Crítico 12: el `brandId` salía de `memberContext`, que hace I/O de disco
+   * y, cuando el Trabajo no tiene ninguna conversación viva, REESCRIBE su
+   * CLAUDE.md/AGENTS.md. O sea que cada cambio de estado de coordinación
+   * —empezar, pausar, reanudar, cancelar, aprobar, reportar— reescribía los
+   * archivos de instrucciones del Trabajo sólo para averiguar a qué Marca
+   * pertenece. La regla de quietud del repo dice que esos archivos se tocan
+   * en momentos contados, y esto los tocaba en todos. Es una lectura de una
+   * columna: sale del repo, sincrónica, sin tocar el filesystem.
+   */
   private touch(workId: string, runId: string | null): void {
     if (!this.deps.emit) return;
     try {
-      this.deps.emit({ brandId: this.deps.memberContext(workId).brandId, workId, runId });
+      this.deps.emit({ brandId: this.deps.repo.getWork(workId).brandId, workId, runId });
     } catch { /* an event listener's own failure is never this engine's problem */ }
   }
 
@@ -351,6 +363,9 @@ export class CoordinationEngine {
     // sigue sobre la mesa, tal cual estaba. La salida de emergencia con la
     // bandera baja es `cancelCoordinationRun`, que apaga en vez de encender.
     this.requireCoordinationEnabled();
+    // Defensa en profundidad (crítico 12): la frontera IPC ya lo valida, pero
+    // este método es público y `hub.send` está a tres saltos de acá.
+    if (editedPrompt != null) requireText(editedPrompt, 'editedPrompt', LIMITS.chatMessage);
     const result = await this.resolveGateInternal(gateId, decision, editedPrompt);
     const workId = 'workId' in result ? result.workId : this.deps.repo.getCoordinationRun(result.runId).workId;
     const runId = 'runId' in result ? result.runId : result.id;

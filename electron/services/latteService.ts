@@ -126,7 +126,7 @@ import { DELIVERABLES_DIR, DeliverableFiles, deliverableName } from '../workspac
 import { documentFileName, fingerprintOf, type DocumentOnDisk, type WorkspaceFiles } from '../workspace/workspace';
 import { BRAND_CONTEXT_DRAFT_PROMPT_EN, BRAND_CONTEXT_DRAFT_PROMPT_ES, brandContextFingerprint, requireBrandContextInput } from '../workspace/brandContextProtocol';
 import { composeBrandContext } from '../../shared/brandContext';
-import { LIMITS, requireCleanContext, requireGateId, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
+import { LIMITS, requireCleanContext, requireEditedPrompt, requireGateId, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
 import { BrandingService } from '../branding/service';
 
 /** Stable content identity; request identity handles retries, this flags similar proposals without merging them. */
@@ -1617,7 +1617,11 @@ export class LatteService implements BackendApi {
   async resolveCoordinationGate(gateId: string, decision: 'approve' | 'reject', editedPrompt: string | null = null): Promise<CoordinationRunView> {
     const clean = requireGateId(gateId);
     if (decision !== 'approve' && decision !== 'reject') throw new ValidationError('Invalid gate decision');
-    const resolved = await this.coordination.resolveGate(clean, decision, editedPrompt ?? undefined);
+    // Crítico 12: esto cruzaba la frontera IPC sin un solo chequeo y llegaba
+    // tal cual hasta `hub.send`. Se valida en la frontera (acá) y de nuevo,
+    // defensivamente, adentro del motor.
+    const cleanPrompt = editedPrompt == null ? undefined : requireEditedPrompt(editedPrompt);
+    const resolved = await this.coordination.resolveGate(clean, decision, cleanPrompt);
     const runId = 'runId' in resolved ? resolved.runId : (resolved as CoordinationRunRecord).id;
     return this.toCoordinationRunView(this.coordination.getRun(runId));
   }
