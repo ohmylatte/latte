@@ -1099,13 +1099,32 @@ export class CoordinationEngine {
       return { status: 'pending_approval', taskId: task.id, dispatchId: dispatch.id };
     }
 
-    // (El diseño pedía además un chequeo barato del estado del run ACÁ, antes
-    // de pagar el spawn. No se escribió: entre la lectura del run al entrar a
-    // este método y esta línea no hay un solo `await` —el reclamo, el gate y la
-    // autoridad son todos sincrónicos—, así que releer devolvería exactamente
-    // lo mismo. Sería una rama muerta que ningún test puede alcanzar. El
-    // chequeo que importa es el de la confirmación, abajo, que sí tiene un
-    // spawn entero de por medio.)
+    // EL PRESUPUESTO SE CONSULTA ANTES DE CONTRATAR (R2). Estos cuatro
+    // veredictos —presupuesto legible, concurrencia, tope del Trabajo, tope
+    // app-wide— vivían SÓLO dentro de la transacción de abajo, o sea después
+    // de `reserveTargetMember` + `hub.addMember`: fila, token, cupo de techo y
+    // un PROCESO REAL levantado para un despacho que el tope ya iba a negar. Y
+    // la denegación no despedía a nadie. Acá es un pre-chequeo barato,
+    // sincrónico, en el MISMO tick en que se reclamó la tarea: nada se reserva
+    // todavía, se mira el estado de ahora. Con el tope ya agotado no se
+    // contrata a nadie, que es el caso común.
+    //
+    // NO reemplaza al chequeo de la transacción: entre esta línea y el commit
+    // hay un spawn entero, y en esos segundos otro despacho puede consumir lo
+    // que quedaba. Éste evita lo evitable; aquél es el que manda.
+    //
+    // (El diseño pedía además un chequeo barato del ESTADO DEL RUN acá. Sigue
+    // sin escribirse, y por la misma razón de siempre: del `getCoordinationRun`
+    // de arriba a esta línea no hay un solo `await`, así que releerlo devolvería
+    // lo mismo. El presupuesto sí cambia sin que este método espere nada — lo
+    // mueven otros despachos y otros runs —, por eso éste vale y aquél no.)
+    const preflight = this.judgeDispatchBudget(run, existingPending?.id);
+    if (!preflight.ok) {
+      this.deps.repo.transaction(() => this.applyDispatchDenial(run.id, task.id, existingPending, now, preflight));
+      this.touch(run.workId, run.id);
+      throw preflight.error;
+    }
+
     let session: Awaited<ReturnType<AgentHub['openMember']>>;
     // La elección del miembro y su reserva pasan en el MISMO tick (ver
     // `assigning`); lo lento —levantar el proceso— viene después.
@@ -1161,60 +1180,16 @@ export class CoordinationEngine {
       // protegían nada y que se leían como si protegieran algo. Si alguna vez
       // aparece un `await` acá adentro, esta invariante deja de valer y hay
       // que releer el run, no volver a poner el `if`.
-      // Del run RELEÍDO, igual que su estado: un `setCoordinationBudget` que
-      // entró mientras se levantaba el proceso ya escribió el snapshot nuevo,
-      // y despachar contra la foto vieja es la misma causa raíz de siempre.
-      const budgetRead = readStoredCoordinationBudget(live.budgetJson);
-      if (budgetRead.kind !== 'set') {
-        // Ilegible NO es "sin presupuesto", y tampoco es una excepción opaca
-        // desde el fondo de la pila: es una denegación con nombre, que se lee
-        // en la bitácora y en la suspensión como cualquier otra (crítico 8).
-        const reason = 'budget_invalid';
-        this.writeLedgerDenied(run.id, reason);
-        this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
-        this.abortDispatchClaim(task.id, existingPending, now, reason);
-        return { ok: false, error: new LatteError('COORDINATION_BUDGET_INVALID', "This run's budget cannot be read; set the Work's budget again before dispatching.") };
-      }
-      const budget = budgetRead.budget;
-      const inFlight = this.countInFlightDispatches(run.id, existingPending?.id);
-      if (budget.maxConcurrent != null && inFlight >= budget.maxConcurrent) {
-        this.writeLedgerDenied(run.id, 'max_concurrent');
-        this.abortDispatchClaim(task.id, existingPending, now, 'max_concurrent');
-        return { ok: false, error: new LatteError('MAX_CONCURRENT', 'Too many dispatches are already in flight') };
-      }
-
-      const decision = reserveDispatch(budget, this.usageFor(run.id));
-      if (!decision.ok) {
-        this.writeLedgerDenied(run.id, decision.reason);
-        this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, decision.reason);
-        this.abortDispatchClaim(task.id, existingPending, now, decision.reason);
-        return { ok: false, error: new LatteError('BUDGET_EXCEEDED', `Coordination budget denied: ${decision.reason}`) };
-      }
-
-      // El tope app-wide (task 6.35), en el MISMO choke point que el del
-      // Trabajo: se guardaba en meta y no lo leía nadie, así que la persona
-      // que ponía 40 no tenía tope ninguno. Suspende sólo al run que chocó.
-      const globalBudget = this.readGlobalBudget();
-      // Ilegible NO es "sin tope": es un dato roto, y un dato roto DENIEGA,
-      // con una razón que se lee en la bitácora y en la suspensión como
-      // cualquier otra — no como una excepción opaca desde el fondo de la
-      // pila (crítico 8).
-      if (globalBudget.kind === 'invalid') {
-        const reason = 'global_budget_invalid';
-        this.writeLedgerDenied(run.id, reason);
-        this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
-        this.abortDispatchClaim(task.id, existingPending, now, reason);
-        return { ok: false, error: new LatteError('GLOBAL_BUDGET_INVALID', 'The app-wide dispatch cap could not be read; fix it in Settings before dispatching again.') };
-      }
-      if (globalBudget.kind === 'set') {
-        const globalDecision = reserveDispatch(globalBudget.budget, this.globalUsage());
-        if (!globalDecision.ok) {
-          const reason = `global_${globalDecision.reason}`;
-          this.writeLedgerDenied(run.id, reason);
-          this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
-          this.abortDispatchClaim(task.id, existingPending, now, reason);
-          return { ok: false, error: new LatteError('BUDGET_EXCEEDED', `Coordination budget denied: ${reason}`) };
-        }
+      // LA CONFIRMACIÓN del presupuesto, sobre el run RELEÍDO: un
+      // `setCoordinationBudget` que entró mientras se levantaba el proceso ya
+      // escribió el snapshot nuevo, y despachar contra la foto vieja es la
+      // misma causa raíz de siempre. El pre-chequeo de arriba evita contratar
+      // cuando el tope YA estaba agotado; éste es el que manda, porque otro
+      // despacho pudo consumir el último cupo durante el spawn.
+      const verdict = this.judgeDispatchBudget(live, existingPending?.id);
+      if (!verdict.ok) {
+        this.applyDispatchDenial(run.id, task.id, existingPending, now, verdict);
+        return { ok: false, error: verdict.error };
       }
 
       const reservationId = newId('crs');
@@ -1263,9 +1238,19 @@ export class CoordinationEngine {
         outcome = this.deps.repo.transaction(runTransaction);
       } catch (error) {
         this.releaseDispatchClaim(task.id, existingPending, now);
+        // R2: y la contratación también se deshace. Un throw de adentro deja
+        // exactamente el mismo miembro sobrante que una denegación.
+        this.compensateHire(reservedMemberId, session.id, run.id, task.roleId, now);
         throw error;
       }
-      if (!outcome.ok) throw outcome.error;
+      if (!outcome.ok) {
+        // R2: la transacción dijo que no, así que el miembro que se contrató
+        // PARA ESTE despacho sobra. `resolveProposalGate` ya compensaba así
+        // desde siempre; acá no compensaba nadie, y cada denegación dejaba una
+        // fila, un token, un cupo de techo y un proceso vivo para nadie.
+        this.compensateHire(reservedMemberId, session.id, run.id, task.roleId, now);
+        throw outcome.error;
+      }
       const dispatched = outcome.dispatch;
 
       // `hub.send` es el UNICO efecto real, y corre despues del commit: si el
@@ -1291,6 +1276,112 @@ export class CoordinationEngine {
       return { status: 'dispatched', taskId: task.id, dispatchId: dispatched.id };
     } finally {
       if (reservationKey) this.assigning.delete(reservationKey);
+    }
+  }
+
+  /**
+   * "¿Entra un despacho más?", sin reservar nada (R2). Los CUATRO veredictos
+   * —presupuesto legible, concurrencia, tope del Trabajo, tope app-wide— en un
+   * solo lugar, para que el pre-chequeo barato de antes del spawn y la
+   * confirmación de adentro de la transacción no puedan divergir: dos fórmulas
+   * distintas para la misma pregunta es exactamente cómo se cuela un despacho
+   * que un tope tenía que negar.
+   *
+   * Es una lectura pura de la base: no escribe una sola fila. Quien decide qué
+   * hacer con el "no" es `applyDispatchDenial`.
+   *
+   * `suspend:false` sólo para `max_concurrent`: chocar contra la concurrencia
+   * no agota nada, es un "ahora no" que se resuelve solo en cuanto termine
+   * alguno de los que están en vuelo. Suspender el run por eso lo dejaría
+   * esperando una decisión humana que no hace falta tomar.
+   */
+  private judgeDispatchBudget(
+    run: CoordinationRunRecord,
+    excludeDispatchId: string | undefined,
+  ): { ok: true } | { ok: false; reason: string; suspend: boolean; error: LatteError } {
+    // Ilegible NO es "sin presupuesto", y tampoco es una excepción opaca desde
+    // el fondo de la pila: es una denegación con nombre, que se lee en la
+    // bitácora y en la suspensión como cualquier otra (crítico 8).
+    const budgetRead = readStoredCoordinationBudget(run.budgetJson);
+    if (budgetRead.kind !== 'set') {
+      return {
+        ok: false, reason: 'budget_invalid', suspend: true,
+        error: new LatteError('COORDINATION_BUDGET_INVALID', "This run's budget cannot be read; set the Work's budget again before dispatching."),
+      };
+    }
+    const budget = budgetRead.budget;
+    const inFlight = this.countInFlightDispatches(run.id, excludeDispatchId);
+    if (budget.maxConcurrent != null && inFlight >= budget.maxConcurrent) {
+      return { ok: false, reason: 'max_concurrent', suspend: false, error: new LatteError('MAX_CONCURRENT', 'Too many dispatches are already in flight') };
+    }
+    const decision = reserveDispatch(budget, this.usageFor(run.id));
+    if (!decision.ok) {
+      return { ok: false, reason: decision.reason, suspend: true, error: new LatteError('BUDGET_EXCEEDED', `Coordination budget denied: ${decision.reason}`) };
+    }
+    // El tope app-wide (task 6.35), en el MISMO choke point que el del Trabajo:
+    // se guardaba en meta y no lo leía nadie, así que la persona que ponía 40
+    // no tenía tope ninguno. Suspende sólo al run que chocó. Ilegible tampoco
+    // es "sin tope": un dato roto DENIEGA (crítico 8).
+    const globalBudget = this.readGlobalBudget();
+    if (globalBudget.kind === 'invalid') {
+      return {
+        ok: false, reason: 'global_budget_invalid', suspend: true,
+        error: new LatteError('GLOBAL_BUDGET_INVALID', 'The app-wide dispatch cap could not be read; fix it in Settings before dispatching again.'),
+      };
+    }
+    if (globalBudget.kind === 'set') {
+      const globalDecision = reserveDispatch(globalBudget.budget, this.globalUsage());
+      if (!globalDecision.ok) {
+        const reason = `global_${globalDecision.reason}`;
+        return { ok: false, reason, suspend: true, error: new LatteError('BUDGET_EXCEEDED', `Coordination budget denied: ${reason}`) };
+      }
+    }
+    return { ok: true };
+  }
+
+  /**
+   * El "no" del presupuesto, anotado donde se anotan todos: un asiento
+   * `denied` en el libro mayor, la suspensión del run cuando corresponde, y el
+   * reclamo soltado con el despacho resuelto en contra.
+   *
+   * NO abre transacción: los dos llamadores ya están adentro de una (la
+   * confirmación por estar dentro de `runTransaction`, el pre-chequeo porque la
+   * abre él). `repo.transaction` es un `BEGIN` pelado y SQLite no anida.
+   */
+  private applyDispatchDenial(
+    runId: string,
+    taskId: string,
+    existingPending: CoordinationDispatchRecord | null,
+    now: string,
+    verdict: { reason: string; suspend: boolean },
+  ): void {
+    this.writeLedgerDenied(runId, verdict.reason);
+    if (verdict.suspend) this.deps.repo.updateCoordinationRunStatus(runId, 'suspended', now, verdict.reason);
+    this.abortDispatchClaim(taskId, existingPending, now, verdict.reason);
+  }
+
+  /**
+   * Deshace la contratación que este despacho hizo y no va a usar (R2).
+   *
+   * Sólo cuando el miembro se contrató PARA ESTE despacho: `reservedMemberId`
+   * no nulo significa que se REUTILIZÓ a alguien que ya estaba en el equipo, y
+   * a ése no lo despide un despacho que no salió. `hub.removeMember` es la
+   * misma compensación que `resolveProposalGate` usa desde siempre: para el
+   * proceso, suelta el cupo de techo y el token, y borra la fila.
+   *
+   * Si la compensación FALLA, el alta se registra igual. El miembro sigue
+   * vivo, así que ocultarlo dejaría un proceso contratado que ninguna bitácora
+   * nombra — y la bitácora existe justamente para que la persona pueda ver lo
+   * que hay. La verdad manda por encima de la prolijidad del registro.
+   */
+  private compensateHire(reservedMemberId: string | null, memberId: string, runId: string, roleId: string, now: string): void {
+    if (reservedMemberId != null) return; // se reutilizó a alguien del equipo: no se contrató nada que deshacer
+    try {
+      this.deps.hub.removeMember(memberId);
+    } catch {
+      try {
+        this.recordHire(runId, memberId, roleId, now);
+      } catch { /* si ni siquiera se puede anotar, no hay nada más honesto que hacer acá */ }
     }
   }
 
