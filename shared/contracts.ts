@@ -839,7 +839,14 @@ export type CoordinationDegradedReason =
    * procesos lleno). La UI nunca puede afirmar una capacidad que el proceso
    * no tiene.
    */
-  | 'runtime_refused_injection';
+  | 'runtime_refused_injection'
+  /**
+   * El cupo se había reservado y el servidor MCP local no pudo arrancar. La
+   * reserva se soltó (si no, un servidor que nunca levantó se comía el cupo de
+   * otra Marca para siempre) y el miembro quedó sin coordinación, pero con su
+   * memoria: degradar la coordinación nunca se lleva puesta a engram.
+   */
+  | 'coordination_server_unavailable';
 
 /**
  * One row per team member of the Work, from `coordinationRuntimeSupport`

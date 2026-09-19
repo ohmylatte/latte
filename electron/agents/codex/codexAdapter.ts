@@ -447,10 +447,28 @@ export class CodexChatAdapter implements RuntimeAdapter {
   private async resolveServer(accountId: string, serverKey: string, mcpServers?: AdapterMcpServer[]): Promise<CodexAppServer> {
     let server = this.servers.get(serverKey);
     if (!server) {
-      const runtime = await this.deps.resolveExecutable();
-      if (!runtime) throw new UnavailableError('Codex is not installed or not on PATH');
       const hasMcp = mcpServers !== undefined && mcpServers.length > 0;
       const hasCoordination = mcpServers?.some((s) => s.kind === 'http') ?? false;
+      // LA RESERVA DEL CUPO, antes del primer `await`. `startChat` cuenta
+      // `countCoordinatedServers()` y después llama acá; con el `add` al final
+      // —después de esperar a `resolveExecutable()` y a `ensure()`— dos
+      // miembros distintos abriendo a la vez leían los dos el mismo contador
+      // viejo y entraban los dos. Todo el camino desde ese conteo hasta esta
+      // línea es sincrónico, así que nadie se puede meter en el medio.
+      if (hasCoordination) this.coordinatedServerKeys.add(serverKey);
+      let runtime: Awaited<ReturnType<CodexAdapterDeps['resolveExecutable']>>;
+      try {
+        runtime = await this.deps.resolveExecutable();
+      } catch (error) {
+        if (hasCoordination) this.coordinatedServerKeys.delete(serverKey);
+        throw error;
+      }
+      if (!runtime) {
+        // Compensación: el cupo reservado se suelta, o un Codex ausente lo
+        // quemaba para siempre en cada intento.
+        if (hasCoordination) this.coordinatedServerKeys.delete(serverKey);
+        throw new UnavailableError('Codex is not installed or not on PATH');
+      }
       server = new CodexAppServer({
         executable: runtime.executable,
         env: {
@@ -487,7 +505,6 @@ export class CodexChatAdapter implements RuntimeAdapter {
         this.coordinatedServerKeys.delete(serverKey);
         forgetServerPid(this.deps.serverCwd, serverKey);
       };
-      if (hasCoordination) this.coordinatedServerKeys.add(serverKey);
       this.servers.set(serverKey, server);
     }
     try {

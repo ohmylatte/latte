@@ -298,6 +298,7 @@ const DEGRADED_KEY: Record<CoordinationDegradedReason, string> = {
   opencode_shared_server: 'opencodeSharedServer',
   engram_not_installed: 'engramMissing',
   runtime_refused_injection: 'runtimeRefused',
+  coordination_server_unavailable: 'coordinationServerDown',
 };
 
 /** The coordination line: nothing to flag when the member can propose; the reason's own sentence otherwise (it already says "dispatch manual"). */

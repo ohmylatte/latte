@@ -52,7 +52,9 @@ export type CoordinationDegradedReason =
   | 'opencode_shared_server'
   | 'engram_not_installed'
   /** El adaptador entregó menos de lo que este planificador reclamó (ver `confirmInjection`). */
-  | 'runtime_refused_injection';
+  | 'runtime_refused_injection'
+  /** El cupo estaba reservado y el servidor MCP local no pudo arrancar: la reserva se soltó y este miembro queda sin coordinación, pero con su memoria. */
+  | 'coordination_server_unavailable';
 
 export interface MemberInjectionStatus {
   runtime: ChatRuntime;
@@ -111,6 +113,12 @@ interface Decision {
   reason: CoordinationDegradedReason | null;
 }
 
+/** Lo que hay que esperar ANTES de mirar un solo cupo (ver `resolveSlowInputs`). */
+interface SlowInputs {
+  claudeVersion: string | null;
+  memoryServer: AdapterMcpServer | null;
+}
+
 interface Claim {
   workId: string;
   coordinated: boolean;
@@ -132,50 +140,83 @@ export class CoordinationInjectionPlanner {
 
   constructor(private readonly deps: CoordinationInjectionDeps) {}
 
-  /** Real assembly: mints a token unconditionally, decides delivery, commits the ledger, returns the servers to hand the adapter. */
+  /**
+   * Real assembly: mints a token unconditionally, decides delivery, commits the
+   * ledger, returns the servers to hand the adapter.
+   *
+   * El ORDEN es el arreglo (crítico 10). Antes, `evaluate()` leía los cupos
+   * DESPUÉS de esperar a `resolveClaudeVersion`/`memoryServerFor`, y la marca
+   * (`markCoordinated`) se escribía DESPUÉS de esperar también a
+   * `ensureStarted()`. Los locks que existen son por miembro, así que dos
+   * miembros DISTINTOS abriendo a la vez leían los dos la misma foto de "hay
+   * lugar" y entraban los dos, pasándose del techo. Ahora:
+   *
+   *   1. primero lo lento que NO depende de cupos;
+   *   2. después, en UN SOLO TICK sin un `await` en el medio: leer los cupos,
+   *      decidir y MARCAR — nadie puede meterse entre la lectura y la marca;
+   *   3. después lo lento que sí depende de la decisión (`ensureStarted`);
+   *   4. y si eso falla, COMPENSAR: soltar el cupo reservado y degradar sólo la
+   *      entrada de coordinación — la memoria sobrevive (task 6.39).
+   */
   async assign(input: MemberInjectionInput): Promise<{ servers: AdapterMcpServer[] | undefined; status: MemberInjectionStatus }> {
     // Task 6.28: unconditional, every member, every runtime -- delivery is a separate question.
     const token = this.deps.tokens.mint(input.workId, input.memberId);
-    const decision = await this.evaluate(input);
+    // (1) Lo lento que no mira ningún cupo.
+    const resolved = await this.resolveSlowInputs(input);
+
+    // (2) UN SOLO TICK: de acá hasta el final del bloque no hay un solo `await`.
+    const decision = this.decide(input, resolved);
+    let coordinated = decision.coordinationEligible;
+    let memorySlotKey: string | null = null;
+    // El techo que estos contadores acotan es de PROCESOS `codex app-server`
+    // (ver los docstrings de MAX_COORDINATED_CODEX_*). Claude no spawnea
+    // ninguno: contarlo acá le comía el cupo a Codex sin gastar nada, y con
+    // seis miembros Claude app-wide `totalSlots()` llegaba a frenar hasta la
+    // rama de sólo-memoria. Sólo Codex entra al ledger.
+    if (coordinated && input.runtime === 'codex') this.markCoordinated(input.workId, input.memberId);
+    // A coordinated member's memory rides the SAME process (the shared
+    // http token already forces its own fingerprint) -- only a genuinely
+    // memory-only member needs its own brand+account slot.
+    if (decision.memoryServer && input.runtime === 'codex' && !coordinated) {
+      memorySlotKey = memorySlotKeyFor(input.accountId, input.brandId);
+      this.markMemorySlot(memorySlotKey, input.memberId);
+    }
+    // -- fin del tick --
 
     const servers: AdapterMcpServer[] = [];
-    let coordinated = false;
-    let memorySlotKey: string | null = null;
-
-    if (decision.coordinationEligible) {
-      await this.deps.server.ensureStarted();
-      const port = this.deps.server.boundPort;
-      servers.push({ kind: 'http', name: 'latte_coordination', url: `http://127.0.0.1:${port}/mcp`, token });
-      // ENTREGADO, no solo acuniado (juicio #10, ronda 4): `mint()` corre para
-      // todo miembro de todo Trabajo de toda Marca, asi que `tokens.size` nunca
-      // llegaba a cero y `stopIfIdle` no podia cerrar el listener jamas. Esta
-      // linea -- y solo esta -- es donde un token llega de verdad a un runtime.
-      this.deps.tokens.markDelivered(input.workId, input.memberId);
-      // El techo que estos contadores acotan es de PROCESOS `codex app-server`
-      // (ver los docstrings de MAX_COORDINATED_CODEX_*). Claude no spawnea
-      // ninguno: contarlo acá le comía el cupo a Codex sin gastar nada, y con
-      // seis miembros Claude app-wide `totalSlots()` llegaba a frenar hasta la
-      // rama de sólo-memoria. Sólo Codex entra al ledger.
-      if (input.runtime === 'codex') this.markCoordinated(input.workId, input.memberId);
-      coordinated = true;
-    }
-    if (decision.memoryServer) {
-      servers.push(decision.memoryServer);
-      // A coordinated member's memory rides the SAME process (the shared
-      // http token already forces its own fingerprint) -- only a genuinely
-      // memory-only member needs its own brand+account slot.
-      if (input.runtime === 'codex' && !coordinated) {
-        memorySlotKey = memorySlotKeyFor(input.accountId, input.brandId);
-        this.markMemorySlot(memorySlotKey, input.memberId);
+    let reason = decision.reason;
+    if (coordinated) {
+      // (3) Lo lento, ya con el cupo reservado.
+      try {
+        await this.deps.server.ensureStarted();
+        const port = this.deps.server.boundPort;
+        servers.push({ kind: 'http', name: 'latte_coordination', url: `http://127.0.0.1:${port}/mcp`, token });
+        // ENTREGADO, no solo acuniado (juicio #10, ronda 4): `mint()` corre para
+        // todo miembro de todo Trabajo de toda Marca, asi que `tokens.size` nunca
+        // llegaba a cero y `stopIfIdle` no podia cerrar el listener jamas. Esta
+        // linea -- y solo esta -- es donde un token llega de verdad a un runtime.
+        this.deps.tokens.markDelivered(input.workId, input.memberId);
+      } catch {
+        // (4) COMPENSACIÓN. El cupo reservado se suelta enseguida: dejarlo
+        // marcado por un servidor que no arrancó se lo come a otra Marca para
+        // siempre. Se degrada SÓLO la coordinación; la memoria sigue viajando.
+        if (input.runtime === 'codex') this.coordinatedByWork.get(input.workId)?.delete(input.memberId);
+        coordinated = false;
+        reason = 'coordination_server_unavailable';
+        if (decision.memoryServer && input.runtime === 'codex') {
+          memorySlotKey = memorySlotKeyFor(input.accountId, input.brandId);
+          this.markMemorySlot(memorySlotKey, input.memberId);
+        }
       }
     }
+    if (decision.memoryServer) servers.push(decision.memoryServer);
 
     const status: MemberInjectionStatus = {
       runtime: input.runtime,
-      coordinationInjected: decision.coordinationEligible,
+      coordinationInjected: coordinated,
       memoryInjected: decision.memoryServer != null,
-      canPropose: decision.coordinationEligible,
-      reason: decision.reason,
+      canPropose: coordinated,
+      reason,
     };
     this.claims.set(input.memberId, { workId: input.workId, coordinated, memorySlotKey, status });
     return { servers: servers.length > 0 ? servers : undefined, status };
@@ -185,7 +226,7 @@ export class CoordinationInjectionPlanner {
   async preview(input: MemberInjectionInput): Promise<MemberInjectionStatus> {
     const existing = this.claims.get(input.memberId);
     if (existing) return existing.status;
-    const decision = await this.evaluate(input);
+    const decision = this.decide(input, await this.resolveSlowInputs(input));
     return {
       runtime: input.runtime,
       coordinationInjected: decision.coordinationEligible,
@@ -284,7 +325,26 @@ export class CoordinationInjectionPlanner {
 
   // -- Decision logic (pure given the current ledger) -----------------------
 
-  private async evaluate(input: MemberInjectionInput): Promise<Decision> {
+  /**
+   * TODO lo lento que la decisión necesita y que NO depende de ningún cupo:
+   * la versión de Claude instalada y el binario de engram. Separado a
+   * propósito, para que `decide()` pueda ser sincrónico — es lo único que hace
+   * que leer los cupos y marcarlos no puedan quedar a ambos lados de un await.
+   */
+  private async resolveSlowInputs(input: MemberInjectionInput): Promise<SlowInputs> {
+    if (input.runtime === 'opencode') return { claudeVersion: null, memoryServer: null };
+    if (input.runtime === 'claude') {
+      const claudeVersion = await this.deps.resolveClaudeVersion();
+      // Por debajo del piso no hay inyección de ninguna clase, ni siquiera
+      // memoria: no se pregunta por engram al pedo.
+      if (!claudeSupportsMcpInjection(claudeVersion)) return { claudeVersion, memoryServer: null };
+      return { claudeVersion, memoryServer: await this.memoryServerFor(input) };
+    }
+    return { claudeVersion: null, memoryServer: await this.memoryServerFor(input) };
+  }
+
+  /** La decisión entera, SINCRÓNICA: lee los cupos y devuelve el veredicto en el mismo tick en que el llamador lo marca. */
+  private decide(input: MemberInjectionInput, resolved: SlowInputs): Decision {
     // Task 8.1: coordination lives behind `featureFlags('coordination')`.
     // Memory does not -- this is the ONLY read of the flag in this method,
     // and it only ever narrows `coordinationEligible`, never `memoryServer`.
@@ -295,22 +355,20 @@ export class CoordinationInjectionPlanner {
     }
 
     if (input.runtime === 'claude') {
-      const version = await this.deps.resolveClaudeVersion();
-      if (!claudeSupportsMcpInjection(version)) {
+      if (!claudeSupportsMcpInjection(resolved.claudeVersion)) {
         return { coordinationEligible: false, memoryServer: null, reason: 'claude_below_floor' };
       }
-      const memoryServer = await this.memoryServerFor(input);
       return {
         coordinationEligible: coordinationFeatureOn,
-        memoryServer,
-        reason: memoryServer ? null : 'engram_not_installed',
+        memoryServer: resolved.memoryServer,
+        reason: resolved.memoryServer ? null : 'engram_not_installed',
       };
     }
 
     // Codex: memory and coordination are evaluated independently, then
     // combined -- coordination, when granted, always carries memory too
     // (same process); memory alone needs its own ceiling check.
-    const memoryServer = await this.memoryServerFor(input);
+    const memoryServer = resolved.memoryServer;
     const coordination = coordinationFeatureOn
       ? this.evaluateCodexCoordination(input)
       : { eligible: false, reason: null as CoordinationDegradedReason | null };
