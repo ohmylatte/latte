@@ -195,8 +195,9 @@ export interface CoordinationEngineDeps {
    * Task 8.1 (rollout gate): `featureFlags('coordination')`. Optional and
    * defaults to ENABLED when absent -- every pre-8.1 test (direct engine
    * construction, ~150 of them) never wires this and must keep behaving
-   * exactly as before. Real production wiring (`latteService.ts`,
-   * `bootstrap.ts`'s `mcpEngine`) passes the REAL flag, off by default like
+   * exactly as before. Real production wiring (`latteService.ts`, el único
+   * motor del proceso — Q11: acá decía "el `mcpEngine` de bootstrap.ts", que
+   * R1 eliminó) passes the REAL flag, off by default like
    * every other feature. Gates only the two entry points that can create a
    * run (`startRun`, `requestCoordination`) -- everything downstream already
    * requires an active run (task 6.3's `NO_ACTIVE_RUN` guard), so gating

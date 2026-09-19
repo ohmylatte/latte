@@ -176,7 +176,17 @@ export interface LatteServiceDeps {
   engram: EngramClient;
   /** sdd/autonomous-coordination, task 6.33: the SAME planner hub wiring uses, so `coordinationRuntimeSupport` reports what actually happened for a live member (`preview()`'s own claim-lookup) rather than a second, possibly-divergent guess. Absent (tests that never wire coordination) reports every member as unsupported. */
   injection?: CoordinationInjectionPlanner;
-  /** Task 6.37: forwarded straight into this service's own `CoordinationEngine`, so an IPC-driven change (this engine) fires the same event a real MCP `tools/call` (the SEPARATE engine instance bootstrap.ts builds for the coordination MCP server) does. */
+  /**
+   * Task 6.37: forwarded straight into this service's own `CoordinationEngine`,
+   * so an IPC-driven change fires the same event a real MCP `tools/call` does.
+   *
+   * Q11: y lo hace por la razón más simple, que es que SON EL MISMO MOTOR. Este
+   * comentario hablaba de "la instancia SEPARADA que bootstrap.ts construye
+   * para el servidor MCP de coordinación"; esa instancia se eliminó en R1 —el
+   * motor tiene estado en memoria y dos copias no se ven la una a la otra—, así
+   * que el servidor MCP usa `service.coordinationEngine`. Un comentario que
+   * describe una arquitectura que ya no existe es peor que no tener ninguno.
+   */
   emitCoordination?: (event: CoordinationEvent) => void;
   /** MCP servers, read and written through each runtime's own CLI. */
   mcp?: McpCatalog;
