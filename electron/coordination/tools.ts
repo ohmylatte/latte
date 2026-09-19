@@ -42,14 +42,16 @@ async function wrap<T>(engine: CoordinationEngine, grant: CoordinationGrant, req
   try {
     authority = engine.readAuthorityForEnvelope(grant.workId);
     budget = engine.budgetBlockForEnvelope(grant.runId);
-    if (requireCoordinator && grant.role !== 'coordinator') {
-      return { ok: false, authority, budget, data: null, error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE } };
-    }
-    // `latte_report`/`check`/`ask` need a live run to act against; a grant
-    // lazily resolved to `runId:null` (task 6.3) fails cleanly here instead of
-    // reaching the engine at all — nothing is mutated because nothing runs.
+    // "No hay run" va PRIMERO, antes que "no sos el coordinador": cuando el run
+    // termina, el permiso de coordinador se borra con él (D3), así que el mismo
+    // agente que venía coordinando pasaba a recibir FORBIDDEN —"no tenés el
+    // permiso, proponé un plan"— cuando el hecho real es que su equipo ya
+    // terminó. Se responde el hecho, no su consecuencia.
     if (requiresRun && grant.runId == null) {
       return { ok: false, authority, budget, data: null, error: { code: 'NO_ACTIVE_RUN', message: 'This Work has no active coordination run yet.' } };
+    }
+    if (requireCoordinator && grant.role !== 'coordinator') {
+      return { ok: false, authority, budget, data: null, error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE } };
     }
     const data = await fn();
     return { ok: true, authority, budget, data };
@@ -81,7 +83,11 @@ export function createCoordinationTools(engine: CoordinationEngine) {
       // el `approvedGateId` que el esquema publicaba y este handler nunca
       // leyó) are dropped here at the schema boundary: only `taskId` is read
       // from `args`.
-      wrap(engine, grant, true, () => engine.startDispatch({ grant, taskId: args.taskId })),
+      // `requiresRun` prendido (D2): sin él, un `latte_dispatch` sobre un run ya
+      // terminado entraba al motor y sólo fallaba tres chequeos más adentro,
+      // después de leer el run y la tarea. Con el run cerrado no hay nada que
+      // despachar, y decirlo acá no escribe una sola fila.
+      wrap(engine, grant, true, () => engine.startDispatch({ grant, taskId: args.taskId }), true),
 
     latte_team_list: (grant: CoordinationGrant, _args: Record<string, never>) =>
       wrap(engine, grant, true, () => engine.teamList(grant.workId)),

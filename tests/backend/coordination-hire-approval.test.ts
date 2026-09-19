@@ -109,7 +109,10 @@ describe('la contratación que la persona destildó', () => {
     // Ni miembro nuevo, ni proceso levantado, ni tarea que desaparece en silencio.
     expect(members.map((m) => m.roleId)).toEqual(['copywriter']);
     expect(send.mock.calls).toHaveLength(0);
-    expect(b.repo.getCoordinationTask(designerTask).status).toBe('blocked');
+    // `failed`, no `blocked` (D1): la persona ya decidió que ese rol no se
+    // contrata en este run, así que esa tarea no va a correr acá. `blocked`
+    // dejaba el run vivo para siempre esperando una intervención que ya ocurrió.
+    expect(b.repo.getCoordinationTask(designerTask).status).toBe('failed');
     // Y la razón queda escrita en la bitácora, no sólo en el error que se tiró.
     // `'taskId' in entry` en vez de enumerar las entradas de cierre: la
     // bitácora ya tiene dos (`run_done`, `run_cancelled`) y cada nueva rompía

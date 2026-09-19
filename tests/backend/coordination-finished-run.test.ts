@@ -126,10 +126,25 @@ describe('un run terminado se sigue viendo, con su bitácora (crítico: la UI bo
     expect(await b.service.getCoordinationRun(workId)).toMatchObject({ id: second.id, status: 'cancelled', active: false });
   });
 
-  it('un run terminado NO aparece en la tira global de equipos activos', async () => {
+  /**
+   * D18: la tira dejó de ser "sólo lo activo" y pasó a ser la fuente de
+   * "desde tu última visita". Un equipo que TERMINA es exactamente la novedad
+   * que Inicio tiene que poder contar, y desaparecer de la fuente en el mismo
+   * instante en que había algo que decir era el motivo por el que no la
+   * contaba nunca. Sigue sin parecer vivo: viaja con su `status` real.
+   */
+  it('un run recién terminado sigue en la tira hasta que la persona lo mira', async () => {
     const run = await engine.startRun(workId, 'mem_coordinator');
     b.repo.updateCoordinationRunStatus(run.id, 'done', new Date().toISOString(), null);
-    const active = await b.service.listActiveCoordinationRuns();
-    expect(active.some((row) => row.runId === run.id)).toBe(false);
+
+    const before = await b.service.listActiveCoordinationRuns();
+    const row = before.find((r) => r.runId === run.id);
+    expect(row).toBeDefined();
+    expect(row!.status).toBe('done');
+
+    await b.service.markCoordinationSeen(workId);
+
+    const after = await b.service.listActiveCoordinationRuns();
+    expect(after.some((r) => r.runId === run.id)).toBe(false);
   });
 });

@@ -1133,6 +1133,25 @@ export class LatteRepository {
   }
 
   /**
+   * El ÚLTIMO run terminado de cada Trabajo, app-wide, del más nuevo al más
+   * viejo. Uno por Trabajo y nada más: la tira de Inicio tiene que poder decir
+   * "tu equipo terminó" desde que terminó hasta que la persona lo mira, y para
+   * eso alcanza el último — el historial completo no es una novedad, es un
+   * archivo.
+   */
+  listLatestFinishedCoordinationRuns(limit = 25): CoordinationRunRecord[] {
+    return this.db
+      .all<CoordinationRunRow>(
+        `SELECT r.* FROM coordination_run r
+         WHERE r.status IN ('done','cancelled')
+           AND r.updated_at = (SELECT MAX(o.updated_at) FROM coordination_run o WHERE o.work_id = r.work_id AND o.status IN ('done','cancelled'))
+         ORDER BY r.updated_at DESC, r.id DESC LIMIT ?`,
+        [limit],
+      )
+      .map(toCoordinationRun);
+  }
+
+  /**
    * Every active run app-wide, across every Work and every Brand —
    * `planning`/`running`/`suspended`, the same set `idx_coordination_run_active`
    * enforces one-per-Work of. Feeds a proposal gate's `aggregate` (task 6.13:

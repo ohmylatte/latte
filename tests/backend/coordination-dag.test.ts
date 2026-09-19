@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canAddTask,
-  computeBlockedTasks,
+  computeDoomedTasks,
   computeReadyTasks,
   computeTaskDepth,
   wouldCreateCycle,
@@ -48,7 +48,7 @@ describe('coordination dag (pure)', () => {
       { id: 'T', status: 'pending' },
     ];
     const edges: DagEdge[] = [{ taskId: 'T', dependsOnId: 'A' }];
-    expect(computeBlockedTasks(tasks, edges)).toEqual(['T']);
+    expect(computeDoomedTasks(tasks, edges)).toEqual(['T']);
     // A blocked/failed dependency must never also read as "ready".
     expect(computeReadyTasks(tasks, edges)).toEqual([]);
   });
@@ -63,7 +63,7 @@ describe('coordination dag (pure)', () => {
       { taskId: 'B', dependsOnId: 'A' },
       { taskId: 'C', dependsOnId: 'B' },
     ];
-    expect(computeBlockedTasks(tasks, edges).sort()).toEqual(['B', 'C']);
+    expect(computeDoomedTasks(tasks, edges).sort()).toEqual(['B', 'C']);
   });
 
   it('rejects a cycle A -> B -> C -> A', () => {

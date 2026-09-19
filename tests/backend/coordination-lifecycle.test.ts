@@ -146,7 +146,11 @@ describe('CoordinationEngine — ciclo de vida del despacho', () => {
       const outcome = await engine.startDispatch({ grant: coordinator(), taskId: task.id });
       const memberId = b.repo.getCoordinationDispatch(outcome.dispatchId).memberId;
       await engine.report({ workId, runId, memberId, role: 'worker' }, task.id, 'succeeded', 'listo');
-      engine.cancelRun(runId);
+      // El reporte de la última tarea ya cerró el run solo (`done`). Cancelar
+      // encima ahora tira `RUN_NOT_ACTIVE` (D3): un run terminado no acepta una
+      // mutación más. Lo que este test mide es el tope global, y para eso lo
+      // que importa es que el run haya dejado de estar activo — que ya pasó.
+      expect(engine.getRun(runId).status).toBe('done');
 
       // Otro Trabajo, otro run: el tope global vuelve a estar disponible.
       const otherWork = await b.service.createWork(brandId, 'Otro');

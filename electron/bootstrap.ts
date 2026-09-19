@@ -171,10 +171,20 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     // se suelta lo del proceso, después se cierran las cuentas.
     if (event.type === 'closed') {
       hub.stop(event.chatId);
-      service.settleCoordinationDispatchesForMember(event.chatId);
+      // D5: cerrar A PROPÓSITO no es morirse. Pausar, terminar, reiniciar,
+      // quitar o cambiarle el modelo/esfuerzo a un miembro pasan todos por
+      // `hub.stop` -> `adapter.stop` -> `closed` con `reason:'stopped'`, y
+      // cobrarle un intento a la tarea por eso la acercaba al tope de
+      // reintentos por una decisión de la PERSONA. La tarea vuelve a `ready`
+      // igual, sin cargo. Una muerte real (cualquier otro motivo) sigue
+      // contando como el fracaso que es.
+      service.settleCoordinationDispatchesForMember(event.chatId, { incrementAttempts: event.reason !== 'stopped' });
       forward(event);
       return;
     }
+    // El fin de un turno: si el coordinador tenía el cierre del run esperando
+    // por él (D17), acá es donde se destraba.
+    if (event.type === 'status' && event.status === 'idle') service.noteCoordinationTurnEnded(event.chatId);
     if (event.type === 'message' && event.message.role === 'assistant' && event.message.completed) {
       const assistantText = event.message.parts.filter(p=>p.type==='text').map(p=>(p as {text:string}).text).join('\n');
       for (const proposal of decisionProtocolBlocks(assistantText)) {

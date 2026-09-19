@@ -39,7 +39,7 @@ const { useCoordination } = await import('./useCoordination');
 const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => ({
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'm1',
   budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, planApproved: true, suspendReason: null, active: true,
-  createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', ...patch,
+  createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', lastEventAt: '2026-09-01T00:00:00.000Z', ...patch,
 });
 
 let coordinationEventCallback: ((event: CoordinationEvent) => void) | null = null;
@@ -77,7 +77,7 @@ describe('useCoordination(workId): no Work open', () => {
   });
 
   it('still fetches the GLOBAL active-runs strip even with no Work open', async () => {
-    mocks.listActiveCoordinationRuns.mockResolvedValue([{ runId: 'r1', workId: 'w9', workTitle: 'Otro', brandId: 'b9', brandName: 'Otra marca', status: 'running', dispatchesUsed: 1, maxDispatches: 5, pendingGates: 0, budgetInvalid: false, updatedAt: '2026-09-02T00:00:00.000Z', lastSeenAt: null }]);
+    mocks.listActiveCoordinationRuns.mockResolvedValue([{ runId: 'r1', workId: 'w9', workTitle: 'Otro', brandId: 'b9', brandName: 'Otra marca', status: 'running', dispatchesUsed: 1, maxDispatches: 5, pendingGates: 0, budgetInvalid: false, updatedAt: '2026-09-02T00:00:00.000Z', lastEventAt: '2026-09-02T00:00:00.000Z', lastSeenAt: null }]);
     const { result } = renderHook(() => useCoordination(null));
     await waitFor(() => expect(result.current.activeRuns).toHaveLength(1));
   });
@@ -285,7 +285,7 @@ describe('useCoordination(workId): refreshActiveRuns tiene su PROPIO guard de ge
     await waitFor(() => expect(mocks.listActiveCoordinationRuns).toHaveBeenCalledTimes(2));
 
     // La llamada MÁS NUEVA resuelve primero...
-    resolvers[1]([{ runId: 'r2', workId: 'w2', workTitle: 'Nuevo', brandId: 'b2', brandName: 'Marca 2', status: 'running', dispatchesUsed: 0, maxDispatches: 5, pendingGates: 0, budgetInvalid: false, updatedAt: '2026-09-02T00:00:00.000Z', lastSeenAt: null }]);
+    resolvers[1]([{ runId: 'r2', workId: 'w2', workTitle: 'Nuevo', brandId: 'b2', brandName: 'Marca 2', status: 'running', dispatchesUsed: 0, maxDispatches: 5, pendingGates: 0, budgetInvalid: false, updatedAt: '2026-09-02T00:00:00.000Z', lastEventAt: '2026-09-02T00:00:00.000Z', lastSeenAt: null }]);
     await waitFor(() => expect(result.current.activeRuns).toHaveLength(1));
 
     // ...y la VIEJA resuelve después: no puede pisar las filas nuevas.

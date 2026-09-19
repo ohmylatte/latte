@@ -234,19 +234,24 @@ describe('CoordinationEngine — capacidades que decía tener', () => {
 
   // --- #8: una dependencia bloqueada no deja huérfanos ----------------------
 
-  it('una tarea cuya dependencia fracasa definitivamente pasa a blocked, no se queda pending para siempre (juicio #8)', async () => {
+  it('una tarea cuya dependencia fracasa definitivamente pasa a failed, no se queda pending para siempre (juicio #8)', async () => {
     await b.service.setCoordinationAuthority(workId, 'auto');
     const first = engine.taskCreate(runId, { roleId: 'role_a', spec: 'a' });
     const second = engine.taskCreate(runId, { roleId: 'role_b', spec: 'b', dependsOn: [first.id] });
     // Tres fracasos: la primera tarea llega al tope de intentos y queda
-    // `failed` (terminal, definitivo); la que dependía de ella queda `blocked`.
+    // `failed` (terminal, definitivo). La que dependía de ella cae con ella —
+    // `failed` también, no `blocked` (D1): una dependencia caída no se
+    // destraba, así que dejarla en un estado no terminal mantenía vivo un run
+    // que ya no tenía nada que hacer.
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await engine.startDispatch({ grant: coordinator(), taskId: first.id });
       const dispatch = b.repo.listCoordinationDispatches(runId).find((d) => d.taskId === first.id && d.status === 'dispatched')!;
       await engine.report(worker(dispatch.memberId), first.id, 'failed', 'no salió');
     }
     expect(b.repo.getCoordinationTask(first.id).status).toBe('failed');
-    expect(b.repo.getCoordinationTask(second.id).status).toBe('blocked');
+    expect(b.repo.getCoordinationTask(second.id).status).toBe('failed');
+    const row = b.repo.listCoordinationDispatches(runId).find((d) => d.taskId === second.id);
+    expect(row?.outcome).toBe('dependency_failed'); // y la razón queda escrita, no se infiere
   });
 
   it('una dependencia de OTRO run se rechaza al crear la tarea (juicio #8)', async () => {

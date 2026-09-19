@@ -1582,7 +1582,28 @@ export class LatteService implements BackendApi {
       // El mismo conjunto que el índice único parcial y que la tira global:
       // `done`/`cancelled` quedan afuera, y por eso se marcan como no activos.
       active: run.status === 'planning' || run.status === 'running' || run.status === 'suspended',
+      lastEventAt: this.lastCoordinationEventAt(run),
     };
+  }
+
+  /**
+   * El instante del último hecho del run: el máximo entre su propio
+   * `updatedAt` (que ya cubre el cierre, porque cerrar lo reescribe) y el
+   * `createdAt` de la fila de despacho más nueva — que es también la de todo
+   * gate de despacho pendiente. Un gate que nace no toca la fila del run, así
+   * que con `updatedAt` solo "Desde tu última visita" se perdía justamente lo
+   * que la persona tenía que ver.
+   */
+  private lastCoordinationEventAt(run: CoordinationRunRecord): string {
+    let latest = run.updatedAt;
+    try {
+      for (const dispatch of this.deps.repo.listCoordinationDispatches(run.id)) {
+        for (const at of [dispatch.createdAt, dispatch.startedAt, dispatch.settledAt]) {
+          if (at && at > latest) latest = at;
+        }
+      }
+    } catch { /* una bitácora ilegible no puede romper la vista del run */ }
+    return latest;
   }
 
   async startCoordinationRun(workId: string): Promise<CoordinationRunView> {
@@ -1747,7 +1768,17 @@ export class LatteService implements BackendApi {
 
   /** The global "Equipos activos" strip (task 6.34) -- the only app-scoped read in this change. */
   async listActiveCoordinationRuns(): Promise<CoordinationActiveRunSummary[]> {
-    const runs = [...this.deps.repo.listActiveCoordinationRuns()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    // Y los que ACABAN de terminar (D18). Un equipo que termina desaparecía de
+    // la tira en el mismo instante en que había algo que contar: Inicio no
+    // podía decir "tu equipo terminó" porque la fuente ya no lo traía. Se
+    // incluye el último run terminado de cada Trabajo mientras la persona no
+    // haya pasado por ahí después de que cerró; su `active:false`/`status` es
+    // lo que impide que parezca vivo.
+    const finished = this.deps.repo.listLatestFinishedCoordinationRuns().filter((run) => {
+      const seen = this.deps.repo.getMeta('coordination_last_seen:' + run.workId);
+      return !seen || run.updatedAt > seen;
+    });
+    const runs = [...this.deps.repo.listActiveCoordinationRuns(), ...finished].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     return runs.map((run) => {
       const work = this.deps.repo.getWork(run.workId);
       const brand = this.deps.repo.getBrand(work.brandId);
@@ -1763,10 +1794,16 @@ export class LatteService implements BackendApi {
         const budget = this.coordination.budgetBlockForEnvelope(run.id);
         dispatchesUsed = budget.dispatchesUsed;
         maxDispatches = budget.maxDispatches;
-        pendingGates = this.coordination.listGates(run.id).length;
       } catch {
         budgetInvalid = true;
       }
+      // Los gates se cuentan en su PROPIO try (D12): compartirlo con el
+      // presupuesto hacía que un `budget_json` ilegible dejara `pendingGates`
+      // en 0 — o sea, la tira decía "nada que decidir" justo en la fila que
+      // tiene un problema y más necesita que la persona la mire.
+      try {
+        pendingGates = this.coordination.listGates(run.id).length;
+      } catch { /* una fila rota no puede borrar el resto de la tira */ }
       return {
         runId: run.id,
         workId: run.workId,
@@ -1779,6 +1816,7 @@ export class LatteService implements BackendApi {
         pendingGates,
         budgetInvalid,
         updatedAt: run.updatedAt,
+        lastEventAt: this.lastCoordinationEventAt(run),
         lastSeenAt: this.deps.repo.getMeta('coordination_last_seen:' + run.workId),
       };
     });
@@ -2362,12 +2400,24 @@ export class LatteService implements BackendApi {
    * después de `hub.stop`, que es donde el reclamo de inyección ya se soltó.
    * Nunca tira: la muerte de un proceso no puede tumbar el loop de eventos.
    */
-  settleCoordinationDispatchesForMember(memberId: string): number {
+  settleCoordinationDispatchesForMember(memberId: string, options: { incrementAttempts?: boolean } = {}): number {
     try {
-      return this.coordination.settleMemberDispatches(memberId);
+      return this.coordination.settleMemberDispatches(memberId, options);
     } catch {
       return 0;
     }
+  }
+
+  /**
+   * El turno de un miembro terminó. Si ese miembro es el coordinador y el
+   * cierre del run había quedado esperándolo (D17), se re-evalúa ahora. Para
+   * cualquier otro miembro es un no-op barato: `noteTurnEnded` mira primero si
+   * había algo pendiente.
+   */
+  noteCoordinationTurnEnded(memberId: string): void {
+    try {
+      this.coordination.noteTurnEnded(memberId);
+    } catch { /* el fin de un turno nunca puede voltear el evento de chat */ }
   }
 
   // Internals ---------------------------------------------------------------

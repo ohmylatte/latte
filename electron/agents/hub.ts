@@ -302,6 +302,17 @@ export class AgentHub {
     return this.deps.repo.listMembers(workId).filter((m) => this.adapters().some((a) => a.owns(m.id))).length;
   }
 
+  /**
+   * Si este miembro tiene un turno EN CURSO ahora mismo. Lo pregunta al
+   * adaptador, que es el único que lo sabe (`isBusy`); un miembro pausado, o de
+   * un runtime que este build no trae, no está en ningún turno. Lo lee el cierre
+   * del run (`finishRunIfComplete`): terminar el run mientras el coordinador
+   * está pensando le come el `latte_task_create` que estaba por hacer.
+   */
+  isMemberBusy(memberId: string): boolean {
+    return this.adapters().some((a) => a.owns(memberId) && a.isBusy(memberId));
+  }
+
   listTeam(workId: string): TeamMember[] {
     return this.deps.repo.listMembers(workId).map((record) => this.describe(record));
   }

@@ -28,7 +28,7 @@ import type {
   CoordinationTaskRecord,
   LatteRepository,
 } from '../storage/repository';
-import { canAddTask, computeBlockedTasks, computeReadyTasks, computeTaskDepth, wouldCreateCycle, type DagEdge, type DagTask } from './dag';
+import { canAddTask, computeDoomedTasks, computeReadyTasks, computeTaskDepth, wouldCreateCycle, type DagEdge, type DagTask } from './dag';
 import { assertBudgetConfigured, BudgetUnsetError, readStoredCoordinationBudget, requireCoordinationBudget, reserveDispatch, type BudgetUsage, type StoredCoordinationBudgetRead } from './budget';
 import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK } from './limits';
 
@@ -225,7 +225,30 @@ export class CoordinationEngine {
    */
   private readonly assigning = new Set<string>();
 
+  /**
+   * Los runs cuyo cierre quedó esperando a que el coordinador termine su turno
+   * (D17). En memoria y no en la base a propósito, igual que `assigning`:
+   * "¿está ocupado?" sale del adaptador, estado vivo de ESTE proceso. Un
+   * reinicio lo pierde, y no importa — el barrido de arranque vuelve a evaluar
+   * el cierre con el coordinador ya apagado.
+   */
+  private readonly pendingClose = new Set<string>();
+
   constructor(private readonly deps: CoordinationEngineDeps) {}
+
+  /**
+   * D3: un run `done`/`cancelled` no acepta una sola mutación más. Cancelar,
+   * pausar, reanudar, resolver un gate, mandar un plan o responder una pregunta
+   * sobre algo terminado escribía igual: `pauseRun` devolvía el run como si
+   * nada, `resolveGate` volvía a correr los seis efectos de una propuesta sobre
+   * un run cancelado, y `planSubmit` pisaba `plan_json`. Terminado es terminado.
+   */
+  private assertRunMutable(run: CoordinationRunRecord): CoordinationRunRecord {
+    if (run.status === 'done' || run.status === 'cancelled') {
+      throw new LatteError('RUN_NOT_ACTIVE', `This coordination run already finished (${run.status})`);
+    }
+    return run;
+  }
 
   /**
    * Task 6.37's own trigger. Nunca tira: el fallo de un listener no es
@@ -316,7 +339,7 @@ export class CoordinationEngine {
    * cancelación no.
    */
   pauseRun(runId: string): CoordinationRunRecord {
-    const run = this.deps.repo.getCoordinationRun(runId);
+    const run = this.assertRunMutable(this.deps.repo.getCoordinationRun(runId));
     if (run.status !== 'running') return run;
     const updated = this.deps.repo.updateCoordinationRunStatus(runId, 'suspended', this.deps.clock(), 'paused_by_human');
     this.touch(updated.workId, updated.id);
@@ -330,7 +353,7 @@ export class CoordinationEngine {
    * the next attempt instead of lying about being unblocked.
    */
   resumeRun(runId: string): CoordinationRunRecord {
-    const run = this.deps.repo.getCoordinationRun(runId);
+    const run = this.assertRunMutable(this.deps.repo.getCoordinationRun(runId));
     if (run.status !== 'suspended') return run;
     const updated = this.deps.repo.updateCoordinationRunStatus(runId, 'running', this.deps.clock(), null);
     this.touch(updated.workId, updated.id);
@@ -347,10 +370,20 @@ export class CoordinationEngine {
    * miembro FUE despachado: el asiento se escribe), sin cobrar intento.
    */
   cancelRun(runId: string): CoordinationRunRecord {
+    this.assertRunMutable(this.deps.repo.getCoordinationRun(runId));
+    const now = this.deps.clock();
     for (const dispatch of this.deps.repo.listCoordinationDispatches(runId)) {
       if (dispatch.status === 'dispatched' || dispatch.status === 'running') this.settleUncertain(dispatch.id, { incrementAttempts: false });
+      // Y los gates que quedaron sobre la mesa. Un `pending_approval` de un run
+      // cancelado es una decisión que ya no decide nada: `listGates` la seguía
+      // ofreciendo y aprobarla reentraba a `startDispatch` sobre un run muerto.
+      else if (dispatch.status === 'pending_approval') {
+        this.deps.repo.updateCoordinationDispatch(dispatch.id, {
+          status: 'cancelled', outcome: 'run_cancelled', summary: 'El equipo se canceló antes de resolver esta aprobación', settledAt: now,
+        });
+      }
     }
-    const updated = this.deps.repo.updateCoordinationRunStatus(runId, 'cancelled', this.deps.clock(), null);
+    const updated = this.closeRun(runId, 'cancelled', now);
     this.touch(updated.workId, updated.id);
     return updated;
   }
@@ -358,6 +391,10 @@ export class CoordinationEngine {
   /** The gate kinds a human resolves with approve/reject: proposal, plan, dispatch, budget-exhausted. Open `latte_ask`s are a separate surface (`answerAsk`). */
   listGates(runId: string): CoordinationGate[] {
     const run = this.deps.repo.getCoordinationRun(runId);
+    // Un run terminado no tiene ninguna decisión pendiente: seguir ofreciendo
+    // gates de algo que ya terminó es pedirle a la persona que decida sobre un
+    // equipo que no existe, y cada clic rebotaba con un error desde el fondo.
+    if (run.status === 'done' || run.status === 'cancelled') return [];
     const gates: CoordinationGate[] = [];
     // The proposal gate (task 6.9): a 'planning' run holds an unapproved
     // `latte_request_coordination` proposal. Unlike the 'plan' gate below,
@@ -408,7 +445,12 @@ export class CoordinationEngine {
     // pendiente, y cuando la persona vuelve a prender la bandera la decisión
     // sigue sobre la mesa, tal cual estaba. La salida de emergencia con la
     // bandera baja es `cancelCoordinationRun`, que apaga en vez de encender.
-    this.requireCoordinationEnabled();
+    // D4: sólo APROBAR enciende. `reject` —de cualquier clase de gate— apaga:
+    // cancela el run o devuelve la tarea a la cola. Gatearlo dejaba a la persona
+    // que baja la bandera sin ninguna salida salvo cancelar a mano lo que ya
+    // estaba andando, que es exactamente lo contrario de lo que un interruptor
+    // de emergencia tiene que permitir.
+    if (decision === 'approve') this.requireCoordinationEnabled();
     // Defensa en profundidad (crítico 12): la frontera IPC ya lo valida, pero
     // este método es público y `hub.send` está a tres saltos de acá.
     if (editedPrompt != null) requireText(editedPrompt, 'editedPrompt', LIMITS.chatMessage);
@@ -420,6 +462,14 @@ export class CoordinationEngine {
   }
 
   private async resolveGateInternal(gateId: string, decision: 'approve' | 'reject', editedPrompt?: string | null): Promise<CoordinationGate | CoordinationDispatchRecord | CoordinationRunRecord> {
+    // D3: el run tiene que seguir vivo, sea cual sea la clase de gate. Sin esto,
+    // aprobar un `proposal:` de un run ya cancelado volvía a correr los seis
+    // efectos —contratar, spawnear, escribir permiso, presupuesto y autoridad—
+    // sobre un equipo que la persona ya había apagado.
+    const runIdOfGate = gateId.includes(':')
+      ? gateId.slice(gateId.indexOf(':') + 1)
+      : this.deps.repo.getCoordinationDispatch(gateId).runId;
+    this.assertRunMutable(this.deps.repo.getCoordinationRun(runIdOfGate));
     if (gateId.startsWith('proposal:')) {
       return this.resolveProposalGate(gateId.slice('proposal:'.length), decision, editedPrompt ?? undefined);
     }
@@ -707,12 +757,25 @@ export class CoordinationEngine {
    * sola garantía a cambio.
    */
   answerAsk(askId: string, answer: string): CoordinationAskRecord {
-    const answered = this.deps.repo.answerCoordinationAsk(askId, answer, this.deps.clock());
+    const pending = this.deps.repo.getCoordinationAsk(askId);
+    this.assertRunMutable(this.deps.repo.getCoordinationRun(pending.runId));
+    const now = this.deps.clock();
+    const answered = this.deps.repo.answerCoordinationAsk(askId, answer, now);
     // Answering may un-suspend a run that self-suspended on "all blocked on asks".
     const run = this.deps.repo.getCoordinationRun(answered.runId);
     if (run.status === 'suspended' && run.suspendReason === 'all_blocked_on_ask') {
-      this.deps.repo.updateCoordinationRunStatus(run.id, 'running', this.deps.clock(), null);
+      this.deps.repo.updateCoordinationRunStatus(run.id, 'running', now, null);
     }
+    // D1: la tarea que esperaba esta respuesta vuelve a la cola. `blocked` es
+    // exactamente esto y nada más — "bloqueada por una pregunta" — así que
+    // contestarla es su única salida, y tiene que existir de punta a punta.
+    if (answered.taskId) {
+      const task = this.deps.repo.getCoordinationTask(answered.taskId);
+      if (task.status === 'blocked') this.deps.repo.updateCoordinationTask(task.id, { status: 'ready', assignedMemberId: null }, now);
+    }
+    // Y con la pregunta cerrada, el cierre se re-evalúa: puede haber sido lo
+    // único que quedaba en pie (D2).
+    this.finishRunIfComplete(run.id, now);
     this.touch(run.workId, run.id);
     return answered;
   }
@@ -793,6 +856,12 @@ export class CoordinationEngine {
 
   planSubmit(runId: string, tasks: Array<{ roleId: string; spec: string; dependsOn?: number[] }>): CoordinationTaskRecord[] {
     const run = this.deps.repo.getCoordinationRun(runId);
+    // `running`, no "cualquier cosa menos terminal" (D3). Sobre un run
+    // `planning` esto pisaba `plan_json` —que ahí adentro guarda la PROPUESTA
+    // ENTERA— con una lista pelada de ids: la propuesta que la persona todavía
+    // no aprobó se quedaba sin `plan`, sin `membersToHire` y sin `rationale`, y
+    // el gate pasaba a mostrar un objeto vacío.
+    if (run.status !== 'running') throw new LatteError('RUN_NOT_ACTIVE', `Run is ${run.status}`);
     const created: CoordinationTaskRecord[] = [];
     for (const spec of tasks) {
       const dependsOnIds = (spec.dependsOn ?? []).map((idx) => {
@@ -1102,10 +1171,17 @@ export class CoordinationEngine {
    * bitácora dijera que alguien negó un trabajo que en realidad autorizó.
    */
   /**
-   * La tarea de un rol sin aprobar: `blocked`, con la razón anotada donde se
-   * anotan todas — una fila de `coordination_dispatch` resuelta en contra,
-   * exactamente como `abortDispatchClaim` anota una denegación de presupuesto
-   * y como `startDispatch` anota un `hub.send` que rebotó. Nada de esto
+   * La tarea de un rol sin aprobar: `failed` con outcome `role_not_approved`,
+   * y eso es TERMINAL (D1). La persona rechazó esa contratación: esa tarea no
+   * corre en este run, punto. Antes quedaba `blocked` —no terminal— y el run
+   * no podía cerrarse nunca, esperando una intervención que la interfaz ni
+   * siquiera ofrece. El coordinador recibe `ROLE_NOT_APPROVED` en el resultado
+   * de su tool y puede re-planificar con tareas de otro rol; el run ya no
+   * queda rehén de la decisión que la persona YA tomó.
+   *
+   * La razón se anota donde se anotan todas — una fila de
+   * `coordination_dispatch` resuelta en contra, exactamente como
+   * `abortDispatchClaim` anota una denegación de presupuesto. Nada de esto
    * contrata ni gasta: `memberId` vacío, sin reserva, `settled_at` en el acto.
    */
   private blockOnUnapprovedRole(
@@ -1117,7 +1193,7 @@ export class CoordinationEngine {
     reason: string,
   ): void {
     this.deps.repo.transaction(() => {
-      this.deps.repo.updateCoordinationTask(task.id, { status: 'blocked', assignedMemberId: null }, now);
+      this.deps.repo.updateCoordinationTask(task.id, { status: 'failed', assignedMemberId: null }, now);
       if (existingPending) {
         this.deps.repo.updateCoordinationDispatch(existingPending.id, { status: 'cancelled', outcome: 'role_not_approved', summary: reason, settledAt: now });
       } else {
@@ -1132,6 +1208,9 @@ export class CoordinationEngine {
     // Y con ella caen sus dependientes, igual que con cualquier otra tarea que
     // no va a resolverse sola.
     this.recomputeReadiness(run.id, now);
+    // Y si era la última, el run cierra: una tarea terminal SIEMPRE pasa por el
+    // punto único de cierre, venga de un reporte o de un rol sin aprobar.
+    this.finishRunIfComplete(run.id, now);
     this.touch(run.workId, run.id);
   }
 
@@ -1266,15 +1345,106 @@ export class CoordinationEngine {
   private finishRunIfComplete(runId: string, now: string): void {
     const run = this.deps.repo.getCoordinationRun(runId);
     if (run.status !== 'running' && run.status !== 'suspended') return;
+    // El barrido de vencimientos corre ACÁ, en el único punto por el que pasa
+    // todo cierre: al arrancar la app y en cada reporte. Una pregunta vencida
+    // sólo se consultaba (`askStatus`), así que nadie destrababa nunca la tarea
+    // que esperaba por ella.
+    this.expireOverdueAsks(runId, now);
     const tasks = this.deps.repo.listCoordinationTasks(runId);
     if (tasks.length === 0) return;
     if (!tasks.every((t) => t.status === 'done' || t.status === 'failed')) return;
+    // Una pregunta abierta es trabajo pendiente de la PERSONA. Cerrar el run
+    // con una sobre la mesa la deja contestando algo que ya no le va a llegar a
+    // nadie, y borra la única pista de por qué el equipo se detuvo.
+    if (this.openAsksHolding(runId, now).length > 0) return;
     // Un despacho o una reserva todavía abiertos son trabajo en vuelo: la foto
     // de las tareas puede estar adelantada respecto de la contabilidad.
     const open = this.deps.repo.listCoordinationDispatches(runId).some((d) => d.status === 'dispatched' || d.status === 'running');
     if (open) return;
     if (this.deps.repo.countOpenCoordinationCostReservations(runId) > 0) return;
-    this.deps.repo.updateCoordinationRunStatus(runId, 'done', now, null);
+    // D17: el coordinador puede estar en medio de un turno — leyendo el último
+    // resultado y por crear la tarea que sigue. Cerrarle el run abajo convierte
+    // su próximo `latte_task_create` en un `NO_ACTIVE_RUN` y le come el trabajo
+    // que estaba por encargar. La única mitigación que había era una frase en
+    // `strategist.md`, o sea una promesa del prompt, no una garantía del motor.
+    if (this.coordinatorIsMidTurn(run)) {
+      this.pendingClose.add(runId);
+      return;
+    }
+    this.pendingClose.delete(runId);
+    this.closeRun(runId, 'done', now);
+  }
+
+  /**
+   * El cierre, con las dos limpiezas que todo final necesita.
+   *
+   * `coordination_coordinator:<workId>` se BORRA: el permiso se concedió para
+   * ESTE run. Arrastrarlo al siguiente hacía que un miembro cualquiera
+   * amaneciera coordinador de un run que nadie le confió — `resolveGrant` lee
+   * ese meta fresco en cada request, sin mirar de qué run venía.
+   */
+  private closeRun(runId: string, status: 'done' | 'cancelled', now: string): CoordinationRunRecord {
+    const run = this.deps.repo.getCoordinationRun(runId);
+    this.deps.repo.setMeta('coordination_coordinator:' + run.workId, '');
+    this.pendingClose.delete(runId);
+    return this.deps.repo.updateCoordinationRunStatus(runId, status, now, null);
+  }
+
+  /**
+   * Si el miembro coordinador está respondiendo AHORA. La señal la da el
+   * adaptador (`isBusy`), que es el único que sabe si hay un turno en vuelo; un
+   * runtime que no la publique se lee como "no está ocupado" y el run cierra
+   * como cerraba antes — nunca se inventa una espera.
+   */
+  private coordinatorIsMidTurn(run: CoordinationRunRecord): boolean {
+    const coordinatorId = run.coordinatorMemberId || this.deps.repo.getMeta('coordination_coordinator:' + run.workId);
+    if (!coordinatorId) return false;
+    try {
+      return this.deps.hub.isMemberBusy(coordinatorId);
+    } catch {
+      return false; // un miembro que ya no existe no está en ningún turno
+    }
+  }
+
+  /**
+   * El turno del coordinador terminó: si el cierre había quedado pendiente por
+   * él, se vuelve a evaluar. Y se re-evalúa DE VERDAD, no se cierra a ciegas:
+   * si en ese turno creó una tarea nueva, `finishRunIfComplete` la ve y el run
+   * sigue vivo con ella.
+   */
+  noteTurnEnded(memberId: string): void {
+    if (!memberId || this.pendingClose.size === 0) return;
+    // Se recorre lo PENDIENTE, no el miembro: `findMember` no sirve acá (el
+    // coordinador puede no tener fila propia, y de todas formas lo que importa
+    // es qué cierre estaba esperando a quién). Como mucho hay un puñado.
+    const now = this.deps.clock();
+    for (const runId of [...this.pendingClose]) {
+      let run: CoordinationRunRecord;
+      try {
+        run = this.deps.repo.getCoordinationRun(runId);
+      } catch {
+        this.pendingClose.delete(runId);
+        continue;
+      }
+      const coordinatorId = run.coordinatorMemberId || this.deps.repo.getMeta('coordination_coordinator:' + run.workId);
+      if (coordinatorId !== memberId) continue;
+      this.finishRunIfComplete(runId, now);
+      this.touch(run.workId, run.id);
+    }
+  }
+
+  /** Las preguntas que TODAVÍA retienen el cierre: sin responder y sin vencer. Una vencida ya no espera a nadie. */
+  private openAsksHolding(runId: string, now: string): CoordinationAskRecord[] {
+    return this.deps.repo.listOpenCoordinationAsks(runId).filter((ask) => ask.deadlineAt > now);
+  }
+
+  /** Una pregunta vencida devuelve su tarea a la cola: nadie contestó, pero el trabajo no queda sepultado. */
+  private expireOverdueAsks(runId: string, now: string): void {
+    for (const ask of this.deps.repo.listOpenCoordinationAsks(runId)) {
+      if (ask.deadlineAt > now || !ask.taskId) continue;
+      const task = this.deps.repo.getCoordinationTask(ask.taskId);
+      if (task.status === 'blocked') this.deps.repo.updateCoordinationTask(task.id, { status: 'ready', assignedMemberId: null }, now);
+    }
   }
 
   /**
@@ -1341,6 +1511,16 @@ export class CoordinationEngine {
       id: newId('cak'), runId: grant.runId, taskId: taskId ?? null, memberId: grant.memberId, question, answer: null,
       deadlineAt: deadline, answeredAt: null, createdAt: now,
     });
+    // D1: la tarea que la pregunta traba pasa a `blocked` — el ÚNICO
+    // significado que le queda a ese estado. Sólo desde `ready`/`pending`: una
+    // tarea ya despachada sigue en vuelo y su reporte tiene que poder entrar;
+    // moverla acá le sacaría la fila de despacho de abajo.
+    if (taskId) {
+      const task = this.deps.repo.getCoordinationTask(taskId);
+      if (task.runId === grant.runId && (task.status === 'ready' || task.status === 'pending')) {
+        this.deps.repo.updateCoordinationTask(task.id, { status: 'blocked', assignedMemberId: null }, now);
+      }
+    }
     this.maybeSelfSuspendOnAsks(grant.runId, now);
     this.touch(grant.workId, grant.runId);
     return ask;
@@ -1420,12 +1600,13 @@ export class CoordinationEngine {
    * Un miembro sin despachos en vuelo (el caso normal: pausar a alguien que no
    * estaba trabajando) no escribe nada.
    */
-  settleMemberDispatches(memberId: string): number {
+  settleMemberDispatches(memberId: string, options: { incrementAttempts?: boolean } = {}): number {
     if (!memberId) return 0;
+    const incrementAttempts = options.incrementAttempts ?? true;
     const open = this.deps.repo.listOpenCoordinationDispatches().filter((d) => d.memberId === memberId);
     for (const dispatch of open) {
       const run = this.deps.repo.getCoordinationRun(dispatch.runId);
-      this.settleUncertain(dispatch.id, { incrementAttempts: true });
+      this.settleUncertain(dispatch.id, { incrementAttempts });
       this.touch(run.workId, run.id);
     }
     return open.length;
@@ -1529,12 +1710,34 @@ export class CoordinationEngine {
     for (const task of tasks) {
       if (task.status === 'pending' && ready.has(task.id)) this.deps.repo.updateCoordinationTask(task.id, { status: 'ready' }, now);
     }
-    const blocked = new Set(computeBlockedTasks(dagTasks, edges));
+    // D1: la dependencia caída CONDENA, no bloquea. `blocked` no era terminal,
+    // así que un run con una tarea condenada quedaba vivo para siempre
+    // esperando una intervención imposible: nadie destraba una dependencia
+    // `failed`. Hoy la tarea termina `failed`, con la razón escrita en la
+    // bitácora — igual que cualquier otro final — y el run puede cerrarse.
+    const doomed = new Set(computeDoomedTasks(dagTasks, edges));
     for (const task of tasks) {
-      if ((task.status === 'pending' || task.status === 'ready') && blocked.has(task.id)) {
-        this.deps.repo.updateCoordinationTask(task.id, { status: 'blocked', assignedMemberId: null }, now);
-      }
+      if (!doomed.has(task.id)) continue;
+      if (task.status !== 'pending' && task.status !== 'ready' && task.status !== 'blocked') continue;
+      this.deps.repo.updateCoordinationTask(task.id, { status: 'failed', assignedMemberId: null }, now);
+      this.writeTerminalDispatchRow(runId, task, 'dependency_failed', 'Una dependencia de esta tarea terminó fallada: no va a poder correr.', now);
     }
+  }
+
+  /**
+   * El final de una tarea que nunca llegó a despacharse, anotado donde se
+   * anotan todos: una fila de `coordination_dispatch` ya resuelta. Sin miembro,
+   * sin reserva, `settled_at` en el acto — no contrata ni gasta. Es la única
+   * forma de que la bitácora (derivada de esa tabla) pueda explicar por qué una
+   * tarea terminó sin que nadie la trabajara.
+   */
+  private writeTerminalDispatchRow(runId: string, task: CoordinationTaskRecord, outcome: string, summary: string, now: string): void {
+    const attempt = this.deps.repo.listCoordinationDispatches(runId).filter((d) => d.taskId === task.id).length + 1;
+    this.deps.repo.insertCoordinationDispatch({
+      id: newId('cdp'), runId, taskId: task.id, memberId: '', attempt, status: 'cancelled',
+      gateId: null, prompt: task.spec, outcome, summary, filesJson: null, reservationId: null,
+      createdAt: now, startedAt: null, settledAt: now,
+    });
   }
 
   private maybeSelfSuspendOnAsks(runId: string, now: string): void {
@@ -1544,7 +1747,11 @@ export class CoordinationEngine {
     const openAsks = this.deps.repo.listOpenCoordinationAsks(runId);
     if (openAsks.length === 0) return;
     const blockedTaskIds = new Set(openAsks.map((a) => a.taskId).filter((id): id is string => id != null));
-    const readyEligible = tasks.filter((t) => t.status === 'ready' || t.status === 'dispatched' || t.status === 'running');
+    // `blocked` entra en la cuenta: desde D1 ese estado significa exactamente
+    // "esperando una respuesta", que es justo lo que este chequeo mide. Sin
+    // incluirlo, la tarea que la pregunta acaba de trabar desaparecía del
+    // conjunto y el run nunca se auto-suspendía.
+    const readyEligible = tasks.filter((t) => t.status === 'ready' || t.status === 'blocked' || t.status === 'dispatched' || t.status === 'running');
     const allBlocked = readyEligible.length > 0 && readyEligible.every((t) => blockedTaskIds.has(t.id));
     if (allBlocked) this.deps.repo.updateCoordinationRunStatus(runId, 'suspended', now, 'all_blocked_on_ask');
   }

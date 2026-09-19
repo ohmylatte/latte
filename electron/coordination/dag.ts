@@ -20,8 +20,16 @@ export interface DagEdge {
   dependsOnId: string;
 }
 
-/** Statuses that can never resolve on their own — a dependent on one of these must not be marked ready. */
-const POISONED: ReadonlySet<CoordinationTaskStatus> = new Set(['failed', 'blocked']);
+/**
+ * El único estado del que un dependiente no se recupera nunca.
+ *
+ * `blocked` SALIÓ de este conjunto (decisión D1 de la ronda final): ya no
+ * significa "muerta sin remedio" sino "esperando una respuesta", y una
+ * pregunta se contesta — la tarea vuelve a `ready` y sus dependientes tienen
+ * que poder correr detrás. Envenenar la cadena entera por una pregunta
+ * abierta mataba trabajo que todavía iba a poder hacerse.
+ */
+const POISONED: ReadonlySet<CoordinationTaskStatus> = new Set(['failed']);
 
 function directDependencies(edges: DagEdge[], taskId: string): string[] {
   return edges.filter((e) => e.taskId === taskId).map((e) => e.dependsOnId);
@@ -31,7 +39,7 @@ function directDependencies(edges: DagEdge[], taskId: string): string[] {
  * Every `pending` task whose dependencies (if any) are ALL `done`. A task
  * with no dependencies is ready immediately. A task with any non-`done`
  * dependency — including a `failed`/`blocked` one — is never returned here;
- * see `computeBlockedTasks` for that case.
+ * see `computeDoomedTasks` for that case.
  */
 export function computeReadyTasks(tasks: DagTask[], edges: DagEdge[]): string[] {
   const statusById = new Map(tasks.map((t) => [t.id, t.status]));
@@ -46,12 +54,19 @@ export function computeReadyTasks(tasks: DagTask[], edges: DagEdge[]): string[] 
 }
 
 /**
- * Every task that must move to `blocked` because a dependency (direct or
- * transitive) is itself `failed` or `blocked`. Computed to a fixed point in
- * one call, so a chain blocks all the way down without the caller having to
- * re-invoke this per hop — a task never stalls `pending` forever.
+ * Toda tarea CONDENADA: una dependencia suya (directa o transitiva) terminó
+ * `failed`, así que nunca va a poder correr. Se calcula a punto fijo en una
+ * sola llamada, de modo que la cadena entera cae de una — el llamador no tiene
+ * que reinvocar esto salto por salto, y ninguna tarea se queda `pending` para
+ * siempre.
+ *
+ * Se llamaba `computeBlockedTasks` y el llamador las movía a `blocked`.
+ * `blocked` no era terminal, así que el run quedaba vivo eternamente esperando
+ * una intervención que nadie podía hacer: una dependencia `failed` no se
+ * destraba. Hoy esto nombra lo que es —condena, no bloqueo— y el motor las
+ * pasa a `failed` con outcome `dependency_failed`.
  */
-export function computeBlockedTasks(tasks: DagTask[], edges: DagEdge[]): string[] {
+export function computeDoomedTasks(tasks: DagTask[], edges: DagEdge[]): string[] {
   const statusById = new Map(tasks.map((t) => [t.id, t.status]));
   const blocked = new Set<string>();
   let changed = true;
@@ -60,7 +75,9 @@ export function computeBlockedTasks(tasks: DagTask[], edges: DagEdge[]): string[
     for (const task of tasks) {
       if (blocked.has(task.id)) continue;
       const status = statusById.get(task.id);
-      if (status !== 'pending' && status !== 'ready') continue;
+      // `blocked` (esperando una respuesta) entra igual: si la dependencia se
+      // cayó, contestar la pregunta ya no la salva.
+      if (status !== 'pending' && status !== 'ready' && status !== 'blocked') continue;
       const deps = directDependencies(edges, task.id);
       const poisoned = deps.some((depId) => POISONED.has(statusById.get(depId) as CoordinationTaskStatus) || blocked.has(depId));
       if (poisoned) {

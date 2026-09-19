@@ -716,6 +716,14 @@ export interface CoordinationRunView {
    * in the app-wide active strip.
    */
   active: boolean;
+  /**
+   * El instante del último hecho de este run: el máximo entre su propio
+   * `updatedAt`, el `createdAt` del gate o del despacho más nuevo, y el
+   * instante en que cerró. `updatedAt` solo no alcanzaba para "desde tu última
+   * visita": un gate que nace o un despacho que arranca son exactamente lo que
+   * la persona no vio, y ninguno de los dos reescribe la fila del run.
+   */
+  lastEventAt: string;
 }
 
 /**
@@ -947,6 +955,12 @@ export interface CoordinationActiveRunSummary {
   budgetInvalid: boolean;
   /** When this run last changed — the instant "since your last visit" is measured against. */
   updatedAt: string;
+  /**
+   * El último hecho de este run, igual que en `CoordinationRunView`: el máximo
+   * entre `updatedAt`, el gate/despacho más nuevo y el cierre. Es contra ESTO
+   * que se compara `lastSeenAt`, no contra `updatedAt`.
+   */
+  lastEventAt: string;
   /**
    * When the person last opened this Work's coordination panel
    * (`markCoordinationSeen`), or `null` if never. Inicio's "since your last

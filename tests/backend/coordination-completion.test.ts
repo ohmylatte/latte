@@ -189,20 +189,32 @@ describe('CoordinationEngine — un run termina cuando no queda nada por hacer',
     expect(finished[0]).toMatchObject({ tasksDone: 1, tasksFailed: 1 });
   });
 
-  // --- 6: lo bloqueado NO es terminal: el run sigue vivo ----------------------
+  // --- 6: lo bloqueado POR UNA PREGUNTA no es terminal: el run sigue vivo -----
 
-  it('un run con tareas `blocked` NO termina: queda para que la persona intervenga', async () => {
-    const first = engine.taskCreate(runId, { roleId: 'role_a', spec: 'a' });
-    const second = engine.taskCreate(runId, { roleId: 'role_b', spec: 'b', dependsOn: [first.id] });
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const memberId = await dispatchTo(first.id);
-      await engine.report(worker(memberId), first.id, 'failed', 'no salió');
-    }
+  /**
+   * D1: `blocked` dejó de significar "condenada" — una dependencia caída o un
+   * rol sin contratar terminan `failed`, que SÍ es terminal. Lo único que queda
+   * bajo `blocked` es lo que todavía se destraba de verdad: una tarea esperando
+   * la respuesta a un `latte_ask`. Ése es el caso que tiene que mantener el run
+   * vivo, porque la salida existe y es de la persona.
+   */
+  it('un run con una tarea bloqueada por una pregunta NO termina: espera a la persona', async () => {
+    members.push({ id: 'mem_w', workId, roleId: 'role_a', status: 'idle' });
+    const answered = engine.taskCreate(runId, { roleId: 'role_a', spec: 'a' });
+    const waiting = engine.taskCreate(runId, { roleId: 'role_b', spec: 'b' });
+    await engine.report(worker(await dispatchTo(answered.id)), answered.id, 'succeeded', 'listo');
 
-    expect(b.repo.getCoordinationTask(first.id).status).toBe('failed');
-    expect(b.repo.getCoordinationTask(second.id).status).toBe('blocked');
-    expect(b.repo.getCoordinationRun(runId).status).toBe('running');
+    const ask = engine.ask(worker('mem_w'), '¿Con qué tono?', 30, waiting.id);
+
+    expect(b.repo.getCoordinationTask(waiting.id).status).toBe('blocked');
+    expect(b.repo.getCoordinationRun(runId).status).not.toBe('done');
     expect(b.repo.listActiveCoordinationRuns().map((r) => r.id)).toContain(runId);
+
+    // Y la salida existe: contestar la devuelve a la cola.
+    engine.answerAsk(ask.id, 'Cercano');
+
+    expect(b.repo.getCoordinationTask(waiting.id).status).toBe('ready');
+    expect(b.repo.getCoordinationRun(runId).status).toBe('running');
   });
 
   // --- 7: reparación de bases existentes, idempotente ------------------------
@@ -269,7 +281,18 @@ describe('CoordinationEngine — un run termina cuando no queda nada por hacer',
     expect(reported.status).toBe(200);
     expect(envelope(reported).ok).toBe(false);
     expect(envelope(reported).error?.code).toBe('NO_ACTIVE_RUN');
-    // Las herramientas del coordinador tampoco pueden seguir gastando.
-    expect(createCoordinationTools(engine).latte_dispatch).toBeTypeOf('function');
+    // Las herramientas del coordinador tampoco pueden seguir gastando. Esto
+    // asertaba `toBeTypeOf('function')` sobre `latte_dispatch`: una tautología
+    // que pasaba con el motor entero roto — lo único que probaba es que
+    // `createCoordinationTools` devuelve funciones. Lo que hay que probar es
+    // que un despacho sobre un run terminado se niega Y no escribe gasto.
+    const spentBefore = engine.budgetBlockForEnvelope(runId).dispatchesUsed;
+    const dispatched = await server.handleMcpRequest(rpc('latte_dispatch', { taskId: task.id }), `Bearer ${token}`, '127.0.0.1');
+
+    expect(dispatched.status).toBe(200);
+    expect(envelope(dispatched).ok).toBe(false);
+    expect(envelope(dispatched).error?.code).toBe('NO_ACTIVE_RUN');
+    expect(engine.budgetBlockForEnvelope(runId).dispatchesUsed).toBe(spentBefore);
+    expect(b.repo.listCoordinationDispatches(runId).filter((d) => d.status === 'dispatched')).toHaveLength(0);
   });
 });

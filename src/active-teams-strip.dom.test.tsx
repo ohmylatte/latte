@@ -15,7 +15,7 @@ import type { CoordinationActiveRunSummary } from '../shared/contracts';
 
 const run = (patch: Partial<CoordinationActiveRunSummary> = {}): CoordinationActiveRunSummary => ({
   runId: 'run1', workId: 'w1', workTitle: 'Lanzamiento', brandId: 'b1', brandName: 'Casa Oliva',
-  status: 'running', dispatchesUsed: 3, maxDispatches: 10, pendingGates: 0, budgetInvalid: false, updatedAt: '2026-09-02T00:00:00.000Z', lastSeenAt: null, ...patch,
+  status: 'running', dispatchesUsed: 3, maxDispatches: 10, pendingGates: 0, budgetInvalid: false, updatedAt: '2026-09-02T00:00:00.000Z', lastEventAt: '2026-09-02T00:00:00.000Z', lastSeenAt: null, ...patch,
 });
 
 const mount = (runs: readonly CoordinationActiveRunSummary[], onOpen = vi.fn()) =>
