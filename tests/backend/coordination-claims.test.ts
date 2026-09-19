@@ -152,6 +152,41 @@ describe('los adaptadores reportan lo que el RUNTIME dijo, no lo que Latte pidi�
   });
 
   /**
+   * D7b: `pending` es "todavia esta levantando", no "no esta". Contarlo como
+   * una negativa degradaba el reclamo por una foto sacada medio segundo antes
+   * de tiempo — y el reclamo degradado no vuelve a subir solo, asi que el
+   * miembro quedaba marcado "el runtime se nego" con el servidor andando.
+   */
+  it('un estado transitorio del runtime NO reporta nada: "no se" no es una negativa', async () => {
+    const dir = makeTempDir();
+    const reported: Array<{ chatId: string; names: string[] }> = [];
+    const adapter = new ClaudeChatAdapter({
+      resolveExecutable: async () => ({ executable: process.execPath, version: '2.1.263' }),
+      emit: () => {},
+      accountEnv: () => ({}),
+      promptDir: path.join(dir, 'prompts'),
+      onMcpServers: (chatId, names) => { reported.push({ chatId, names }); },
+      spawnImpl: ((file: string, args: string[], options: unknown) => spawn(file, [FAKE_CLAUDE, ...args], options as Parameters<typeof spawn>[2])) as typeof spawn,
+      platform: 'linux',
+      env: { PATH: process.env.PATH ?? '' },
+    });
+    await adapter.start({
+      workId: 'wrk_1', chatId: 'mem_pending', directory: dir, title: 't', label: 'Claude',
+      mcpServers: [COORD_SERVER, MEMORY_SERVER],
+      extraEnv: { FAKE_CLAUDE_MCP_STATUS: JSON.stringify({ latte_coordination: 'connected', latte_memory: 'pending' }) },
+    });
+
+    await adapter.send('mem_pending', 'hola');
+    // El `system/init` TIENE que haber llegado: sin esto el test pasaria
+    // igual con el evento nunca emitido, que es lo contrario de lo que afirma.
+    await waitFor(() => adapter.mcpServersFromInit().some((s) => s.status === 'pending'));
+
+    expect(reported).toEqual([]);
+    adapter.shutdown();
+    removeDir(dir);
+  });
+
+  /**
    * D7c: esto asertaba `[]` — o sea, "el runtime reportó cero servidores" —
    * para un caso en el que el runtime no dijo NADA: el que se negó fue Latte,
    * porque no tiene dónde escribir el config. `confirmInjection` tomaba ese
