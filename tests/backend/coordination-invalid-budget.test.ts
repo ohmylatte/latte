@@ -118,10 +118,23 @@ describe('un presupuesto ilegible no tumba la tira de las demás marcas (crític
         expect(result.status).toBe(200);
         const envelope = toolEnvelope(result);
         expect(envelope.ok).toBe(false);
-        expect(envelope.error?.code).toBe('VALIDATION');
+        // R6: el rechazo llega UNA CAPA ANTES que antes. El esquema publicado
+        // dice `integer, minimum 1`, y ahora `tools/call` lo hace cumplir, así
+        // que estos seis valores mueren en la frontera con `INVALID_ARGUMENT`
+        // en vez de llegar hasta el `VALIDATION` del motor. El código cambió;
+        // la invariante que este test cuida —que la base quede intacta— no.
+        expect(envelope.error?.code).toBe('INVALID_ARGUMENT');
         expect(envelope.error?.message).toContain('estimatedDispatches');
         // Lo que de verdad importa: la base quedó intacta.
         expect(b.repo.findActiveCoordinationRun(workA)).toBeNull();
+        expect(b.repo.listActiveCoordinationRuns()).toEqual([]);
+        // Y el motor SIGUE siendo la defensa de fondo: la frontera es la
+        // primera puerta, no la única. Sin esto, mover la validación a la
+        // frontera habría dejado al motor sin un solo test que lo cubra.
+        await expect(engine.requestCoordination(
+          { workId: workA, runId: null, memberId: 'mem_proposer', role: 'worker' },
+          proposalWith(value) as never,
+        )).rejects.toThrow(/estimatedDispatches/);
         expect(b.repo.listActiveCoordinationRuns()).toEqual([]);
       });
     }

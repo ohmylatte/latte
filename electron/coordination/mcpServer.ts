@@ -54,8 +54,11 @@
  * implements the lifecycle rules themselves (`ensureStarted`/`stopIfIdle`),
  * tested directly.
  */
+import type { CoordinationAuthorityMode } from '../../shared/contracts';
 import { LatteError, UnavailableError } from '../core/errors';
-import type { CoordinationEngine } from './engine';
+import { LIMITS } from '../services/validation';
+import type { CoordinationBudgetBlock, CoordinationEngine } from './engine';
+import { validateAgainstSchema } from './schemaGuard';
 import { createCoordinationTools, type ToolEnvelope } from './tools';
 import type { CoordinationTokenRegistry } from './tokens';
 import type { LatteRepository } from '../storage/repository';
@@ -212,11 +215,15 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
           type: 'array',
           items: {
             type: 'object',
-            properties: { roleId: { type: 'string' }, why: { type: 'string' } },
+            // R6: el tope se PUBLICA, y por eso se puede hacer cumplir en la
+            // frontera. `assertCoordinationProposal` ya lo aplicaba (LIMITS.decision)
+            // y el esquema no lo decía: el agente descubría el límite recién
+            // cuando su llamada fallaba, sin saber cuál era.
+            properties: { roleId: { type: 'string' }, why: { type: 'string', maxLength: LIMITS.decision } },
             required: ['roleId', 'why'],
           },
         },
-        rationale: { type: 'string' },
+        rationale: { type: 'string', maxLength: LIMITS.decision },
       },
       required: ['plan', 'estimatedDispatches', 'rationale'],
     },
@@ -444,6 +451,20 @@ export class CoordinationMcpServer {
     if (typeof handler !== 'function') {
       return { jsonrpc: '2.0', id, error: { code: -32602, message: `Unknown tool: ${name || '(missing name)'}` } };
     }
+    // R6: LOS ARGUMENTOS SE VALIDAN CONTRA EL ESQUEMA QUE ESTE MISMO SERVIDOR
+    // PUBLICA, para TODA herramienta, antes de que `tools.ts` vea nada. Sólo
+    // `latte_request_coordination` validaba, y de rebote (el motor lo hace por
+    // su cuenta): `latte_report` con `outcome:"success"` —prohibido por su
+    // propio enum— caía en el `else` de `report()` y contaba como FRACASO, con
+    // un intento cobrado contra el tope de reintentos de la tarea.
+    //
+    // NO es un error de PROTOCOLO: el cliente habló bien, el agente se
+    // equivocó de argumento. Sale como cualquier otro rechazo de negocio —
+    // `result` con `isError:true` y un sobre con `INVALID_ARGUMENT`— así que
+    // el agente lo lee, ve qué campo fue y lo corrige.
+    const definition = MCP_TOOL_DEFINITIONS.find((d) => d.name === name);
+    const violation = definition ? validateAgainstSchema(definition.inputSchema, args ?? {}) : null;
+    if (violation) return this.invalidArgument(id, grant, violation);
     const envelope = await handler(grant, args ?? {});
     return {
       jsonrpc: '2.0',
@@ -453,6 +474,33 @@ export class CoordinationMcpServer {
         structuredContent: envelope,
         isError: !envelope.ok,
       },
+    };
+  }
+
+  /**
+   * R6: el rechazo de un argumento que no cumple el esquema publicado, con la
+   * MISMA forma que cualquier otro rechazo de `tools.ts` — mismo sobre, mismo
+   * `authority`/`budget`, `isError:true`. El bloque se lee de verdad (no van
+   * ceros por comodidad): la llamada falló, pero el estado del equipo que el
+   * agente necesita para corregirse sigue siendo legible. Si ESA lectura
+   * tampoco se puede hacer, van ceros y `null`, el mismo "no se pudo leer" que
+   * usa `tools.ts`.
+   */
+  private invalidArgument(id: string | number | null, grant: ReturnType<CoordinationEngine['resolveGrant']>, message: string): Record<string, unknown> {
+    let authority: CoordinationAuthorityMode = 'manual';
+    let budget: CoordinationBudgetBlock = { dispatchesUsed: 0, maxDispatches: null, inFlight: 0, maxConcurrent: null };
+    try {
+      authority = this.deps.engine.readAuthorityForEnvelope(grant.workId);
+      budget = this.deps.engine.budgetBlockForEnvelope(grant.runId);
+    } catch { /* un presupuesto ilegible no puede tapar el motivo real del rechazo */ }
+    const envelope: ToolEnvelope<never> = {
+      ok: false, authority, budget, data: null,
+      error: { code: 'INVALID_ARGUMENT', message },
+    };
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: { content: [{ type: 'text', text: JSON.stringify(envelope) }], structuredContent: envelope, isError: true },
     };
   }
 
