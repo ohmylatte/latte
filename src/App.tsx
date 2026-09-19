@@ -146,7 +146,18 @@ export function App() {
    * sobreviviría a un cambio de Marca y volvería a marcar visto lo que la app
    * eligió sola del otro lado.
    */
-  const humanOpenedWorkRef = useRef<string | null>(null);
+  /**
+   * Q3: ESTADO, no ref, y por dos razones que son la misma.
+   *
+   * Como ref, el efecto de abajo sólo la miraba cuando `work.id` o la carga del
+   * recorte cambiaban: abrir desde Inicio un Trabajo que ya estaba seleccionado
+   * —el caso normal después de volver a la Marca— no volvía a correr el efecto,
+   * así que ese acto explícito no anotaba nada. Y como valor que nadie limpiaba
+   * sobrevivía a los cambios de Marca, así que la autoselección de `list[0]`
+   * anotaba visitas que nadie hizo. Un dato que decide un efecto tiene que
+   * poder dispararlo.
+   */
+  const [humanOpenedWorkId, setHumanOpenedWorkId] = useState<string | null>(null);
   // The brand effect re-reads works when the id changes. Finishing the walk on
   // the already-selected brand (the demo) changes nothing, so it needs its own
   // reason to run; the ref above is only honoured if the effect runs.
@@ -218,11 +229,18 @@ export function App() {
   // R5: y SÓLO si el Trabajo lo abrió la persona. `App` autoselecciona
   // `works[0]` al arrancar y en cada cambio de Marca; con F13 eso anotaba la
   // visita sin un solo acto humano y se comía la fila "tu equipo terminó" —
-  // la novedad que existe justamente para avisarle. `humanOpenedWorkRef` lo
+  // la novedad que existe justamente para avisarle. `humanOpenedWorkId` lo
   // escriben los caminos de navegación explícita, nunca la autoselección.
+  // Q3: y la ref se CONSUME al marcar. Un acto explícito vale por UNA visita:
+  // dejarla puesta hacía que cualquier re-carga posterior del recorte de
+  // coordinación —otra Marca y vuelta, un evento que refresca— volviera a
+  // anotar visto un Trabajo que la persona no abrió de nuevo.
   useEffect(() => {
-    if (work?.id && coordinationLoaded && humanOpenedWorkRef.current === work.id) markSeen();
-  }, [work?.id, coordinationLoaded]);
+    if (work?.id && coordinationLoaded && humanOpenedWorkId === work.id) {
+      markSeen();
+      setHumanOpenedWorkId(null);
+    }
+  }, [work?.id, coordinationLoaded, humanOpenedWorkId]);
   // The memory notice (task 7.10) is dismissed per Brand, for this session
   // only: this state is plain React state, never persisted, so it "returns
   // next launch while the condition holds" simply because a fresh launch
@@ -441,7 +459,7 @@ export function App() {
     void api.getDecisionAuthority(work.id).then(value => { if (active) setDecisionAuthority(value); }).catch(() => { if (active) setDecisionAuthority('suggest'); });
     return () => { active = false; };
   }, [work?.id]);
-  useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setKnowledgeScope(ALL_BRAND_SCOPE); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); const requested = list.find(w => w.id === pendingWorkRef.current) ?? null; const preferred = requested ?? list[0] ?? null; pendingWorkRef.current = null; /* R5: sólo el Trabajo PEDIDO por una acción de la persona cuenta como abierto por ella; `list[0]` lo elige la app sola y no es ninguna visita. */ if (requested) humanOpenedWorkRef.current = requested.id; setWork(preferred); if (preferred && pendingViewRef.current) setView(pendingViewRef.current); pendingViewRef.current = null; }).catch(e => setError(displayError(e))); }, [brand?.id, brandEpoch]);
+  useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setKnowledgeScope(ALL_BRAND_SCOPE); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); const requested = list.find(w => w.id === pendingWorkRef.current) ?? null; const preferred = requested ?? list[0] ?? null; pendingWorkRef.current = null; /* R5: sólo el Trabajo PEDIDO por una acción de la persona cuenta como abierto por ella; `list[0]` lo elige la app sola y no es ninguna visita. Q3: y se PISA, no se deja. Sin el `else` la ref sobrevivía al cambio de Marca, así que volver a esta Marca por el selector autoseleccionaba `list[0]` —que puede ser el mismo Trabajo— y la visita se anotaba sola, con la persona mirando Inicio. */ setHumanOpenedWorkId(requested?.id ?? null); setWork(preferred); if (preferred && pendingViewRef.current) setView(pendingViewRef.current); pendingViewRef.current = null; }).catch(e => setError(displayError(e))); }, [brand?.id, brandEpoch]);
   useEffect(() => {
     if (!brand) { setDocuments([]); setDecisions([]); return; }
     let active = true;
@@ -531,7 +549,7 @@ export function App() {
     // R5: TODO camino que pasa por acá es un acto de la persona — un clic en la
     // lista de Trabajos, una fila de Inicio, la cola de revisión. La visita se
     // anota sólo por estos, nunca por la autoselección del arranque.
-    humanOpenedWorkRef.current = w.id;
+    setHumanOpenedWorkId(w.id);
     setWork(w);
     setContext(brand?.context ?? '');
     setView(target);
