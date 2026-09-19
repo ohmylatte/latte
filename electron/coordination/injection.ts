@@ -257,6 +257,13 @@ export class CoordinationInjectionPlanner {
     if (claim.coordinated && !coordination) {
       this.coordinatedByWork.get(claim.workId)?.delete(memberId);
       claim.coordinated = false;
+      // Y el token se REVOCA (crítico 11). Antes esto soltaba el cupo y dejaba
+      // la credencial viva: el miembro rechazado seguía teniendo un bearer que
+      // funcionaba —un token no vence— mientras otro se quedaba con su cupo, y
+      // como `stopIfIdle` cuenta tokens ENTREGADOS, el servidor de loopback no
+      // se podía apagar nunca. Va ANTES de `stopIfIdle` a propósito: si no,
+      // `deliveredSize` todavía cuenta a este miembro y la puerta queda abierta.
+      this.deps.tokens.revokeMember(claim.workId, memberId);
       this.deps.server.stopIfIdle();
     }
     if (claim.memorySlotKey && !memory) {
