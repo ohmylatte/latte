@@ -145,7 +145,27 @@ export interface CoordinationRunDoneLogEntry {
   createdAt: string;
 }
 
-export type CoordinationLogEntry = CoordinationDispatchLogEntry | CoordinationRunDoneLogEntry;
+/**
+ * El otro final. Un run `cancelled` terminó igual que uno `done` —no vuelve a
+ * despachar nunca—, y la bitácora lo dejaba sin una sola línea: la última cosa
+ * que se leía era el despacho que quedó a medio camino, como si el equipo
+ * siguiera trabajando. Se deriva igual que `run_done`, del estado del run y del
+ * de sus tareas, así que tampoco puede divergir de lo que dice la base.
+ *
+ * `tasksPending` en vez de `tasksFailed`: cancelar no hace fracasar a nadie,
+ * deja tareas sin terminar, y decir "fallidas" sobre trabajo que nunca se
+ * intentó sería la bitácora mintiendo.
+ */
+export interface CoordinationRunCancelledLogEntry {
+  kind: 'run_cancelled';
+  id: string;
+  runId: string;
+  tasksDone: number;
+  tasksPending: number;
+  createdAt: string;
+}
+
+export type CoordinationLogEntry = CoordinationDispatchLogEntry | CoordinationRunDoneLogEntry | CoordinationRunCancelledLogEntry;
 
 /** Un alta de este run: quién se sumó, con qué rol y cuándo. Guardado en `coordination_hires:<runId>`. */
 export interface CoordinationHireRecord {
@@ -612,6 +632,21 @@ export class CoordinationEngine {
         createdAt: run.updatedAt,
       });
     }
+    if (run.status === 'cancelled') {
+      const tasks = this.deps.repo.listCoordinationTasks(runId);
+      const done = tasks.filter((t) => t.status === 'done').length;
+      entries.push({
+        kind: 'run_cancelled',
+        id: `run-cancelled:${run.id}`,
+        runId: run.id,
+        tasksDone: done,
+        // Todo lo que no llegó a `done` quedó sin terminar, incluidas las
+        // `failed`: desde el punto de vista de quien lee la bitácora de un run
+        // cancelado, lo que importa es cuánto quedó sin hacer.
+        tasksPending: tasks.length - done,
+        createdAt: run.updatedAt,
+      });
+    }
     return entries;
   }
 
@@ -912,6 +947,14 @@ export class CoordinationEngine {
         this.abortDispatchOnRunNotRunning(run, task, existingPending, prompt, now, live.status);
         return { ok: false, error: new LatteError('RUN_NOT_ACTIVE', `Run is ${live.status}`) };
       }
+      // A PARTIR DE ACÁ `live.status` ES `'running'`, SIEMPRE. De acá al final
+      // de esta función no hay un solo `await` —es el cuerpo de una
+      // transacción sincrónica—, así que nadie puede cambiarlo en el medio.
+      // Las cuatro suspensiones de abajo llevaban cada una su
+      // `if (live.status === 'running')` adelante: cuatro ramas que no
+      // protegían nada y que se leían como si protegieran algo. Si alguna vez
+      // aparece un `await` acá adentro, esta invariante deja de valer y hay
+      // que releer el run, no volver a poner el `if`.
       // Del run RELEÍDO, igual que su estado: un `setCoordinationBudget` que
       // entró mientras se levantaba el proceso ya escribió el snapshot nuevo,
       // y despachar contra la foto vieja es la misma causa raíz de siempre.
@@ -922,7 +965,7 @@ export class CoordinationEngine {
         // en la bitácora y en la suspensión como cualquier otra (crítico 8).
         const reason = 'budget_invalid';
         this.writeLedgerDenied(run.id, reason);
-        if (live.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
+        this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
         this.abortDispatchClaim(task.id, existingPending, now, reason);
         return { ok: false, error: new LatteError('COORDINATION_BUDGET_INVALID', "This run's budget cannot be read; set the Work's budget again before dispatching.") };
       }
@@ -937,7 +980,7 @@ export class CoordinationEngine {
       const decision = reserveDispatch(budget, this.usageFor(run.id));
       if (!decision.ok) {
         this.writeLedgerDenied(run.id, decision.reason);
-        if (live.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, decision.reason);
+        this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, decision.reason);
         this.abortDispatchClaim(task.id, existingPending, now, decision.reason);
         return { ok: false, error: new LatteError('BUDGET_EXCEEDED', `Coordination budget denied: ${decision.reason}`) };
       }
@@ -953,7 +996,7 @@ export class CoordinationEngine {
       if (globalBudget.kind === 'invalid') {
         const reason = 'global_budget_invalid';
         this.writeLedgerDenied(run.id, reason);
-        if (live.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
+        this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
         this.abortDispatchClaim(task.id, existingPending, now, reason);
         return { ok: false, error: new LatteError('GLOBAL_BUDGET_INVALID', 'The app-wide dispatch cap could not be read; fix it in Settings before dispatching again.') };
       }
@@ -962,7 +1005,7 @@ export class CoordinationEngine {
         if (!globalDecision.ok) {
           const reason = `global_${globalDecision.reason}`;
           this.writeLedgerDenied(run.id, reason);
-          if (live.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
+          this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
           this.abortDispatchClaim(task.id, existingPending, now, reason);
           return { ok: false, error: new LatteError('BUDGET_EXCEEDED', `Coordination budget denied: ${reason}`) };
         }

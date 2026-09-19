@@ -27,7 +27,10 @@ describe('CoordinationEngine — el mundo cambia durante el spawn', () => {
   }
 
   function dispatchEntries(entries: CoordinationLogEntry[]) {
-    return entries.filter((e) => e.kind !== 'run_done');
+    // Por presencia de `taskId`, no enumerando las entradas de cierre: la
+    // bitácora ya deriva dos (`run_done`, `run_cancelled`) y este filtro las
+    // dejaba pasar de a una cada vez que aparecía otra.
+    return entries.filter((e) => 'taskId' in e);
   }
 
   beforeEach(async () => {

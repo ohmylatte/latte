@@ -94,13 +94,16 @@ export interface CoordinationHireEvent {
 export type BitacoraRow =
   | { kind: 'dispatch'; id: string; taskId: string; memberId: string; status: CoordinationDispatchStatus; at: string }
   | { kind: 'runDone'; id: string; tasksDone: number; tasksFailed: number; at: string }
+  | { kind: 'runCancelled'; id: string; tasksDone: number; tasksPending: number; at: string }
   | { kind: 'hire'; id: string; memberId: string; roleName: string; at: string };
 
 /** Pure merge + sort: no invented rows, no invented order. */
 export function bitacoraRows(log: readonly CoordinationLogEntryView[], hires: readonly CoordinationHireEvent[]): BitacoraRow[] {
-  const dispatchRows: BitacoraRow[] = log.map((entry) => (entry.kind === 'run_done'
-    ? { kind: 'runDone', id: entry.id, tasksDone: entry.tasksDone, tasksFailed: entry.tasksFailed, at: entry.createdAt }
-    : { kind: 'dispatch', id: entry.id, taskId: entry.taskId, memberId: entry.memberId, status: entry.status, at: entry.createdAt }));
+  const dispatchRows: BitacoraRow[] = log.map((entry): BitacoraRow => {
+    if (entry.kind === 'run_done') return { kind: 'runDone', id: entry.id, tasksDone: entry.tasksDone, tasksFailed: entry.tasksFailed, at: entry.createdAt };
+    if (entry.kind === 'run_cancelled') return { kind: 'runCancelled', id: entry.id, tasksDone: entry.tasksDone, tasksPending: entry.tasksPending, at: entry.createdAt };
+    return { kind: 'dispatch', id: entry.id, taskId: entry.taskId, memberId: entry.memberId, status: entry.status, at: entry.createdAt };
+  });
   const hireRows: BitacoraRow[] = hires.map((event, index) => ({
     kind: 'hire', id: `hire:${event.memberId}:${index}`, memberId: event.memberId, roleName: event.roleName, at: event.hiredAt,
   }));

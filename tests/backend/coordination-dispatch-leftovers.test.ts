@@ -36,6 +36,26 @@ describe('runTransaction decide sobre el run RELEÍDO, nunca sobre la foto vieja
     expect(runTransactionBody()).toContain("if (live.status !== 'running')");
   });
 
+  it('ninguna rama vuelve a preguntar si el run sigue `running`: el early-return ya lo garantizó', () => {
+    const body = runTransactionBody();
+    // El early-return de arriba tira si `live.status !== 'running'`, y de ahí
+    // al final del cuerpo no hay un solo `await`. Las cuatro suspensiones
+    // llevaban cada una un `if (live.status === 'running')` adelante: ramas
+    // muertas que se leían como si protegieran algo. Se afirma el largo
+    // primero (lo hace `runTransactionBody`) para que esta negación no pase
+    // por vacío.
+    // Sin los comentarios: el guard mira CÓDIGO. La prosa que explica por qué
+    // esas ramas no están tiene que poder nombrarlas sin disparar el test.
+    const code = body.split(/\r?\n/).filter((line) => {
+      const trimmed = line.trim();
+      return trimmed !== '' && !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*');
+    });
+    expect(code.length).toBeGreaterThan(20);
+    expect(code.filter((line) => line.includes("live.status === 'running'"))).toEqual([]);
+    // Y la comparación que SÍ manda sigue en pie, una sola vez.
+    expect(code.filter((line) => line.includes("live.status !== 'running'"))).toHaveLength(1);
+  });
+
   it('ninguna rama de denegación vuelve a mirar el `run` viejo', () => {
     const offenders = runTransactionBody()
       .split(/\r?\n/)

@@ -53,6 +53,51 @@ describe('un run terminado se sigue viendo, con su bitácora (crítico: la UI bo
     expect(view).toMatchObject({ id: run.id, status: 'cancelled', active: false });
   });
 
+  /**
+   * Los DOS finales dejan constancia. `run_done` existía desde el slice del
+   * cierre; `cancelled` —el otro final, el que la persona aprieta— no tenía
+   * entrada equivalente, así que la última línea de la bitácora de un run
+   * cancelado era el despacho que quedó a medio camino: se leía como si el
+   * equipo siguiera trabajando.
+   */
+  describe('la bitácora deja constancia de los DOS finales', () => {
+    it('un run CANCELADO cierra con `run_cancelled`, contando lo hecho y lo que quedó sin terminar', async () => {
+      const run = await engine.startRun(workId, 'mem_coordinator');
+      const done = engine.taskCreate(run.id, { roleId: 'strategist', spec: 'a' });
+      const pending = engine.taskCreate(run.id, { roleId: 'strategist', spec: 'b' });
+      b.repo.updateCoordinationTask(done.id, { status: 'done' }, new Date().toISOString());
+
+      engine.cancelRun(run.id);
+
+      const log = await b.service.listCoordinationLog(run.id);
+      const closing = log.filter((entry) => entry.kind === 'run_cancelled');
+      expect(closing).toHaveLength(1);
+      expect(closing[0]).toMatchObject({ runId: run.id, tasksDone: 1, tasksPending: 1 });
+      expect(closing[0].createdAt).toBe(b.repo.getCoordinationRun(run.id).updatedAt);
+      // Y NO la del otro final: un run cancelado no "terminó".
+      expect(log.filter((entry) => entry.kind === 'run_done')).toEqual([]);
+      expect(pending.id).toBeTruthy();
+    });
+
+    it('un run VIVO todavía no tiene entrada de cierre de ninguna de las dos clases', async () => {
+      const run = await engine.startRun(workId, 'mem_coordinator');
+      engine.taskCreate(run.id, { roleId: 'strategist', spec: 'a' });
+
+      const log = await b.service.listCoordinationLog(run.id);
+      expect(log.filter((entry) => entry.kind === 'run_cancelled')).toEqual([]);
+      expect(log.filter((entry) => entry.kind === 'run_done')).toEqual([]);
+    });
+
+    it('un run TERMINADO cierra con `run_done`, nunca con `run_cancelled`', async () => {
+      const run = await engine.startRun(workId, 'mem_coordinator');
+      b.repo.updateCoordinationRunStatus(run.id, 'done', new Date().toISOString(), null);
+
+      const log = await b.service.listCoordinationLog(run.id);
+      expect(log.filter((entry) => entry.kind === 'run_done')).toHaveLength(1);
+      expect(log.filter((entry) => entry.kind === 'run_cancelled')).toEqual([]);
+    });
+  });
+
   it('un run TERMINADO se sigue devolviendo, y su bitácora sigue en pie', async () => {
     const run = await engine.startRun(workId, 'mem_coordinator');
     b.repo.updateCoordinationRunStatus(run.id, 'done', new Date().toISOString(), null);

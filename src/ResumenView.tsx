@@ -140,7 +140,9 @@ export function ResumenView(props: ResumenViewProps) {
               ? t('resumen.bitacora.hired', { roleName: row.roleName })
               : row.kind === 'runDone'
                 ? t('resumen.bitacora.runDone', { done: row.tasksDone, failed: row.tasksFailed })
-                : t(`resumen.bitacora.status.${row.status}` as 'resumen.bitacora.status.reported')}</p>
+                : row.kind === 'runCancelled'
+                  ? t('resumen.bitacora.runCancelled', { done: row.tasksDone, pending: row.tasksPending })
+                  : t(`resumen.bitacora.status.${row.status}` as 'resumen.bitacora.status.reported')}</p>
             <small>{props.formatDate(row.at)}</small>
             {row.kind === 'dispatch' && IN_FLIGHT_STATUSES.has(row.status) && props.onSettleDispatch && <div className="resumen-bitacora-settle">
               <button type="button" className="resumen-bitacora-settle-succeeded" onClick={() => {

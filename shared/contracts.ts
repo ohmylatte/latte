@@ -807,7 +807,25 @@ export interface CoordinationRunDoneLogEntryView {
   createdAt: string;
 }
 
-export type CoordinationLogEntryView = CoordinationDispatchLogEntryView | CoordinationRunDoneLogEntryView;
+/**
+ * The run's other ending. A cancelled run is as finished as a done one — it
+ * never dispatches again — and it used to leave the bitácora with no closing
+ * line at all: the last thing on screen was the dispatch that got cut off, as
+ * if the team were still working. Derived the same way, never stored.
+ *
+ * `tasksPending` rather than `tasksFailed`: cancelling does not make anyone
+ * fail, it leaves work unfinished.
+ */
+export interface CoordinationRunCancelledLogEntryView {
+  kind: 'run_cancelled';
+  id: string;
+  runId: string;
+  tasksDone: number;
+  tasksPending: number;
+  createdAt: string;
+}
+
+export type CoordinationLogEntryView = CoordinationDispatchLogEntryView | CoordinationRunDoneLogEntryView | CoordinationRunCancelledLogEntryView;
 
 export type CoordinationTaskStatus = 'pending' | 'ready' | 'dispatched' | 'running' | 'done' | 'failed' | 'blocked';
 

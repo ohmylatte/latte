@@ -111,7 +111,10 @@ describe('la contratación que la persona destildó', () => {
     expect(send.mock.calls).toHaveLength(0);
     expect(b.repo.getCoordinationTask(designerTask).status).toBe('blocked');
     // Y la razón queda escrita en la bitácora, no sólo en el error que se tiró.
-    const entries = engine.listLog(run.id).filter((entry) => entry.kind !== 'run_done' && entry.taskId === designerTask);
+    // `'taskId' in entry` en vez de enumerar las entradas de cierre: la
+    // bitácora ya tiene dos (`run_done`, `run_cancelled`) y cada nueva rompía
+    // este filtro. Sólo las de despacho tienen tarea.
+    const entries = engine.listLog(run.id).filter((entry) => 'taskId' in entry && entry.taskId === designerTask);
     expect(entries).toHaveLength(1);
     const row = b.repo.listCoordinationDispatches(run.id).find((d) => d.taskId === designerTask);
     expect(row).toBeDefined();
