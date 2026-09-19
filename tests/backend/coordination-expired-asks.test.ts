@@ -89,10 +89,11 @@ describe('F5: preguntas vencidas', () => {
 
   it('una pregunta nueva no suspende el run si hay trabajo despachable', () => {
     const blocked = engine.taskCreate(runId, { roleId: 'role_a', spec: 'a' });
+    const other = engine.taskCreate(runId, { roleId: 'role_b', spec: 'b' });
     engine.ask(worker(), 'la primera', 1, blocked.id);
+    expect(b.repo.getCoordinationRun(runId).status).toBe('running'); // queda `other` para despachar
 
     advanceMinutes(5);
-    const other = engine.taskCreate(runId, { roleId: 'role_b', spec: 'b' });
     engine.ask(worker('mem_b1'), 'la segunda, legítima', 30, other.id);
 
     expect(b.repo.getCoordinationRun(runId).status).toBe('running');

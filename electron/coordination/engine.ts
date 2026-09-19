@@ -422,7 +422,17 @@ export class CoordinationEngine {
     // it appears in EVERY authority mode — the proposal decides the
     // authority, so there is no authority yet to gate it by.
     if (run.status === 'planning') {
-      const proposal = run.planJson ? (JSON.parse(run.planJson) as CoordinationProposal) : null;
+      // F8: un `plan_json` ilegible no puede tumbar la lista entera. Este
+      // `JSON.parse` iba a pelo, así que una fila rota hacía estallar la
+      // pantalla de Decisiones — justo donde vive el único botón que puede
+      // sacar a ese run de ahí. El gate se emite igual, con el JSON CRUDO:
+      // la interfaz ya sabe dibujar la tarjeta ilegible, cuya única acción es
+      // "Rechazar". Sin propuesta legible no hay agregado que calcular, y
+      // `undefined` es honesto donde un cero sería inventado.
+      let proposal: CoordinationProposal | null = null;
+      try {
+        proposal = run.planJson ? (JSON.parse(run.planJson) as CoordinationProposal) : null;
+      } catch { proposal = null; }
       gates.push({
         id: `proposal:${run.id}`,
         kind: 'proposal',
@@ -865,6 +875,19 @@ export class CoordinationEngine {
     this.requireCoordinationEnabled();
     const run = this.deps.repo.findActiveCoordinationRun(workId);
     if (!run) return { bridged: false };
+    // EL MISMO chequeo que `taskCreate` y `planSubmit` (F7). Este camino
+    // llamaba a `createTaskRow` directo: la tarea nacía, el despacho moría con
+    // `ROLE_NOT_APPROVED` tres saltos más adentro, quedaba una tarea `failed`
+    // en la bitácora de la persona y la excepción subía hasta la interfaz por
+    // haber aceptado un borrador. Un rol que nadie aprobó no se puede
+    // convertir en tarea por ningún camino; el handoff DEGRADA al borrador,
+    // que es exactamente lo que este método promete cuando no hay run.
+    try {
+      this.assertRoleCreatable(run, roleId);
+    } catch (error) {
+      if (error instanceof LatteError && error.code === 'ROLE_NOT_APPROVED') return { bridged: false };
+      throw error;
+    }
     const task = this.createTaskRow(run.id, roleId, spec, []);
     const outcome = await this.startDispatch({ grant: { workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id });
     this.touch(workId, run.id);
@@ -958,7 +981,14 @@ export class CoordinationEngine {
   }
 
   taskCreate(runId: string, input: { roleId: string; spec: string; dependsOn?: string[] }): CoordinationTaskRecord {
-    const run = this.deps.repo.getCoordinationRun(runId);
+    const run = this.assertRunMutable(this.deps.repo.getCoordinationRun(runId));
+    // `running`, el MISMO umbral que `planSubmit` (F6). Sin esto, con el
+    // permiso de coordinador escrito por IPC y un run todavía en `planning`,
+    // el agente colaba tareas que la persona NO leyó en la propuesta que está
+    // por aprobar: aprobaba un plan de tres tareas y el run arrancaba con
+    // cinco. Una propuesta que se puede ampliar mientras se la lee no es una
+    // propuesta.
+    if (run.status !== 'running') throw new LatteError('RUN_NOT_ACTIVE', `Run is ${run.status}`);
     this.assertRoleCreatable(run, input.roleId);
     const task = this.createTaskRow(runId, input.roleId, input.spec, input.dependsOn ?? []);
     this.touch(run.workId, runId);
