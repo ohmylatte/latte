@@ -67,6 +67,18 @@ interface LiveChat {
   usageTurnId: string | null;
 }
 
+/**
+ * Los `authStatus` que `mcpServerStatus/list` devuelve para un servidor que el
+ * proceso CONECTÓ de verdad. Allowlist, no denylist (D7): los estados buenos
+ * son enumerables y los malos no — un valor nuevo que Codex agregue mañana cae
+ * del lado seguro, que es "no cuenta", en vez de pasar por conectado.
+ *
+ * `unsupported` es el que devuelve un servidor que no requiere auth (el caso de
+ * `latte_coordination` y `latte_memory`, ver `fakeCodex.cjs` y `applyCodexAuth`
+ * en `agents/mcp.ts`, el único otro lector de este campo en el repo).
+ */
+const CODEX_CONNECTED_AUTH: ReadonlySet<string> = new Set(['unsupported', 'loggedIn', 'connected', 'authenticated', 'ok']);
+
 const MESSAGE_LIMIT = 400;
 const TOOL_TEXT_LIMIT = 12_000;
 
@@ -146,11 +158,14 @@ export class CodexChatAdapter implements RuntimeAdapter {
   }
 
   async listMcpStatus(accountId: string): Promise<Array<{ name: string; authStatus: string }>> {
-    return this.mcpStatusOn(await this.serverFor(accountId));
+    // Hacia afuera, un `authStatus` ausente se sigue viendo como `'unknown'`:
+    // `applyCodexAuth` sólo pregunta por `notLoggedIn`, y ninguna pantalla
+    // necesita distinguir. Adentro sí (ver `mcpStatusOn`).
+    return (await this.mcpStatusOn(await this.serverFor(accountId))).map((entry) => ({ name: entry.name, authStatus: entry.authStatus ?? 'unknown' }));
   }
 
   /** `mcpServerStatus/list` sobre UN app-server concreto: lo que ESE proceso conoce de verdad. */
-  private async mcpStatusOn(server: CodexAppServer): Promise<Array<{ name: string; authStatus: string }>> {
+  private async mcpStatusOn(server: CodexAppServer): Promise<Array<{ name: string; authStatus: string | null }>> {
     let result: unknown;
     try {
       result = await server.request('mcpServerStatus/list', { detail: 'toolsAndAuthOnly' });
@@ -158,10 +173,13 @@ export class CodexChatAdapter implements RuntimeAdapter {
       throw new UnavailableError(`Este Codex no soporta mcpServerStatus/list: ${describe(error)}`);
     }
     const data = isRecord(result) && Array.isArray(result.data) ? result.data : [];
-    const out: Array<{ name: string; authStatus: string }> = [];
+    // `null` = el campo NO vino. Antes se normalizaba a la cadena `'unknown'`,
+    // que `reportInjected` no distinguía de un estado real y terminaba contando
+    // como conectado. Ausente y "no sé" son lo mismo, y ninguno es "anda" (D7).
+    const out: Array<{ name: string; authStatus: string | null }> = [];
     for (const entry of data) {
       if (!isRecord(entry) || typeof entry.name !== 'string' || !entry.name) continue;
-      out.push({ name: entry.name, authStatus: typeof entry.authStatus === 'string' ? entry.authStatus : 'unknown' });
+      out.push({ name: entry.name, authStatus: typeof entry.authStatus === 'string' ? entry.authStatus : null });
     }
     return out;
   }
@@ -169,7 +187,11 @@ export class CodexChatAdapter implements RuntimeAdapter {
   // Chats --------------------------------------------------------------------------
 
   async start(input: AdapterStartInput): Promise<AdapterStartResult> {
-    if (this.chats.size >= this.maxChats) throw new ValidationError(`Too many open Codex chats (max ${this.maxChats})`);
+    // `starting` cuenta (D9). El guard miraba solo `chats`, y una fila entra
+    // ahi recien cuando el proceso ya arranco: N aperturas simultaneas leian
+    // las N el mismo tamanio —cero— y pasaban todas, asi que el tope no topaba
+    // nada justo cuando mas hace falta, que es cuando llegan todas juntas.
+    if (this.chats.size + this.starting.size >= this.maxChats) throw new ValidationError(`Too many open Codex chats (max ${this.maxChats})`);
     const chatId = input.chatId ?? newId('ses');
     if (this.chats.has(chatId) || this.starting.has(chatId)) throw new ValidationError('This chat is already open');
     this.starting.add(chatId);
@@ -301,13 +323,26 @@ export class CodexChatAdapter implements RuntimeAdapter {
   private async reportInjected(server: CodexAppServer, mcpServers: AdapterMcpServer[] | undefined): Promise<string[] | undefined> {
     const requested = (mcpServers ?? []).map((entry) => entry.name);
     if (requested.length === 0) return requested;
-    let statuses: Array<{ name: string; authStatus: string }>;
+    let statuses: Array<{ name: string; authStatus: string | null }>;
     try {
       statuses = await this.mcpStatusOn(server);
     } catch {
       return undefined;
     }
-    const connected = new Set(statuses.filter((entry) => entry.authStatus !== 'notLoggedIn').map((entry) => entry.name));
+    // ALLOWLIST, no denylist (D7). `!== 'notLoggedIn'` daba por conectado
+    // CUALQUIER valor que el protocolo devolviera: un `failed`, un `error`, un
+    // estado que Codex agregue el mes que viene, todos contaban como "anda". La
+    // denylist de un solo valor tiene que acertarle a todos los estados malos
+    // presentes y futuros; la allowlist sólo tiene que acertarle a los buenos,
+    // que son los que este repo puede nombrar (ver `applyCodexAuth` en
+    // `agents/mcp.ts` y el catálogo que devuelve `mcpServerStatus/list`).
+    //
+    // Y un `authStatus` AUSENTE no es un estado: es "no sé". Asumirlo conectado
+    // repetía la mentira de raíz, así que la respuesta entera se descarta y el
+    // reclamo previo queda intacto, igual que con un Codex que no conoce el
+    // método.
+    if (statuses.some((entry) => entry.authStatus === null)) return undefined;
+    const connected = new Set(statuses.filter((entry) => CODEX_CONNECTED_AUTH.has(entry.authStatus as string)).map((entry) => entry.name));
     return requested.filter((name) => connected.has(name));
   }
 
@@ -474,6 +509,7 @@ export class CodexChatAdapter implements RuntimeAdapter {
     if (live) return parseModelList(await live.request('model/list', {}));
     const runtime = await this.deps.resolveExecutable();
     if (!runtime) throw new UnavailableError('Codex is not installed or not on PATH');
+    const ephemeralKey = `${accountId}|ephemeral-models`;
     const server = new CodexAppServer({
       executable: runtime.executable,
       env: { ...scrubEnv(this.env), ...this.deps.accountEnv(accountId === SYSTEM_ACCOUNT_ID ? null : accountId) },
@@ -482,11 +518,21 @@ export class CodexChatAdapter implements RuntimeAdapter {
       spawnImpl: this.deps.spawnImpl,
       requestTimeoutMs: this.deps.requestTimeoutMs,
       log: this.deps.log,
+      // D14: el efímero se anota igual que el administrado. Era el ÚNICO
+      // `codex app-server` que Latte spawnea sin registrar su pid, y si la app
+      // se cae o la matan mientras este proceso vive, el barrido de arranque no
+      // tiene forma de enterarse: queda un `codex app-server` huérfano para
+      // siempre. Su clave es propia, para que apagarlo no borre la anotación
+      // del servidor administrado de la misma cuenta.
+      onSpawn: (pid) => recordServerPid(this.deps.serverCwd, ephemeralKey, pid),
     });
     try {
       return parseModelList(await server.request('model/list', {}));
     } finally {
       server.stop();
+      // Y se olvida al cerrar: un pid fantasma hace que el barrido siguiente
+      // señale un proceso que ya no existe — o uno que el sistema reasignó.
+      forgetServerPid(this.deps.serverCwd, ephemeralKey);
     }
   }
 

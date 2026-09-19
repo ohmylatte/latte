@@ -175,7 +175,11 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
   }
 
   async start(input: AdapterStartInput): Promise<AdapterStartResult> {
-    if (this.chats.size >= this.maxChats) throw new ValidationError(`Too many open Claude chats (max ${this.maxChats})`);
+    // `starting` cuenta (D9). El guard miraba solo `chats`, y una fila entra
+    // ahi recien cuando el proceso ya arranco: N aperturas simultaneas leian
+    // las N el mismo tamanio —cero— y pasaban todas, asi que el tope no topaba
+    // nada justo cuando mas hace falta, que es cuando llegan todas juntas.
+    if (this.chats.size + this.starting.size >= this.maxChats) throw new ValidationError(`Too many open Claude chats (max ${this.maxChats})`);
     const chatId = input.chatId ?? newId('ses');
     if (this.chats.has(chatId) || this.starting.has(chatId)) throw new ValidationError('This chat is already open');
     this.starting.add(chatId);
@@ -297,12 +301,20 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
     //
     // El unico reporte honesto es el del propio runtime, y llega en el
     // `system/init` -- DESPUES de que esta funcion vuelve. Asi que aca:
-    //   - sin archivo escrito => `[]`: Latte mismo se nego, y eso SI se sabe ya.
     //   - con archivo escrito => `undefined`: "todavia no se", que
     //     `confirmInjection` respeta dejando el reclamo previo intacto. La
     //     correccion llega por `deps.onMcpServers` apenas el proceso habla.
-    const injectedMcpServers = mcpConfigFile ? undefined : [];
-    return { session, runtimeSessionId: input.previousSessionId ?? '', injectedMcpServers };
+    //   - SIN archivo escrito => `undefined` TAMBIEN (D7c). Devolver `[]` era la
+    //     ultima tautologia que quedaba, dada vuelta: convertia la negativa de
+    //     LATTE (sin `promptDir`, un EACCES al escribir el config, el piso de
+    //     version) en "el runtime reporto cero servidores", y `confirmInjection`
+    //     prendia `runtimeConfirmed` — o sea, la UI afirmaba que el proceso
+    //     habia hablado cuando el proceso no habia dicho una palabra. La
+    //     negativa es real y hay que contarla, pero por su propio campo: es un
+    //     hecho sobre Latte, no sobre el runtime.
+    const injectedMcpServers = undefined;
+    const injectionRefusedByLatte = Boolean(input.mcpServers && input.mcpServers.length > 0 && !mcpConfigFile);
+    return { session, runtimeSessionId: input.previousSessionId ?? '', injectedMcpServers, injectionRefusedByLatte };
   }
 
   listMessages(chatId: string): ChatMessage[] {
@@ -486,10 +498,20 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
             this.deps.onSessionId?.(live.chatId, msg.session_id);
           }
           live.mcpServers = parseInitMcpServers(msg.mcp_servers);
-          // El estado por servidor que el CLI publica. Solo `connected` es
-          // una herramienta que el agente puede usar: `failed`, `needs-auth`
-          // o `pending` son un servidor que NO esta (juicio #1).
-          this.deps.onMcpServers?.(live.chatId, live.mcpServers.filter((server) => server.status === 'connected').map((server) => server.name));
+          // El estado por servidor que el CLI publica. Solo `connected` es una
+          // herramienta que el agente puede usar; `failed` o `needs-auth` son un
+          // servidor que NO esta, y eso SI es una negativa del runtime.
+          //
+          // `pending` (o cualquier estado transitorio) NO lo es (D7b): es "todavia
+          // esta levantando". Contarlo como no-conectado degradaba el reclamo por
+          // una foto sacada medio segundo antes de tiempo, y el reclamo degradado
+          // no vuelve a subir solo: el miembro quedaba marcado "el runtime se
+          // nego" para siempre, con el servidor andando. Ante un transitorio no
+          // se informa nada y el reclamo previo queda intacto, hasta el proximo
+          // `system/init`.
+          if (!live.mcpServers.some((server) => TRANSIENT_MCP_STATUS.has(server.status))) {
+            this.deps.onMcpServers?.(live.chatId, live.mcpServers.filter((server) => server.status === 'connected').map((server) => server.name));
+          }
         } else if (msg.subtype === 'permission_denied') {
           const toolUseId = str(msg.tool_use_id);
           const message = str(msg.message, 'Permission denied');
@@ -809,6 +831,12 @@ function patternsFromInput(input: unknown): string[] {
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+/**
+ * Estados que el CLI publica mientras TODAVIA esta levantando un servidor MCP.
+ * No son una negativa: son un "no se". Ver el uso en `system/init`.
+ */
+const TRANSIENT_MCP_STATUS: ReadonlySet<string> = new Set(['pending', 'connecting', 'starting', '']);
 
 function parseInitMcpServers(raw: unknown): Array<{ name: string; status: string }> {
   if (!Array.isArray(raw)) return [];

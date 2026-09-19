@@ -124,6 +124,20 @@ export class AgentHub {
    * la ventana entera.
    */
   private readonly opening = new Map<string, Promise<ChatSession>>();
+  /**
+   * Los miembros a los que alguien pidió cerrar MIENTRAS su apertura seguía en
+   * vuelo (D8).
+   *
+   * `stop()` hacía `injection.release` —un no-op, porque el reclamo todavía no
+   * existía— y después buscaba un adaptador que lo `owns` —tampoco, porque el
+   * proceso todavía no había arrancado—, así que se iba sin hacer nada. Un
+   * segundo después la apertura commiteaba: marcaba el cupo de techo, entregaba
+   * el token y spawneaba un proceso de un miembro que la persona YA cerró. El
+   * cupo quedaba comido, el bearer vivo (no vence) y el servidor de loopback sin
+   * poder apagarse nunca. La apertura consulta este conjunto al asentar y
+   * COMPENSA: suelta el reclamo y cierra el proceso que acaba de nacer.
+   */
+  private readonly closedWhileOpening = new Set<string>();
   private readonly clock: () => string;
   /**
    * sdd/autonomous-coordination, task 6.28: attached AFTER construction, not
@@ -525,11 +539,33 @@ export class AgentHub {
   private open(record: TeamMemberRecord, context: MemberContext): Promise<ChatSession> {
     const inFlight = this.opening.get(record.id);
     if (inFlight) return inFlight;
+    this.closedWhileOpening.delete(record.id); // una apertura nueva empieza sin deudas
     const started = this.openNow(record, context);
     this.opening.set(record.id, started);
-    const clear = () => { if (this.opening.get(record.id) === started) this.opening.delete(record.id); };
+    const clear = () => {
+      if (this.opening.get(record.id) === started) this.opening.delete(record.id);
+      this.closedWhileOpening.delete(record.id);
+    };
     started.then(clear, clear);
     return started;
+  }
+
+  /**
+   * La compensación de D8: alguien cerró a este miembro mientras se abría.
+   * Se llama en los DOS puntos donde la apertura puede notarlo — justo después
+   * de reclamar el cupo (antes de spawnear, y ahí alcanza con abortar) y justo
+   * después del spawn (y ahí hay que cerrar el proceso que nació).
+   */
+  private compensateClosedWhileOpening(memberId: string): void {
+    this.sessions.delete(memberId);
+    this.openedOutcome.delete(memberId);
+    this.injection?.release(memberId);
+    for (const adapter of this.adapters()) {
+      if (adapter.owns(memberId)) {
+        adapter.stop(memberId);
+        return;
+      }
+    }
   }
 
   private async openNow(record: TeamMemberRecord, context: MemberContext): Promise<ChatSession> {
@@ -548,6 +584,14 @@ export class AgentHub {
       runtime: record.runtime,
       accountId: record.accountId,
     })).servers : undefined;
+    // PRIMER punto de control (D8): el reclamo ya está tomado pero todavía no
+    // se pagó ningún spawn. Si la persona cerró en el medio, se suelta acá y no
+    // se levanta un proceso de un miembro que ya no está.
+    if (this.closedWhileOpening.has(record.id)) {
+      this.closedWhileOpening.delete(record.id);
+      this.compensateClosedWhileOpening(record.id);
+      throw new UnavailableError('This conversation was closed while it was starting');
+    }
     const adapterInput: AdapterStartInput = {
       workId: context.workId,
       chatId: record.id,
@@ -570,6 +614,9 @@ export class AgentHub {
     // Lo que el adaptador entregó DE VERDAD corrige el reclamo que `assign()`
     // dejó escrito antes del spawn: sin esto, `coordinationRuntimeSupport`
     // afirmaba capacidades que el proceso no tenía (juicio #5).
+    // La negativa de LATTE viaja por su propio campo (D7c): degrada el reclamo
+    // sin afirmar que el runtime confirmó nada.
+    if (result.injectionRefusedByLatte) this.injection?.noteLatteRefusedInjection(record.id);
     this.injection?.confirmInjection(record.id, result.injectedMcpServers);
     // El archivo de instrucciones del Trabajo se vuelve a escribir con el
     // reclamo YA corregido (juicio #2): una negativa del runtime tiene que
@@ -578,6 +625,14 @@ export class AgentHub {
     if (result.runtimeSessionId && result.runtimeSessionId !== record.sessionId) this.deps.repo.setMemberSession(record.id, result.runtimeSessionId, this.clock());
     this.sessions.set(result.session.id, result.session);
     this.openedOutcome.set(record.id, outcome);
+    // SEGUNDO punto de control (D8): el cierre llegó mientras el proceso
+    // arrancaba. Ahora sí hay algo que apagar, y se apaga en el acto — la
+    // sesión nunca llega a quedar publicada como viva.
+    if (this.closedWhileOpening.has(record.id)) {
+      this.closedWhileOpening.delete(record.id);
+      this.compensateClosedWhileOpening(record.id);
+      throw new UnavailableError('This conversation was closed while it was starting');
+    }
     return result.session;
   }
 
@@ -673,6 +728,10 @@ export class AgentHub {
   }
 
   stop(chatId: string): void {
+    // D8: si la apertura sigue en vuelo, ni el reclamo ni el proceso existen
+    // todavía y las dos líneas de abajo no encuentran nada que soltar. Se anota
+    // la intención y la apertura la respeta cuando asienta.
+    if (this.opening.has(chatId)) this.closedWhileOpening.add(chatId);
     this.sessions.delete(chatId);
     this.openedOutcome.delete(chatId);
     // Task 6.28: the single chokepoint `pauseMember`/`finishMember`/

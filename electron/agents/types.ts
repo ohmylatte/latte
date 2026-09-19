@@ -87,6 +87,16 @@ export interface AdapterStartResult {
    * = este adaptador no inyecta nada (OpenCode): el reclamo queda intacto.
    */
   injectedMcpServers?: string[];
+  /**
+   * LATTE se negó a inyectar lo que el planificador había reclamado: no hay
+   * `promptDir`, el config no se pudo escribir, la versión del CLI está por
+   * debajo del piso. Es un campo APARTE de `injectedMcpServers` a propósito
+   * (D7c): meter esa negativa ahí la disfrazaba de reporte del runtime y
+   * encendía `runtimeConfirmed` sin que el proceso hubiera dicho nada. Acá
+   * degrada el reclamo, que es verdad, sin afirmar que el runtime habló, que
+   * no lo es.
+   */
+  injectionRefusedByLatte?: boolean;
 }
 
 /**

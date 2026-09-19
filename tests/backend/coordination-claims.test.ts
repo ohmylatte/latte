@@ -151,7 +151,15 @@ describe('los adaptadores reportan lo que el RUNTIME dijo, no lo que Latte pidi�
     removeDir(dir);
   });
 
-  it('Claude sigue reportando `[]` cuando el que se negó fue Latte (sin promptDir)', async () => {
+  /**
+   * D7c: esto asertaba `[]` — o sea, "el runtime reportó cero servidores" —
+   * para un caso en el que el runtime no dijo NADA: el que se negó fue Latte,
+   * porque no tiene dónde escribir el config. `confirmInjection` tomaba ese
+   * `[]` por una confirmación y encendía `runtimeConfirmed`, así que la UI
+   * afirmaba que el proceso había hablado. La negativa es real y se reporta,
+   * pero por su propio campo.
+   */
+  it('Claude reporta la negativa de LATTE por su campo, sin fingir que el runtime habló (sin promptDir)', async () => {
     const dir = makeTempDir();
     const adapter = new ClaudeChatAdapter({
       resolveExecutable: async () => ({ executable: process.execPath, version: '2.1.263' }),
@@ -164,7 +172,8 @@ describe('los adaptadores reportan lo que el RUNTIME dijo, no lo que Latte pidi�
     const result = await adapter.start({
       workId: 'wrk_1', chatId: 'mem_coord', directory: dir, title: 't', label: 'Claude', mcpServers: [COORD_SERVER],
     });
-    expect(result.injectedMcpServers).toEqual([]);
+    expect(result.injectedMcpServers).toBeUndefined();
+    expect(result.injectionRefusedByLatte).toBe(true);
     adapter.shutdown();
     removeDir(dir);
   });

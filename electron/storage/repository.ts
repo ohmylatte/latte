@@ -1403,11 +1403,17 @@ export class LatteRepository {
     );
   }
 
-  settleCoordinationCostReservation(id: string, usageJson: string | null, settledAt: string, uncertain: boolean): void {
-    this.db.run(
+  /**
+   * Compare-and-set: sólo cierra una reserva que TODAVÍA está abierta. Devuelve
+   * si ganó — el llamador necesita saberlo, porque el asiento de gasto se
+   * escribe una sola vez por reserva y quien pierde el CAS no tiene que
+   * escribir nada (ver `CoordinationEngine.settleUncertain`).
+   */
+  settleCoordinationCostReservation(id: string, usageJson: string | null, settledAt: string, uncertain: boolean): boolean {
+    return this.db.run(
       "UPDATE coordination_cost_reservations SET state = ?, usage_json = ?, settled_at = ? WHERE id = ? AND state = 'reserved'",
       [uncertain ? 'uncertain' : 'settled', usageJson, settledAt, id],
-    );
+    ) > 0;
   }
 
   getCoordinationCostReservation(id: string): CoordinationCostReservationRecord | null {

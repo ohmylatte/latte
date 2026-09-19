@@ -1006,14 +1006,18 @@ export class CoordinationEngine {
     // La elección del miembro y su reserva pasan en el MISMO tick (ver
     // `assigning`); lo lento —levantar el proceso— viene después.
     let reservedMemberId: string | null = null;
+    // La clave de la reserva: el id del miembro reutilizado, o la del ROL que
+    // se está contratando (D10). Se suelta siempre en el `finally` de abajo.
+    let reservationKey: string | null = null;
     try {
       const target = this.reserveTargetMember(run.workId, task.roleId, this.approvedRoleIds(run));
       reservedMemberId = target.reuseMemberId;
+      reservationKey = target.reservationKey;
       session = await (target.reuseMemberId
         ? this.deps.hub.openMember(target.reuseMemberId, target.context)
         : this.deps.hub.addMember({ ...target.context, roleId: task.roleId }));
     } catch (error) {
-      if (reservedMemberId) this.assigning.delete(reservedMemberId);
+      if (reservationKey) this.assigning.delete(reservationKey);
       // Un rol que la persona no aprobó no vuelve a la cola a reintentarse
       // eternamente ni desaparece en silencio: la tarea queda `blocked` con la
       // razón escrita en la bitácora, para que la persona la vea y el
@@ -1182,7 +1186,7 @@ export class CoordinationEngine {
       this.touch(run.workId, run.id);
       return { status: 'dispatched', taskId: task.id, dispatchId: dispatched.id };
     } finally {
-      if (reservedMemberId) this.assigning.delete(reservedMemberId);
+      if (reservationKey) this.assigning.delete(reservationKey);
     }
   }
 
@@ -1569,11 +1573,14 @@ export class CoordinationEngine {
     // Las escrituras van juntas, por lo mismo que en `report`: cerrar la
     // reserva sin asentar el gasto vuelve el despacho invisible para el tope.
     const outcome = this.deps.repo.transaction(() => {
-      if (dispatch.reservationId) {
-        this.deps.repo.settleCoordinationCostReservation(dispatch.reservationId, null, now, true);
-        // El asiento se escribe igual que en `report`: el miembro FUE despachado
-        // y la persona lo pagó. Sin esto, cerrar la reserva volvía ese gasto
-        // invisible para siempre y el reintento estrenaba cupo.
+      // El asiento se escribe SÓLO si el CAS de la reserva ganó (D6). Dos
+      // cierres de la misma reserva no son hipotéticos: la muerte de un proceso
+      // y el barrido de cancelación llegan por caminos distintos y pueden
+      // pisarse. El UPDATE lleva `AND state='reserved'`, así que el segundo no
+      // cierra nada — pero el asiento se escribía igual, y el despacho quedaba
+      // cobrado dos veces contra el presupuesto de la persona y contra el tope
+      // app-wide, para siempre (el libro mayor es append-only por trigger).
+      if (dispatch.reservationId && this.deps.repo.settleCoordinationCostReservation(dispatch.reservationId, null, now, true)) {
         this.deps.repo.insertCoordinationCostLedger({
           id: newId('cld'), runId: dispatch.runId, reservationId: dispatch.reservationId, kind: 'spend', dispatches: 1, costMicros: 0,
           detailJson: JSON.stringify({ taskId: dispatch.taskId, outcome: 'uncertain' }), createdAt: now,
@@ -1966,7 +1973,19 @@ export class CoordinationEngine {
     }
   }
 
-  private reserveTargetMember(workId: string, roleId: string, approvedRoles: Set<string> | null = null): { reuseMemberId: string | null; context: MemberContext } {
+  private reserveTargetMember(workId: string, roleId: string, approvedRoles: Set<string> | null = null): { reuseMemberId: string | null; reservationKey: string; context: MemberContext } {
+    // LA RESERVA DE CONTRATACIÓN SE MIRA PRIMERO (D10). `hub.addMember` inserta
+    // la fila ANTES de terminar de levantar el proceso, así que un segundo
+    // despacho del mismo rol ya ve al recién contratado en `listTeam`, ocioso y
+    // sin reservar — y se lo lleva puesto: dos tareas asignadas a la misma
+    // persona y el segundo `hub.send` pisando al primero. Mientras una
+    // contratación de este rol está en vuelo, ningún otro despacho del mismo rol
+    // arranca; la tarea vuelve intacta a `ready` y el intento siguiente
+    // encuentra al miembro nuevo ya asentado y disponible.
+    const hireKey = 'hire:' + workId + '|' + roleId;
+    if (this.assigning.has(hireKey)) {
+      throw new LatteError('MEMBER_BUSY', `A ${roleId} is already being hired for this Work; retry once it is up`);
+    }
     const team = this.deps.hub.listTeam(workId);
     const candidates = team.filter((m) => m.roleId === roleId && m.status !== 'ended');
     // Un miembro que otro despacho ya eligió cuenta como ocupado: va a estarlo
@@ -1977,12 +1996,19 @@ export class CoordinationEngine {
     if (candidates.length === 0 && approvedRoles && !approvedRoles.has(roleId) && !this.workHasMemberForRole(workId, roleId)) {
       throw new LatteError('ROLE_NOT_APPROVED', `Hiring a ${roleId} was not part of the approved plan; it needs its own approval`);
     }
+    // La reserva de la contratación se TOMA acá, en el mismo tick de la
+    // decisión: el argumento viejo de que "una contratación no se reserva
+    // porque su id todavía no existe" miraba el problema al revés — el riesgo
+    // no es colisionar por id, es contratar DOS VECES. Dos `latte_dispatch` del
+    // mismo rol sin miembro veían los dos `candidates` vacío y llamaban los dos
+    // a `hub.addMember`: dos filas, dos tokens, dos cupos de techo y DOS
+    // PROCESOS reales para un rol que la persona aprobó una vez. La clave es
+    // por ROL y lleva prefijo, así que no puede chocar con ningún id de miembro.
+    if (!idle) this.assigning.add(hireKey);
     const context = this.deps.memberContext(workId);
     // SINCRÓNICO, en el mismo tick de la elección: el llamador recién después
-    // espera al spawn, y suelta la reserva en su `finally`. Una contratación no
-    // se reserva porque su id todavía no existe: `hub.addMember` acuña uno
-    // nuevo, con el que nadie puede colisionar.
+    // espera al spawn, y suelta la reserva en su `finally`.
     if (idle) this.assigning.add(idle.id);
-    return { reuseMemberId: idle?.id ?? null, context };
+    return { reuseMemberId: idle?.id ?? null, reservationKey: idle?.id ?? hireKey, context };
   }
 }

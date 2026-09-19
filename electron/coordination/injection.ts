@@ -128,6 +128,10 @@ interface SlowInputs {
 
 interface Claim {
   workId: string;
+  /** Lo que `confirmInjection` necesita para tomar un slot de memoria igual que `assign()` lo toma. */
+  brandId: string;
+  accountId: string | null;
+  runtime: ChatRuntime;
   coordinated: boolean;
   /** Set only for a genuinely memory-ONLY member (a coordinated member's memory rides its own process, no separate slot). */
   memorySlotKey: string | null;
@@ -169,7 +173,20 @@ export class CoordinationInjectionPlanner {
     // Task 6.28: unconditional, every member, every runtime -- delivery is a separate question.
     const token = this.deps.tokens.mint(input.workId, input.memberId);
     // (1) Lo lento que no mira ningún cupo.
-    const resolved = await this.resolveSlowInputs(input);
+    let resolved: SlowInputs;
+    try {
+      resolved = await this.resolveSlowInputs(input);
+    } catch (error) {
+      // D15: el token se acuña ANTES del primer await, a propósito. Pero si ese
+      // await rechaza —el detector de Claude que se cae, `engram --version` que
+      // no vuelve—, `assign()` se iba por excepción y el token quedaba vivo:
+      // una credencial válida y sin vencimiento para un miembro que nunca
+      // abrió, y `stopIfIdle` cuenta tokens, así que el listener de loopback
+      // tampoco podía cerrarse. Lo que se acuña antes del await se revoca en su
+      // catch.
+      this.deps.tokens.revokeMember(input.workId, input.memberId);
+      throw error;
+    }
 
     // (2) UN SOLO TICK: de acá hasta el final del bloque no hay un solo `await`.
     const decision = this.decide(input, resolved);
@@ -228,7 +245,10 @@ export class CoordinationInjectionPlanner {
       // puede prender esto.
       runtimeConfirmed: false,
     };
-    this.claims.set(input.memberId, { workId: input.workId, coordinated, memorySlotKey, status });
+    this.claims.set(input.memberId, {
+      workId: input.workId, brandId: input.brandId, accountId: input.accountId, runtime: input.runtime,
+      coordinated, memorySlotKey, status,
+    });
     return { servers: servers.length > 0 ? servers : undefined, status };
   }
 
@@ -275,6 +295,16 @@ export class CoordinationInjectionPlanner {
     if (claim.coordinated && !coordination) {
       this.coordinatedByWork.get(claim.workId)?.delete(memberId);
       claim.coordinated = false;
+      // Y el cupo de MEMORIA se toma, exactamente como lo toma `assign()` al
+      // degradar (ver su rama de compensación). Un miembro de Codex que pierde
+      // la coordinación pero conserva `latte_memory` sigue teniendo un
+      // `app-server` VIVO: sin este slot, ese proceso deja de contar en
+      // `totalSlots()` y `MAX_CODEX_APP_SERVERS_TOTAL` empieza a autorizar
+      // procesos que ya existen — el techo de procesos deja de medir procesos.
+      if (claim.memorySlotKey == null && claim.status.memoryInjected && claim.runtime === 'codex') {
+        claim.memorySlotKey = memorySlotKeyFor(claim.accountId, claim.brandId);
+        this.markMemorySlot(claim.memorySlotKey, memberId);
+      }
       // Y el token se REVOCA (crítico 11). Antes esto soltaba el cupo y dejaba
       // la credencial viva: el miembro rechazado seguía teniendo un bearer que
       // funcionaba —un token no vence— mientras otro se quedaba con su cupo, y
@@ -293,6 +323,35 @@ export class CoordinationInjectionPlanner {
       coordinationInjected: coordination,
       memoryInjected: memory,
       canPropose: coordination,
+      reason: 'runtime_refused_injection',
+    };
+  }
+
+  /**
+   * LATTE se negó a inyectar después de que el reclamo ya estaba escrito (D7c).
+   * Degrada exactamente como una negativa del runtime —suelta el cupo, revoca
+   * el token, deja que el servidor se apague— pero NO toca `runtimeConfirmed`:
+   * el proceso todavía no dijo una palabra, y decir que sí lo hizo es la
+   * mentira que este campo existe para no contar.
+   */
+  noteLatteRefusedInjection(memberId: string): void {
+    const claim = this.claims.get(memberId);
+    if (!claim) return;
+    if (claim.coordinated) {
+      this.coordinatedByWork.get(claim.workId)?.delete(memberId);
+      claim.coordinated = false;
+      this.deps.tokens.revokeMember(claim.workId, memberId);
+      this.deps.server.stopIfIdle();
+    }
+    if (claim.memorySlotKey) {
+      this.memorySlots.get(claim.memorySlotKey)?.delete(memberId);
+      claim.memorySlotKey = null;
+    }
+    claim.status = {
+      ...claim.status,
+      coordinationInjected: false,
+      memoryInjected: false,
+      canPropose: false,
       reason: 'runtime_refused_injection',
     };
   }
