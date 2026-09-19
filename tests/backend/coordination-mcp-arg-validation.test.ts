@@ -113,12 +113,74 @@ describe('R6: los argumentos de las tools MCP se validan contra su inputSchema',
 
   // --- el largo, publicado y hecho cumplir ------------------------------------
 
+  /**
+   * Q2: TODO TEXTO PUBLICADO TIENE TOPE, sin una lista a mano que pueda quedar
+   * vieja.
+   *
+   * `maxLength` estaba a medias: lo publicaban `question`, `why` y `rationale`,
+   * y no lo publicaban `summary`, `files`, los tres `spec` ni ningún `roleId`.
+   * No era cosmético: `report()` y `createTaskRow` escriben sin pasar por
+   * `requireText` —a diferencia de la puerta IPC—, así que el esquema era lo
+   * único que podía acotar esos campos, y un `spec` sin tope es el prompt que
+   * va derecho a `hub.send`. El recorrido es recursivo y cuenta lo que revisó:
+   * una propiedad nueva sin tope no puede colarse, y un esquema que se vacíe no
+   * puede dejar este test verde por no haber mirado nada.
+   */
+  it('toda propiedad de texto publicada declara su `maxLength`', () => {
+    const offenders: string[] = [];
+    let stringProps = 0;
+    const walk = (schema: unknown, where: string): void => {
+      if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) return;
+      const node = schema as Record<string, unknown>;
+      const types = typeof node.type === 'string' ? [node.type] : Array.isArray(node.type) ? node.type : [];
+      if (types.includes('string')) {
+        stringProps += 1;
+        if (typeof node.maxLength !== 'number') offenders.push(where);
+      }
+      if (node.items !== undefined) walk(node.items, `${where}[]`);
+      if (typeof node.properties === 'object' && node.properties !== null) {
+        for (const [name, sub] of Object.entries(node.properties as Record<string, unknown>)) walk(sub, `${where}.${name}`);
+      }
+    };
+    expect(MCP_TOOL_DEFINITIONS.length).toBeGreaterThan(0);
+    for (const def of MCP_TOOL_DEFINITIONS) walk(def.inputSchema, def.name);
+
+    expect(offenders).toEqual([]);
+    // El recorrido tiene que haber ENCONTRADO los campos de texto: sin esta
+    // cota, borrar `properties` de todos los esquemas dejaría `offenders` vacío
+    // y el test verde sin haber revisado un solo campo.
+    expect(stringProps).toBeGreaterThanOrEqual(17);
+  });
+
   it('`rationale` y `membersToHire[].why` publican su tope y lo hacen cumplir', () => {
     const proposal = MCP_TOOL_DEFINITIONS.find((d) => d.name === 'latte_request_coordination')!;
     const properties = proposal.inputSchema.properties as Record<string, Record<string, unknown>>;
     expect(properties.rationale.maxLength).toBe(LIMITS.decision);
     const hireItems = properties.membersToHire.items as { properties: Record<string, Record<string, unknown>> };
     expect(hireItems.properties.why.maxLength).toBe(LIMITS.decision);
+  });
+
+  it('Q2: los topes nuevos se HACEN CUMPLIR, no sólo se declaran', async () => {
+    const created = envelope(await call('latte_task_create', { roleId: 'role_a', spec: 'a' }));
+    const taskId = (created.data as { taskId: string }).taskId;
+    await call('latte_dispatch', { taskId });
+    const memberId = b.repo.listCoordinationDispatches(runId).find((d) => d.taskId === taskId)!.memberId;
+    const workerToken = b.coordinationTokens.mint(workId, memberId);
+
+    const tooLongSummary = envelope(await call('latte_report', { taskId, outcome: 'succeeded', summary: 'x'.repeat(LIMITS.decision + 1) }, workerToken));
+    expect(tooLongSummary.ok).toBe(false);
+    expect(tooLongSummary.error?.code).toBe('INVALID_ARGUMENT');
+    expect(tooLongSummary.error?.message).toContain('summary');
+    // Y nada se escribió: la tarea sigue en vuelo.
+    expect(b.repo.getCoordinationTask(taskId).status).toBe('dispatched');
+
+    const tooLongSpec = envelope(await call('latte_task_create', { roleId: 'role_a', spec: 'x'.repeat(LIMITS.chatMessage + 1) }));
+    expect(tooLongSpec.ok).toBe(false);
+    expect(tooLongSpec.error?.message).toContain('spec');
+
+    const tooLongRole = envelope(await call('latte_task_create', { roleId: 'r'.repeat(LIMITS.name + 1), spec: 'a' }));
+    expect(tooLongRole.ok).toBe(false);
+    expect(tooLongRole.error?.message).toContain('roleId');
   });
 
   it('una `rationale` más larga que lo publicado se rechaza nombrando el campo', async () => {

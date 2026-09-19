@@ -100,8 +100,8 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
           items: {
             type: 'object',
             properties: {
-              roleId: { type: 'string', description: 'The role that should do this task.' },
-              spec: { type: 'string', description: 'What the task asks for.' },
+              roleId: { type: 'string', maxLength: LIMITS.name, description: 'The role that should do this task.' },
+              spec: { type: 'string', maxLength: LIMITS.chatMessage, description: 'What the task asks for.' },
               dependsOn: { type: 'array', items: { type: 'integer' }, description: 'Indexes into this same tasks array that must finish first.' },
             },
             required: ['roleId', 'spec'],
@@ -117,9 +117,9 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        roleId: { type: 'string', description: 'The role that should do this task.' },
-        spec: { type: 'string', description: 'What the task asks for.' },
-        dependsOn: { type: 'array', items: { type: 'string' }, description: 'Existing task ids this task depends on.' },
+        roleId: { type: 'string', maxLength: LIMITS.name, description: 'The role that should do this task.' },
+        spec: { type: 'string', maxLength: LIMITS.chatMessage, description: 'What the task asks for.' },
+        dependsOn: { type: 'array', items: { type: 'string', maxLength: LIMITS.name }, description: 'Existing task ids this task depends on.' },
       },
       required: ['roleId', 'spec'],
     },
@@ -135,7 +135,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
       // existe. La aprobación de un gate entra por `resolveCoordinationGate`,
       // la interfaz de la persona, nunca por una herramienta del agente.
       properties: {
-        taskId: { type: 'string' },
+        taskId: { type: 'string', maxLength: LIMITS.name },
       },
       required: ['taskId'],
     },
@@ -150,11 +150,16 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
     description: 'Reports the outcome of a task this member was dispatched to do.',
     inputSchema: {
       type: 'object',
+      // Q2: `summary` y `files` entraban SIN tope hasta la base. `report()` los
+      // escribe sin pasar por `requireText` —a diferencia de la puerta IPC, que
+      // sí lo hace— así que lo único que podía acotarlos era el esquema, y el
+      // esquema no decía nada. Los mismos topes que `assertCoordinationProposal`
+      // aplica del otro lado.
       properties: {
-        taskId: { type: 'string' },
-        outcome: { type: 'string', enum: ['succeeded', 'failed'] },
-        summary: { type: 'string' },
-        files: { type: ['string', 'null'], description: 'Relative paths of files this task produced or changed, if any.' },
+        taskId: { type: 'string', maxLength: LIMITS.name },
+        outcome: { type: 'string', maxLength: LIMITS.name, enum: ['succeeded', 'failed'] },
+        summary: { type: 'string', maxLength: LIMITS.decision },
+        files: { type: ['string', 'null'], maxLength: LIMITS.chatMessage, description: 'Relative paths of files this task produced or changed, if any.' },
       },
       required: ['taskId', 'outcome', 'summary'],
     },
@@ -186,7 +191,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         question: { type: 'string', maxLength: LIMITS.decision },
         ttlMinutes: { type: 'number', description: 'Defaults to 30, capped at 1440 (24h).' },
-        taskId: { type: 'string' },
+        taskId: { type: 'string', maxLength: LIMITS.name },
       },
       required: ['question'],
     },
@@ -202,7 +207,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        askId: { type: 'string', description: 'The `askId` that latte_ask returned.' },
+        askId: { type: 'string', maxLength: LIMITS.name, description: 'The `askId` that latte_ask returned.' },
       },
       required: ['askId'],
     },
@@ -218,8 +223,11 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
           items: {
             type: 'object',
             properties: {
-              roleId: { type: 'string' },
-              spec: { type: 'string' },
+              // Q2: los mismos topes que `assertCoordinationProposal` ya aplica
+              // sobre este payload. El esquema los callaba, así que el agente
+              // descubría el límite recién cuando su llamada fallaba.
+              roleId: { type: 'string', maxLength: LIMITS.name },
+              spec: { type: 'string', maxLength: LIMITS.chatMessage },
               dependsOn: { type: 'array', items: { type: 'integer' } },
             },
             required: ['roleId', 'spec'],
@@ -241,7 +249,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
             // frontera. `assertCoordinationProposal` ya lo aplicaba (LIMITS.decision)
             // y el esquema no lo decía: el agente descubría el límite recién
             // cuando su llamada fallaba, sin saber cuál era.
-            properties: { roleId: { type: 'string' }, why: { type: 'string', maxLength: LIMITS.decision } },
+            properties: { roleId: { type: 'string', maxLength: LIMITS.name }, why: { type: 'string', maxLength: LIMITS.decision } },
             required: ['roleId', 'why'],
           },
         },
