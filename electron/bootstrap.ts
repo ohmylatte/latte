@@ -162,7 +162,19 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     // `stopIfIdle` tampoco podia cerrar el listener de loopback.
     // `hub.stop` es idempotente: el adaptador ya se borro a si mismo, asi que
     // el loop no encuentra duenio y esto no reentra.
-    if (event.type === 'closed') { hub.stop(event.chatId); forward(event); return; }
+    // Y crítico 5: soltar el reclamo de inyección no alcanzaba. El despacho que
+    // ese miembro tenía en vuelo se quedaba `dispatched` con su reserva abierta
+    // por el resto de la sesión — sin reintento, con el cupo de presupuesto
+    // quemado y el run sin poder terminar nunca. `settleUncertain` documentaba
+    // un modo `incrementAttempts:true` "para la muerte de un proceso" y no tenía
+    // un solo llamador; éste es. Va DESPUÉS de `hub.stop` a propósito: primero
+    // se suelta lo del proceso, después se cierran las cuentas.
+    if (event.type === 'closed') {
+      hub.stop(event.chatId);
+      service.settleCoordinationDispatchesForMember(event.chatId);
+      forward(event);
+      return;
+    }
     if (event.type === 'message' && event.message.role === 'assistant' && event.message.completed) {
       const assistantText = event.message.parts.filter(p=>p.type==='text').map(p=>(p as {text:string}).text).join('\n');
       for (const proposal of decisionProtocolBlocks(assistantText)) {

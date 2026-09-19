@@ -1294,6 +1294,33 @@ export class CoordinationEngine {
     return open.length;
   }
 
+  /**
+   * EL LLAMADOR EN CALIENTE de `settleUncertain(..., {incrementAttempts:true})`,
+   * que documentaba ese modo "para la muerte de un proceso" y no tenía ninguno
+   * (crítico 5). Un `closed` de un adaptador llegaba a `hub.stop` y a
+   * `injection.release` y ahí terminaba: la tarea se quedaba `dispatched` y su
+   * reserva abierta por el resto de la sesión — sin reintento, con el cupo de
+   * presupuesto quemado, y el run sin poder terminar nunca.
+   *
+   * `incrementAttempts:true` a diferencia del barrido de arranque: que se caiga
+   * el proceso del agente SÍ es un fracaso de este intento, y al tope la tarea
+   * queda `failed` en vez de reintentarse para siempre. `settleUncertain` ya
+   * corre `finishRunIfComplete`, así que si era la última el run cierra solo.
+   *
+   * Un miembro sin despachos en vuelo (el caso normal: pausar a alguien que no
+   * estaba trabajando) no escribe nada.
+   */
+  settleMemberDispatches(memberId: string): number {
+    if (!memberId) return 0;
+    const open = this.deps.repo.listOpenCoordinationDispatches().filter((d) => d.memberId === memberId);
+    for (const dispatch of open) {
+      const run = this.deps.repo.getCoordinationRun(dispatch.runId);
+      this.settleUncertain(dispatch.id, { incrementAttempts: true });
+      this.touch(run.workId, run.id);
+    }
+    return open.length;
+  }
+
   // -- Envelope helpers for tools.ts -------------------------------------------
   // Kept public (only these two) so tools.ts never reaches into the repo or
   // hub directly — every envelope's `authority`/`budget` block is read the

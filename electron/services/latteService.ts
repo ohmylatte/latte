@@ -2301,6 +2301,21 @@ export class LatteService implements BackendApi {
     return swept;
   }
 
+  /**
+   * La liquidación EN CALIENTE: el proceso de un miembro se murió y su despacho
+   * en vuelo no lo va a reportar nadie nunca. Lo llama el único chokepoint por
+   * el que pasa un `closed` de cualquier adaptador (`createBackend`), justo
+   * después de `hub.stop`, que es donde el reclamo de inyección ya se soltó.
+   * Nunca tira: la muerte de un proceso no puede tumbar el loop de eventos.
+   */
+  settleCoordinationDispatchesForMember(memberId: string): number {
+    try {
+      return this.coordination.settleMemberDispatches(memberId);
+    } catch {
+      return 0;
+    }
+  }
+
   // Internals ---------------------------------------------------------------
 
   /**
