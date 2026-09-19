@@ -82,6 +82,36 @@ export function requireCoordinationBudget(value: unknown): CoordinationBudget {
 }
 
 /**
+ * Los cuatro topes SECUNDARIOS, los únicos que se pueden fundir: `maxDispatches`
+ * (y con él `unlimitedConfirmedAt`) es obligatorio en todo payload que el
+ * validador acepta, así que nunca está ausente.
+ */
+const MERGEABLE_CAPS = ['maxTokens', 'maxCostMicros', 'maxWallMinutes', 'maxConcurrent'] as const;
+
+/**
+ * Un presupuesto escrito ENCIMA de otro, campo por campo (F2).
+ *
+ * `requireCoordinationBudget` normaliza a `null` todo campo ausente, así que
+ * escribir su salida tal cual convertía cada escritura parcial en un borrado:
+ * el editor de la pantalla de Decisiones manda sólo `{maxDispatches}` y
+ * apagaba `maxConcurrent` —el único limitador en vuelo que existe— de un
+ * equipo ya andando. La distinción que hace falta es AUSENTE vs. `null`
+ * EXPLÍCITO, y ésa sólo está en el payload CRUDO: por eso entran los dos, el
+ * crudo para decidir qué se nombró y el validado para el valor.
+ *
+ * No nombrar un tope conserva el que había. Nombrarlo `null` lo apaga — que es
+ * la única forma de apagarlo, y sigue siendo posible.
+ */
+export function mergeCoordinationBudget(previous: CoordinationBudget, raw: unknown, valid: CoordinationBudget): CoordinationBudget {
+  const named = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {};
+  const merged: CoordinationBudget = { ...valid };
+  for (const cap of MERGEABLE_CAPS) {
+    if (!Object.prototype.hasOwnProperty.call(named, cap)) merged[cap] = previous[cap];
+  }
+  return merged;
+}
+
+/**
  * El resultado de leer el tope app-wide (`coordination_budget_global`), en
  * TRES estados, no dos.
  *

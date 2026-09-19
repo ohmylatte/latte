@@ -2044,11 +2044,27 @@ export class CoordinationEngine {
     // a `hub.addMember`: dos filas, dos tokens, dos cupos de techo y DOS
     // PROCESOS reales para un rol que la persona aprobó una vez. La clave es
     // por ROL y lleva prefijo, así que no puede chocar con ningún id de miembro.
-    if (!idle) this.assigning.add(hireKey);
+    //
+    // F3: el CONTEXTO se resuelve ANTES de reservar. `memberContext` hace I/O
+    // de disco y puede tirar, y cuando tiraba la reserva ya estaba tomada
+    // mientras el llamador todavía no había copiado la clave en
+    // `reservationKey` (sigue `null` hasta que este método RETORNA): ni su
+    // `catch` ni su `finally` la soltaban, así que el rol quedaba en
+    // `MEMBER_BUSY` para el resto de la sesión por un fallo transitorio. Lo
+    // que puede fallar falla antes de haber tomado nada.
     const context = this.deps.memberContext(workId);
-    // SINCRÓNICO, en el mismo tick de la elección: el llamador recién después
-    // espera al spawn, y suelta la reserva en su `finally`.
-    if (idle) this.assigning.add(idle.id);
-    return { reuseMemberId: idle?.id ?? null, reservationKey: idle?.id ?? hireKey, context };
+    // Y la reserva propiamente dicha, en su propio try: si alguna vez algo
+    // entre tomarla y devolverla llega a tirar, se suelta acá — el llamador
+    // todavía no tiene la clave y no puede soltarla por él.
+    const reservationKey = idle?.id ?? hireKey;
+    try {
+      // SINCRÓNICO, en el mismo tick de la elección: el llamador recién después
+      // espera al spawn, y suelta la reserva en su `finally`.
+      this.assigning.add(reservationKey);
+      return { reuseMemberId: idle?.id ?? null, reservationKey, context };
+    } catch (error) {
+      this.assigning.delete(reservationKey);
+      throw error;
+    }
   }
 }

@@ -104,7 +104,7 @@ import { EngramClient, memoryProjectFor } from '../memory/engram';
 import { AccountStore } from '../agents/accounts';
 import { isAccountRuntime, isChatRuntime, type AgentHub, type MemberContext } from '../agents/hub';
 import { CoordinationEngine } from '../coordination/engine';
-import { readStoredCoordinationBudget, requireCoordinationBudget } from '../coordination/budget';
+import { mergeCoordinationBudget, readStoredCoordinationBudget, requireCoordinationBudget } from '../coordination/budget';
 import type { CoordinationInjectionPlanner } from '../coordination/injection';
 import type { McpCatalog } from '../agents/mcp';
 import { RoleCatalog } from '../agents/roles';
@@ -1522,13 +1522,25 @@ export class LatteService implements BackendApi {
     const id = requireId(workId, 'workId');
     this.deps.repo.getWork(id);
     const valid = requireCoordinationBudget(budget);
-    const json = JSON.stringify(valid);
+    // F2: se FUNDE sobre lo que había, no lo reemplaza. `requireCoordinationBudget`
+    // normaliza a `null` todo campo ausente, y el editor de Decisiones manda
+    // sólo `{maxDispatches}`: subir el tope apagaba `maxConcurrent` —el único
+    // limitador en vuelo que existe—, `maxTokens`, `maxCostMicros` y
+    // `maxWallMinutes` de un equipo que ya estaba andando. Es la misma fusión
+    // que `commitProposal` ya hace al aprobar una propuesta.
+    //
+    // La distinción es AUSENTE vs. `null` EXPLÍCITO, y por eso se mira el
+    // payload crudo y no el normalizado: no nombrar un tope conserva el que
+    // había; nombrarlo `null` lo apaga, que es la única forma de apagarlo.
+    const previous = readStoredCoordinationBudget(this.deps.repo.getMeta('coordination_budget:' + id));
+    const merged = previous.kind === 'set' ? mergeCoordinationBudget(previous.budget, budget, valid) : valid;
+    const json = JSON.stringify(merged);
     this.deps.repo.setMeta('coordination_budget:' + id, json);
     // A raised cap must also reach a run already in flight — the run's own
     // snapshot is never a live read, so it has to be written here too (design
     // decision 1: "raising a cap writes BOTH the run row and the Work default").
     this.deps.repo.updateActiveCoordinationRunBudget(id, json, this.clock());
-    return valid;
+    return merged;
   }
 
   /** `null`/empty stored value, or a member id that no longer belongs to this Work, both read back as "no coordinator". */
