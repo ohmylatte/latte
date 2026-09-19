@@ -84,7 +84,9 @@ describe('F5: preguntas vencidas', () => {
     expect(b.repo.getCoordinationAsk(ask.id).answer).toBeNull(); // nadie contestó: no se inventa una respuesta
     expect(b.repo.getCoordinationTask(task.id).status).toBe('ready');
     // Y sigue leyéndose como SIN responder, que es lo que pasó.
-    expect(engine.askStatus(ask.id).answered).toBe(false);
+    // R7: `askStatus` toma el grant y dice además cuándo venció.
+    expect(engine.askStatus(worker(), ask.id).answered).toBe(false);
+    expect(engine.askStatus(worker(), ask.id).expiredAt).not.toBeNull();
   });
 
   it('una pregunta nueva no suspende el run si hay trabajo despachable', () => {

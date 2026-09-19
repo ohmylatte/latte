@@ -1118,7 +1118,14 @@ export class CoordinationEngine {
       }
     }
 
-    const prompt = ctx.editedPrompt ?? existingPending?.prompt ?? task.spec;
+    // R7: LA RESPUESTA VUELVE AL AGENTE. Preguntar estaba construido de punta a
+    // punta y la respuesta no salía de la base: la tarea que volvía a la cola
+    // se re-despachaba con su `spec` pelado, o sea el mismo texto de la primera
+    // vez, sin una palabra de lo que el agente preguntó ni de lo que le
+    // contestaron. Sólo se agrega cuando el prompt se ARMA desde la tarea: un
+    // `editedPrompt` es lo que la persona escribió a mano y se respeta tal
+    // cual, y una fila pendiente ya lleva la sección adentro desde que nació.
+    const prompt = ctx.editedPrompt ?? existingPending?.prompt ?? this.withAnsweredAsks(task);
     const authority = this.readAuthority(run.workId);
     const gated = !ctx.approvedGateId && this.isGated(authority, run, task);
 
@@ -1880,14 +1887,47 @@ export class CoordinationEngine {
     return ask;
   }
 
-  /** A synchronous poll of one ask: never blocks. Past its deadline and still unanswered, it reports `{answered:false, deadline}` rather than hanging. */
-  askStatus(askId: string): { answered: boolean; answer?: string | null; deadline: string } {
+  /**
+   * A synchronous poll of one ask: never blocks. Past its deadline and still
+   * unanswered, it reports `{answered:false}` rather than hanging.
+   *
+   * R7: toma el GRANT y exige que la pregunta sea de ESTE run. Es la misma
+   * regla que `report()` ya aplica sobre `taskId`, y pasa a hacer falta de
+   * verdad ahora que `latte_ask_status` expone esto por MCP: sin el chequeo,
+   * un miembro de la Marca B con un token válido pasaba un `askId` de la Marca
+   * A y se llevaba su pregunta y su respuesta.
+   */
+  askStatus(grant: CoordinationGrant, askId: string): { answered: boolean; answer: string | null; deadline: string; expiredAt: string | null } {
+    if (grant.runId == null) throw new LatteError('NO_ACTIVE_RUN', 'This Work has no active coordination run');
     const ask = this.deps.repo.getCoordinationAsk(askId);
+    if (ask.runId !== grant.runId) throw new NotFoundError('CoordinationAsk', askId);
     // F5: `answeredAt` con `answer` en `null` es una pregunta CERRADA POR
     // VENCIMIENTO, no una respondida. Decir `answered:true` con la respuesta en
     // `null` le haría creer al agente que la persona contestó y no dijo nada.
-    if (ask.answeredAt && ask.answer !== null) return { answered: true, answer: ask.answer, deadline: ask.deadlineAt };
-    return { answered: false, deadline: ask.deadlineAt };
+    if (ask.answeredAt && ask.answer !== null) return { answered: true, answer: ask.answer, deadline: ask.deadlineAt, expiredAt: null };
+    return { answered: false, answer: null, deadline: ask.deadlineAt, expiredAt: ask.answeredAt };
+  }
+
+  /**
+   * La tarea MÁS lo que ya se preguntó y se contestó sobre ella (R7).
+   *
+   * En inglés y sin i18n a propósito: esto no lo lee una persona, lo lee el
+   * agente, igual que el resto de su prompt y que los packs de rol. Y se marca
+   * como vinculante para que no vuelva a preguntar lo mismo: un agente que
+   * repite la pregunta que ya le contestaron vuelve a trabar su tarea y a
+   * gastar un despacho.
+   *
+   * Sólo las CONTESTADAS: una vencida se cerró con `answer` en `null` y nadie
+   * dijo nada, así que no hay nada que pasarle.
+   */
+  private withAnsweredAsks(task: CoordinationTaskRecord): string {
+    let answered: CoordinationAskRecord[] = [];
+    try {
+      answered = this.deps.repo.listCoordinationAsksForTask(task.id).filter((ask) => ask.answer !== null);
+    } catch { return task.spec; } // una bitácora de preguntas ilegible no puede impedir el despacho
+    if (answered.length === 0) return task.spec;
+    const lines = answered.map((ask) => `- You asked: ${ask.question}\n  The human answered: ${ask.answer}`);
+    return `${task.spec}\n\n## Answers to your questions\n\nYou asked about this task and the human answered. These answers are binding: follow them, and do not ask the same thing again.\n\n${lines.join('\n')}`;
   }
 
   /** Crash/death settlement. `incrementAttempts:false` for an app-restart crash (not the agent's fault); `true` for a member-process death (a real failure). */

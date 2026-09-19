@@ -232,7 +232,7 @@ describe('CoordinationMcpServer', () => {
       expect(result.body).toBe('');
     });
 
-    it('tools/list returns real JSON-Schema for all 8 coordination tools, with no drift from tools.ts', async () => {
+    it('tools/list returns real JSON-Schema for all 9 coordination tools, with no drift from tools.ts', async () => {
       const { listen } = fakeListen();
       const server = new CoordinationMcpServer({ repo: b.repo, engine, tokens, listen });
 
@@ -245,8 +245,12 @@ describe('CoordinationMcpServer', () => {
       // Authoritative source of truth: the actual tool map tools.ts builds — no hand-maintained list can drift silently.
       const authoritative = Object.keys(createCoordinationTools(engine)).sort();
       expect(names).toEqual(authoritative);
+      // R7: `latte_ask_status` es la vuelta de la pregunta que no traba ninguna
+      // tarea. Preguntar estaba construido entero y la respuesta no salia de la
+      // base: una pregunta CON tarea vuelve en el prompt del re-despacho, y esta
+      // es la unica forma que tiene el coordinador de enterarse de la suya.
       expect(names).toEqual([
-        'latte_ask', 'latte_check', 'latte_dispatch', 'latte_plan_submit',
+        'latte_ask', 'latte_ask_status', 'latte_check', 'latte_dispatch', 'latte_plan_submit',
         'latte_report', 'latte_request_coordination', 'latte_task_create', 'latte_team_list',
       ]);
       for (const tool of list.tools) {

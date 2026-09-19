@@ -89,6 +89,7 @@ describe('R6: los argumentos de las tools MCP se validan contra su inputSchema',
     latte_report: { taskId: 'ctk_x', outcome: 'success', summary: 'listo' },
     latte_check: 42,
     latte_ask: { question: ['no', 'es', 'texto'] },
+    latte_ask_status: { askId: 99 },
     latte_request_coordination: { plan: [{ roleId: 'role_a', spec: 'a' }], estimatedDispatches: 0, rationale: 'porque sí' },
   };
 
@@ -177,6 +178,7 @@ describe('R6: los argumentos de las tools MCP se validan contra su inputSchema',
       latte_dispatch: { taskId: 'ctk_inexistente' },
       latte_report: { taskId: 'ctk_inexistente', outcome: 'succeeded', summary: 'listo' },
       latte_ask: { question: '¿Seguimos?' },
+      latte_ask_status: { askId: 'cak_inexistente' },
       latte_request_coordination: { plan: [{ roleId: 'role_a', spec: 'a' }], estimatedDispatches: 2, rationale: 'porque sí' },
     };
     let checked = 0;

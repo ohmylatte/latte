@@ -1389,6 +1389,16 @@ export class LatteRepository {
   }
 
   /**
+   * Las preguntas de UNA tarea, oldest first (R7). Alimenta el prompt del
+   * re-despacho: sin esto, la tarea que volvía a la cola porque su pregunta
+   * fue contestada se despachaba EXACTAMENTE igual que la primera vez, y la
+   * respuesta que la persona escribió no salía nunca de la base.
+   */
+  listCoordinationAsksForTask(taskId: string): CoordinationAskRecord[] {
+    return this.db.all<CoordinationAskRow>('SELECT * FROM coordination_ask WHERE task_id = ? ORDER BY created_at ASC, id ASC', [taskId]).map(toCoordinationAsk);
+  }
+
+  /**
    * La pregunta que se venció sin respuesta, CERRADA (F5).
    *
    * `answered_at` con la marca del cierre y `answer` intacto en `null`: ninguna

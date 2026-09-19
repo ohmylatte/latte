@@ -174,15 +174,31 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'latte_ask',
-    description: 'Asks the human (or the coordinator) a question and suspends this task until it is answered or the TTL expires.',
+    description: 'Asks the human (or the coordinator) a question and suspends this task until it is answered or the TTL expires. Returns an `askId`: poll it with latte_ask_status. When the question names a `taskId`, the answer also comes back inside that task\'s next dispatch prompt.',
     inputSchema: {
       type: 'object',
       properties: {
-        question: { type: 'string' },
+        question: { type: 'string', maxLength: LIMITS.decision },
         ttlMinutes: { type: 'number', description: 'Defaults to 30, capped at 1440 (24h).' },
         taskId: { type: 'string' },
       },
       required: ['question'],
+    },
+  },
+  {
+    name: 'latte_ask_status',
+    // R7: la vuelta de la pregunta que no traba ninguna tarea. Una pregunta
+    // CON tarea se contesta sola (la tarea vuelve a la cola y el prompt del
+    // re-despacho lleva la respuesta adentro); ésta es para la del
+    // coordinador, que no está despachado a nada y no tenía forma de
+    // enterarse — `latte_check` devuelve `[]` por diseño.
+    description: "Reads the current state of a question this Work's team asked with latte_ask. Never blocks: it answers with what is known right now. `answered:false` with an `expiredAt` means the deadline passed and nobody answered.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        askId: { type: 'string', description: 'The `askId` that latte_ask returned.' },
+      },
+      required: ['askId'],
     },
   },
   {

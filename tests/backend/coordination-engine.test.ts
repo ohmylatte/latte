@@ -278,7 +278,11 @@ describe('CoordinationEngine — the dispatch choke point', () => {
   it('an expired, unanswered ask reports {answered:false, deadline} on the next poll', () => {
     const ask = engine.ask(worker('mem_a'), '¿Tono?', 30);
     advanceClock('2026-01-01T00:31:00.000Z'); // 31 minutes later, past the deadline
-    expect(engine.askStatus(ask.id)).toEqual({ answered: false, deadline: ask.deadlineAt });
+    // R7: `askStatus` toma el grant (la pregunta tiene que ser de ESTE run,
+    // ahora que `latte_ask_status` la expone por MCP) y dice además CUÁNDO
+    // venció — `null` mientras el plazo sigue corriendo, como acá: nadie
+    // contestó y nadie cerró la pregunta todavía.
+    expect(engine.askStatus(worker('mem_a'), ask.id)).toEqual({ answered: false, answer: null, deadline: ask.deadlineAt, expiredAt: null });
   });
 
   // --- 3.13: self-suspend -----------------------------------------------------

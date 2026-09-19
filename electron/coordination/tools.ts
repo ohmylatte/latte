@@ -99,8 +99,23 @@ export function createCoordinationTools(engine: CoordinationEngine) {
     latte_check: (grant: CoordinationGrant, _args: Record<string, never>) =>
       wrap(engine, grant, false, () => engine.check(grant.memberId), true),
 
+    // R7: devuelve el `askId` explícitamente. Antes devolvía la fila entera y
+    // el id venía de rebote, como un `id` entre otros campos: el agente no
+    // tenía cómo saber que ESO era lo que después le pide `latte_ask_status`.
+    // Lo que se necesita para seguir la conversación se nombra.
     latte_ask: (grant: CoordinationGrant, args: { question: string; ttlMinutes?: number; taskId?: string }) =>
-      wrap(engine, grant, false, () => engine.ask(grant, args.question, args.ttlMinutes, args.taskId), true),
+      wrap(engine, grant, false, () => {
+        const ask = engine.ask(grant, args.question, args.ttlMinutes, args.taskId);
+        return { askId: ask.id, deadlineAt: ask.deadlineAt };
+      }, true),
+
+    // R7: la otra mitad de preguntar. Una pregunta CON tarea se responde sola —
+    // la tarea vuelve a la cola y el prompt del re-despacho lleva la respuesta
+    // adentro—, pero una pregunta SIN tarea (la del coordinador, que no está
+    // despachado a nada) no tenía camino de vuelta: `latte_check` devuelve `[]`
+    // por diseño y no existía nada más. El agente consulta y sigue.
+    latte_ask_status: (grant: CoordinationGrant, args: { askId: string }) =>
+      wrap(engine, grant, false, () => engine.askStatus(grant, args.askId), true),
 
     // The sentence becomes a gate (task 6.5): callable by ANY member, not
     // just a coordinator (`requireCoordinator:false`) — this is precisely
