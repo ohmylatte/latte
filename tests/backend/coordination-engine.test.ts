@@ -593,7 +593,11 @@ describe('CoordinationEngine — the dispatch choke point', () => {
 
       let caught: unknown;
       try {
-        await engine.requestCoordination(proposerGrant, { plan: [], estimatedDispatches: 1, rationale: 'Propongo coordinar' });
+        // F4: la propuesta se valida ENTERA antes de tocar la base, así que un
+        // `plan: []` ya no llega al techo — lo frena el validador, que es otra
+        // cosa. Lo que este test mide es el techo app-wide, así que la
+        // propuesta tiene que ser una propuesta de verdad.
+        await engine.requestCoordination(proposerGrant, { plan: [{ roleId: 'strategist', spec: 'Armar el plan' }], estimatedDispatches: 1, rationale: 'Propongo coordinar' });
       } catch (error) {
         caught = error;
       }

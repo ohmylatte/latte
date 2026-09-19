@@ -125,6 +125,32 @@ describe('una propuesta que no se puede leer', () => {
     expect(container.querySelector('.decision-gate-unreadable')).not.toBeNull();
   });
 
+  /**
+   * F4b: un JSON válido con un campo del tipo equivocado es tan ilegible como
+   * un JSON roto. `{task.spec}` y `{proposal.rationale}` se renderizan como
+   * hijos de React, así que un objeto ahí tira "Objects are not valid as a
+   * React child" — y no hay ErrorBoundary: eso no rompe una tarjeta, deja la
+   * app EN BLANCO, con el run `planning` ocupando el único cupo del Trabajo.
+   */
+  const illegible: Array<[string, unknown]> = [
+    ['un `rationale` que es un objeto', { plan: [{ roleId: 'strategist', spec: 'x' }], estimatedDispatches: 3, rationale: {} }],
+    ['un `spec` que es un objeto', { plan: [{ roleId: 'strategist', spec: {} }], estimatedDispatches: 3, rationale: 'ok' }],
+    ['un `roleId` que es un número', { plan: [{ roleId: 7, spec: 'x' }], estimatedDispatches: 3, rationale: 'ok' }],
+    ['un `why` que es un objeto', { plan: [{ roleId: 'strategist', spec: 'x' }], estimatedDispatches: 3, rationale: 'ok', membersToHire: [{ roleId: 'analyst', why: {} }] }],
+  ];
+  for (const [name, payload] of illegible) {
+    it(`${name} cae en la tarjeta ilegible, sin tirar`, () => {
+      const { container } = mount({
+        coordinationRun: run(),
+        gates: [gate({ id: 'gp', kind: 'proposal', proposalJson: JSON.stringify(payload) })],
+        onResolveGate: () => {},
+      });
+      const card = container.querySelector('.decision-gate-proposal');
+      expect(card).not.toBeNull();
+      expect(card!.querySelector('.decision-gate-unreadable')).not.toBeNull();
+    });
+  }
+
   it('una propuesta ilegible no ofrece Aprobar ni Editar: no hay nada que aprobar', () => {
     mount({
       coordinationRun: run(),

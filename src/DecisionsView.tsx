@@ -234,6 +234,26 @@ function readProposal(raw: string | null | undefined): CoordinationProposal | nu
   if (typeof parsed !== 'object' || parsed === null) return null;
   const candidate = parsed as Partial<CoordinationProposal>;
   if (!Array.isArray(candidate.plan)) return null;
+  // Y CADA CAMPO QUE ESTA TARJETA RENDERIZA, con su tipo (F4). Bastaba un
+  // `spec` u objeto `rationale` —que el motor dejaba entrar por MCP sin
+  // validar— para que React tirara "Objects are not valid as a React child".
+  // No hay ErrorBoundary: eso no rompía una tarjeta, dejaba la app en blanco.
+  // Un tipo que no se puede mostrar es exactamente lo mismo que un JSON roto:
+  // la propuesta llegó ilegible, y se dice.
+  if (typeof candidate.rationale !== 'string') return null;
+  if (candidate.estimatedDispatches != null && typeof candidate.estimatedDispatches !== 'number') return null;
+  for (const task of candidate.plan) {
+    if (typeof task !== 'object' || task === null) return null;
+    if (typeof task.roleId !== 'string' || typeof task.spec !== 'string') return null;
+  }
+  const hires = candidate.membersToHire;
+  if (hires != null) {
+    if (!Array.isArray(hires)) return null;
+    for (const hire of hires) {
+      if (typeof hire !== 'object' || hire === null) return null;
+      if (typeof hire.roleId !== 'string' || typeof hire.why !== 'string') return null;
+    }
+  }
   return candidate as CoordinationProposal;
 }
 

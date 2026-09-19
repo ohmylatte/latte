@@ -19,7 +19,7 @@ import type { CoordinationAuthorityMode, CoordinationBudget } from '../../shared
 import { LatteError, NotFoundError, ValidationError } from '../core/errors';
 import { FeatureDisabledError } from '../core/features';
 import { newId } from '../core/ids';
-import { LIMITS, requireCoordinationProposal, requireInt, requireText } from '../services/validation';
+import { assertCoordinationProposal, LIMITS, requireCoordinationProposal, requireInt, requireText } from '../services/validation';
 import type {
   CoordinationAskRecord,
   CoordinationDispatchRecord,
@@ -535,7 +535,16 @@ export class CoordinationEngine {
 
     // Defensa en profundidad (D12): la frontera IPC ya la valida, pero este
     // método es público y desde acá se contrata gente y se levantan procesos.
+    // Y cuando NO hay edición, se valida lo GUARDADO (F4c). Aprobar sin
+    // `editedProposalJson` hacía un `JSON.parse(run.planJson!)` a ciegas sobre
+    // una fila que pudo haberse escrito antes de que `requestCoordination`
+    // validara nada — o quedar ilegible por cualquier otra razón —, y los seis
+    // efectos de la aprobación (contratar, spawnear, permiso, presupuesto,
+    // autoridad, tareas) corrían sobre eso. Aprobar algo que no se puede leer
+    // no es aprobar nada: se rechaza, y la persona ve la tarjeta ilegible con
+    // su única acción, "Rechazar".
     if (editedProposalJson != null) requireCoordinationProposal(editedProposalJson);
+    else requireCoordinationProposal(run.planJson ?? '');
     const proposal: CoordinationProposal = editedProposalJson ? JSON.parse(editedProposalJson) : JSON.parse(run.planJson!);
     // "No implicit unlimited" re-asserted for an EDITED proposal too (task
     // 6.11): the same validator `setCoordinationBudget` already uses. La
@@ -862,6 +871,16 @@ export class CoordinationEngine {
     // convertía cada llamada MCP siguiente de este Trabajo en un HTTP 500.
     // Un run con presupuesto ilegible no se inserta nunca.
     requireInt(proposal.estimatedDispatches, 'estimatedDispatches', 1, Number.MAX_SAFE_INTEGER);
+    // Y LA FORMA ENTERA, con el MISMO validador que corre sobre la propuesta
+    // editada (F4). `estimatedDispatches` era el único campo que se miraba:
+    // `plan[].spec`, `plan[].roleId`, `membersToHire[].why` y `rationale`
+    // entraban crudos desde `tools/call` —`mcpServer` no valida contra el
+    // `inputSchema` que publica— y se guardaban tal cual en `plan_json`. La
+    // tarjeta de Decisiones los renderiza como hijos de React, así que un
+    // objeto ahí tiraba "Objects are not valid as a React child" y, sin
+    // ErrorBoundary, dejaba la app en blanco con el run `planning` ocupando el
+    // único cupo del Trabajo. Antes de insertar la fila, no después.
+    assertCoordinationProposal(proposal);
     const existing = this.deps.repo.findActiveCoordinationRun(grant.workId);
     if (existing) throw new LatteError('RUN_ALREADY_ACTIVE', `This Work already has an active coordination run (${existing.id}, ${existing.status})`);
     this.assertRunCeiling();

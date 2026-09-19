@@ -127,6 +127,25 @@ export function requireCoordinationProposal(raw: string): string {
   } catch {
     throw new ValidationError('The edited proposal is not valid JSON');
   }
+  assertCoordinationProposal(parsed);
+  return text;
+}
+
+/**
+ * La MISMA forma, sobre el objeto ya parseado (F4).
+ *
+ * La propuesta EDITADA se validaba; la ORIGINAL, la que el agente manda por
+ * `latte_request_coordination` sobre MCP, no: `mcpServer` no valida contra el
+ * `inputSchema` publicado y `tools.ts` pasa `args` tal cual. O sea que
+ * `plan[].spec`, `plan[].roleId`, `membersToHire[].why` y `rationale` entraban
+ * crudos —un objeto, un número, lo que fuera— y se guardaban en `plan_json`.
+ * La pantalla de Decisiones los renderiza como hijos de React
+ * (`{task.spec}`, `{proposal.rationale}`), así que un objeto ahí tiraba
+ * "Objects are not valid as a React child"; sin ErrorBoundary, la app quedaba
+ * en blanco y el run `planning` seguía ocupando el único cupo del Trabajo. Lo
+ * que entra por MCP se valida como lo que entra por IPC.
+ */
+export function assertCoordinationProposal(parsed: unknown): void {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new ValidationError('The edited proposal must be a JSON object');
   }
@@ -165,9 +184,15 @@ export function requireCoordinationProposal(raw: string): string {
     for (const [index, item] of hires.entries()) {
       if (typeof item !== 'object' || item === null) throw new ValidationError(`membersToHire ${index} must be an object`);
       requireText((item as Record<string, unknown>).roleId, `membersToHire ${index} roleId`, LIMITS.name);
+      // El "por qué" de un alta es lo ÚNICO que la persona lee para decidir si
+      // la aprueba: tiene que ser texto, y texto que diga algo.
+      requireText((item as Record<string, unknown>).why, `membersToHire ${index} why`, LIMITS.decision);
     }
   }
-  return text;
+
+  // El párrafo que la tarjeta de la propuesta muestra tal cual. Un objeto acá
+  // era la pantalla en blanco.
+  requireText(proposal.rationale, 'rationale', LIMITS.decision);
 }
 
 export function requireInt(value: unknown, name: string, min: number, max: number): number {
