@@ -124,7 +124,7 @@ describe('F6/F7/F8: las puertas que no miraban el estado', () => {
 
     const result = await b.service.acceptHandoffAsTask(workId, 'para-analyst.md');
 
-    expect(result).toEqual({ bridged: false, task: null, dispatched: null, reason: null }); // R3: sin puente no hay despacho del cual hablar
+    expect(result).toEqual({ bridged: false, task: null, outcome: null, reason: null }); // R3: sin puente no hay despacho del cual hablar
     expect(b.repo.listCoordinationTasks(run.id)).toEqual([]);
     expect(b.repo.listCoordinationDispatches(run.id)).toEqual([]);
     // El borrador sigue sobre la mesa: no se consumió nada.

@@ -39,7 +39,7 @@ describe('acceptHandoffAsTask: the handoff-to-coordination bridge', () => {
     // R3: el resultado dice además si el despacho salió. Sin puente no hay
     // despacho del cual hablar, así que las dos cosas son `null` — no `false`,
     // que sería afirmar que algo se intentó y no salió.
-    expect(result).toEqual({ bridged: false, task: null, dispatched: null, reason: null });
+    expect(result).toEqual({ bridged: false, task: null, outcome: null, reason: null });
     // Untouched: still there, unconsumed, exactly like before this change.
     expect(await b.service.listHandoffs(workId)).toEqual(before);
     expect(fs.existsSync(path.join(dir, 'para-strategist.md'))).toBe(true);

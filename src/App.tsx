@@ -883,7 +883,14 @@ export function App() {
     // R3: el puente ya no tira cuando el despacho se deniega, lo devuelve. Y
     // entonces la frase no puede ser la misma: la tarea existe pero nadie la
     // está haciendo, y decir "despachada" sería anunciar algo que no pasó.
-    if (result.dispatched === false) { setNotice(t('handoff.bridged.queued', { role: handoff.roleName, reason: result.reason ?? '' })); return; }
+    // Q1: y son TRES, no dos. Con la autoridad por defecto (`manual`, y también
+    // `plan`, porque la tarea del puente nace fuera del plan) el motor devuelve
+    // `pending_approval`: la tarea existe, nadie la está haciendo, y lo que
+    // falta es un gesto de la persona en Decisiones. Decirle "despachada al
+    // equipo" la dejaba esperando un resultado que nunca iba a llegar, sin
+    // saber que la decisión era suya.
+    if (result.outcome === 'not_dispatched') { setNotice(t('handoff.bridged.queued', { role: handoff.roleName, reason: result.reason ?? '' })); return; }
+    if (result.outcome === 'pending_approval') { setNotice(t('handoff.bridged.pendingApproval', { role: handoff.roleName })); return; }
     setNotice(t('handoff.bridged.dispatched', { role: handoff.roleName }));
   });
   const acceptHandoff = (handoff: HandoffRequest) => run(async () => {

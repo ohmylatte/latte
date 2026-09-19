@@ -683,7 +683,7 @@ describe('el aviso del handoff puenteado dice lo que de verdad paso (juicio #4)'
   const app = () => readFileSync(join(REPO_ROOT, 'src', 'App.tsx'), 'utf8');
   const i18n = () => readFileSync(join(REPO_ROOT, 'src', 'i18n.tsx'), 'utf8');
 
-  it('la rama `bridged` no reusa la copia de la OTRA rama', () => {
+  it('la rama `bridged` no reusa la copia de la OTRA rama, y tiene una frase por cada final del motor', () => {
     const source = app();
     const start = source.indexOf('const acceptHandoffAsTask');
     expect(start).toBeGreaterThan(-1);
@@ -693,13 +693,26 @@ describe('el aviso del handoff puenteado dice lo que de verdad paso (juicio #4)'
     // `ui.auto.343` es "{p0} abierto con el pedido cargado. Revisalo antes de
     // enviarlo": con `bridged` no se abrio NADA y la plata ya se gasto.
     expect(body).not.toContain('ui.auto.343');
+    // Q1: ESTA aserción, sola, era la que fijaba la copia mentirosa. Decía que
+    // la rama `bridged` usa `handoff.bridged.dispatched` y se daba por
+    // satisfecha, así que pasaba igual cuando esa frase —"despachada al
+    // equipo"— se usaba sobre una tarea que el motor había dejado en
+    // `pending_approval`. El motor tiene TRES finales y la pantalla necesita
+    // tres frases; se exigen las tres.
     expect(body).toContain("t('handoff.bridged.dispatched'");
+    expect(body).toContain("t('handoff.bridged.pendingApproval'");
+    expect(body).toContain("t('handoff.bridged.queued'");
+    expect(body).toContain("result.outcome === 'pending_approval'");
   });
 
-  it('la clave nueva es semantica y existe en los DOS idiomas', () => {
+  it('las claves son semanticas y existen en los DOS idiomas', () => {
     const source = i18n();
     expect(source).toContain("'handoff.bridged.dispatched': 'Tarea creada para {role} y despachada al equipo.");
     expect(source).toContain("'handoff.bridged.dispatched': 'Task created for {role} and dispatched to the team.");
+    // Q1: y la del gate pendiente, que es la que faltaba. Sin ella la pantalla
+    // no tenía con qué decir la verdad del caso por defecto.
+    expect(source).toContain("'handoff.bridged.pendingApproval': 'Tarea creada para {role}. Esperando tu aprobación en Decisiones.'");
+    expect(source).toContain("'handoff.bridged.pendingApproval': 'Task created for {role}. Waiting for your approval in Decisions.'");
     // Semantica nueva = clave semantica: el balde mecanico `ui.auto.NNN` no
     // crecio para esto.
     expect(i18n()).not.toContain('ui.auto.');

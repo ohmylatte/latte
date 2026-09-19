@@ -1013,12 +1013,22 @@ export interface CoordinationEvent {
  * the existing handoff flow (open a member, draft the request, dismiss the
  * file) is unaffected, exactly as the spec requires outside an active run.
  */
+/**
+ * Q1: los TRES finales que puede tener un puente de handoff, porque el motor
+ * tiene tres y no dos. `startDispatch` devuelve `pending_approval` cuando la
+ * autoridad gatea —el modo por defecto, `manual`, y también `plan`, porque la
+ * tarea del puente nace fuera del plan—, así que un booleano `dispatched`
+ * obligaba a la interfaz a elegir entre dos frases para tres hechos, y elegía
+ * la que mentía: "despachada al equipo" sobre una tarea esperando aprobación.
+ */
+export type HandoffBridgeOutcome = 'dispatched' | 'pending_approval' | 'not_dispatched';
+
 export interface HandoffTaskBridgeResult {
   bridged: boolean;
   task: { id: string; roleId: string; spec: string; status: string } | null;
   /**
-   * R3: si el despacho que sigue al puente SALIÓ (o quedó esperando una
-   * aprobación). `null` cuando no hubo puente y no hay nada que despachar.
+   * R3/Q1: qué pasó de verdad con el despacho que sigue al puente. `null`
+   * cuando no hubo puente y no hay nada que despachar.
    *
    * Aceptar un pedido no puede explotarle en la cara a la persona: cuando el
    * despacho se deniega —presupuesto agotado, concurrencia al tope— el puente
@@ -1026,8 +1036,8 @@ export interface HandoffTaskBridgeResult {
    * vez de subir como excepción. La interfaz necesita saberlo para no anunciar
    * un despacho que no pasó.
    */
-  dispatched: boolean | null;
-  /** El código del motor cuando `dispatched` es `false` (`BUDGET_EXCEEDED`, `MAX_CONCURRENT`, …). Nunca un texto inventado. */
+  outcome: HandoffBridgeOutcome | null;
+  /** El código del motor cuando `outcome` es `not_dispatched` (`BUDGET_EXCEEDED`, `MAX_CONCURRENT`, …). Nunca un texto inventado. */
   reason: string | null;
 }
 

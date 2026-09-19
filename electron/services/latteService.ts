@@ -1750,26 +1750,30 @@ export class LatteService implements BackendApi {
   async acceptHandoffAsTask(workId: string, fileName: string): Promise<HandoffTaskBridgeResult> {
     const id = requireId(workId, 'workId');
     this.deps.repo.getWork(id);
-    if (!this.deps.repo.findActiveCoordinationRun(id)) return { bridged: false, task: null, dispatched: null, reason: null };
+    if (!this.deps.repo.findActiveCoordinationRun(id)) return { bridged: false, task: null, outcome: null, reason: null };
     // D4: con la bandera baja esto DEGRADA, no tira. El docstring de arriba
     // promete "el llamador cae al borrador de chat exactamente como antes", y
     // dejar escapar `FEATURE_DISABLED` rompía esa promesa justo donde importa:
     // la persona apagaba coordinación y aceptar un pedido pasaba a fallar en
     // vez de abrirle el chat que tenía antes de que coordinación existiera.
-    if (!featureEnabled((key) => this.deps.repo.getMeta(key), 'coordination')) return { bridged: false, task: null, dispatched: null, reason: null };
+    if (!featureEnabled((key) => this.deps.repo.getMeta(key), 'coordination')) return { bridged: false, task: null, outcome: null, reason: null };
     const pending = await this.listHandoffs(id);
     const handoff = pending.find((h) => h.fileName === fileName);
     if (!handoff) throw new ValidationError('Ese pedido ya no está en la carpeta');
     const result = await this.coordination.bridgeHandoffToTask(id, handoff.roleId, handoff.request);
-    if (!result.bridged) return { bridged: false, task: null, dispatched: null, reason: null };
+    if (!result.bridged) return { bridged: false, task: null, outcome: null, reason: null };
     await this.dismissHandoff(id, fileName).catch(() => undefined);
-    // R3: el pedido se consumió igual — la tarea existe — pero el despacho pudo
-    // no salir. Se dice cuál de las dos cosas pasó, para que la interfaz no
-    // anuncie un despacho que no hubo.
+    // R3/Q1: el pedido se consumió igual — la tarea existe — pero el despacho
+    // pudo no salir, Y PUDO QUEDAR ESPERANDO UNA APROBACIÓN. Eran tres hechos
+    // metidos en un booleano: `result.dispatch != null` daba `true` tanto para
+    // un despacho que salió como para una fila `pending_approval`, o sea que
+    // bajo la autoridad por defecto (`manual`) la interfaz anunciaba
+    // "despachada al equipo" sobre una tarea que nadie había aprobado todavía.
+    // El estado del motor viaja tal cual y la pantalla elige la frase.
     return {
       bridged: true,
       task: { id: result.task.id, roleId: result.task.roleId, spec: result.task.spec, status: result.task.status },
-      dispatched: result.dispatch != null,
+      outcome: result.dispatch ? result.dispatch.status : 'not_dispatched',
       reason: result.reason,
     };
   }

@@ -577,6 +577,10 @@ const es = {
   // subia como excepcion y la persona veia un error rojo despues de aceptar un
   // pedido; ahora vuelve en el resultado, y decir "despachada" seria mentir.
   'handoff.bridged.queued': 'Tarea creada para {role}, pero todavía no salió: {reason}. Queda en la cola, en Decisiones.',
+  // Q1: el tercer final. Con la autoridad por defecto el despacho queda
+  // esperando un gesto de la persona, y si la frase no se lo dice nadie va a ir
+  // a darlo.
+  'handoff.bridged.pendingApproval': 'Tarea creada para {role}. Esperando tu aprobación en Decisiones.',
   // --- Coordinación: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
   'coordination.teams.status.planning': 'Planificando',
   'coordination.teams.status.running': 'En curso',
@@ -1200,6 +1204,7 @@ const en: Record<MessageKey, string> = {
   'decision.permissions.handoffs.accept': 'Accept as task',
   'handoff.bridged.dispatched': 'Task created for {role} and dispatched to the team. Follow it in Decisions.',
   'handoff.bridged.queued': 'Task created for {role}, but it has not started yet: {reason}. It stays queued, in Decisions.',
+  'handoff.bridged.pendingApproval': 'Task created for {role}. Waiting for your approval in Decisions.',
   // --- Coordination: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
   'coordination.teams.status.planning': 'Planning',
   'coordination.teams.status.running': 'Running',
