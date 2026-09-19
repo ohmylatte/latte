@@ -37,7 +37,7 @@ const { useCoordination } = await import('./useCoordination');
 
 const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => ({
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'm1',
-  budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, planApproved: true, suspendReason: null,
+  budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, planApproved: true, suspendReason: null, active: true,
   createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', ...patch,
 });
 
@@ -114,6 +114,23 @@ describe('useCoordination(workId): a Work is open', () => {
     expect(result.current.gates).toEqual([]);
     expect(result.current.log).toEqual([]);
     expect(mocks.listCoordinationGates).not.toHaveBeenCalled();
+  });
+
+  // El hook vaciaba bitácora, gates y preguntas en cuanto el run terminaba,
+  // porque el getter contestaba `null`. Ahora el run terminado llega con
+  // `active: false`, y lo que tiene que sobrevivir es JUSTO la bitácora: la
+  // entrada de cierre `run_done` no se veía nunca.
+  it('con el run TERMINADO, la bitácora persiste y muestra la entrada de cierre', async () => {
+    mocks.getCoordinationRun.mockResolvedValue(run({ status: 'done', active: false }));
+    mocks.listCoordinationGates.mockResolvedValue([]);
+    mocks.listCoordinationLog.mockResolvedValue([
+      { id: 'l1', taskId: 't1', memberId: 'm1', status: 'reported', createdAt: '2026-09-01T00:00:00.000Z', startedAt: '2026-09-01T00:00:00.000Z', settledAt: '2026-09-01T00:01:00.000Z' },
+      { id: 'l2', kind: 'run_done', tasksDone: 1, tasksFailed: 0, createdAt: '2026-09-01T00:02:00.000Z' },
+    ] as never);
+    const { result } = renderHook(() => useCoordination('w1'));
+    await waitFor(() => expect(result.current.log).toHaveLength(2));
+    expect(result.current.run).toMatchObject({ status: 'done', active: false });
+    expect(mocks.listCoordinationLog).toHaveBeenCalledWith('run1');
   });
 
   it('re-fetches for a new Work when workId changes', async () => {

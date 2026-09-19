@@ -1578,6 +1578,9 @@ export class LatteService implements BackendApi {
       suspendReason: run.suspendReason,
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
+      // El mismo conjunto que el índice único parcial y que la tira global:
+      // `done`/`cancelled` quedan afuera, y por eso se marcan como no activos.
+      active: run.status === 'planning' || run.status === 'running' || run.status === 'suspended',
     };
   }
 
@@ -1605,7 +1608,12 @@ export class LatteService implements BackendApi {
   async getCoordinationRun(workId: string): Promise<CoordinationRunView | null> {
     const id = requireId(workId, 'workId');
     this.deps.repo.getWork(id);
-    const run = this.deps.repo.findActiveCoordinationRun(id);
+    // El run vivo si lo hay; si no, el ÚLTIMO terminado. Devolver `null` en
+    // cuanto el run terminaba hacía que la interfaz limpiara bitácora, gates y
+    // preguntas, así que la entrada de cierre `run_done` que el motor deriva
+    // no se veía NUNCA. El `active: false` que lleva la vista es lo que impide
+    // que un run terminado parezca vivo; un run nuevo lo reemplaza solo.
+    const run = this.deps.repo.findActiveCoordinationRun(id) ?? this.deps.repo.findLatestFinishedCoordinationRun(id);
     return run ? this.toCoordinationRunView(run) : null;
   }
 

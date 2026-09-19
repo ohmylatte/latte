@@ -1118,6 +1118,21 @@ export class LatteRepository {
   }
 
   /**
+   * El ÚLTIMO run terminado de este Trabajo (`done`/`cancelled`), o `null` si
+   * nunca terminó ninguno. Terminar no es desaparecer: sin esto, en cuanto un
+   * run pasaba a `done` la interfaz se quedaba sin run, y con él se iba la
+   * bitácora entera — la entrada de cierre `run_done` incluida, que es
+   * justamente la que cuenta cómo terminó.
+   */
+  findLatestFinishedCoordinationRun(workId: string): CoordinationRunRecord | null {
+    const row = this.db.get<CoordinationRunRow>(
+      "SELECT * FROM coordination_run WHERE work_id = ? AND status IN ('done','cancelled') ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1",
+      [workId],
+    );
+    return row ? toCoordinationRun(row) : null;
+  }
+
+  /**
    * Every active run app-wide, across every Work and every Brand —
    * `planning`/`running`/`suspended`, the same set `idx_coordination_run_active`
    * enforces one-per-Work of. Feeds a proposal gate's `aggregate` (task 6.13:

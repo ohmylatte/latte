@@ -23,7 +23,7 @@ const chat: ChatSession = { id: 'm1', workId: 'w1', provider: 'opencode', model:
 
 const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => ({
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'm1',
-  budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, planApproved: true, suspendReason: null,
+  budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, planApproved: true, suspendReason: null, active: true,
   createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', ...patch,
 });
 
@@ -69,6 +69,34 @@ describe('"Pausar equipo" (additive, autonomous-coordination Phase 7 task 7.7)',
     expect(button.textContent).toContain('Pausar equipo');
     fireEvent.click(button);
     expect(onPauseCoordination).toHaveBeenCalledWith('run-xyz');
+  });
+
+  // Un run terminado no puede PARECER vivo: ni acciones de run vivo, ni
+  // silencio. Se dice cómo terminó.
+  it('un run TERMINADO no ofrece ninguna acción de run vivo, y dice su estado final', () => {
+    const { container } = mount({
+      coordinationRun: run({ status: 'done', active: false }),
+      onPauseCoordination: vi.fn(), onResumeCoordination: vi.fn(), onCancelCoordination: vi.fn(),
+    });
+    expect(container.querySelector('.team-pause-coordination')).toBeNull();
+    expect(container.querySelector('.team-resume-coordination')).toBeNull();
+    expect(container.querySelector('.team-cancel-coordination')).toBeNull();
+    const finished = container.querySelector('.team-finished-coordination');
+    expect(finished).not.toBeNull();
+    expect(finished!.textContent).toContain('Terminado');
+  });
+
+  it('un run CANCELADO se dice cancelado, no terminado', () => {
+    const { container } = mount({ coordinationRun: run({ status: 'cancelled', active: false }), onCancelCoordination: vi.fn() });
+    expect(container.querySelector('.team-cancel-coordination')).toBeNull();
+    expect(container.querySelector('.team-finished-coordination')!.textContent).toContain('Cancelado');
+  });
+
+  // Un run SUSPENDIDO sigue vivo: reanudar y cancelar tienen que estar.
+  it('un run suspendido sigue siendo un run vivo: conserva sus acciones y no se anuncia terminado', () => {
+    const { container } = mount({ coordinationRun: run({ status: 'suspended' }), onResumeCoordination: vi.fn(), onCancelCoordination: vi.fn() });
+    expect(container.querySelector('.team-resume-coordination')).not.toBeNull();
+    expect(container.querySelector('.team-finished-coordination')).toBeNull();
   });
 
   it('renders the same control in English, with nothing left in Spanish', async () => {

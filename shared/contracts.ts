@@ -705,6 +705,17 @@ export interface CoordinationRunView {
   suspendReason: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Whether this run is still one of the Work's ACTIVE runs
+   * (`planning`/`running`/`suspended`). `getCoordinationRun` also answers with
+   * the Work's LAST finished run (`done`/`cancelled`), so its bitácora — the
+   * `run_done` closing entry included — does not vanish the moment the team
+   * finishes; the renderer used to clear log, gates and asks on the `null`
+   * this getter returned, so that entry was never seen once. A run with
+   * `active: false` must never be offered live-run actions, and never appears
+   * in the app-wide active strip.
+   */
+  active: boolean;
 }
 
 /**

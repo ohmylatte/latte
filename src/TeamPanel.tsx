@@ -145,8 +145,13 @@ export function TeamPanel(props: TeamPanelProps) {
         {workTotal > 0 && <span className="team-usage-total" title={t('usage.help')}>{t('usage.workTotal', { tokens: formatTokens(workTotal, currentLocale()) })}</span>}
         <button className="team-tab-add" aria-label={t('ui.auto.269')} title={t('ui.auto.269')} disabled={busy || !isDesktop} onClick={() => setAdding(true)}><UserPlus size={15} /></button>
         <button className="team-tab-add" aria-label="Proveedores de IA" title="Agentes y proveedores" onClick={props.onProviders}><Settings2 size={15} /></button>
-        {props.coordinationRun && props.coordinationRun.status === 'running' && <button className="team-pause-coordination" title={t('coordination.run.pauseHelp')} disabled={busy || Boolean(props.pending?.[`run:${props.coordinationRun.id}`])} onClick={() => props.onPauseCoordination?.(props.coordinationRun!.id)}><Pause size={13} />{t('coordination.run.pause')}</button>}
-        {props.coordinationRun && props.coordinationRun.status === 'suspended' && <>
+        {/* Un run TERMINADO ya no ofrece ninguna acción de run vivo: se dice
+            cómo terminó y nada más. `active` es explícito a propósito — un
+            `status` nuevo no puede volver a colar botones de pausar o cancelar
+            sobre algo que ya cerró. */}
+        {props.coordinationRun && !props.coordinationRun.active && <span className="team-finished-coordination" role="status">{t(`coordination.teams.status.${props.coordinationRun.status}` as 'coordination.teams.status.done')}</span>}
+        {props.coordinationRun?.active && props.coordinationRun.status === 'running' && <button className="team-pause-coordination" title={t('coordination.run.pauseHelp')} disabled={busy || Boolean(props.pending?.[`run:${props.coordinationRun.id}`])} onClick={() => props.onPauseCoordination?.(props.coordinationRun!.id)}><Pause size={13} />{t('coordination.run.pause')}</button>}
+        {props.coordinationRun?.active && props.coordinationRun.status === 'suspended' && <>
           <button className="team-resume-coordination" title={t('coordination.run.resumeHelp')} disabled={busy || Boolean(props.pending?.[`run:${props.coordinationRun.id}`])} onClick={() => props.onResumeCoordination?.(props.coordinationRun!.id)}><Play size={13} />{t('coordination.run.resume')}</button>
           <button className="team-cancel-coordination" title={t('coordination.run.cancelHelp')} disabled={busy || Boolean(props.pending?.[`run:${props.coordinationRun.id}`])} onClick={() => props.onCancelCoordination?.(props.coordinationRun!.id)}><X size={13} />{t('coordination.run.cancel')}</button>
         </>}
