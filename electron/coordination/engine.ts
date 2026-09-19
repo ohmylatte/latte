@@ -866,6 +866,18 @@ export class CoordinationEngine {
     return out;
   }
 
+  /**
+   * Q9: el alta que se deshizo. Sólo se escribe si había algo que sacar, para
+   * que compensar un despacho que nunca anotó nada (los caminos con rollback)
+   * no invente una clave de meta vacía.
+   */
+  private forgetHire(runId: string, memberId: string): void {
+    const hires = this.listHires(runId);
+    const remaining = hires.filter((hire) => hire.memberId !== memberId);
+    if (remaining.length === hires.length) return;
+    this.deps.repo.setMeta(HIRES_META + runId, JSON.stringify(remaining));
+  }
+
   /** Append-only, idempotente por miembro: re-abrir a alguien ya anotado no lo duplica. */
   private recordHire(runId: string, memberId: string, roleId: string, at: string): void {
     const hires = this.listHires(runId);
@@ -1383,6 +1395,14 @@ export class CoordinationEngine {
           });
           this.deps.repo.updateCoordinationTask(task.id, { status: 'ready', assignedMemberId: null }, now);
         });
+        // Q9: y la CONTRATACIÓN también se deshace, igual que en las otras dos
+        // salidas de este método (R2). Acá no se deshacía: la reserva se
+        // liquidaba, la tarea volvía a `ready` y el miembro contratado PARA
+        // ESTE despacho se quedaba —fila, token, cupo del techo de la app y un
+        // proceso vivo— sin trabajo que hacer y sin nadie que lo fuera a
+        // reclamar; el reintento contrataba a otro. Reutilizar a alguien del
+        // equipo no contrató nada, así que ahí no se toca a nadie.
+        this.compensateHire(reservedMemberId, session.id, run.id, task.roleId, now);
         this.touch(run.workId, run.id);
         throw error;
       }
@@ -1492,6 +1512,11 @@ export class CoordinationEngine {
     if (reservedMemberId != null) return; // se reutilizó a alguien del equipo: no se contrató nada que deshacer
     try {
       this.deps.hub.removeMember(memberId);
+      // Q9: y el alta se borra de la bitácora. En las dos salidas viejas la
+      // transacción hacía rollback y el `recordHire` se iba con ella; en la de
+      // `hub.send` la transacción YA COMMITEÓ, así que el alta queda escrita y
+      // hay que sacarla a mano. Una contratación deshecha no es un alta.
+      this.forgetHire(runId, memberId);
     } catch {
       try {
         this.recordHire(runId, memberId, roleId, now);
