@@ -609,17 +609,26 @@ describe('CoordinationMcpServer', () => {
       const listen: ListenFn = async (requestListener) => { listener.current = requestListener as never; return { port: 4242, close: () => {} }; };
       const server = new CoordinationMcpServer({ repo: b.repo, engine, tokens, listen });
       await captureListener(server, listener);
-      // El fallo se induce en `tokens.verify`, la PRIMERA lectura del camino y
-      // la única que queda fuera de todo try por diseño: la autenticación se
-      // decide antes de que exista ningún sobre que devolver.
+      // R11: LA PREMISA, DICHA COMO ES. Acá decía que el fallo era "database is
+      // locked" sobre `tokens.verify`, y `tokens.verify` no toca la base: es un
+      // `Map` en memoria, no puede fallar por la base ni por nada parecido.
+      // Revisado el camino entero de `handleMcpRequest`, NO queda hoy ninguna
+      // lectura de base fuera del try que se pueda mockear con honestidad: el
+      // `JSON.parse` tiene el suyo, `resolveGrant` tiene el suyo desde F12 (y
+      // sale como `ok:false` con HTTP 200 —lo correcto para el fallo de UNA
+      // llamada—, cubierto por `coordination-mcp-grant-failure.test.ts`), y
+      // todo lo que pasa por `tools.ts` lo envuelve `wrap`.
       //
-      // Antes se inducía en `resolveGrant`, pero desde F12 esa lectura vive
-      // adentro del try y sale como `ok:false` con HTTP 200 —lo correcto para
-      // un fallo de UNA llamada, que un cliente MCP no puede leer de un 500—;
-      // ese camino lo cubre `coordination-mcp-grant-failure.test.ts`. Lo que
-      // este test protege es otra cosa y sigue viva: que un fallo INESPERADO
-      // escriba una respuesta en vez de dejar la conexión abierta para siempre.
-      vi.spyOn(tokens, 'verify').mockImplementation(() => { throw new Error('database is locked'); });
+      // Así que este test dice lo que prueba de verdad, que sigue valiendo: el
+      // envoltorio de `onRequest` tiene que ESCRIBIR UNA RESPUESTA ante un
+      // rechazo cualquiera de `handleMcpRequest`, venga de donde venga, en vez
+      // de dejar la conexión abierta para siempre y levantar un unhandled
+      // rejection en el proceso principal de Electron. El throw se inyecta en
+      // el primer paso del camino —el único que queda fuera de todo try por
+      // diseño, porque la autenticación se decide antes de que exista un sobre
+      // que devolver— como REPRESENTANTE de ese "cualquiera", no porque ese
+      // paso pueda fallar así en producción.
+      vi.spyOn(tokens, 'verify').mockImplementation(() => { throw new Error('fallo inesperado, representante de cualquier otro'); });
       b.repo.insertMember({ id: 'mem_coordinator', workId, roleId: 'strategist', roleName: 'Strategist', initial: 'S', runtime: 'codex', model: null, accountId: null, sessionId: '', done: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
       const token = tokens.mint(workId, 'mem_coordinator');
       const { req, res, flush } = fakeReqRes(rpc('tools/call', { name: 'latte_team_list', arguments: {} }), `Bearer ${token}`);
