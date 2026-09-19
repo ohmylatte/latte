@@ -322,7 +322,13 @@ export class CodexChatAdapter implements RuntimeAdapter {
    */
   private async reportInjected(server: CodexAppServer, mcpServers: AdapterMcpServer[] | undefined): Promise<string[] | undefined> {
     const requested = (mcpServers ?? []).map((entry) => entry.name);
-    if (requested.length === 0) return requested;
+    // F10: sin nada que preguntar, la respuesta honesta es "NO SÉ", no "el
+    // runtime reportó cero servidores". `confirmInjection` lee CUALQUIER array
+    // —el vacío incluido— como "el runtime HABLÓ" y prende `runtimeConfirmed`,
+    // así que este atajo hacía que la pantalla afirmara una confirmación que
+    // nadie pidió y que ningún proceso dio. Es la misma regla que ya cumple
+    // Claude, que devuelve `undefined` en los dos casos.
+    if (requested.length === 0) return undefined;
     let statuses: Array<{ name: string; authStatus: string | null }>;
     try {
       statuses = await this.mcpStatusOn(server);
@@ -509,7 +515,15 @@ export class CodexChatAdapter implements RuntimeAdapter {
     if (live) return parseModelList(await live.request('model/list', {}));
     const runtime = await this.deps.resolveExecutable();
     if (!runtime) throw new UnavailableError('Codex is not installed or not on PATH');
-    const ephemeralKey = `${accountId}|ephemeral-models`;
+    // F9: ÚNICA POR INVOCACIÓN. La clave era `<cuenta>|ephemeral-models`, o sea
+    // compartida: dos `listModels` concurrentes de la misma cuenta escriben el
+    // mismo pid-file, el segundo pisa el pid del primero y el primero que
+    // termina BORRA la anotación del que sigue vivo. Ese proceso queda fuera
+    // del barrido de arranque para siempre. Va con `randomUUID` y no con
+    // `newId`: esto no es el id de ninguna entidad del repo (`IdPrefix` es una
+    // unión cerrada a propósito), es una clave de archivo, y `pidFile` la sanea
+    // igual que a cualquier otra.
+    const ephemeralKey = `${accountId}|ephemeral-models-${randomUUID()}`;
     const server = new CodexAppServer({
       executable: runtime.executable,
       env: { ...scrubEnv(this.env), ...this.deps.accountEnv(accountId === SYSTEM_ACCOUNT_ID ? null : accountId) },
