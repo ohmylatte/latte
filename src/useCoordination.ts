@@ -228,6 +228,26 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     resumeRun: (runId) => mutate(`run:${runId}`, api.resumeCoordinationRun(runId)),
     cancelRun: (runId) => mutate(`run:${runId}`, api.cancelCoordinationRun(runId)),
     setBudget: (maxDispatches) => { if (workId) mutate(`budget:${workId}`, api.setCoordinationBudget(workId, { maxDispatches })); },
-    markSeen: () => { if (workId) mutate(`seen:${workId}`, api.markCoordinationSeen(workId)); },
+    /**
+     * Anotar la visita es CONTABILIDAD DE FONDO, no una acción de la persona:
+     * desde F13 corre sola con sólo abrir el Trabajo, en cualquier vista. Por
+     * eso no pasa por `mutate` — su fallo no puede ocupar el canal de error de
+     * la app (taparía el aviso que la persona sí estaba leyendo) ni marcar
+     * nada como pendiente, y en la vista previa del navegador, donde
+     * `markCoordinationSeen` no existe, abrir un Trabajo cualquiera empezaba
+     * con un cartel de error. Lo único que pierde un fallo acá es que la fila
+     * de "desde tu última visita" siga un rato más: se reintenta sola la
+     * próxima vez que se abra.
+     */
+    markSeen: () => {
+      if (!workId) return;
+      const issuedWorkId = workId;
+      void Promise.resolve()
+        .then(() => api.markCoordinationSeen(issuedWorkId))
+        .then(
+          () => { refreshActiveRuns(); },
+          () => { /* una visita que no se pudo anotar no es un error de la persona */ },
+        );
+    },
   };
 }

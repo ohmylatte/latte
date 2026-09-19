@@ -191,9 +191,14 @@ export function App() {
   // visto. `workLoaded` es del Trabajo ABIERTO y se apaga al navegar, así que
   // esto tampoco puede marcar visto el Trabajo nuevo por la carga del viejo.
   const coordinationLoaded = coordination.workLoaded;
+  // F13: una visita es ABRIR EL TRABAJO, en la vista que sea. Atada a
+  // `view === 'decisions'`, la fila "tu equipo terminó" de Inicio —que abre el
+  // TRABAJO, no Decisiones— no marcaba nada: la novedad seguía en la tira y el
+  // run terminado seguía en la tira global hasta que alguien se acordara de
+  // entrar a Decisiones de ese Trabajo. Abrirlo ES mirarlo.
   useEffect(() => {
-    if (view === 'decisions' && work?.id && coordinationLoaded) markSeen();
-  }, [view, work?.id, coordinationLoaded]);
+    if (work?.id && coordinationLoaded) markSeen();
+  }, [work?.id, coordinationLoaded]);
   // The memory notice (task 7.10) is dismissed per Brand, for this session
   // only: this state is plain React state, never persisted, so it "returns
   // next launch while the condition holds" simply because a fresh launch
