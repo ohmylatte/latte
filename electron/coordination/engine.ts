@@ -878,7 +878,7 @@ export class CoordinationEngine {
       const decision = reserveDispatch(budget, this.usageFor(run.id));
       if (!decision.ok) {
         this.writeLedgerDenied(run.id, decision.reason);
-        if (run.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, decision.reason);
+        if (live.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, decision.reason);
         this.abortDispatchClaim(task.id, existingPending, now, decision.reason);
         return { ok: false, error: new LatteError('BUDGET_EXCEEDED', `Coordination budget denied: ${decision.reason}`) };
       }
@@ -894,7 +894,7 @@ export class CoordinationEngine {
       if (globalBudget.kind === 'invalid') {
         const reason = 'global_budget_invalid';
         this.writeLedgerDenied(run.id, reason);
-        if (run.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
+        if (live.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
         this.abortDispatchClaim(task.id, existingPending, now, reason);
         return { ok: false, error: new LatteError('GLOBAL_BUDGET_INVALID', 'The app-wide dispatch cap could not be read; fix it in Settings before dispatching again.') };
       }
@@ -903,7 +903,7 @@ export class CoordinationEngine {
         if (!globalDecision.ok) {
           const reason = `global_${globalDecision.reason}`;
           this.writeLedgerDenied(run.id, reason);
-          if (run.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
+          if (live.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
           this.abortDispatchClaim(task.id, existingPending, now, reason);
           return { ok: false, error: new LatteError('BUDGET_EXCEEDED', `Coordination budget denied: ${reason}`) };
         }

@@ -305,7 +305,7 @@ export class CodexChatAdapter implements RuntimeAdapter {
     if (live.busy) throw new ValidationError('Codex is still working on the previous message');
     // The chat's OWN server, not just any server for the account: a
     // coordinated member's thread lives on its own re-keyed app-server.
-    const server = await this.serverFor(live.accountId, live.serverKey);
+    const server = this.existingServer(live);
     const userMessage: ChatMessage = { id: `user-${randomUUID()}`, chatId, role: 'user', parts: [{ type: 'text', id: `user-${randomUUID()}`, text }], createdAt: new Date().toISOString(), completed: true, error: null };
     this.upsertMessage(live, userMessage);
     this.deps.emit({ chatId, type: 'message', message: userMessage });
@@ -326,10 +326,24 @@ export class CodexChatAdapter implements RuntimeAdapter {
     }
   }
 
+  /**
+   * El app-server QUE YA EXISTE para este chat. `serverFor` no sirve acá: ante
+   * una clave ausente SPAWNEA, y la clave de un miembro coordinado lleva el
+   * fingerprint de su inyección adentro — sin `mcpServers` levantaría un
+   * proceso PELADO bajo esa misma clave, y el miembro perdería la coordinación
+   * en silencio, creyendo que la tiene. Un chat vivo sin server es un estado
+   * imposible: se dice en voz alta, no se repara inventando un proceso.
+   */
+  private existingServer(live: LiveChat): CodexAppServer {
+    const server = this.servers.get(live.serverKey);
+    if (!server) throw new UnavailableError(`El app-server de este chat de Codex ya no está vivo; cerrá el chat y volvé a abrirlo (${live.chatId})`);
+    return server;
+  }
+
   async abort(chatId: string): Promise<void> {
     const live = this.require(chatId);
     if (!live.turnId) return;
-    const server = await this.serverFor(live.accountId, live.serverKey);
+    const server = this.existingServer(live);
     try {
       await server.request('turn/interrupt', { threadId: live.threadId, turnId: live.turnId });
     } catch (error) {
