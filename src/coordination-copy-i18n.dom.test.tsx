@@ -83,6 +83,23 @@ describe('U8: el copy de coordinación vive en los diccionarios', () => {
     'coordination.proposal.unreadable', 'coordination.budget.editLabel', 'coordination.budget.save',
   ];
 
+  /**
+   * F11b: las claves cuyo castellano y cuyo inglés coinciden A PROPÓSITO.
+   *
+   * El test prometía "y no son el mismo texto por olvido" y nunca comparaba
+   * uno con el otro: una clave copiada y pegada del diccionario castellano al
+   * inglés pasaba sin que nadie se enterara, que es exactamente el olvido que
+   * el título nombra. La comparación existe ahora, y lo que legítimamente
+   * coincide se declara acá, clave por clave, con su razón — una lista
+   * explícita que hay que ampliar a mano, nunca una excepción genérica.
+   *
+   * Hoy está VACÍA: ninguna de estas claves coincide. En el diccionario entero
+   * sí hay coincidencias legítimas (`question.option.instagram`,
+   * `trabajo.runtime`: nombres propios y préstamos), que es exactamente el tipo
+   * de entrada que va acá cuando alguna caiga en esta lista.
+   */
+  const SAME_IN_BOTH = new Map<MessageKey, string>([]);
+
   it('cada clave nueva tiene texto propio en los dos idiomas, y no son el mismo texto por olvido', () => {
     expect(NEW_KEYS.length).toBeGreaterThan(20);
     for (const key of NEW_KEYS) {
@@ -92,6 +109,11 @@ describe('U8: el copy de coordinación vive en los diccionarios', () => {
       expect(en, `falta el inglés de ${key}`).not.toBe(key);
       expect(es.trim().length, `castellano vacío en ${key}`).toBeGreaterThan(0);
       expect(en.trim().length, `inglés vacío en ${key}`).toBeGreaterThan(0);
+      if (SAME_IN_BOTH.has(key)) {
+        expect(es, `${key} está en la lista de coincidencias legítimas (${SAME_IN_BOTH.get(key)}) pero YA NO coincide: sacala de la lista`).toBe(en);
+      } else {
+        expect(es, `${key} tiene el MISMO texto en los dos idiomas: o falta traducirlo, o va declarado en SAME_IN_BOTH con su razón`).not.toBe(en);
+      }
     }
   });
 });

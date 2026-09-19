@@ -283,16 +283,33 @@ describe('el estado terminal de un run y sus tareas', () => {
 
   // --- D18: el dato de "desde tu última visita" -------------------------------
 
-  it('D18: la vista del run publica `lastEventAt`, y no es anterior a su `updatedAt`', async () => {
+  /**
+   * F11a: esto afirmaba `lastEventAt >= updatedAt`, que es VERDADERO POR
+   * CONSTRUCCIÓN — `lastCoordinationEventAt` arranca en `run.updatedAt` y sólo
+   * sube. El test no podía fallar ni aunque el método devolviera `updatedAt` a
+   * secas, que es justamente el bug que existe para vigilar: un gate o un
+   * despacho que nace DESPUÉS no toca la fila del run, y con `updatedAt` solo,
+   * "Desde tu última visita" se perdía exactamente lo que la persona tenía que
+   * ver. La desigualdad es ESTRICTA y el escenario la produce de verdad.
+   */
+  it('D18: un despacho nacido después del run adelanta `lastEventAt` por encima de su `updatedAt`', async () => {
+    const before = b.repo.getCoordinationRun(runId).updatedAt;
+    // El reloj tiene que avanzar de verdad: los dos instantes son ISO con
+    // milisegundos, y en el mismo tick serían iguales y la comparación
+    // estricta no probaría nada.
+    await new Promise((resolve) => setTimeout(resolve, 10));
     const task = engine.taskCreate(runId, { roleId: 'role_a', spec: 'a' });
-    const memberId = await dispatchTo(task.id);
-    await engine.report(worker(memberId), task.id, 'succeeded', 'listo');
+    // Se deja EN VUELO a propósito: reportarlo cierra el run y reescribe su
+    // `updatedAt`, que volvería a empatar los dos valores.
+    const outcome = await engine.startDispatch({ grant: coordinator(), taskId: task.id });
 
     const view = await b.service.getCoordinationRun(workId);
 
     expect(view).not.toBeNull();
-    expect(typeof view!.lastEventAt).toBe('string');
-    expect(view!.lastEventAt >= view!.updatedAt).toBe(true);
+    // La fila del run NO se tocó: es la mitad que hace que el `>` sea real.
+    expect(view!.updatedAt).toBe(before);
+    expect(view!.lastEventAt > view!.updatedAt).toBe(true);
+    expect(view!.lastEventAt).toBe(b.repo.getCoordinationDispatch(outcome.dispatchId).startedAt);
   });
 
   it('D18: un run recién terminado sigue apareciendo en la tira, con su estado', async () => {
