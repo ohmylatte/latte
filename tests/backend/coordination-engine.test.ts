@@ -280,8 +280,20 @@ describe('CoordinationEngine — the dispatch choke point', () => {
     advanceClock('2026-01-01T00:31:00.000Z'); // 31 minutes later, past the deadline
     // R7: `askStatus` toma el grant (la pregunta tiene que ser de ESTE run,
     // ahora que `latte_ask_status` la expone por MCP) y dice además CUÁNDO
-    // venció — `null` mientras el plazo sigue corriendo, como acá: nadie
-    // contestó y nadie cerró la pregunta todavía.
+    // venció.
+    //
+    // Q6: y ACÁ venció. Esta aserción esperaba `expiredAt: null` sobre una
+    // pregunta 31 minutos pasada de su plazo de 30, o sea que el test decía en
+    // su título justo lo contrario de lo que afirmaba: fijaba el bug. Lo que
+    // vence una pregunta es su PLAZO, no que alguien haya pasado a anotarlo —
+    // y al anotarlo lo hacen los caminos de escritura, que un agente que sólo
+    // consulta no dispara nunca.
+    expect(engine.askStatus(worker('mem_a'), ask.id)).toEqual({ answered: false, answer: null, deadline: ask.deadlineAt, expiredAt: ask.deadlineAt });
+  });
+
+  it('y mientras el plazo sigue corriendo no se informa ningún vencimiento', () => {
+    const ask = engine.ask(worker('mem_a'), '¿Tono?', 30);
+    advanceClock('2026-01-01T00:29:00.000Z'); // un minuto antes del plazo
     expect(engine.askStatus(worker('mem_a'), ask.id)).toEqual({ answered: false, answer: null, deadline: ask.deadlineAt, expiredAt: null });
   });
 

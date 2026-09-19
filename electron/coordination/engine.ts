@@ -1967,7 +1967,16 @@ export class CoordinationEngine {
     // VENCIMIENTO, no una respondida. Decir `answered:true` con la respuesta en
     // `null` le haría creer al agente que la persona contestó y no dijo nada.
     if (ask.answeredAt && ask.answer !== null) return { answered: true, answer: ask.answer, deadline: ask.deadlineAt, expiredAt: null };
-    return { answered: false, answer: null, deadline: ask.deadlineAt, expiredAt: ask.answeredAt };
+    // Q6: LO QUE VENCE UNA PREGUNTA ES SU PLAZO, no que alguien haya pasado a
+    // anotarlo. Acá se devolvía `ask.answeredAt` a secas, o sea el instante en
+    // que el barrido la cerró — y al barrido lo corren los caminos de
+    // ESCRITURA. Un agente que pregunta y después sólo consulta, que es
+    // exactamente para lo que existe esta herramienta, leía `expiredAt: null`
+    // indefinidamente y se quedaba esperando una respuesta cuyo plazo había
+    // pasado hacía horas. Se compara el plazo contra el reloj de ahora; el
+    // cierre anotado, si lo hay, sigue valiendo.
+    const expiredAt = ask.answeredAt ?? (ask.deadlineAt <= this.deps.clock() ? ask.deadlineAt : null);
+    return { answered: false, answer: null, deadline: ask.deadlineAt, expiredAt };
   }
 
   /**
