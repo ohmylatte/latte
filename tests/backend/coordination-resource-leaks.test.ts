@@ -106,7 +106,7 @@ describe('el motor y sus reservas', () => {
     vi.spyOn(b.hub, 'send').mockResolvedValue(undefined);
     b.hub.setPrimary({ runtime: 'claude', model: null, accountId: null }); // el miembro que contrate el motor tiene que ser de ESTE adaptador
     await startRun();
-    approveCoordinationRoles(b, runId, 'strategist');
+    approveCoordinationRoles(b, runId, 'strategist', 'role_b'); // U10: los dos roles, porque las dos tareas nacen acá
     const task = engine.taskCreate(runId, { roleId: 'strategist', spec: 'a' });
     engine.taskCreate(runId, { roleId: 'role_b', spec: 'b' });
     const outcome = await engine.startDispatch({ grant: coordinator(), taskId: task.id });

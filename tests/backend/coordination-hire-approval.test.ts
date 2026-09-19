@@ -148,11 +148,15 @@ describe('la contratación que la persona destildó', () => {
 
     // Con 'auto' no hay gate por despacho: si el rol se cuela, se contrata.
     await b.service.setCoordinationAuthority(workId, 'auto');
-    // La herramienta que el agente coordinador tiene en la mano reescribe el plan.
-    const created = engine.planSubmit(run.id, [{ roleId: 'designer', spec: 'Colado por la ventana' }]);
-    expect(created).toHaveLength(1);
+    // La herramienta que el agente coordinador tiene en la mano reescribe el
+    // plan. Desde U10 ni siquiera llega a crear la tarea: el rol destildado se
+    // rechaza DONDE NACE, así que la bitácora de la persona no se ensucia con
+    // una tarea condenada a `failed`.
+    const before = b.repo.listCoordinationTasks(run.id).length;
+    expect(() => engine.planSubmit(run.id, [{ roleId: 'designer', spec: 'Colado por la ventana' }]))
+      .toThrowError(expect.objectContaining({ code: 'ROLE_NOT_APPROVED' }));
 
-    await expect(engine.startDispatch({ grant: coordinator(run.id), taskId: created[0].id })).rejects.toMatchObject({ code: 'ROLE_NOT_APPROVED' });
+    expect(b.repo.listCoordinationTasks(run.id)).toHaveLength(before);
     expect(members.map((m) => m.roleId)).toEqual(['copywriter']);
     expect(send.mock.calls).toHaveLength(0);
   });

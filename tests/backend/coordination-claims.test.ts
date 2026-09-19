@@ -10,7 +10,7 @@ import { ClaudeChatAdapter } from '../../electron/agents/claude/claudeAdapter';
 import { CodexChatAdapter } from '../../electron/agents/codex/codexAdapter';
 import { SYSTEM_ACCOUNT_ID } from '../../electron/agents/accounts';
 import { sessionFrom, type AdapterMcpServer, type AdapterStartInput, type AdapterStartResult } from '../../electron/agents/types';
-import { fakeCoordinationHub, makeBackend, makeTempDir, removeDir, type FakeTeamMember, type TestBackend } from './helpers';
+import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, makeTempDir, removeDir, type FakeTeamMember, type TestBackend } from './helpers';
 
 const FAKE_CODEX = path.resolve(__dirname, 'fakeCodex.cjs');
 const FAKE_CLAUDE = path.resolve(__dirname, 'fakeClaude.cjs');
@@ -397,30 +397,35 @@ describe('CoordinationEngine — reclamos que una herramienta del agente podía 
     // coordinador TIENE: pisa `plan_json` con una lista pelada de ids.
     engine.planSubmit(approved.id, [{ roleId: 'strategist', spec: 'otra cosa' }]);
     const before = members.length;
-    const task = engine.taskCreate(approved.id, { roleId: 'designer', spec: 'un rol que nadie aprobó' });
-    // Aprobar subió la autoridad a `plan`, así que una tarea fuera del plan
-    // pasa primero por el gate: se frena en los DOS momentos.
-    const gate = await engine.startDispatch({
-      grant: { workId, runId: approved.id, memberId: 'mem_coordinator', role: 'coordinator' },
-      taskId: task.id,
-    });
-    expect(gate.status).toBe('pending_approval');
-    expect(members.length).toBe(before);
-    await expect(engine.resolveGate(gate.dispatchId, 'approve')).rejects.toMatchObject({ code: 'ROLE_NOT_APPROVED' });
+    const tasksBefore = b.repo.listCoordinationTasks(approved.id).length;
+    // Desde U10 el rol sin aprobar ni llega a ser tarea: la foto de la
+    // aprobación manda EN LA CREACIÓN, no recién en el despacho. La propiedad
+    // que este test protege —que una herramienta del agente no pueda ampliar
+    // lo que la persona aprobó— se cumple ahora un paso antes.
+    expect(() => engine.taskCreate(approved.id, { roleId: 'designer', spec: 'un rol que nadie aprobó' }))
+      .toThrowError(expect.objectContaining({ code: 'ROLE_NOT_APPROVED' }));
+    expect(b.repo.listCoordinationTasks(approved.id)).toHaveLength(tasksBefore);
     expect(members.length).toBe(before);
   });
 
   it('un run nacido de `startRun` no contrata roles que no estén ya en el Trabajo (juicio #3)', async () => {
     await b.service.setCoordinationAuthority(workId, 'auto');
     const before = members.length;
-    const task = engine.taskCreate(runId, { roleId: 'designer', spec: 'sin propuesta ninguna' });
-    await expect(engine.startDispatch({ grant: coordinator(), taskId: task.id }))
-      .rejects.toMatchObject({ code: 'ROLE_NOT_APPROVED' });
+    // Un run de `startRun` tiene la foto VACÍA: sin propuesta aprobada, lo
+    // único que autoriza es el equipo que ya está. U10 lo dice en la creación.
+    expect(() => engine.taskCreate(runId, { roleId: 'designer', spec: 'sin propuesta ninguna' }))
+      .toThrowError(expect.objectContaining({ code: 'ROLE_NOT_APPROVED' }));
     expect(members.length).toBe(before);
   });
 
   it('un rol YA presente en el Trabajo se reutiliza aunque el run no venga de una propuesta', async () => {
     await b.service.setCoordinationAuthority(workId, 'auto');
+    // En el repo Y en el equipo falso: `workHasMemberForRole` —el lookup vivo
+    // que comparten la creación y el despacho— lee las filas de miembros.
+    b.repo.insertMember({
+      id: 'mem_existing', workId, roleId: 'designer', roleName: 'Designer', initial: 'D', runtime: 'codex',
+      model: null, accountId: null, sessionId: '', done: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    });
     members.push({ id: 'mem_existing', workId, roleId: 'designer', status: 'idle' });
     const before = members.length;
     const task = engine.taskCreate(runId, { roleId: 'designer', spec: 'reusar al que ya está' });
@@ -432,6 +437,7 @@ describe('CoordinationEngine — reclamos que una herramienta del agente podía 
 
   it('el reporte repetido de una tarea `done` autoriza por intento, no por posición en la lista (juicio #5)', async () => {
     await b.service.setCoordinationAuthority(workId, 'auto');
+    approveCoordinationRoles(b, runId, 'role_a'); // U10: el rol se aprueba antes de que la tarea exista
     members.push({ id: 'mem_w1', workId, roleId: 'role_a', status: 'idle' });
     const task = engine.taskCreate(runId, { roleId: 'role_a', spec: 'a' });
 

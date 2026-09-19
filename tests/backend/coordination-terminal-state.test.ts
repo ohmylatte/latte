@@ -92,8 +92,13 @@ describe('el estado terminal de un run y sus tareas', () => {
   });
 
   it('D1: el rol que nadie contrató deja la tarea `failed` con outcome `role_not_approved`', async () => {
-    approveCoordinationRoles(b, runId); // nadie aprobado
+    // La tarea nace con su rol aprobado y la foto se achica DESPUÉS: desde U10
+    // crear una tarea de un rol sin aprobar ya se rechaza en la creación, así
+    // que el único camino que llega al despacho es éste — el miembro que se
+    // borró o la aprobación que se editó (D11).
+    approveCoordinationRoles(b, runId, 'role_z');
     const task = engine.taskCreate(runId, { roleId: 'role_z', spec: 'z' });
+    approveCoordinationRoles(b, runId); // nadie aprobado
 
     await expect(engine.startDispatch({ grant: coordinator(), taskId: task.id })).rejects.toMatchObject({ code: 'ROLE_NOT_APPROVED' });
 

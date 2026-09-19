@@ -258,6 +258,10 @@ describe('CoordinationEngine — capacidades que decía tener', () => {
     const otherWork = await b.service.createWork(brandId, 'Otro trabajo');
     await b.service.setCoordinationBudget(otherWork.id, { maxDispatches: 3 });
     const otherRun = await engine.startRun(otherWork.id, null);
+    // U10: crear una tarea exige que el rol esté aprobado. Acá el sujeto del
+    // test es la dependencia CRUZADA, no el rol: se aprueba para que lo único
+    // que pueda fallar sea lo que el test mira.
+    approveCoordinationRoles(b, otherRun.id, 'role_z');
     const foreign = engine.taskCreate(otherRun.id, { roleId: 'role_z', spec: 'z' });
     expect(() => engine.taskCreate(runId, { roleId: 'role_a', spec: 'a', dependsOn: [foreign.id] })).toThrow(/depend/i);
   });
@@ -397,7 +401,15 @@ describe('CoordinationEngine — la propuesta aprobada es el equipo que se contr
   it('despachar un rol que nunca estuvo en la propuesta aprobada no contrata a nadie (juicio #9)', async () => {
     await b.service.setCoordinationAuthority(workId, 'auto');
     const run = await approvedRun(); // aprobar sube la autoridad a `plan`
+    // U10 rechaza este rol AL CREAR la tarea, así que el escenario que queda
+    // vivo —y el que de verdad pasa en producción— es el otro: la tarea nació
+    // cuando el rol SÍ estaba aprobado y la foto se achicó después (el miembro
+    // que se borró, D11). El freno del despacho tiene que seguir ahí.
+    const snapshot = JSON.parse(b.repo.getMeta(`coordination_approved_roles:${run.id}`) ?? '[]') as string[];
+    expect(snapshot).not.toContain('copywriter');
+    approveCoordinationRoles(b, run.id, ...snapshot, 'copywriter');
     const task = engine.taskCreate(run.id, { roleId: 'copywriter', spec: 'Escribir el copy' });
+    approveCoordinationRoles(b, run.id, ...snapshot);
     const before = members.length;
 
     // Una tarea fuera del plan aprobado gatea PRIMERO: desde que el gate se

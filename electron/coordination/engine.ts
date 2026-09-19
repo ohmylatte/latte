@@ -891,6 +891,10 @@ export class CoordinationEngine {
     // no aprobó se quedaba sin `plan`, sin `membersToHire` y sin `rationale`, y
     // el gate pasaba a mostrar un objeto vacío.
     if (run.status !== 'running') throw new LatteError('RUN_NOT_ACTIVE', `Run is ${run.status}`);
+    // TODOS los roles ANTES de crear la primera fila (U10). Validar por tarea
+    // dejaría medio plan escrito y el otro medio rechazado: el coordinador
+    // cree que mandó un plan entero y la bitácora muestra la mitad.
+    for (const spec of tasks) this.assertRoleCreatable(run, spec.roleId);
     const created: CoordinationTaskRecord[] = [];
     for (const spec of tasks) {
       const dependsOnIds = (spec.dependsOn ?? []).map((idx) => {
@@ -907,9 +911,32 @@ export class CoordinationEngine {
   }
 
   taskCreate(runId: string, input: { roleId: string; spec: string; dependsOn?: string[] }): CoordinationTaskRecord {
+    const run = this.deps.repo.getCoordinationRun(runId);
+    this.assertRoleCreatable(run, input.roleId);
     const task = this.createTaskRow(runId, input.roleId, input.spec, input.dependsOn ?? []);
-    this.touch(this.deps.repo.getCoordinationRun(runId).workId, runId);
+    this.touch(run.workId, runId);
     return task;
+  }
+
+  /**
+   * U10: un rol que nadie contrató no llega a ser tarea.
+   *
+   * El despacho ya lo frenaba (`reserveTargetMember` → `ROLE_NOT_APPROVED`),
+   * pero recién ahí: la tarea nacía igual, se quedaba en la cola y terminaba
+   * `failed` con una entrada de bitácora por cada rol que el coordinador se
+   * inventó. Ensuciar el registro de la persona con trabajo que nunca podía
+   * salir es exactamente lo contrario de "nunca mostrar como hecho lo que el
+   * motor no confirmó". Se rechaza donde nace.
+   *
+   * El lookup es EL MISMO que el del despacho, sin una segunda verdad: la foto
+   * de CONTRATABLES que congeló la aprobación (D11) más el equipo VIVO de hoy
+   * — un rol que ya está en el Trabajo no se contrata, se reutiliza, así que no
+   * necesita aprobación.
+   */
+  private assertRoleCreatable(run: CoordinationRunRecord, roleId: string): void {
+    if (this.approvedRoleIds(run).has(roleId)) return;
+    if (this.workHasMemberForRole(run.workId, roleId)) return;
+    throw new LatteError('ROLE_NOT_APPROVED', `Creating a task for ${roleId} was not part of the approved plan; it needs its own approval`);
   }
 
   teamList(workId: string) {

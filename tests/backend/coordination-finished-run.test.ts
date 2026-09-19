@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CoordinationEngine } from '../../electron/coordination/engine';
-import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
+import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
  * Un run que termina desaparecía de la interfaz. `getCoordinationRun` sólo
@@ -63,6 +63,7 @@ describe('un run terminado se sigue viendo, con su bitácora (crítico: la UI bo
   describe('la bitácora deja constancia de los DOS finales', () => {
     it('un run CANCELADO cierra con `run_cancelled`, contando lo hecho y lo que quedó sin terminar', async () => {
       const run = await engine.startRun(workId, 'mem_coordinator');
+      approveCoordinationRoles(b, run.id, 'strategist'); // U10: crear una tarea exige el rol aprobado
       const done = engine.taskCreate(run.id, { roleId: 'strategist', spec: 'a' });
       const pending = engine.taskCreate(run.id, { roleId: 'strategist', spec: 'b' });
       b.repo.updateCoordinationTask(done.id, { status: 'done' }, new Date().toISOString());
@@ -81,6 +82,7 @@ describe('un run terminado se sigue viendo, con su bitácora (crítico: la UI bo
 
     it('un run VIVO todavía no tiene entrada de cierre de ninguna de las dos clases', async () => {
       const run = await engine.startRun(workId, 'mem_coordinator');
+      approveCoordinationRoles(b, run.id, 'strategist'); // U10: crear una tarea exige el rol aprobado
       engine.taskCreate(run.id, { roleId: 'strategist', spec: 'a' });
 
       const log = await b.service.listCoordinationLog(run.id);
