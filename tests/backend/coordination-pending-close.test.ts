@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionFrom, type AdapterStartInput, type AdapterStartResult } from '../../electron/agents/types';
 import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
-import { CoordinationEngine, type CoordinationGrant } from '../../electron/coordination/engine';
 import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
@@ -15,42 +14,55 @@ import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTe
  * `running` para siempre, ocupando uno de los cupos app-wide, con todo su
  * trabajo terminado.
  *
- * Los dos tests entran por donde entra la realidad: `b.emitChat` (el chokepoint
- * por el que pasa TODO evento de adaptador) y `pauseTeamMember` por IPC. Y el
- * reporte que deja el cierre pendiente entra por `settleCoordinationDispatch`,
- * o sea por el motor DEL SERVICIO — `pendingClose` vive en memoria de UNA
- * instancia, así que probarlo contra un motor de costado no probaría nada.
+ * R1: los dos tests entran ENTEROS por el camino de producción. Antes creaban
+ * su propio `CoordinationEngine` de costado y reportaban por
+ * `settleCoordinationDispatch` —el motor DEL SERVICIO—, y el docstring lo
+ * admitía: así nunca se habría visto que el motor del servidor MCP era otra
+ * instancia, con su propio `pendingClose`. Acá la tarea se crea, se despacha y
+ * se reporta por `handleMcpRequest` sobre el servidor que construye
+ * `createBackend`, y el fin del turno llega por `b.emitChat` (el chokepoint
+ * por el que pasa TODO evento de adaptador) o por `pauseTeamMember` por IPC.
  */
 describe('F1: un cierre pendiente se destraba aunque el coordinador no vuelva', () => {
   let b: TestBackend;
-  let engine: CoordinationEngine;
   let members: FakeTeamMember[];
-  let brandId: string;
   let workId: string;
   let runId: string;
 
-  function coordinator(): CoordinationGrant {
-    return { workId, runId, memberId: 'mem_coordinator', role: 'coordinator' };
+  /** El `tools/call` real que manda un cliente MCP, en JSON-RPC 2.0. */
+  function rpc(name: string, args: Record<string, unknown>): string {
+    return JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
   }
 
-  function makeEngine(): CoordinationEngine {
-    return new CoordinationEngine({
-      repo: b.repo,
-      hub: b.hub,
-      clock: () => new Date().toISOString(),
-      memberContext: (id) => ({ workId: id, brandId, directory: b.dir, title: 'x', extraEnv: {} }),
-    });
+  function envelope(result: { body: string }): { ok: boolean; data: unknown; error?: { code: string; message: string } } {
+    const parsed = JSON.parse(result.body) as { result?: { structuredContent: unknown }; error?: unknown };
+    expect(parsed.error).toBeUndefined();
+    return (parsed.result as { structuredContent: ReturnType<typeof envelope> }).structuredContent;
+  }
+
+  function call(name: string, args: Record<string, unknown>, token: string) {
+    return b.coordinationMcpServer.handleMcpRequest(rpc(name, args), `Bearer ${token}`, '127.0.0.1');
+  }
+
+  /** Crea, despacha y devuelve `{taskId, memberId}` — todo por las herramientas MCP del coordinador. */
+  async function dispatchViaMcp(roleId: string, coordinatorToken: string): Promise<{ taskId: string; memberId: string }> {
+    const created = envelope(await call('latte_task_create', { roleId, spec: 'a' }, coordinatorToken));
+    expect(created.ok).toBe(true);
+    const taskId = (created.data as { taskId: string }).taskId;
+    const dispatched = envelope(await call('latte_dispatch', { taskId }, coordinatorToken));
+    expect(dispatched.ok).toBe(true);
+    const memberId = b.repo.listCoordinationDispatches(runId).find((d) => d.taskId === taskId && d.status === 'dispatched')!.memberId;
+    return { taskId, memberId };
   }
 
   beforeEach(async () => {
     b = await makeBackend();
     const brand = await b.service.createBrand('Marca');
-    brandId = brand.id;
     const work = await b.service.createWork(brand.id, 'Trabajo');
     workId = work.id;
     await b.service.setCoordinationBudget(workId, { maxDispatches: 20 });
     await b.service.setCoordinationAuthority(workId, 'auto');
-    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON); // se entra por IPC: la bandera tiene que estar arriba
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON); // se entra por IPC y por MCP: la bandera tiene que estar arriba
     members = [];
   });
   afterEach(() => { vi.restoreAllMocks(); b.cleanup(); });
@@ -65,13 +77,14 @@ describe('F1: un cierre pendiente se destraba aunque el coordinador no vuelva', 
     approveCoordinationRoles(b, runId, 'role_a');
     members.push({ id: 'mem_coordinator', workId, roleId: 'strategist', status: 'working' });
     members.push({ id: 'mem_a1', workId, roleId: 'role_a', status: 'idle' });
-    engine = makeEngine();
-    const task = engine.taskCreate(runId, { roleId: 'role_a', spec: 'a' });
-    await engine.startDispatch({ grant: coordinator(), taskId: task.id });
+    const coordinatorToken = b.coordinationTokens.mint(workId, 'mem_coordinator');
+    const { taskId, memberId } = await dispatchViaMcp('role_a', coordinatorToken);
 
-    // El coordinador está pensando cuando entra el último reporte.
+    // El coordinador está pensando cuando entra el último reporte, que llega
+    // por `latte_report` sobre el servidor MCP de producción.
     const busy = vi.spyOn(b.hub, 'isMemberBusy').mockReturnValue(true);
-    await b.service.settleCoordinationDispatch(task.id, 'succeeded', 'listo');
+    const workerToken = b.coordinationTokens.mint(workId, memberId);
+    expect(envelope(await call('latte_report', { taskId, outcome: 'succeeded', summary: 'listo' }, workerToken)).ok).toBe(true);
     expect(b.repo.getCoordinationRun(runId).status).toBe('running'); // el cierre queda pendiente
 
     // Y se muere: nunca va a emitir un `idle`.
@@ -104,11 +117,11 @@ describe('F1: un cierre pendiente se destraba aunque el coordinador no vuelva', 
     await b.service.startCoordinationRun(workId);
     runId = b.repo.findActiveCoordinationRun(workId)!.id;
     approveCoordinationRoles(b, runId, 'analyst');
-    engine = makeEngine();
-    const task = engine.taskCreate(runId, { roleId: 'analyst', spec: 'a' });
-    await engine.startDispatch({ grant: { workId, runId, memberId: coord.id, role: 'coordinator' }, taskId: task.id });
+    const coordinatorToken = b.coordinationTokens.mint(workId, coord.id);
+    const { taskId, memberId } = await dispatchViaMcp('analyst', coordinatorToken);
 
-    await b.service.settleCoordinationDispatch(task.id, 'succeeded', 'listo');
+    const workerToken = b.coordinationTokens.mint(workId, memberId);
+    expect(envelope(await call('latte_report', { taskId, outcome: 'succeeded', summary: 'listo' }, workerToken)).ok).toBe(true);
     expect(b.repo.getCoordinationRun(runId).status).toBe('running'); // el coordinador sigue ocupado
 
     await b.service.pauseTeamMember(coord.id);

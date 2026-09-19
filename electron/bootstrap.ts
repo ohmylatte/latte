@@ -11,7 +11,6 @@ import { McpCatalog } from './agents/mcp';
 import { ProfileStore } from './agents/profiles';
 import { RoleCatalog } from './agents/roles';
 import { TranscriptStore } from './agents/transcripts';
-import { CoordinationEngine } from './coordination/engine';
 import { CoordinationInjectionPlanner } from './coordination/injection';
 import { CoordinationMcpServer } from './coordination/mcpServer';
 import { createHttpListen } from './coordination/mcpTransport';
@@ -19,7 +18,6 @@ import { CoordinationTokenRegistry } from './coordination/tokens';
 import { featureEnabled } from './core/features';
 import { LattePaths } from './core/paths';
 import type { TaskkillExecFile } from './core/processTree';
-import { nowIso } from './core/ids';
 import { EngramClient } from './memory/engram';
 import { ChatManager } from './opencode/chatManager';
 import type { OpenCodeEndpoint } from './opencode/server';
@@ -95,6 +93,16 @@ export interface Backend {
   claude: ClaudeChatAdapter;
   codex: CodexChatAdapter | null;
   accounts: AccountStore;
+  /**
+   * El servidor MCP REAL, el que sirve todo `tools/call` de todo miembro
+   * coordinado. Expuesto para que un test pueda entrar por el camino de
+   * producción (`handleMcpRequest` sobre ESTE servidor, con ESTE motor) en vez
+   * de construirse uno de costado que no comparte el estado en memoria del
+   * motor del servicio (R1).
+   */
+  coordinationMcpServer: CoordinationMcpServer;
+  /** El registro de tokens de ESE servidor: sin él no se puede mintear un bearer que `handleMcpRequest` acepte. */
+  coordinationTokens: CoordinationTokenRegistry;
   info: { dataDir: string; dbFile: string; engine: string; engineReason: string; seeded: boolean; pack: string | null };
 }
 
@@ -319,28 +327,29 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
   // to break the construction cycle (`CoordinationMcpServer` needs a
   // `CoordinationEngine`, which needs `hub`; `hub` needs the planner, which
   // needs the server) -- see `AgentHub.attachCoordinationInjection`'s own
-  // comment for the full reasoning. This `mcpEngine` is a SEPARATE
-  // `CoordinationEngine` instance from `service`'s own internal one; both
-  // are stateless proxies over the same `repo`/`hub`, so the two are
-  // behaviourally identical -- this one exists only so the coordination MCP
-  // server's `tools/call` path needs no reference into `LatteService`.
+  // comment for the full reasoning.
+  //
+  // R1: el servidor MCP usa EL MOTOR DEL SERVICIO, no uno propio. Acá vivía un
+  // `mcpEngine` aparte, justificado con "los dos son proxies sin estado sobre
+  // el mismo repo, así que son intercambiables". Eso era cierto cuando se
+  // escribió y dejó de serlo: el motor tiene ESTADO EN MEMORIA — `assigning`
+  // (el miembro que un despacho ya eligió y todavía está levantando) y
+  // `pendingClose` (el cierre aparcado esperando a que el coordinador termine
+  // su turno) — y ese estado no se comparte entre instancias. El último
+  // `latte_report` por MCP aparcaba el cierre en un motor y el fin de turno
+  // llegaba al otro: el run quedaba `running` para siempre. Un despacho por
+  // MCP y una aprobación por IPC elegían al mismo miembro ocioso. El motor es
+  // único por proceso porque tiene estado, y punto.
+  //
   // Task 8.1: the real feature-flag reader, off by default like every other
   // feature. Shared by both the coordination engine (gates run creation) and
   // the injection planner (gates `latte_coordination` delivery) -- `latte_memory`
   // never reads this, per task 6.29's independent policy.
   const isCoordinationEnabled = () => featureEnabled((key) => repo.getMeta(key), 'coordination');
   const coordinationTokens = new CoordinationTokenRegistry();
-  const mcpEngine = new CoordinationEngine({
-    repo,
-    hub,
-    clock: nowIso,
-    memberContext: (workId) => service.memberContext(workId),
-    emit: options.emitCoordination,
-    isCoordinationEnabled,
-  });
   const coordinationMcpServer = new CoordinationMcpServer({
     repo,
-    engine: mcpEngine,
+    engine: service.coordinationEngine,
     tokens: coordinationTokens,
     listen: createHttpListen(),
     log: options.log,
@@ -389,6 +398,8 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     claude,
     codex,
     accounts,
+    coordinationMcpServer,
+    coordinationTokens,
     info: { dataDir: paths.root, dbFile: paths.dbFile, engine: driver.kind, engineReason: reason, seeded, pack: pack ? `${pack.id}@${pack.version}` : null },
   };
 }

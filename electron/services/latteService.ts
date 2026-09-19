@@ -306,6 +306,23 @@ export class LatteService implements BackendApi {
   }
 
   /**
+   * EL motor de coordinación de este proceso, expuesto para que `bootstrap.ts`
+   * se lo pase al servidor MCP en vez de construirse uno propio (R1).
+   *
+   * No es un detalle de cableado: el motor TIENE ESTADO EN MEMORIA
+   * (`assigning`, la reserva de un miembro mientras se levanta su proceso; y
+   * `pendingClose`, los cierres aparcados esperando a que el coordinador
+   * termine su turno). Dos instancias sobre el mismo repo no ven ese estado la
+   * una de la otra: el último `latte_report` por MCP aparcaba el cierre en un
+   * motor y el fin de turno llegaba al otro, así que el run quedaba `running`
+   * para siempre; y un despacho por MCP y una aprobación por IPC elegían al
+   * MISMO miembro ocioso. Uno por proceso, y punto.
+   */
+  get coordinationEngine(): CoordinationEngine {
+    return this.coordination;
+  }
+
+  /**
    * sdd/autonomous-coordination, task 6.33: attached AFTER construction, the
    * same reasoning as `AgentHub.attachCoordinationInjection` -- the planner
    * needs `this.memberContext` (via the coordination MCP server's own
@@ -2096,13 +2113,11 @@ export class LatteService implements BackendApi {
    * files, not about the work directory, which any process can still write.
    */
   /**
-   * Public (not just internal) since sdd/autonomous-coordination task
-   * 6.28+: bootstrap.ts needs it to build the SEPARATE `CoordinationEngine`
-   * instance the coordination MCP server's `tools/call` path uses (kept
-   * apart from this service's own private `this.coordination` to avoid a
-   * hub<->engine<->service construction cycle -- both instances are
-   * behaviourally identical, since `CoordinationEngine` holds no state of
-   * its own beyond `deps`). Behaviour unchanged; visibility only.
+   * Public (not just internal) since sdd/autonomous-coordination task 6.28+:
+   * lo necesita el `CoordinationEngine` que este servicio construye, y que
+   * `bootstrap.ts` le pasa al servidor MCP. Es EL MISMO motor: tiene estado en
+   * memoria (`assigning`, `pendingClose`), así que es único por proceso — ver
+   * `coordinationEngine`, arriba. Behaviour unchanged; visibility only.
    */
   memberContext(workId: string): MemberContext {
     const work = this.syncFromDisk(this.deps.repo.getWork(requireId(workId, 'workId')));

@@ -70,8 +70,15 @@ describe('el interruptor de coordinación falla cerrado en el cableado real (jui
   // cuántas construcciones tiene que haber en cada archivo, se cuentan las que
   // hay de verdad, y una cuenta que no da tira.
   const CTORS = ['CoordinationEngine', 'CoordinationInjectionPlanner'] as const;
+  //
+  // R1: `bootstrap.ts` pasó de 1 a 0 motores. Construía uno propio para el
+  // servidor MCP; hoy le pasa el del servicio, porque el motor tiene estado en
+  // memoria (`assigning`, `pendingClose`) y dos instancias sobre el mismo repo
+  // no lo comparten. La cuenta en CERO es justamente lo que impide que vuelva a
+  // aparecer un segundo motor ahí sin que nadie se entere — y la bandera real
+  // la sigue asegurando la única construcción que queda, la del servicio.
   const productionWiring: Array<{ file: string; expected: Record<(typeof CTORS)[number], number> }> = [
-    { file: 'electron/bootstrap.ts', expected: { CoordinationEngine: 1, CoordinationInjectionPlanner: 1 } },
+    { file: 'electron/bootstrap.ts', expected: { CoordinationEngine: 0, CoordinationInjectionPlanner: 1 } },
     { file: 'electron/services/latteService.ts', expected: { CoordinationEngine: 1, CoordinationInjectionPlanner: 0 } },
   ];
 

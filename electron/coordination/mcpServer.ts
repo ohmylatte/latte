@@ -291,6 +291,16 @@ export class CoordinationMcpServer {
     this.clock = deps.clock ?? (() => Date.now());
   }
 
+  /**
+   * El motor que sirve todo `tools/call`. Expuesto para que se pueda
+   * COMPROBAR que es el mismo objeto que el del servicio: el motor tiene
+   * estado en memoria (`assigning`, `pendingClose`), así que dos instancias
+   * sobre el mismo repo no son intercambiables (R1).
+   */
+  get engine(): CoordinationEngine {
+    return this.deps.engine;
+  }
+
   get listening(): boolean {
     return this.handle != null;
   }
