@@ -128,7 +128,10 @@ export function HomeView(props: HomeViewProps) {
         verdad — prometer una visita que nunca se midió era la mentira. */}
     {showSinceLastVisit && <section className="home-card home-since" aria-label={t(sinceTitleKey)}>
       <h2 className="home-card-title">{t(sinceTitleKey)}</h2>
-      <div className="home-rows">{summary.sinceLastVisitRows.map((row) => <button type="button" className="home-row" key={row.id} onClick={() => row.kind === 'awaitingYou' ? props.onOpenDecisions(row.workId) : props.onOpenWork(row.workId)}>
+      {/* El `kind` viaja al DOM: un equipo que TERMINÓ no es una novedad
+          cualquiera y su fila tiene que poder verse distinta sin que el estilo
+          dependa de leer el texto de la frase. */}
+      <div className="home-rows">{summary.sinceLastVisitRows.map((row) => <button type="button" className={'home-row' + (row.kind === 'done' || row.kind === 'failed' ? ' home-row-finished' : '')} data-kind={row.kind} key={row.id} onClick={() => row.kind === 'awaitingYou' ? props.onOpenDecisions(row.workId) : props.onOpenWork(row.workId)}>
         <span className="home-row-title">{t(`home.since.kind.${row.kind}` as 'home.since.kind.done', { workTitle: row.workTitle })}</span>
       </button>)}</div>
     </section>}

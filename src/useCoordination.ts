@@ -33,6 +33,18 @@ export interface CoordinationState {
    * acción" — el mismo default seguro que el resto de este hook.
    */
   pending: Record<string, boolean>;
+  /**
+   * El recorte por-Trabajo del Trabajo ABIERTO ya terminó de cargar: el run,
+   * sus gates, su bitácora, sus altas y sus preguntas resolvieron (o no hay
+   * run, que es una respuesta completa igual). `false` sin Trabajo abierto.
+   *
+   * Existe por una sola razón: `markSeen`. Marcar visto en el mismo tick en
+   * que la persona toca la pestaña registraba la visita sobre una pantalla
+   * todavía vacía, y todo lo que llegaba después —justo lo que tenía que ver—
+   * nacía ya "visto". Una visita que se anota antes de que haya algo que
+   * mirar no es una visita.
+   */
+  workLoaded: boolean;
   resolveGate: (gateId: string, decision: 'approve' | 'reject', editedPayload?: string | null) => void;
   answerAsk: (askId: string, answer: string) => void;
   /** Surfaces task 3.19's `settleCoordinationDispatch` — never reinvented. */
@@ -86,6 +98,11 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
   const [openAsks, setOpenAsks] = useState<CoordinationAskView[]>([]);
   const [activeRuns, setActiveRuns] = useState<CoordinationActiveRunSummary[]>([]);
   const [pending, setPending] = useState<Record<string, boolean>>({});
+  // El Trabajo cuyo recorte YA terminó de cargar, no un booleano: con un
+  // booleano, navegar de un Trabajo a otro dejaba el `true` del anterior
+  // prendido durante el render en el que el nuevo todavía no pidió nada — y
+  // ahí `markSeen` marcaba visto el Trabajo NUEVO por la carga del VIEJO.
+  const [loadedWorkId, setLoadedWorkId] = useState<string | null>(null);
   const generation = useRef(0);
   // Contador INDEPENDIENTE del de arriba (ronda 4, ítem 13e-a): `generation`
   // es del recorte por-Trabajo; `activeRuns` es global y se refresca en el
@@ -120,15 +137,25 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     void api.getCoordinationBudget(id).then((v) => { if (fresh()) setBudget(v); }).catch(() => { if (fresh()) setBudget({ state: 'unset' }); });
     void api.getCoordinatorGrant(id).then((v) => { if (fresh()) setCoordinatorGrant(v); }).catch(() => { if (fresh()) setCoordinatorGrant(null); });
     void api.coordinationRuntimeSupport(id).then((v) => { if (fresh()) setSupport(v); }).catch(() => { if (fresh()) setSupport([]); });
+    // `loaded()` marca el recorte de ESTE `id` como cargado, y sólo si sigue
+    // siendo el vigente. Es lo que `markSeen` espera: hasta acá la pantalla
+    // de Decisiones no tiene un solo gate dibujado.
+    const loaded = () => { if (fresh()) setLoadedWorkId(id); };
     void api.getCoordinationRun(id).then((current) => {
       if (!fresh()) return;
       setRun(current);
-      if (!current) { setGates([]); setLog([]); setHires([]); setOpenAsks([]); return; }
-      void api.listCoordinationGates(current.id).then((v) => { if (fresh()) setGates(v); }).catch(() => { if (fresh()) setGates([]); });
-      void api.listCoordinationLog(current.id).then((v) => { if (fresh()) setLog(v); }).catch(() => { if (fresh()) setLog([]); });
-      void api.listCoordinationHires(current.id).then((v) => { if (fresh()) setHires(v); }).catch(() => { if (fresh()) setHires([]); });
-      void api.listOpenCoordinationAsks(current.id).then((v) => { if (fresh()) setOpenAsks(v); }).catch(() => { if (fresh()) setOpenAsks([]); });
-    }).catch(() => { if (fresh()) { setRun(null); setGates([]); setLog([]); setHires([]); setOpenAsks([]); } });
+      // Sin run no hay nada más que esperar: eso ya es una respuesta completa.
+      if (!current) { setGates([]); setLog([]); setHires([]); setOpenAsks([]); loaded(); return; }
+      // `allSettled`: un error de una de las cuatro no puede dejar la visita
+      // colgada para siempre — cada `.catch` de abajo ya degrada a su default
+      // seguro, y la pantalla igual terminó de cargar.
+      void Promise.allSettled([
+        api.listCoordinationGates(current.id).then((v) => { if (fresh()) setGates(v); }).catch((e) => { report(e); if (fresh()) setGates([]); }),
+        api.listCoordinationLog(current.id).then((v) => { if (fresh()) setLog(v); }).catch((e) => { report(e); if (fresh()) setLog([]); }),
+        api.listCoordinationHires(current.id).then((v) => { if (fresh()) setHires(v); }).catch((e) => { report(e); if (fresh()) setHires([]); }),
+        api.listOpenCoordinationAsks(current.id).then((v) => { if (fresh()) setOpenAsks(v); }).catch((e) => { report(e); if (fresh()) setOpenAsks([]); }),
+      ]).then(loaded);
+    }).catch((e) => { report(e); if (fresh()) { setRun(null); setGates([]); setLog([]); setHires([]); setOpenAsks([]); loaded(); } });
   };
 
   // The global strip: fetched once, regardless of whether a Work is open.
@@ -184,6 +211,9 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
 
   return {
     authority, budget, coordinatorGrant, run, gates, log, hires, support, openAsks, activeRuns, pending,
+    // Comparado contra el `workId` de ESTE render: el `true` del Trabajo
+    // anterior no puede sobrevivir a la navegación ni un solo render.
+    workLoaded: workId != null && loadedWorkId === workId,
     resolveGate: (gateId, decision, editedPayload) => mutate(`gate:${gateId}`, api.resolveCoordinationGate(gateId, decision, editedPayload)),
     answerAsk: (askId, answer) => mutate(`ask:${askId}`, api.answerCoordinationAsk(askId, answer)),
     settleDispatch: (taskId, outcome, summary) => mutate(`task:${taskId}`, api.settleCoordinationDispatch(taskId, outcome, summary)),

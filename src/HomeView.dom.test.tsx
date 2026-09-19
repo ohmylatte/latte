@@ -213,6 +213,25 @@ describe('the since-last-visit card (additive, autonomous-coordination Phase 7)'
     expect(input.onOpenDecisions).toHaveBeenCalledWith('w1');
   });
 
+  // U3c: un equipo que terminó se lee como terminado, no como una novedad
+  // cualquiera. La fila lleva su `kind` en el DOM para que el estilo de
+  // terminado exista de verdad y no dependa de leer el texto.
+  it('la fila de un equipo terminado se marca como terminada', () => {
+    const { container } = mount(props({
+      works: [work({ id: 'w1', title: 'Lanzamiento' })],
+      coordinationSinceLastVisit: [
+        { id: 'e1', workId: 'w1', kind: 'done', sinceVisit: true },
+        { id: 'e2', workId: 'w1', kind: 'awaitingYou', sinceVisit: true },
+      ],
+    }));
+    const rows = [...container.querySelectorAll<HTMLButtonElement>('.home-since .home-row')];
+    expect(rows).toHaveLength(2);
+    expect(rows[0].dataset.kind).toBe('done');
+    expect(rows[0].className).toContain('home-row-finished');
+    expect(rows[1].dataset.kind).toBe('awaitingYou');
+    expect(rows[1].className).not.toContain('home-row-finished');
+  });
+
   // La tarjeta prometía "desde tu última visita" sin ninguna visita medida.
   // Con una visita registrada el título se sostiene; sin ella, el copy tiene
   // que decir desde CUÁNDO habla de verdad.

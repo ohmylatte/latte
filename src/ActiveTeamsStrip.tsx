@@ -27,8 +27,17 @@ export function ActiveTeamsStrip({ runs, onOpen }: ActiveTeamsStripProps) {
   return <nav className="active-teams-strip" aria-label={t('coordination.teams.kicker')}>
     <div className="document-kicker">{t('coordination.teams.kicker')}</div>
     <ul>
-      {runs.map((run) => <li key={run.runId}>
-        <button type="button" className="active-teams-strip-row" data-status={run.status} onClick={() => onOpen(run)}>
+      {runs.map((run) => {
+      // Desde D18 la tira trae también el último run TERMINADO de cada Trabajo
+      // mientras la persona no haya pasado por ahí: sin eso, el equipo
+      // desaparecía de la vista justo en el instante en que había algo que
+      // contar. La decisión acá es dibujarlo, no esconderlo — pero marcado:
+      // `data-live="false"` y una clase propia, más su estado con todas las
+      // letras. Un run cerrado tampoco muestra aprobaciones pendientes: no
+      // espera nada de nadie.
+      const live = run.status === 'planning' || run.status === 'running' || run.status === 'suspended';
+      return <li key={run.runId}>
+        <button type="button" className={'active-teams-strip-row' + (live ? '' : ' active-teams-strip-row-finished')} data-status={run.status} data-live={live ? 'true' : 'false'} onClick={() => onOpen(run)}>
           <span className="active-teams-strip-brand">{run.brandName}</span>
           <span className="active-teams-strip-work">{run.workTitle}</span>
           <span className="active-teams-strip-status">{t(`coordination.teams.status.${run.status}` as 'coordination.teams.status.running')}</span>
@@ -37,9 +46,10 @@ export function ActiveTeamsStrip({ runs, onOpen }: ActiveTeamsStripProps) {
           <span className="active-teams-strip-budget">
             {run.budgetInvalid ? t('coordination.teams.budgetInvalid') : `${run.dispatchesUsed} / ${run.maxDispatches ?? '∞'}`}
           </span>
-          {run.pendingGates > 0 && <span className="active-teams-strip-gates">{t('coordination.teams.gatesWaiting', { count: run.pendingGates })}</span>}
+          {live && run.pendingGates > 0 && <span className="active-teams-strip-gates">{t('coordination.teams.gatesWaiting', { count: run.pendingGates })}</span>}
         </button>
-      </li>)}
+      </li>;
+      })}
     </ul>
   </nav>;
 }

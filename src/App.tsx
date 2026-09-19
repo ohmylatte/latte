@@ -184,9 +184,16 @@ export function App() {
   // coordinador) o vuelve a él. Es lo único que hace honesto el "Desde tu
   // última visita" de Inicio: antes no se medía ninguna visita.
   const markSeen = coordination.markSeen;
+  // DESPUÉS de que el recorte de coordinación cargue, nunca en el mismo tick
+  // del clic. Antes esto corría al montar la pestaña, antes de pedir un solo
+  // gate: la visita quedaba anotada sobre una pantalla vacía y todo lo que
+  // llegaba después —justamente lo que la persona tenía que ver— nacía ya
+  // visto. `workLoaded` es del Trabajo ABIERTO y se apaga al navegar, así que
+  // esto tampoco puede marcar visto el Trabajo nuevo por la carga del viejo.
+  const coordinationLoaded = coordination.workLoaded;
   useEffect(() => {
-    if (view === 'decisions' && work?.id) markSeen();
-  }, [view, work?.id]);
+    if (view === 'decisions' && work?.id && coordinationLoaded) markSeen();
+  }, [view, work?.id, coordinationLoaded]);
   // The memory notice (task 7.10) is dismissed per Brand, for this session
   // only: this state is plain React state, never persisted, so it "returns
   // next launch while the condition holds" simply because a fresh launch

@@ -288,14 +288,14 @@ describe('sinceLastVisitFromActiveRuns: honest, no extra IPC call', () => {
   // no es novedad.
   it('un run que NO cambió desde la última visita no es novedad', () => {
     const rows = sinceLastVisitFromActiveRuns([run({
-      pendingGates: 2, updatedAt: '2026-09-01T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
+      pendingGates: 2, updatedAt: '2026-09-01T00:00:00.000Z', lastEventAt: '2026-09-01T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
     })], 'b1');
     expect(rows).toEqual([]);
   });
 
   it('un run que cambió DESPUÉS de la última visita sí lo es, y se declara medido contra una visita real', () => {
     const rows = sinceLastVisitFromActiveRuns([run({
-      pendingGates: 2, updatedAt: '2026-09-03T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
+      pendingGates: 2, updatedAt: '2026-09-03T00:00:00.000Z', lastEventAt: '2026-09-03T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
     })], 'b1');
     expect(rows).toEqual([{ id: 'run1:gates', workId: 'w1', kind: 'awaitingYou', sinceVisit: true }]);
   });
@@ -308,8 +308,67 @@ describe('sinceLastVisitFromActiveRuns: honest, no extra IPC call', () => {
 
   it('el instante exacto de la visita no es novedad: se pide cambio ESTRICTAMENTE posterior', () => {
     const rows = sinceLastVisitFromActiveRuns([run({
-      pendingGates: 1, updatedAt: '2026-09-02T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
+      pendingGates: 1, updatedAt: '2026-09-02T00:00:00.000Z', lastEventAt: '2026-09-02T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
     })], 'b1');
     expect(rows).toEqual([]);
+  });
+  // --- U3: la visita se mide contra el ULTIMO HECHO, no contra `updatedAt` --
+  //
+  // Un gate que nace no reescribe la fila del run: `updatedAt` se quedaba
+  // igual y la tarjeta se perdia exactamente lo que la persona tenia que ver.
+  // `lastEventAt` (D18) es el maximo entre el run y su despacho/gate mas
+  // nuevo, y es contra ESO que se compara la visita.
+
+  it('un gate que nacio DESPUES de la visita es novedad aunque la fila del run no se haya tocado', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({
+      pendingGates: 1,
+      updatedAt: '2026-09-01T00:00:00.000Z', // la fila del run no se movio
+      lastEventAt: '2026-09-03T00:00:00.000Z', // pero nacio un gate
+      lastSeenAt: '2026-09-02T00:00:00.000Z',
+    })], 'b1');
+    expect(rows).toEqual([{ id: 'run1:gates', workId: 'w1', kind: 'awaitingYou', sinceVisit: true }]);
+  });
+
+  it('sin ningun hecho posterior a la visita no hay novedad, aunque `updatedAt` sea mas nuevo que la visita', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({
+      pendingGates: 1,
+      updatedAt: '2026-09-05T00:00:00.000Z',
+      lastEventAt: '2026-09-01T00:00:00.000Z',
+      lastSeenAt: '2026-09-02T00:00:00.000Z',
+    })], 'b1');
+    expect(rows).toEqual([]);
+  });
+
+  // --- U3c: un equipo que termino es la novedad mas grande que hay ---------
+
+  it('un run `done` que la persona no vio se reporta como "el equipo termino"', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({
+      status: 'done', lastEventAt: '2026-09-03T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
+    })], 'b1');
+    expect(rows).toEqual([{ id: 'run1:done', workId: 'w1', kind: 'done', sinceVisit: true }]);
+  });
+
+  it('el run terminado desaparece de la tarjeta en cuanto la persona pasa por ahi', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({
+      status: 'done', lastEventAt: '2026-09-01T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
+    })], 'b1');
+    expect(rows).toEqual([]);
+  });
+
+  // Cancelar lo aprieta la persona: no puede ser una novedad PARA ella. Se
+  // deja fuera a proposito, no por olvido.
+  it('un run CANCELADO no se reporta: la persona misma lo cancelo', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({
+      status: 'cancelled', lastEventAt: '2026-09-03T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
+    })], 'b1');
+    expect(rows).toEqual([]);
+  });
+
+  it('un run terminado no arrastra las filas de un run vivo: sin gates pendientes no se inventa ninguna', () => {
+    const rows = sinceLastVisitFromActiveRuns([run({
+      status: 'done', pendingGates: 0, dispatchesUsed: 10, maxDispatches: 10,
+      lastEventAt: '2026-09-03T00:00:00.000Z', lastSeenAt: '2026-09-02T00:00:00.000Z',
+    })], 'b1');
+    expect(rows.map((r) => r.kind)).toEqual(['done']);
   });
 });

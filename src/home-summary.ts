@@ -172,11 +172,14 @@ export function homeStep(input: HomeLadderInput): HomeStep {
  * Derives `HomeSinceLastVisitInput` rows straight from `listActiveCoordinationRuns()`
  * (task 6.34, the one app-scoped read the change ships) — zero extra IPC
  * calls (task 7.11's `useCoordination` already fetches this for the global
- * strip). Only `awaitingYou` (a pending gate) and `budgetConsumed` (the cap
- * reached) are honestly derivable from that summary alone: `done`/`failed`
- * would need per-run history no brand-scoped method exposes today, so they
- * are deliberately never invented here — a disclosed scope limit, not an
- * oversight (see `apply-progress-phase7b`).
+ * strip). `awaitingYou` (a pending gate), `budgetConsumed` (the cap reached)
+ * y `done` (el equipo cerró) salen de ese resumen y de nada más: desde D18 la
+ * tira incluye el último run terminado de cada Trabajo mientras la persona no
+ * haya pasado por ahí, que es lo que hace derivable el tercero.
+ *
+ * `failed` sigue sin derivarse: "un despacho falló" necesitaría historial por
+ * run que ningún método con alcance de marca expone hoy. Se declara, no se
+ * inventa.
  */
 export function sinceLastVisitFromActiveRuns(runs: readonly CoordinationActiveRunSummary[], brandId: string): HomeSinceLastVisitInput[] {
   const rows: HomeSinceLastVisitInput[] = [];
@@ -186,7 +189,23 @@ export function sinceLastVisitFromActiveRuns(runs: readonly CoordinationActiveRu
     // visita no es novedad: la persona ya lo vio. Se pide estrictamente
     // posterior — el instante exacto de la visita es lo que se miró.
     const sinceVisit = run.lastSeenAt != null;
-    if (sinceVisit && !(run.updatedAt > run.lastSeenAt!)) continue;
+    // Contra `lastEventAt`, NUNCA contra `updatedAt`. Un gate que nace o un
+    // despacho que arranca no reescriben la fila del run, así que comparar
+    // `updatedAt` hacía que la tarjeta se perdiera justamente lo que la
+    // persona tenía que ver: la aprobación que está esperando.
+    if (sinceVisit && !(run.lastEventAt > run.lastSeenAt!)) continue;
+    // Un equipo que TERMINÓ es la novedad más grande que esta tarjeta puede
+    // dar, y hasta D18 no llegaba acá: la tira sólo traía runs activos, así
+    // que el momento en que había algo que contar era exactamente el momento
+    // en que la fila desaparecía. Un run terminado no tiene gates pendientes
+    // ni presupuesto que se agote: su única fila es ésta.
+    if (run.status === 'done' || run.status === 'cancelled') {
+      // `cancelled` NO se reporta: cancelar lo aprieta la persona, y lo que
+      // uno mismo acaba de hacer no es novedad. `done` sí — ese final lo
+      // decidió el motor, no ella.
+      if (run.status === 'done') rows.push({ id: `${run.runId}:done`, workId: run.workId, kind: 'done', sinceVisit });
+      continue;
+    }
     if (run.pendingGates > 0) rows.push({ id: `${run.runId}:gates`, workId: run.workId, kind: 'awaitingYou', sinceVisit });
     if (run.maxDispatches != null && run.dispatchesUsed >= run.maxDispatches) rows.push({ id: `${run.runId}:budget`, workId: run.workId, kind: 'budgetConsumed', sinceVisit });
   }

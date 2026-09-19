@@ -75,4 +75,43 @@ describe('the active-teams strip (task 7.8)', () => {
     fireEvent.click(rows[1]);
     expect(onOpen).toHaveBeenCalledWith(runB);
   });
+  // --- U3c: lo recien terminado viaja en la tira, pero NO como algo vivo ---
+  //
+  // D18 hizo que `listActiveCoordinationRuns` incluya el ultimo run terminado
+  // de cada Trabajo mientras la persona no haya pasado por ahi -- sin eso,
+  // Inicio no podia decir "tu equipo termino" porque la fuente ya no lo traia.
+  // Decision tomada acá: la fila SE DIBUJA, con su estado terminado explicito
+  // y marcada como tal, en vez de esconderse. Esconderla devolveria el
+  // problema original (el equipo desaparece justo cuando hay algo que contar);
+  // dibujarla como viva seria la mentira. Se dibuja, y se dice que cerro.
+
+  it('un run terminado se marca como terminado, no como vivo', () => {
+    const { container } = mount([run({ status: 'done' })]);
+    const row = container.querySelector('.active-teams-strip-row') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.dataset.live).toBe('false');
+    expect(row.className).toContain('finished');
+    expect(row.querySelector('.active-teams-strip-status')!.textContent).toBe('Terminado');
+  });
+
+  it('un run cancelado tambien, con su propia palabra', () => {
+    const { container } = mount([run({ status: 'cancelled' })]);
+    const row = container.querySelector('.active-teams-strip-row') as HTMLElement;
+    expect(row.dataset.live).toBe('false');
+    expect(row.querySelector('.active-teams-strip-status')!.textContent).toBe('Cancelado');
+  });
+
+  it('un run terminado no muestra aprobaciones pendientes: un run cerrado no espera nada de nadie', () => {
+    const { container } = mount([run({ status: 'done', pendingGates: 3 })]);
+    expect(container.querySelector('.active-teams-strip-gates')).toBeNull();
+  });
+
+  it('los tres estados vivos siguen marcados como vivos', () => {
+    for (const status of ['planning', 'running', 'suspended'] as const) {
+      const { container } = mount([run({ status })]);
+      const row = container.querySelector('.active-teams-strip-row') as HTMLElement;
+      expect(row.dataset.live).toBe('true');
+      expect(row.className).not.toContain('finished');
+    }
+  });
 });

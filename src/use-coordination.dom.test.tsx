@@ -311,3 +311,55 @@ describe('useCoordination(workId): pending por acción (ítem 14)', () => {
     await waitFor(() => expect(result.current.pending['gate:g1']).toBeFalsy());
   });
 });
+/**
+ * U3a: "Desde tu ultima visita" tiene que medir una visita de verdad.
+ *
+ * `App.tsx` marcaba visto en el MISMO tick en que la persona toca la pestana
+ * Decisiones, antes de que cargara un solo gate: la visita quedaba registrada
+ * sobre una pantalla que todavia estaba vacia, y todo lo que llegaba despues
+ * -- justamente lo que la persona tenia que ver -- nacia ya "visto". El hook
+ * publica `workLoaded`, que recien se prende cuando el recorte por-Trabajo
+ * (run + gates + bitacora + altas + preguntas) termino de resolver.
+ */
+describe('useCoordination: `workLoaded`, la senal de que ya hay algo que mirar', () => {
+  it('sin Trabajo abierto nunca se declara cargado: no hay nada que visitar', async () => {
+    const { result } = renderHook(() => useCoordination(null));
+    await waitFor(() => expect(result.current.authority).toBe('manual'));
+    expect(result.current.workLoaded).toBe(false);
+  });
+
+  it('arranca en false y solo se prende cuando los gates y la bitacora ya resolvieron', async () => {
+    let releaseGates: (value: CoordinationGateView[]) => void = () => {};
+    mocks.getCoordinationRun.mockResolvedValue(run());
+    mocks.listCoordinationGates.mockImplementation(() => new Promise<CoordinationGateView[]>((resolve) => { releaseGates = resolve; }));
+
+    const { result } = renderHook(() => useCoordination('w1'));
+    await waitFor(() => expect(mocks.listCoordinationGates).toHaveBeenCalled());
+    // El run ya llego; los gates NO. Marcar visto aca seria marcar una
+    // pantalla vacia.
+    expect(result.current.workLoaded).toBe(false);
+
+    releaseGates([]);
+    await waitFor(() => expect(result.current.workLoaded).toBe(true));
+  });
+
+  it('un Trabajo SIN run se declara cargado igual: no hay nada mas que esperar', async () => {
+    mocks.getCoordinationRun.mockResolvedValue(null);
+    const { result } = renderHook(() => useCoordination('w1'));
+    await waitFor(() => expect(result.current.workLoaded).toBe(true));
+  });
+
+  it('cambiar de Trabajo apaga la senal hasta que el nuevo termine de cargar', async () => {
+    mocks.getCoordinationRun.mockResolvedValue(null);
+    const { result, rerender } = renderHook(({ id }: { id: string }) => useCoordination(id), { initialProps: { id: 'w1' } });
+    await waitFor(() => expect(result.current.workLoaded).toBe(true));
+
+    let releaseRun: (value: CoordinationRunView | null) => void = () => {};
+    mocks.getCoordinationRun.mockImplementation(() => new Promise<CoordinationRunView | null>((resolve) => { releaseRun = resolve; }));
+    rerender({ id: 'w2' });
+    expect(result.current.workLoaded).toBe(false);
+
+    releaseRun(null);
+    await waitFor(() => expect(result.current.workLoaded).toBe(true));
+  });
+});
