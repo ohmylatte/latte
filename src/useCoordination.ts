@@ -3,7 +3,7 @@ import { api } from './browser-api';
 import { shouldRefreshWork } from './coordination-event-routing';
 import type {
   CoordinationActiveRunSummary, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
-  CoordinationGateView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationRunView, CoordinatorGrant,
+  CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationRunView, CoordinatorGrant,
 } from '../shared/contracts';
 
 export { shouldRefreshWork } from './coordination-event-routing';
@@ -15,6 +15,8 @@ export interface CoordinationState {
   run: CoordinationRunView | null;
   gates: CoordinationGateView[];
   log: CoordinationLogEntryView[];
+  /** Las contrataciones del run, para la bitacora. Antes esa prop no la llenaba nadie. */
+  hires: CoordinationHireView[];
   support: CoordinationMemberSupport[];
   /** Las `latte_ask` abiertas del run: una superficie propia, nunca un gate de aprobar/rechazar. */
   openAsks: CoordinationAskView[];
@@ -79,6 +81,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
   const [run, setRun] = useState<CoordinationRunView | null>(null);
   const [gates, setGates] = useState<CoordinationGateView[]>([]);
   const [log, setLog] = useState<CoordinationLogEntryView[]>([]);
+  const [hires, setHires] = useState<CoordinationHireView[]>([]);
   const [support, setSupport] = useState<CoordinationMemberSupport[]>([]);
   const [openAsks, setOpenAsks] = useState<CoordinationAskView[]>([]);
   const [activeRuns, setActiveRuns] = useState<CoordinationActiveRunSummary[]>([]);
@@ -120,11 +123,12 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     void api.getCoordinationRun(id).then((current) => {
       if (!fresh()) return;
       setRun(current);
-      if (!current) { setGates([]); setLog([]); setOpenAsks([]); return; }
+      if (!current) { setGates([]); setLog([]); setHires([]); setOpenAsks([]); return; }
       void api.listCoordinationGates(current.id).then((v) => { if (fresh()) setGates(v); }).catch(() => { if (fresh()) setGates([]); });
       void api.listCoordinationLog(current.id).then((v) => { if (fresh()) setLog(v); }).catch(() => { if (fresh()) setLog([]); });
+      void api.listCoordinationHires(current.id).then((v) => { if (fresh()) setHires(v); }).catch(() => { if (fresh()) setHires([]); });
       void api.listOpenCoordinationAsks(current.id).then((v) => { if (fresh()) setOpenAsks(v); }).catch(() => { if (fresh()) setOpenAsks([]); });
-    }).catch(() => { if (fresh()) { setRun(null); setGates([]); setLog([]); setOpenAsks([]); } });
+    }).catch(() => { if (fresh()) { setRun(null); setGates([]); setLog([]); setHires([]); setOpenAsks([]); } });
   };
 
   // The global strip: fetched once, regardless of whether a Work is open.
@@ -136,7 +140,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     if (!workId) {
       generation.current += 1; // toda respuesta en vuelo queda huérfana
       setAuthority('manual'); setBudget({ state: 'unset' }); setCoordinatorGrant(null);
-      setRun(null); setGates([]); setLog([]); setSupport([]); setOpenAsks([]);
+      setRun(null); setGates([]); setLog([]); setHires([]); setSupport([]); setOpenAsks([]);
       return;
     }
     refreshWork(workId);
@@ -179,7 +183,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
   };
 
   return {
-    authority, budget, coordinatorGrant, run, gates, log, support, openAsks, activeRuns, pending,
+    authority, budget, coordinatorGrant, run, gates, log, hires, support, openAsks, activeRuns, pending,
     resolveGate: (gateId, decision, editedPayload) => mutate(`gate:${gateId}`, api.resolveCoordinationGate(gateId, decision, editedPayload)),
     answerAsk: (askId, answer) => mutate(`ask:${askId}`, api.answerCoordinationAsk(askId, answer)),
     settleDispatch: (taskId, outcome, summary) => mutate(`task:${taskId}`, api.settleCoordinationDispatch(taskId, outcome, summary)),

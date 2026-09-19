@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
-import type { CoordinationActiveRunSummary, CoordinationAuthorityMode, CoordinationBudget, CoordinationBudgetView, CoordinationEvent, CoordinationGateView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationRunView, CoordinatorGrant } from '../shared/contracts';
+import type { CoordinationActiveRunSummary, CoordinationAuthorityMode, CoordinationBudget, CoordinationBudgetView, CoordinationEvent, CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationRunView, CoordinatorGrant } from '../shared/contracts';
 
 /**
  * `useCoordination(workId)` (autonomous-coordination Phase 7 task 7.11):
@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   getCoordinationRun: vi.fn<(workId: string) => Promise<CoordinationRunView | null>>(),
   listCoordinationGates: vi.fn<(runId: string) => Promise<CoordinationGateView[]>>(),
   listCoordinationLog: vi.fn<(runId: string) => Promise<CoordinationLogEntryView[]>>(),
+  listCoordinationHires: vi.fn<(runId: string) => Promise<CoordinationHireView[]>>(),
   listActiveCoordinationRuns: vi.fn<() => Promise<CoordinationActiveRunSummary[]>>(),
   resolveCoordinationGate: vi.fn(),
   answerCoordinationAsk: vi.fn(),
@@ -52,6 +53,7 @@ beforeEach(() => {
   mocks.getCoordinationRun.mockResolvedValue(null);
   mocks.listCoordinationGates.mockResolvedValue([]);
   mocks.listCoordinationLog.mockResolvedValue([]);
+  mocks.listCoordinationHires.mockResolvedValue([]);
   mocks.listActiveCoordinationRuns.mockResolvedValue([]);
   mocks.resolveCoordinationGate.mockResolvedValue(run());
   mocks.answerCoordinationAsk.mockResolvedValue({ id: 'ask1', runId: 'run1', taskId: null, memberId: 'm1', question: '', answer: 'Sí', deadlineAt: '', answeredAt: '', createdAt: '' });
@@ -131,6 +133,26 @@ describe('useCoordination(workId): a Work is open', () => {
     await waitFor(() => expect(result.current.log).toHaveLength(2));
     expect(result.current.run).toMatchObject({ status: 'done', active: false });
     expect(mocks.listCoordinationLog).toHaveBeenCalledWith('run1');
+  });
+
+  // `coordinationHires` estaba testeado en tres archivos del renderer y no lo
+  // llenaba NADIE: la bitácora no mostró jamás una sola alta. Ahora tiene
+  // fuente, y este hook la trae junto con el resto del run.
+  it('trae las contrataciones del run junto con su bitácora', async () => {
+    mocks.getCoordinationRun.mockResolvedValue(run());
+    mocks.listCoordinationHires.mockResolvedValue([{ memberId: 'm2', roleId: 'copywriter', roleName: 'Copywriter', hiredAt: '2026-09-01T09:00:00.000Z' }]);
+    const { result } = renderHook(() => useCoordination('w1'));
+    await waitFor(() => expect(result.current.hires).toHaveLength(1));
+    expect(mocks.listCoordinationHires).toHaveBeenCalledWith('run1');
+    expect(result.current.hires[0].roleName).toBe('Copywriter');
+  });
+
+  it('sin run no se pide ninguna contratación, y la lista queda vacía', async () => {
+    mocks.getCoordinationRun.mockResolvedValue(null);
+    const { result } = renderHook(() => useCoordination('w1'));
+    await waitFor(() => expect(mocks.getCoordinationRun).toHaveBeenCalled());
+    expect(result.current.hires).toEqual([]);
+    expect(mocks.listCoordinationHires).not.toHaveBeenCalled();
   });
 
   it('re-fetches for a new Work when workId changes', async () => {

@@ -38,6 +38,7 @@ import type {
   CoordinationGlobalBudgetView,
   CoordinationEvent,
   CoordinationGateView,
+  CoordinationHireView,
   CoordinationLogEntryView,
   CoordinationMemberSupport,
   CoordinationRunView,
@@ -1635,6 +1636,26 @@ export class LatteService implements BackendApi {
 
   async listCoordinationLog(runId: string): Promise<CoordinationLogEntryView[]> {
     return this.coordination.listLog(requireId(runId, 'runId'));
+  }
+
+  /**
+   * Las contrataciones de este run, con el rol resuelto a NOMBRE. La bitácora
+   * dibujaba filas de alta desde una prop que no llenaba nadie; ésta es su
+   * fuente. El nombre sale del miembro real si sigue en el equipo, y si no del
+   * catálogo de roles; en última instancia queda el id, que es lo único que
+   * hay — nunca un nombre inventado.
+   */
+  async listCoordinationHires(runId: string): Promise<CoordinationHireView[]> {
+    const id = requireId(runId, 'runId');
+    const run = this.coordination.getRun(id);
+    const byMember = new Map(this.deps.hub.listTeam(run.workId).map((m) => [m.id, m]));
+    const roles = new Map(this.deps.hub.listRoles().map((role) => [role.id, role.name]));
+    return this.coordination.listHires(id).map((hire) => ({
+      memberId: hire.memberId,
+      roleId: hire.roleId,
+      roleName: byMember.get(hire.memberId)?.roleName ?? roles.get(hire.roleId) ?? hire.roleId,
+      hiredAt: hire.hiredAt,
+    }));
   }
 
   /** Las preguntas abiertas de un run, para que la persona pueda responderlas con `answerCoordinationAsk` en vez de quedarse sólo con "cancelar". */

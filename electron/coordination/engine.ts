@@ -39,6 +39,8 @@ import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, MAX_ACTIVE_COORDINATION_R
  * nunca una columna nueva (SCHEMA_VERSION se queda en '12').
  */
 const APPROVED_ROLES_META = 'coordination_approved_roles:';
+/** Las altas de ESTE run, en meta (como `decisionAuthority`): sin subir de versión de esquema. */
+const HIRES_META = 'coordination_hires:';
 
 export type CoordinationRole = 'coordinator' | 'worker';
 
@@ -144,6 +146,13 @@ export interface CoordinationRunDoneLogEntry {
 }
 
 export type CoordinationLogEntry = CoordinationDispatchLogEntry | CoordinationRunDoneLogEntry;
+
+/** Un alta de este run: quién se sumó, con qué rol y cuándo. Guardado en `coordination_hires:<runId>`. */
+export interface CoordinationHireRecord {
+  memberId: string;
+  roleId: string;
+  hiredAt: string;
+}
 
 export interface CoordinationEngineDeps {
   repo: LatteRepository;
@@ -607,6 +616,42 @@ export class CoordinationEngine {
   }
 
   /**
+   * Las contrataciones de ESTE run, oldest first: quién se sumó, con qué rol y
+   * cuándo. `coordinationHires` estaba testeado en tres archivos del renderer
+   * y no lo alimentaba nadie; ésta es su fuente.
+   *
+   * Un registro ilegible se lee como VACÍO a propósito: una bitácora no puede
+   * caerse entera por un meta corrupto. No es el caso del presupuesto —donde
+   * ilegible tiene que denegar—, porque acá no se autoriza nada: se cuenta lo
+   * que pasó, y lo que no se puede leer simplemente no se cuenta.
+   */
+  listHires(runId: string): CoordinationHireRecord[] {
+    const raw = this.deps.repo.getMeta(HIRES_META + runId);
+    if (!raw) return [];
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { return []; }
+    if (!Array.isArray(parsed)) return [];
+    const out: CoordinationHireRecord[] = [];
+    for (const row of parsed) {
+      if (typeof row !== 'object' || row === null) continue;
+      const { memberId, roleId, hiredAt } = row as Record<string, unknown>;
+      if (typeof memberId !== 'string' || !memberId) continue;
+      if (typeof roleId !== 'string' || !roleId) continue;
+      if (typeof hiredAt !== 'string' || !hiredAt) continue;
+      out.push({ memberId, roleId, hiredAt });
+    }
+    return out;
+  }
+
+  /** Append-only, idempotente por miembro: re-abrir a alguien ya anotado no lo duplica. */
+  private recordHire(runId: string, memberId: string, roleId: string, at: string): void {
+    const hires = this.listHires(runId);
+    if (hires.some((hire) => hire.memberId === memberId)) return;
+    hires.push({ memberId, roleId, hiredAt: at });
+    this.deps.repo.setMeta(HIRES_META + runId, JSON.stringify(hires));
+  }
+
+  /**
    * Las `latte_ask` todavía sin responder de un run. `listGates` excluye
    * `all_blocked_on_ask` a propósito (una pregunta no es un gate de
    * aprobar/rechazar), así que sin esta lista un run suspendido por una
@@ -945,6 +990,14 @@ export class CoordinationEngine {
         });
       }
       this.deps.repo.updateCoordinationTask(task.id, { status: 'dispatched', assignedMemberId: session.id }, now);
+      // LA CONTRATACIÓN, anotada donde pasa. `coordinationHires` estaba
+      // testeado en tres archivos del renderer y no lo alimentaba NADIE, así
+      // que la bitácora no mostró jamás una sola alta. Se escribe acá adentro,
+      // en la misma transacción sincrónica que commitea el despacho: si el
+      // despacho se va al rollback, la contratación que nunca se usó se va con
+      // él. `reservedMemberId` null significa que el camino fue `addMember`,
+      // o sea que este miembro no existía hasta hace un segundo.
+      if (reservedMemberId == null) this.recordHire(run.id, session.id, task.roleId, now);
       return { ok: true, dispatch };
     };
     // El reclamo se tomo en autocommit ANTES de esta transaccion, asi que un

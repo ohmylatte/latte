@@ -884,6 +884,17 @@ export interface CoordinationMemberSupport {
   runtimeConfirmed: boolean;
 }
 
+/**
+ * A member hired for a run, as the bitácora shows it. `roleName` is resolved
+ * by the backend: the surface never renders a raw id.
+ */
+export interface CoordinationHireView {
+  memberId: string;
+  roleId: string;
+  roleName: string;
+  hiredAt: string;
+}
+
 /** One row per active coordination run app-wide, for the global "Equipos activos" strip (task 6.34) -- the only app-scoped read in this change. */
 export interface CoordinationActiveRunSummary {
   runId: string;
@@ -1274,6 +1285,13 @@ export interface LatteAPI {
    * visit: the last visit is the last one.
    */
   markCoordinationSeen(workId: string): Promise<string>;
+  /**
+   * The run's hires, oldest first: who joined the team, with which role, when.
+   * The bitácora rendered hire rows from a prop nothing ever filled; this is
+   * its source. An unreadable record reads as an empty list — a bitácora never
+   * falls over because one stored value went bad.
+   */
+  listCoordinationHires(runId: string): Promise<CoordinationHireView[]>;
   /** Fires on a run/task/dispatch/gate change, so the renderer can route an event from a Brand the person is not currently looking at (task 6.37). */
   onCoordinationEvent(callback: (event: CoordinationEvent) => void): () => void;
 }

@@ -220,7 +220,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   // runtime process, no loopback MCP server, no coordination event ever
   // fires in the browser preview.
   coordinationRuntimeSupport:async()=>[],listActiveCoordinationRuns:async()=>[],
-  getCoordinationGlobalBudget:async()=>({state:'unset'}),setCoordinationGlobalBudget:unavailable,markCoordinationSeen:unavailable,
+  getCoordinationGlobalBudget:async()=>({state:'unset'}),setCoordinationGlobalBudget:unavailable,markCoordinationSeen:unavailable,listCoordinationHires:async()=>[],
   onCoordinationEvent:()=>()=>{},
   approveDecision:async(decisionId,edited)=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='approved';if(edited)d.text=edited;d.decidedAt=now();return d;}),
   rejectDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='rejected';d.decidedAt=now();return d;}),
