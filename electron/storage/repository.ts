@@ -1219,6 +1219,20 @@ export class LatteRepository {
     return this.db.run("UPDATE coordination_task SET status = 'dispatched', updated_at = ? WHERE id = ? AND status = 'ready'", [updatedAt, id]) > 0;
   }
 
+  /**
+   * El compare-and-set inverso: devuelve a `ready` SOLO la tarea que este
+   * despacho había reclamado. El `WHERE status = 'dispatched'` es lo que hace
+   * que soltar el reclamo no pueda pisar a quien escribió después — si
+   * `cancelRun` (o un reporte, o un barrido) ya movió la fila mientras se
+   * levantaba el proceso, este UPDATE no toca nada y devuelve `false`.
+   */
+  releaseCoordinationTaskFromDispatch(id: string, updatedAt: string): boolean {
+    return this.db.run(
+      "UPDATE coordination_task SET status = 'ready', assigned_member_id = NULL, updated_at = ? WHERE id = ? AND status = 'dispatched'",
+      [updatedAt, id],
+    ) > 0;
+  }
+
   /** Compare-and-set sobre el gate: dos clics en "Aprobar" compiten por esta fila y uno solo gana. */
   claimCoordinationDispatchFromGate(id: string, startedAt: string): boolean {
     return this.db.run("UPDATE coordination_dispatch SET status = 'dispatched', started_at = ? WHERE id = ? AND status = 'pending_approval'", [startedAt, id]) > 0;

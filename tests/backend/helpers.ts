@@ -165,12 +165,47 @@ export function approveCoordinationRoles(b: TestBackend, runId: string, ...roleI
   b.repo.setMeta('coordination_approved_roles:' + runId, JSON.stringify(roleIds));
 }
 
-export function fakeCoordinationHub(b: TestBackend, members: FakeTeamMember[]) {
+export interface Deferred<T = void> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+}
+
+/**
+ * Una espera que el test decide cuándo termina. Es la única forma de reproducir
+ * la carrera que este motor tiene que sobrevivir: levantar un proceso de agente
+ * tarda SEGUNDOS, y el mundo cambia adentro de esa ventana. Sin poder parar el
+ * await en el medio, el test corre las dos mitades pegadas y no prueba nada.
+ */
+export function deferred<T = void>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+/** Cede el control hasta que todo lo que ya estaba encolado corrió: deja a un `startDispatch` en vuelo parado en su await. */
+export function settle(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+export interface FakeCoordinationHubOptions {
+  /**
+   * La espera del spawn, bajo control del test: `openMember`/`addMember` la
+   * esperan antes de devolver la sesión, igual que el hub real espera a que el
+   * proceso arranque. Sin esto el fake resuelve en el mismo tick y ninguna
+   * carrera del camino de despacho es reproducible.
+   */
+  hold?: () => Promise<void> | void;
+}
+
+export function fakeCoordinationHub(b: TestBackend, members: FakeTeamMember[], options: FakeCoordinationHubOptions = {}) {
   const send = vi.spyOn(b.hub, 'send').mockResolvedValue(undefined);
   vi.spyOn(b.hub, 'listTeam').mockImplementation((workId: string) => members.filter((m) => m.workId === workId).map(fakeTeamMemberShape));
   vi.spyOn(b.hub, 'openMember').mockImplementation(async (memberId: string) => {
     const member = members.find((m) => m.id === memberId);
     if (!member) throw new Error(`fakeCoordinationHub: unknown member ${memberId}`);
+    await options.hold?.();
     member.status = 'idle';
     return fakeSessionFor(member);
   });
@@ -179,7 +214,10 @@ export function fakeCoordinationHub(b: TestBackend, members: FakeTeamMember[]) {
     // 'working' once something is actually sent to it (`hub.send`, mocked
     // above) — a test simulating a busy member sets `status` itself.
     const member: FakeTeamMember = { id: `mem_fake_${members.length + 1}`, workId: input.workId, roleId: input.roleId, status: 'idle' };
+    // El alta entra en la lista ANTES de la espera, igual que el hub real:
+    // `insertMember` es sincrónico y el proceso se levanta después.
     members.push(member);
+    await options.hold?.();
     return fakeSessionFor(member);
   });
   return { send, members };

@@ -179,6 +179,23 @@ function isDagStatus(status: CoordinationTaskRecord['status']): DagTask['status'
 }
 
 export class CoordinationEngine {
+  /**
+   * Los miembros que un despacho YA eligió y todavía está levantando.
+   *
+   * `resolveTargetMember` leía `hub.listTeam`, elegía al ocioso y recién
+   * después esperaba a `hub.openMember` — segundos de spawn. Dos despachos
+   * concurrentes del MISMO rol leían la misma foto y elegían al mismo miembro:
+   * el `opening` del hub evita spawnear dos procesos, pero las dos tareas
+   * quedaban asignadas a la misma persona y la segunda pisaba a la primera con
+   * su `hub.send`. La elección se RESERVA en el mismo tick en que se toma, y
+   * quien viene atrás ve a ese miembro tan ocupado como si ya estuviera
+   * trabajando (que es exactamente lo que va a estar en un segundo).
+   *
+   * En memoria y no en la base a propósito: "ocioso" sale de `hub.listTeam`,
+   * estado vivo de ESTE proceso. No sobrevive a un reinicio, y no debe.
+   */
+  private readonly assigning = new Set<string>();
+
   constructor(private readonly deps: CoordinationEngineDeps) {}
 
   /**
@@ -800,10 +817,25 @@ export class CoordinationEngine {
       return { status: 'pending_approval', taskId: task.id, dispatchId: dispatch.id };
     }
 
-    let session: Awaited<ReturnType<CoordinationEngine['resolveTargetMember']>>;
+    // (El diseño pedía además un chequeo barato del estado del run ACÁ, antes
+    // de pagar el spawn. No se escribió: entre la lectura del run al entrar a
+    // este método y esta línea no hay un solo `await` —el reclamo, el gate y la
+    // autoridad son todos sincrónicos—, así que releer devolvería exactamente
+    // lo mismo. Sería una rama muerta que ningún test puede alcanzar. El
+    // chequeo que importa es el de la confirmación, abajo, que sí tiene un
+    // spawn entero de por medio.)
+    let session: Awaited<ReturnType<AgentHub['openMember']>>;
+    // La elección del miembro y su reserva pasan en el MISMO tick (ver
+    // `assigning`); lo lento —levantar el proceso— viene después.
+    let reservedMemberId: string | null = null;
     try {
-      session = await this.resolveTargetMember(run.workId, task.roleId, this.approvedRoleIds(run));
+      const target = this.reserveTargetMember(run.workId, task.roleId, this.approvedRoleIds(run));
+      reservedMemberId = target.reuseMemberId;
+      session = await (target.reuseMemberId
+        ? this.deps.hub.openMember(target.reuseMemberId, target.context)
+        : this.deps.hub.addMember({ ...target.context, roleId: task.roleId }));
     } catch (error) {
+      if (reservedMemberId) this.assigning.delete(reservedMemberId);
       // Un rol que la persona no aprobó no vuelve a la cola a reintentarse
       // eternamente ni desaparece en silencio: la tarea queda `blocked` con la
       // razón escrita en la bitácora, para que la persona la vea y el
@@ -822,6 +854,19 @@ export class CoordinationEngine {
     // haría rollback del asiento `denied` y de la suspensión, que son
     // justamente lo que hay que dejar escrito): se devuelve y se tira afuera.
     const runTransaction = (): { ok: true; dispatch: CoordinationDispatchRecord } | { ok: false; error: LatteError } => {
+      // LA CONFIRMACIÓN. `run` se leyó ANTES de levantar el proceso, y levantar
+      // un proceso son segundos: en el medio la persona pudo cancelar o pausar.
+      // Sin esta relectura, `cancelRun` escribía `cancelled`, su barrido no
+      // encontraba esta tarea (todavía no había fila de despacho) y el despacho
+      // commiteaba y mandaba igual — el escenario del brief, medido:
+      // `{"runStatusAfterCancel":"cancelled","hubSendCalls":1,"openReservations":1}`.
+      // Acá adentro, en la misma transacción que escribe la reserva, gana quien
+      // escribió último en la base, no quien leyó primero.
+      const live = this.deps.repo.getCoordinationRun(run.id);
+      if (live.status !== 'running') {
+        this.abortDispatchOnRunNotRunning(run, task, existingPending, prompt, now, live.status);
+        return { ok: false, error: new LatteError('RUN_NOT_ACTIVE', `Run is ${live.status}`) };
+      }
       const budget = this.readRunBudget(run);
       const inFlight = this.countInFlightDispatches(run.id, existingPending?.id);
       if (budget.maxConcurrent != null && inFlight >= budget.maxConcurrent) {
@@ -893,37 +938,44 @@ export class CoordinationEngine {
     // constraint) hace rollback de la transaccion pero NO del reclamo: la
     // tarea quedaba `dispatched` para siempre, sin reserva y sin despacho, y
     // cada intento siguiente repetia el ciclo. Soltar y recien ahi relanzar.
-    let outcome: ReturnType<typeof runTransaction>;
+    // La reserva del miembro se suelta pase lo que pase: a partir del commit
+    // el estado real del miembro (`working`) es lo que lo protege, y un fallo
+    // no puede dejarlo marcado como "en asignación" para siempre.
     try {
-      outcome = this.deps.repo.transaction(runTransaction);
-    } catch (error) {
-      this.releaseDispatchClaim(task.id, existingPending, now);
-      throw error;
-    }
-    if (!outcome.ok) throw outcome.error;
-    const dispatched = outcome.dispatch;
+      let outcome: ReturnType<typeof runTransaction>;
+      try {
+        outcome = this.deps.repo.transaction(runTransaction);
+      } catch (error) {
+        this.releaseDispatchClaim(task.id, existingPending, now);
+        throw error;
+      }
+      if (!outcome.ok) throw outcome.error;
+      const dispatched = outcome.dispatch;
 
-    // `hub.send` es el UNICO efecto real, y corre despues del commit: si el
-    // proceso del miembro se murio entre `resolveTargetMember` y aca,
-    // `AgentHub.route` tira NotFoundError y la transaccion ya escribio una
-    // reserva `reserved`, un despacho `dispatched` y una tarea `dispatched`
-    // que nadie deshacia. Nada se ejecuto, asi que la reserva se cierra SIN
-    // asiento de gasto: no se cobra un despacho que nunca salio.
-    try {
-      await this.deps.hub.send(session.id, prompt);
-    } catch (error) {
-      this.deps.repo.transaction(() => {
-        if (dispatched.reservationId) this.deps.repo.settleCoordinationCostReservation(dispatched.reservationId, null, now, false);
-        this.deps.repo.updateCoordinationDispatch(dispatched.id, {
-          status: 'cancelled', outcome: 'not_sent', summary: error instanceof Error ? error.message : String(error), settledAt: now,
+      // `hub.send` es el UNICO efecto real, y corre despues del commit: si el
+      // proceso del miembro se murio entre `resolveTargetMember` y aca,
+      // `AgentHub.route` tira NotFoundError y la transaccion ya escribio una
+      // reserva `reserved`, un despacho `dispatched` y una tarea `dispatched`
+      // que nadie deshacia. Nada se ejecuto, asi que la reserva se cierra SIN
+      // asiento de gasto: no se cobra un despacho que nunca salio.
+      try {
+        await this.deps.hub.send(session.id, prompt);
+      } catch (error) {
+        this.deps.repo.transaction(() => {
+          if (dispatched.reservationId) this.deps.repo.settleCoordinationCostReservation(dispatched.reservationId, null, now, false);
+          this.deps.repo.updateCoordinationDispatch(dispatched.id, {
+            status: 'cancelled', outcome: 'not_sent', summary: error instanceof Error ? error.message : String(error), settledAt: now,
+          });
+          this.deps.repo.updateCoordinationTask(task.id, { status: 'ready', assignedMemberId: null }, now);
         });
-        this.deps.repo.updateCoordinationTask(task.id, { status: 'ready', assignedMemberId: null }, now);
-      });
+        this.touch(run.workId, run.id);
+        throw error;
+      }
       this.touch(run.workId, run.id);
-      throw error;
+      return { status: 'dispatched', taskId: task.id, dispatchId: dispatched.id };
+    } finally {
+      if (reservedMemberId) this.assigning.delete(reservedMemberId);
     }
-    this.touch(run.workId, run.id);
-    return { status: 'dispatched', taskId: task.id, dispatchId: dispatched.id };
   }
 
   /** El reclamo se suelta intacto: la tarea vuelve a `ready`, o el gate vuelve a la mesa tal como estaba. */
@@ -971,6 +1023,40 @@ export class CoordinationEngine {
     // no va a resolverse sola.
     this.recomputeReadiness(run.id, now);
     this.touch(run.workId, run.id);
+  }
+
+  /**
+   * El run dejó de correr mientras se levantaba el proceso. Nada se reserva,
+   * nada se inserta, nada sale por `hub.send`; el reclamo se suelta con un
+   * COMPARE-AND-SET (`WHERE status='dispatched'`) para no pisar a quien escribió
+   * después —`cancelRun` liquidando, un barrido, un reporte— y queda constancia
+   * en la bitácora, que se deriva de `coordination_dispatch`: sin una fila, la
+   * persona vería una tarea que vuelve sola a la cola y ninguna explicación.
+   *
+   * NO abre transacción: los dos llamadores ya están adentro de una (el de la
+   * confirmación por estar dentro de `runTransaction`, el barato porque la abre
+   * él). `repo.transaction` es un `BEGIN` pelado y SQLite no anida.
+   */
+  private abortDispatchOnRunNotRunning(
+    run: CoordinationRunRecord,
+    task: CoordinationTaskRecord,
+    existingPending: CoordinationDispatchRecord | null,
+    prompt: string,
+    now: string,
+    status: CoordinationRunRecord['status'],
+  ): void {
+    const summary = `Despacho abortado: el run pasó a ${status} mientras se levantaba el miembro`;
+    this.deps.repo.releaseCoordinationTaskFromDispatch(task.id, now);
+    if (existingPending) {
+      this.deps.repo.updateCoordinationDispatch(existingPending.id, { status: 'cancelled', outcome: 'run_not_active', summary, settledAt: now });
+    } else {
+      const attempt = this.deps.repo.listCoordinationDispatches(run.id).filter((d) => d.taskId === task.id).length + 1;
+      this.deps.repo.insertCoordinationDispatch({
+        id: newId('cdp'), runId: run.id, taskId: task.id, memberId: '', attempt, status: 'cancelled',
+        gateId: null, prompt, outcome: 'run_not_active', summary, filesJson: null, reservationId: null,
+        createdAt: now, startedAt: null, settledAt: now,
+      });
+    }
   }
 
   private abortDispatchClaim(taskId: string, existingPending: CoordinationDispatchRecord | null, now: string, reason: string): void {
@@ -1477,15 +1563,23 @@ export class CoordinationEngine {
    * silencio, sin ningún gate. Un rol ya presente en el Trabajo se reutiliza
    * como siempre — esto sólo frena CONTRATAR a alguien nuevo.
    */
-  private async resolveTargetMember(workId: string, roleId: string, approvedRoles: Set<string> | null = null) {
+  private reserveTargetMember(workId: string, roleId: string, approvedRoles: Set<string> | null = null): { reuseMemberId: string | null; context: MemberContext } {
     const team = this.deps.hub.listTeam(workId);
     const candidates = team.filter((m) => m.roleId === roleId && m.status !== 'ended');
-    const idle = candidates.find((m) => m.status !== 'working');
+    // Un miembro que otro despacho ya eligió cuenta como ocupado: va a estarlo
+    // en cuanto termine de levantarse. Sin esto, dos despachos concurrentes del
+    // mismo rol elegían al mismo y el segundo `hub.send` pisaba al primero.
+    const idle = candidates.find((m) => m.status !== 'working' && !this.assigning.has(m.id));
     if (candidates.length > 0 && !idle) throw new LatteError('MEMBER_BUSY', `Every ${roleId} member is already working`);
     if (candidates.length === 0 && approvedRoles && !approvedRoles.has(roleId)) {
       throw new LatteError('ROLE_NOT_APPROVED', `Hiring a ${roleId} was not part of the approved plan; it needs its own approval`);
     }
     const context = this.deps.memberContext(workId);
-    return idle ? this.deps.hub.openMember(idle.id, context) : this.deps.hub.addMember({ ...context, roleId });
+    // SINCRÓNICO, en el mismo tick de la elección: el llamador recién después
+    // espera al spawn, y suelta la reserva en su `finally`. Una contratación no
+    // se reserva porque su id todavía no existe: `hub.addMember` acuña uno
+    // nuevo, con el que nadie puede colisionar.
+    if (idle) this.assigning.add(idle.id);
+    return { reuseMemberId: idle?.id ?? null, context };
   }
 }
