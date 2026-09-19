@@ -179,6 +179,15 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
       // igual, sin cargo. Una muerte real (cualquier otro motivo) sigue
       // contando como el fracaso que es.
       service.settleCoordinationDispatchesForMember(event.chatId, { incrementAttempts: event.reason !== 'stopped' });
+      // F1: un turno también termina MURIÉNDOSE. El cierre que `finishRunIfComplete`
+      // dejó aparcado esperando al coordinador (D17) se destrababa SÓLO con un
+      // `status:'idle'`, y un proceso que se cae —o que la persona pausa— no
+      // emite `idle` nunca: emite esto, y esta rama hacía `return` antes de
+      // avisar. El run quedaba `running` para siempre con todo su trabajo hecho,
+      // ocupando un cupo app-wide. Va después de liquidar, por lo mismo que
+      // `hub.stop` va primero: se cierran las cuentas y recién ahí se evalúa el
+      // final.
+      service.noteCoordinationTurnEnded(event.chatId);
       forward(event);
       return;
     }

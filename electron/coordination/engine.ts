@@ -1478,12 +1478,20 @@ export class CoordinationEngine {
    * él, se vuelve a evaluar. Y se re-evalúa DE VERDAD, no se cierra a ciegas:
    * si en ese turno creó una tarea nueva, `finishRunIfComplete` la ve y el run
    * sigue vivo con ella.
+   *
+   * F1: se re-evalúa TODO lo pendiente, no sólo lo que esperaba a ESTE miembro.
+   * El filtro por coordinador comparaba contra `run.coordinatorMemberId` o el
+   * meta, dos cosas que pueden estar vacías o desfasadas (un run arrancado sin
+   * coordinador, el permiso movido a otro miembro a mitad de camino), y un
+   * cierre que no le "pertenecía" a nadie no se destrababa nunca. Re-evaluar de
+   * más es gratis y no puede cerrar nada de menos: `finishRunIfComplete` vuelve
+   * a mirar tareas, despachos, reservas y el turno del coordinador, y si
+   * todavía está ocupado el run se vuelve a aparcar igual.
    */
   noteTurnEnded(memberId: string): void {
     if (!memberId || this.pendingClose.size === 0) return;
     // Se recorre lo PENDIENTE, no el miembro: `findMember` no sirve acá (el
-    // coordinador puede no tener fila propia, y de todas formas lo que importa
-    // es qué cierre estaba esperando a quién). Como mucho hay un puñado.
+    // coordinador puede no tener fila propia). Como mucho hay un puñado.
     const now = this.deps.clock();
     for (const runId of [...this.pendingClose]) {
       let run: CoordinationRunRecord;
@@ -1493,8 +1501,6 @@ export class CoordinationEngine {
         this.pendingClose.delete(runId);
         continue;
       }
-      const coordinatorId = run.coordinatorMemberId || this.deps.repo.getMeta('coordination_coordinator:' + run.workId);
-      if (coordinatorId !== memberId) continue;
       this.finishRunIfComplete(runId, now);
       this.touch(run.workId, run.id);
     }
