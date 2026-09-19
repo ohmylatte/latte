@@ -29,7 +29,7 @@ import type {
   LatteRepository,
 } from '../storage/repository';
 import { canAddTask, computeBlockedTasks, computeReadyTasks, computeTaskDepth, wouldCreateCycle, type DagEdge, type DagTask } from './dag';
-import { assertBudgetConfigured, BudgetUnsetError, requireCoordinationBudget, reserveDispatch, type BudgetUsage } from './budget';
+import { assertBudgetConfigured, BudgetUnsetError, readCoordinationGlobalBudget, requireCoordinationBudget, reserveDispatch, type BudgetUsage, type CoordinationGlobalBudgetRead } from './budget';
 import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK } from './limits';
 
 /**
@@ -827,8 +827,19 @@ export class CoordinationEngine {
       // Trabajo: se guardaba en meta y no lo leía nadie, así que la persona
       // que ponía 40 no tenía tope ninguno. Suspende sólo al run que chocó.
       const globalBudget = this.readGlobalBudget();
-      if (globalBudget) {
-        const globalDecision = reserveDispatch(globalBudget, this.globalUsage());
+      // Ilegible NO es "sin tope": es un dato roto, y un dato roto DENIEGA,
+      // con una razón que se lee en la bitácora y en la suspensión como
+      // cualquier otra — no como una excepción opaca desde el fondo de la
+      // pila (crítico 8).
+      if (globalBudget.kind === 'invalid') {
+        const reason = 'global_budget_invalid';
+        this.writeLedgerDenied(run.id, reason);
+        if (run.status === 'running') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, reason);
+        this.abortDispatchClaim(task.id, existingPending, now, reason);
+        return { ok: false, error: new LatteError('GLOBAL_BUDGET_INVALID', 'The app-wide dispatch cap could not be read; fix it in Settings before dispatching again.') };
+      }
+      if (globalBudget.kind === 'set') {
+        const globalDecision = reserveDispatch(globalBudget.budget, this.globalUsage());
         if (!globalDecision.ok) {
           const reason = `global_${globalDecision.reason}`;
           this.writeLedgerDenied(run.id, reason);
@@ -1380,15 +1391,15 @@ export class CoordinationEngine {
 
   /**
    * El tope app-wide (`coordination_budget_global`, task 6.35), leído fresco
-   * en cada despacho tal como su propio doc comment promete. Ausente o
-   * ilegible ⇒ `null`: sin tope, nunca un tope inventado.
+   * en cada despacho tal como su propio doc comment promete — y por el MISMO
+   * parser que usa el getter que alimenta la pantalla (crítico 8). Antes eran
+   * dos lecturas distintas de los mismos bytes: una tiraba y la otra devolvía
+   * `null`, así que la persona leía "sin tope global" mientras cada despacho
+   * se caía. Un solo parser, tres estados, el mismo veredicto en los dos
+   * lados.
    */
-  private readGlobalBudget(): CoordinationBudget | null {
-    const raw = this.deps.repo.getMeta('coordination_budget_global');
-    if (!raw) return null; // AUSENTE es un estado humano explícito: no hay tope.
-    // Ilegible NO es lo mismo que ausente: antes un tope corrupto desaparecía
-    // en silencio y el despacho pasaba sin cap. Acá tira, y tirar NIEGA.
-    return requireCoordinationBudget(JSON.parse(raw));
+  private readGlobalBudget(): CoordinationGlobalBudgetRead {
+    return readCoordinationGlobalBudget(this.deps.repo.getMeta('coordination_budget_global'));
   }
 
   /** `excludeDispatchId` es el despacho que se está decidiendo ahora: ya reclamado, todavía no concedido. */

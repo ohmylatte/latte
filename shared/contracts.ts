@@ -668,6 +668,22 @@ export interface CoordinationBudget {
 export type CoordinatorGrant = string | null;
 
 /**
+ * El tope app-wide, tal como cruza la frontera IPC: TRES estados, no dos.
+ *
+ * Antes este getter devolvía `CoordinationBudget | null` y colapsaba
+ * "nunca se configuró" con "los bytes guardados no se pueden leer" en el
+ * mismo `null`, que la pantalla renderiza como "sin tope global". Mientras
+ * tanto el camino de despacho denegaba cada despacho contra esos mismos
+ * bytes. La pantalla mentía, y la mentira era exactamente la inversa de lo
+ * que pasaba. `invalid` existe para que la interfaz pueda decir "el tope no
+ * se pudo leer, revisalo" en vez de "sin tope".
+ */
+export type CoordinationGlobalBudgetView =
+  | { state: 'unset' }
+  | { state: 'set'; budget: CoordinationBudget }
+  | { state: 'invalid' };
+
+/**
  * Phase 3: the run/task/dispatch surface, reachable only through IPC in this
  * phase (no MCP transport exists yet — see `electron/coordination/engine.ts`).
  * These are read views over `LatteRepository`'s coordination rows, never the
@@ -1203,8 +1219,8 @@ export interface LatteAPI {
   coordinationRuntimeSupport(workId: string): Promise<CoordinationMemberSupport[]>;
   /** The global "Equipos activos" strip: every active run across every Brand, newest-updated first. The only app-scoped read in this change. */
   listActiveCoordinationRuns(): Promise<CoordinationActiveRunSummary[]>;
-  /** The OPTIONAL advanced app-wide dispatch cap, on top of (never instead of) each Work's own budget. `null` = unset = no extra cap applied -- never an invented limit. It counts the dispatches of the runs that are CURRENTLY active, not the install's whole history. */
-  getCoordinationGlobalBudget(): Promise<CoordinationBudget | null>;
+  /** The OPTIONAL advanced app-wide dispatch cap, on top of (never instead of) each Work's own budget. `unset` = no extra cap applied -- never an invented limit; `invalid` = the stored value cannot be read, which is NOT "no cap" (the dispatch path denies against those same bytes). It counts the dispatches of the runs that are CURRENTLY active, not the install's whole history. */
+  getCoordinationGlobalBudget(): Promise<CoordinationGlobalBudgetView>;
   /** `null` clears the cap (back to unset, no extra cap) -- a cap you cannot take off is a trap, not a setting. Any other value goes through the same validator every coordination budget does. */
   setCoordinationGlobalBudget(budget: CoordinationBudget | null): Promise<CoordinationBudget | null>;
   /** Fires on a run/task/dispatch/gate change, so the renderer can route an event from a Brand the person is not currently looking at (task 6.37). */

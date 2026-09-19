@@ -34,6 +34,7 @@ import type {
   CoordinationAskView,
   CoordinationAuthorityMode,
   CoordinationBudget,
+  CoordinationGlobalBudgetView,
   CoordinationEvent,
   CoordinationGateView,
   CoordinationLogEntryView,
@@ -101,7 +102,7 @@ import { EngramClient, memoryProjectFor } from '../memory/engram';
 import { AccountStore } from '../agents/accounts';
 import { isAccountRuntime, isChatRuntime, type AgentHub, type MemberContext } from '../agents/hub';
 import { CoordinationEngine } from '../coordination/engine';
-import { requireCoordinationBudget } from '../coordination/budget';
+import { readCoordinationGlobalBudget, requireCoordinationBudget } from '../coordination/budget';
 import type { CoordinationInjectionPlanner } from '../coordination/injection';
 import type { McpCatalog } from '../agents/mcp';
 import { RoleCatalog } from '../agents/roles';
@@ -1753,14 +1754,14 @@ export class LatteService implements BackendApi {
    * Lo que cuenta son los despachos de los runs VIVOS, no el histórico de la
    * instalación; ver `CoordinationEngine.globalUsage`.
    */
-  async getCoordinationGlobalBudget(): Promise<CoordinationBudget | null> {
-    const raw = this.deps.repo.getMeta('coordination_budget_global');
-    if (!raw) return null;
-    try {
-      return requireCoordinationBudget(JSON.parse(raw));
-    } catch {
-      return null;
-    }
+  async getCoordinationGlobalBudget(): Promise<CoordinationGlobalBudgetView> {
+    // EL MISMO parser que usa el camino de despacho (crítico 8). Devolver
+    // `null` ante bytes ilegibles hacía que la pantalla dijera "sin tope
+    // global" mientras cada despacho se denegaba contra ese mismo valor.
+    const read = readCoordinationGlobalBudget(this.deps.repo.getMeta('coordination_budget_global'));
+    if (read.kind === 'unset') return { state: 'unset' };
+    if (read.kind === 'set') return { state: 'set', budget: read.budget };
+    return { state: 'invalid' }; // los bytes crudos no cruzan IPC: no son dato de la persona, son basura
   }
 
   /**

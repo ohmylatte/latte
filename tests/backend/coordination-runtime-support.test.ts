@@ -120,14 +120,14 @@ describe('LatteService.get/setCoordinationGlobalBudget (task 6.35)', () => {
 
   it('unset reads back null, and applies no extra cap (never an invented limit)', async () => {
     b = await makeBackend();
-    expect(await b.service.getCoordinationGlobalBudget()).toBeNull();
+    expect(await b.service.getCoordinationGlobalBudget()).toEqual({ state: 'unset' });
   });
 
   it('round-trips a set value, reusing the requireCoordinationBudget validator (no implicit unlimited)', async () => {
     b = await makeBackend();
     const saved = await b.service.setCoordinationGlobalBudget({ maxDispatches: 100 });
     expect(saved?.maxDispatches).toBe(100);
-    expect(await b.service.getCoordinationGlobalBudget()).toEqual(saved);
+    expect(await b.service.getCoordinationGlobalBudget()).toEqual({ state: 'set', budget: saved });
     // `{maxDispatches: null}` (un ilimitado sin confirmar) sigue siendo un error; pasar `null` a secas es OTRA cosa: borrar el tope.
     await expect(b.service.setCoordinationGlobalBudget({ maxDispatches: null })).rejects.toThrow();
   });

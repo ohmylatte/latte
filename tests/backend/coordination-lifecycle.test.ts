@@ -154,11 +154,11 @@ describe('CoordinationEngine — ciclo de vida del despacho', () => {
 
     it('se puede borrar desde la interfaz: `null` saca el tope', async () => {
       await b.service.setCoordinationGlobalBudget({ maxDispatches: 1 });
-      expect(await b.service.getCoordinationGlobalBudget()).toMatchObject({ maxDispatches: 1 });
+      expect(await b.service.getCoordinationGlobalBudget()).toMatchObject({ state: 'set', budget: { maxDispatches: 1 } });
 
       expect(await b.service.setCoordinationGlobalBudget(null)).toBeNull();
 
-      expect(await b.service.getCoordinationGlobalBudget()).toBeNull();
+      expect(await b.service.getCoordinationGlobalBudget()).toEqual({ state: 'unset' });
     });
   });
 

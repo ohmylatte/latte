@@ -586,6 +586,7 @@ const es = {
   'coordination.globalBudget.setLabel': 'Nuevo tope',
   'coordination.globalBudget.save': 'Guardar',
   'coordination.globalBudget.clear': 'Sacar el tope',
+  'coordination.globalBudget.invalid': 'El tope global no se pudo leer, revisalo: mientras tanto cada despacho se deniega.',
   // --- Resultados: lo que el trabajo entregó ----------------------------
   'resultados.tab': 'Resultados',
   'resultados.region': 'Resultados',
@@ -1166,6 +1167,7 @@ const en: Record<MessageKey, string> = {
   'coordination.globalBudget.setLabel': 'New cap',
   'coordination.globalBudget.save': 'Save',
   'coordination.globalBudget.clear': 'Remove the cap',
+  'coordination.globalBudget.invalid': 'The global cap could not be read — take a look: until it is fixed, every dispatch is denied.',
   // --- Resultados: what the work delivered ------------------------------
   'resultados.tab': 'Results',
   'resultados.region': 'Results',

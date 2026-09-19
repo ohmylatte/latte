@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, waitFor } from '@testing-library/react';
 import { I18nProvider } from './i18n';
-import type { CoordinationBudget } from '../shared/contracts';
+import type { CoordinationBudget, CoordinationGlobalBudgetView } from '../shared/contracts';
 
 /**
  * The optional app-wide coordination budget cap (autonomous-coordination
@@ -12,7 +12,7 @@ import type { CoordinationBudget } from '../shared/contracts';
  */
 
 const mocks = vi.hoisted(() => ({
-  getCoordinationGlobalBudget: vi.fn<() => Promise<CoordinationBudget | null>>(),
+  getCoordinationGlobalBudget: vi.fn<() => Promise<CoordinationGlobalBudgetView>>(),
   setCoordinationGlobalBudget: vi.fn<(budget: CoordinationBudget) => Promise<CoordinationBudget>>(),
 }));
 
@@ -45,19 +45,19 @@ describe('the global coordination budget cap in advanced settings (task 7.13)', 
   beforeEach(() => { mocks.getCoordinationGlobalBudget.mockReset(); mocks.setCoordinationGlobalBudget.mockReset(); });
 
   it('shows an honest "no global cap" when unset', async () => {
-    mocks.getCoordinationGlobalBudget.mockResolvedValue(null);
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'unset' });
     const { container } = mount();
     await waitFor(() => expect(container.querySelector('.coordination-global-budget')?.textContent).toContain('Sin presupuesto configurado'));
   });
 
   it('shows the configured cap when set', async () => {
-    mocks.getCoordinationGlobalBudget.mockResolvedValue({ maxDispatches: 40 });
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'set', budget: { maxDispatches: 40 } });
     const { container } = mount();
     await waitFor(() => expect(container.querySelector('.coordination-global-budget')?.textContent).toContain('40'));
   });
 
   it('saves a new cap through setCoordinationGlobalBudget, never inventing a limit on its own', async () => {
-    mocks.getCoordinationGlobalBudget.mockResolvedValue(null);
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'unset' });
     mocks.setCoordinationGlobalBudget.mockResolvedValue({ maxDispatches: 25 });
     const { container } = mount();
     await waitFor(() => expect(container.querySelector('.coordination-global-budget-input')).not.toBeNull());
@@ -67,8 +67,18 @@ describe('the global coordination budget cap in advanced settings (task 7.13)', 
     await waitFor(() => expect(mocks.setCoordinationGlobalBudget).toHaveBeenCalledWith({ maxDispatches: 25 }));
   });
 
+  // Crítico 8: "no se pudo leer" NO es "sin tope". El camino de despacho
+  // deniega contra esos mismos bytes, así que la pantalla que decía "sin tope
+  // global" estaba diciendo exactamente lo contrario de lo que pasaba.
+  it('un tope ilegible se declara ilegible, nunca se dibuja como "sin tope"', async () => {
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'invalid' });
+    const { container } = mount();
+    await waitFor(() => expect(container.querySelector('.coordination-global-budget-value')?.textContent).toContain('no se pudo leer'));
+    expect(container.querySelector('.coordination-global-budget-value')?.textContent).not.toContain('Sin presupuesto configurado');
+  });
+
   it('lives only in the advanced section — it does not render for any other settings section', async () => {
-    mocks.getCoordinationGlobalBudget.mockResolvedValue(null);
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'unset' });
     const { container } = mount({ section: 'workspace' });
     await waitFor(() => expect(container.querySelector('.settings-section')).not.toBeNull());
     expect(container.querySelector('.coordination-global-budget')).toBeNull();

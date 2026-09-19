@@ -81,6 +81,36 @@ export function requireCoordinationBudget(value: unknown): CoordinationBudget {
   };
 }
 
+/**
+ * El resultado de leer el tope app-wide (`coordination_budget_global`), en
+ * TRES estados, no dos.
+ *
+ * Crítico 8: había DOS lectores de estos mismos bytes con semánticas
+ * opuestas. El getter que alimenta la pantalla devolvía `null` —"sin tope"—
+ * ante un JSON ilegible; el lector del camino de despacho TIRABA ante esos
+ * mismos bytes, y tirar deniega. O sea: la pantalla decía "sin tope global"
+ * mientras cada despacho fallaba con un error opaco, y no había forma de que
+ * la persona relacionara una cosa con la otra.
+ *
+ * "Ausente" e "ilegible" son estados DISTINTOS y ninguno de los dos es "sin
+ * tope": ausente es una elección humana explícita (no hay cap extra),
+ * ilegible es un dato roto que hay que mirar. Este parser es el único lugar
+ * donde esos bytes se interpretan, y los dos lectores lo llaman.
+ */
+export type CoordinationGlobalBudgetRead =
+  | { kind: 'unset' }
+  | { kind: 'set'; budget: CoordinationBudget }
+  | { kind: 'invalid'; raw: string };
+
+export function readCoordinationGlobalBudget(raw: string | null | undefined): CoordinationGlobalBudgetRead {
+  if (raw == null || raw.trim().length === 0) return { kind: 'unset' };
+  try {
+    return { kind: 'set', budget: requireCoordinationBudget(JSON.parse(raw)) };
+  } catch {
+    return { kind: 'invalid', raw };
+  }
+}
+
 /** Running totals for one run, maintained by the caller and passed in fresh each time. */
 export interface BudgetUsage {
   dispatchesUsed: number;

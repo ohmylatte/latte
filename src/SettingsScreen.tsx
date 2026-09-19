@@ -1,7 +1,7 @@
 import { translate as t } from './i18n';
 import { useEffect, useState, type ReactNode } from 'react';
 import { ArrowLeft, HardDrive, Info, Plug, SlidersHorizontal, Sparkles, Wrench } from 'lucide-react';
-import type { AppInfo, CoordinationBudget } from '../shared/contracts';
+import type { AppInfo, CoordinationGlobalBudgetView } from '../shared/contracts';
 import { api, isDesktop } from './browser-api';
 import { ProvidersView } from './ProvidersView';
 import { ProfilesView } from './ProfilesView';
@@ -138,7 +138,10 @@ function ModeSection({ mode, onModeChange }: { mode: LatteMode; onModeChange: (m
  */
 function CoordinationGlobalBudgetSection({ onError }: { onError: (text: string) => void }) {
   const { t } = useI18n();
-  const [budget, setBudget] = useState<CoordinationBudget | null>(null);
+  // Tres estados, no dos: "nunca se configuró" y "los bytes guardados no se
+  // pueden leer" son cosas distintas, y la segunda NO se dibuja como "sin
+  // tope" — el camino de despacho deniega contra esos mismos bytes.
+  const [budget, setBudget] = useState<CoordinationGlobalBudgetView>({ state: 'unset' });
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   useEffect(() => { void api.getCoordinationGlobalBudget().then(setBudget).catch(e => onError(e instanceof Error ? e.message : String(e))); }, []);
@@ -147,7 +150,7 @@ function CoordinationGlobalBudgetSection({ onError }: { onError: (text: string) 
     if (!draft.trim() || !Number.isInteger(parsed) || parsed <= 0) return;
     setSaving(true);
     void api.setCoordinationGlobalBudget({ maxDispatches: parsed })
-      .then(next => { setBudget(next); setDraft(''); })
+      .then(next => { setBudget(next ? { state: 'set', budget: next } : { state: 'unset' }); setDraft(''); })
       .catch(e => onError(e instanceof Error ? e.message : String(e)))
       .finally(() => setSaving(false));
   };
@@ -157,7 +160,7 @@ function CoordinationGlobalBudgetSection({ onError }: { onError: (text: string) 
   const clear = () => {
     setSaving(true);
     void api.setCoordinationGlobalBudget(null)
-      .then(next => { setBudget(next); setDraft(''); })
+      .then(next => { setBudget(next ? { state: 'set', budget: next } : { state: 'unset' }); setDraft(''); })
       .catch(e => onError(e instanceof Error ? e.message : String(e)))
       .finally(() => setSaving(false));
   };
@@ -165,11 +168,13 @@ function CoordinationGlobalBudgetSection({ onError }: { onError: (text: string) 
     <h2>{t('coordination.globalBudget.kicker')}</h2>
     <p className="settings-lead">{t('coordination.globalBudget.help')}</p>
     <p className="coordination-global-budget-value">
-      {budget == null
-        ? t('coordination.budget.unset')
-        : budget.maxDispatches == null
-          ? t('coordination.budget.unlimited')
-          : t('coordination.budget.limited', { count: budget.maxDispatches })}
+      {budget.state === 'invalid'
+        ? t('coordination.globalBudget.invalid')
+        : budget.state === 'unset'
+          ? t('coordination.budget.unset')
+          : budget.budget.maxDispatches == null
+            ? t('coordination.budget.unlimited')
+            : t('coordination.budget.limited', { count: budget.budget.maxDispatches })}
     </p>
     <div className="settings-facts">
       <label>{t('coordination.globalBudget.setLabel')}
