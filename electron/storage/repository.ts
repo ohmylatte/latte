@@ -1388,6 +1388,20 @@ export class LatteRepository {
     return this.db.all<CoordinationAskRow>('SELECT * FROM coordination_ask WHERE run_id = ? AND answered_at IS NULL ORDER BY created_at ASC, id ASC', [runId]).map(toCoordinationAsk);
   }
 
+  /**
+   * La pregunta que se venció sin respuesta, CERRADA (F5).
+   *
+   * `answered_at` con la marca del cierre y `answer` intacto en `null`: ninguna
+   * respuesta real puede verse así (`answerCoordinationAsk` siempre escribe un
+   * texto), y así `listOpenCoordinationAsks` —que filtra por `answered_at IS
+   * NULL`— deja de publicarla sin que haga falta una columna nueva ni subir
+   * `SCHEMA_VERSION`. El `WHERE answered_at IS NULL` impide pisar una respuesta
+   * que entró en el mismo instante.
+   */
+  expireCoordinationAsk(id: string, expiredAt: string): void {
+    this.db.run('UPDATE coordination_ask SET answered_at = ? WHERE id = ? AND answered_at IS NULL', [expiredAt, id]);
+  }
+
   answerCoordinationAsk(id: string, answer: string, answeredAt: string): CoordinationAskRecord {
     this.getCoordinationAsk(id);
     this.db.run('UPDATE coordination_ask SET answer = ?, answered_at = ? WHERE id = ?', [answer, answeredAt, id]);

@@ -357,9 +357,18 @@ export class CoordinationEngine {
    * the next attempt instead of lying about being unblocked.
    */
   resumeRun(runId: string): CoordinationRunRecord {
-    const run = this.assertRunMutable(this.deps.repo.getCoordinationRun(runId));
-    if (run.status !== 'suspended') return run;
-    const updated = this.deps.repo.updateCoordinationRunStatus(runId, 'running', this.deps.clock(), null);
+    this.assertRunMutable(this.deps.repo.getCoordinationRun(runId));
+    // F5: reanudar es el momento más obvio en que alguien vuelve a mirar el
+    // run, y una pregunta cuyo plazo venció no puede seguir reteniendo sus
+    // tareas. El barrido puede devolverlo a `running` por su cuenta.
+    const now = this.deps.clock();
+    this.refreshAsks(runId, now);
+    const run = this.deps.repo.getCoordinationRun(runId);
+    if (run.status !== 'suspended') {
+      this.touch(run.workId, run.id);
+      return run;
+    }
+    const updated = this.deps.repo.updateCoordinationRunStatus(runId, 'running', now, null);
     this.touch(updated.workId, updated.id);
     return updated;
   }
@@ -394,11 +403,19 @@ export class CoordinationEngine {
 
   /** The gate kinds a human resolves with approve/reject: proposal, plan, dispatch, budget-exhausted. Open `latte_ask`s are a separate surface (`answerAsk`). */
   listGates(runId: string): CoordinationGate[] {
-    const run = this.deps.repo.getCoordinationRun(runId);
+    const terminal = this.deps.repo.getCoordinationRun(runId);
     // Un run terminado no tiene ninguna decisión pendiente: seguir ofreciendo
     // gates de algo que ya terminó es pedirle a la persona que decida sobre un
     // equipo que no existe, y cada clic rebotaba con un error desde el fondo.
-    if (run.status === 'done' || run.status === 'cancelled') return [];
+    if (terminal.status === 'done' || terminal.status === 'cancelled') return [];
+    // F5: mirar las decisiones de un run es uno de los tres momentos en que
+    // alguien vuelve a mirarlo, y un run suspendido por preguntas vencidas no
+    // tiene ningún otro camino de vuelta a `running` hasta el próximo arranque.
+    // El run se RELEE después: el barrido puede haberlo devuelto a `running`, y
+    // un gate de presupuesto derivado de la foto vieja sería una decisión sobre
+    // una suspensión que ya no existe.
+    this.refreshAsks(runId, this.deps.clock());
+    const run = this.deps.repo.getCoordinationRun(runId);
     const gates: CoordinationGate[] = [];
     // The proposal gate (task 6.9): a 'planning' run holds an unapproved
     // `latte_request_coordination` proposal. Unlike the 'plan' gate below,
@@ -788,6 +805,10 @@ export class CoordinationEngine {
    * pregunta no tenía ninguna salida en la UI salvo cancelar.
    */
   listOpenAsks(runId: string): CoordinationAskRecord[] {
+    // F5: se vence lo vencido ANTES de publicar la lista. Sin esto la pantalla
+    // ofrecía preguntas cuyo plazo ya había pasado, y contestarlas no
+    // destrababa a nadie.
+    this.refreshAsks(runId, this.deps.clock());
     return this.deps.repo.listOpenCoordinationAsks(runId);
   }
 
@@ -1435,7 +1456,7 @@ export class CoordinationEngine {
     // todo cierre: al arrancar la app y en cada reporte. Una pregunta vencida
     // sólo se consultaba (`askStatus`), así que nadie destrababa nunca la tarea
     // que esperaba por ella.
-    this.expireOverdueAsks(runId, now);
+    this.refreshAsks(runId, now);
     const tasks = this.deps.repo.listCoordinationTasks(runId);
     if (tasks.length === 0) return;
     if (!tasks.every((t) => t.status === 'done' || t.status === 'failed')) return;
@@ -1530,13 +1551,71 @@ export class CoordinationEngine {
     return this.deps.repo.listOpenCoordinationAsks(runId).filter((ask) => ask.deadlineAt > now);
   }
 
-  /** Una pregunta vencida devuelve su tarea a la cola: nadie contestó, pero el trabajo no queda sepultado. */
+  /**
+   * Una pregunta vencida devuelve su tarea a la cola Y SE CIERRA (F5).
+   *
+   * Cerrarla no era un detalle contable: `listOpenCoordinationAsks` filtra
+   * sólo por `answered_at IS NULL`, así que una pregunta vencida seguía
+   * publicándose en la pantalla —la persona podía contestar algo que ya no
+   * esperaba nadie— y `maybeSelfSuspendOnAsks` la seguía contando como
+   * bloqueo, con lo cual la pregunta SIGUIENTE suspendía el run entero aunque
+   * hubiera tareas `ready` para despachar. Se cierra sin respuesta: nadie
+   * contestó, y eso es exactamente lo que queda escrito.
+   */
   private expireOverdueAsks(runId: string, now: string): void {
     for (const ask of this.deps.repo.listOpenCoordinationAsks(runId)) {
-      if (ask.deadlineAt > now || !ask.taskId) continue;
+      if (ask.deadlineAt > now) continue;
+      this.deps.repo.expireCoordinationAsk(ask.id, now);
+      if (!ask.taskId) continue;
       const task = this.deps.repo.getCoordinationTask(ask.taskId);
       if (task.status === 'blocked') this.deps.repo.updateCoordinationTask(task.id, { status: 'ready', assignedMemberId: null }, now);
     }
+  }
+
+  /**
+   * El barrido de vencimientos MÁS su consecuencia: un run que se auto-suspendió
+   * porque TODO estaba esperando respuestas vuelve a `running` cuando esas
+   * respuestas ya no pueden llegar (F5).
+   *
+   * Antes el barrido vivía sólo adentro de `finishRunIfComplete`, y a un run
+   * `suspended` por `all_blocked_on_ask` no lo llama nadie: ni un reporte (no
+   * hay despachos en vuelo), ni un despacho (el run no está `running`). El
+   * equipo quedaba detenido hasta el próximo arranque de la app, con sus tareas
+   * listas y su plazo vencido hacía horas. Por eso corre también en las
+   * lecturas por IPC (`listGates`, `listOpenAsks`) y al reanudar: son los tres
+   * momentos en los que alguien vuelve a mirar ese run.
+   *
+   * Es idempotente y barato: sin preguntas abiertas no escribe una sola fila.
+   */
+  private refreshAsks(runId: string, now: string): void {
+    this.expireOverdueAsks(runId, now);
+    const run = this.deps.repo.getCoordinationRun(runId);
+    if (run.status !== 'suspended' || run.suspendReason !== 'all_blocked_on_ask') return;
+    // La suspensión se levanta cuando su MOTIVO deja de ser cierto, no sólo
+    // cuando no queda ninguna pregunta: con una pregunta vigente sobre una
+    // tarea y otra tarea `ready` para despachar, "todo bloqueado" ya es falso.
+    if (this.allBlockedOnAsks(runId, now)) return;
+    this.deps.repo.updateCoordinationRunStatus(runId, 'running', now, null);
+  }
+
+  /**
+   * "Todo lo despachable está esperando una respuesta". El MISMO cálculo que
+   * decide suspender y que decide levantar la suspensión: dos fórmulas
+   * distintas para entrar y salir del mismo estado es exactamente cómo un run
+   * queda atrapado en él.
+   */
+  private allBlockedOnAsks(runId: string, now: string): boolean {
+    // Sólo las VIGENTES retienen: una vencida no espera a nadie.
+    const openAsks = this.openAsksHolding(runId, now);
+    if (openAsks.length === 0) return false;
+    const tasks = this.deps.repo.listCoordinationTasks(runId);
+    const blockedTaskIds = new Set(openAsks.map((a) => a.taskId).filter((id): id is string => id != null));
+    // `blocked` entra en la cuenta: desde D1 ese estado significa exactamente
+    // "esperando una respuesta", que es justo lo que este chequeo mide. Sin
+    // incluirlo, la tarea que la pregunta acaba de trabar desaparecía del
+    // conjunto y el run nunca se auto-suspendía.
+    const readyEligible = tasks.filter((t) => t.status === 'ready' || t.status === 'blocked' || t.status === 'dispatched' || t.status === 'running');
+    return readyEligible.length > 0 && readyEligible.every((t) => blockedTaskIds.has(t.id));
   }
 
   /**
@@ -1621,7 +1700,10 @@ export class CoordinationEngine {
   /** A synchronous poll of one ask: never blocks. Past its deadline and still unanswered, it reports `{answered:false, deadline}` rather than hanging. */
   askStatus(askId: string): { answered: boolean; answer?: string | null; deadline: string } {
     const ask = this.deps.repo.getCoordinationAsk(askId);
-    if (ask.answeredAt) return { answered: true, answer: ask.answer, deadline: ask.deadlineAt };
+    // F5: `answeredAt` con `answer` en `null` es una pregunta CERRADA POR
+    // VENCIMIENTO, no una respondida. Decir `answered:true` con la respuesta en
+    // `null` le haría creer al agente que la persona contestó y no dijo nada.
+    if (ask.answeredAt && ask.answer !== null) return { answered: true, answer: ask.answer, deadline: ask.deadlineAt };
     return { answered: false, deadline: ask.deadlineAt };
   }
 
@@ -1836,19 +1918,14 @@ export class CoordinationEngine {
   }
 
   private maybeSelfSuspendOnAsks(runId: string, now: string): void {
+    // F5: lo vencido se vence PRIMERO. Contando preguntas cuyo plazo ya pasó,
+    // la pregunta siguiente —perfectamente legítima— suspendía el run entero
+    // aunque las tareas de las viejas ya hubieran vuelto a `ready`: el equipo
+    // se paraba por un bloqueo que ya no existía.
+    this.refreshAsks(runId, now);
     const run = this.deps.repo.getCoordinationRun(runId);
     if (run.status !== 'running') return;
-    const tasks = this.deps.repo.listCoordinationTasks(runId);
-    const openAsks = this.deps.repo.listOpenCoordinationAsks(runId);
-    if (openAsks.length === 0) return;
-    const blockedTaskIds = new Set(openAsks.map((a) => a.taskId).filter((id): id is string => id != null));
-    // `blocked` entra en la cuenta: desde D1 ese estado significa exactamente
-    // "esperando una respuesta", que es justo lo que este chequeo mide. Sin
-    // incluirlo, la tarea que la pregunta acaba de trabar desaparecía del
-    // conjunto y el run nunca se auto-suspendía.
-    const readyEligible = tasks.filter((t) => t.status === 'ready' || t.status === 'blocked' || t.status === 'dispatched' || t.status === 'running');
-    const allBlocked = readyEligible.length > 0 && readyEligible.every((t) => blockedTaskIds.has(t.id));
-    if (allBlocked) this.deps.repo.updateCoordinationRunStatus(runId, 'suspended', now, 'all_blocked_on_ask');
+    if (this.allBlockedOnAsks(runId, now)) this.deps.repo.updateCoordinationRunStatus(runId, 'suspended', now, 'all_blocked_on_ask');
   }
 
   private isGated(authority: CoordinationAuthorityMode, run: CoordinationRunRecord, task: CoordinationTaskRecord): boolean {
