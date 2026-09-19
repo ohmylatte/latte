@@ -18,6 +18,20 @@ export const MAX_DEPENDENCY_DEPTH = 20;
 /** A task blocks (never retries indefinitely) after this many consecutive failed reports. */
 export const MAX_ATTEMPTS_PER_TASK = 3;
 
+/**
+ * Cuántos despachos pueden estar en vuelo a la vez cuando nadie eligió un
+ * número.
+ *
+ * Es estructural, no económico: no acota lo que la persona gasta —para eso está
+ * `maxDispatches`— sino cuántos procesos de agente Latte tiene corriendo A LA
+ * VEZ. Aprobar una propuesta en un Trabajo sin presupuesto previo dejaba
+ * `maxConcurrent` en `null`, o sea SIN tope de concurrencia: el único limitador
+ * en vuelo que existe quedaba apagado justo en el camino más común, y un
+ * coordinador podía tener a todo el equipo trabajando en paralelo hasta el
+ * techo de procesos de la app.
+ */
+export const DEFAULT_MAX_CONCURRENT = 3;
+
 /** `latte_ask` TTL when the caller omits one. */
 export const ASK_TTL_DEFAULT_MINUTES = 30;
 

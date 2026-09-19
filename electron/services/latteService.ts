@@ -128,7 +128,7 @@ import { DELIVERABLES_DIR, DeliverableFiles, deliverableName } from '../workspac
 import { documentFileName, fingerprintOf, type DocumentOnDisk, type WorkspaceFiles } from '../workspace/workspace';
 import { BRAND_CONTEXT_DRAFT_PROMPT_EN, BRAND_CONTEXT_DRAFT_PROMPT_ES, brandContextFingerprint, requireBrandContextInput } from '../workspace/brandContextProtocol';
 import { composeBrandContext } from '../../shared/brandContext';
-import { LIMITS, requireCleanContext, requireEditedPrompt, requireGateId, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
+import { LIMITS, requireCleanContext, requireCoordinationProposal, requireEditedPrompt, requireGateId, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
 import { BrandingService } from '../branding/service';
 
 /** Stable content identity; request identity handles retries, this flags similar proposals without merging them. */
@@ -1649,7 +1649,13 @@ export class LatteService implements BackendApi {
     // Crítico 12: esto cruzaba la frontera IPC sin un solo chequeo y llegaba
     // tal cual hasta `hub.send`. Se valida en la frontera (acá) y de nuevo,
     // defensivamente, adentro del motor.
-    const cleanPrompt = editedPrompt == null ? undefined : requireEditedPrompt(editedPrompt);
+    // Un gate de propuesta no recibe un "prompt editado": recibe la PROPUESTA
+    // ENTERA en JSON, y el motor la consume campo por campo. Validarla con
+    // `requireEditedPrompt` —que sólo mira largo y NULs— dejaba pasar
+    // `{"plan":null}` hasta después de contratar y spawnear al equipo (D12).
+    const cleanPrompt = editedPrompt == null
+      ? undefined
+      : (clean.startsWith('proposal:') ? requireCoordinationProposal(editedPrompt) : requireEditedPrompt(editedPrompt));
     const resolved = await this.coordination.resolveGate(clean, decision, cleanPrompt);
     const runId = 'runId' in resolved ? resolved.runId : (resolved as CoordinationRunRecord).id;
     return this.toCoordinationRunView(this.coordination.getRun(runId));
@@ -1703,6 +1709,12 @@ export class LatteService implements BackendApi {
     const id = requireId(workId, 'workId');
     this.deps.repo.getWork(id);
     if (!this.deps.repo.findActiveCoordinationRun(id)) return { bridged: false, task: null };
+    // D4: con la bandera baja esto DEGRADA, no tira. El docstring de arriba
+    // promete "el llamador cae al borrador de chat exactamente como antes", y
+    // dejar escapar `FEATURE_DISABLED` rompía esa promesa justo donde importa:
+    // la persona apagaba coordinación y aceptar un pedido pasaba a fallar en
+    // vez de abrirle el chat que tenía antes de que coordinación existiera.
+    if (!featureEnabled((key) => this.deps.repo.getMeta(key), 'coordination')) return { bridged: false, task: null };
     const pending = await this.listHandoffs(id);
     const handoff = pending.find((h) => h.fileName === fileName);
     if (!handoff) throw new ValidationError('Ese pedido ya no está en la carpeta');

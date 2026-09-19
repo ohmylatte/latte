@@ -19,7 +19,7 @@ import type { CoordinationAuthorityMode, CoordinationBudget } from '../../shared
 import { LatteError, NotFoundError, ValidationError } from '../core/errors';
 import { FeatureDisabledError } from '../core/features';
 import { newId } from '../core/ids';
-import { LIMITS, requireInt, requireText } from '../services/validation';
+import { LIMITS, requireCoordinationProposal, requireInt, requireText } from '../services/validation';
 import type {
   CoordinationAskRecord,
   CoordinationDispatchRecord,
@@ -30,7 +30,7 @@ import type {
 } from '../storage/repository';
 import { canAddTask, computeDoomedTasks, computeReadyTasks, computeTaskDepth, wouldCreateCycle, type DagEdge, type DagTask } from './dag';
 import { assertBudgetConfigured, BudgetUnsetError, readStoredCoordinationBudget, requireCoordinationBudget, reserveDispatch, type BudgetUsage, type StoredCoordinationBudgetRead } from './budget';
-import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK } from './limits';
+import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK } from './limits';
 
 /**
  * Los roles que la persona aprobo, por run. Una clave propia y no `plan_json`:
@@ -529,6 +529,9 @@ export class CoordinationEngine {
     const run = this.deps.repo.getCoordinationRun(runId);
     if (decision === 'reject') return this.cancelRun(runId);
 
+    // Defensa en profundidad (D12): la frontera IPC ya la valida, pero este
+    // método es público y desde acá se contrata gente y se levantan procesos.
+    if (editedProposalJson != null) requireCoordinationProposal(editedProposalJson);
     const proposal: CoordinationProposal = editedProposalJson ? JSON.parse(editedProposalJson) : JSON.parse(run.planJson!);
     // "No implicit unlimited" re-asserted for an EDITED proposal too (task
     // 6.11): the same validator `setCoordinationBudget` already uses. La
@@ -550,15 +553,15 @@ export class CoordinationEngine {
     // inserta la fila, mintea el token, ocupa un cupo de techo Y spawnea un
     // proceso real, nada de lo cual vuelve atrás solo. Si una falla —o si
     // falla la transacción de abajo— hay que deshacer las que ya entraron.
-    const hired: string[] = [];
+    const hired: Array<{ memberId: string; roleId: string }> = [];
     try {
       for (const hire of proposal.membersToHire ?? []) {
         const session = await this.deps.hub.addMember({ ...this.deps.memberContext(run.workId), roleId: hire.roleId });
-        hired.push(session.id);
+        hired.push({ memberId: session.id, roleId: hire.roleId });
       }
-      return this.commitProposal(run.id, proposal, budget);
+      return this.commitProposal(run.id, proposal, budget, hired);
     } catch (error) {
-      for (const memberId of hired.reverse()) {
+      for (const { memberId } of hired.reverse()) {
         try { this.deps.hub.removeMember(memberId); } catch { /* el rollback nunca tapa el error original */ }
       }
       throw error;
@@ -566,7 +569,7 @@ export class CoordinationEngine {
   }
 
   /** Los cinco efectos restantes de una propuesta aprobada, en una sola transacción real. */
-  private commitProposal(runId: string, proposal: CoordinationProposal, budget: CoordinationBudget): CoordinationRunRecord {
+  private commitProposal(runId: string, proposal: CoordinationProposal, budget: CoordinationBudget, hired: Array<{ memberId: string; roleId: string }> = []): CoordinationRunRecord {
     const now = this.deps.clock();
     return this.deps.repo.transaction(() => {
       // Releído acá adentro: es el único chequeo que dos aprobaciones
@@ -585,7 +588,12 @@ export class CoordinationEngine {
         maxTokens: existingBudget?.maxTokens ?? budget.maxTokens,
         maxCostMicros: existingBudget?.maxCostMicros ?? budget.maxCostMicros,
         maxWallMinutes: existingBudget?.maxWallMinutes ?? budget.maxWallMinutes,
-        maxConcurrent: existingBudget?.maxConcurrent ?? budget.maxConcurrent,
+        // D16: `budget` sale de `requireCoordinationBudget({maxDispatches,
+        // unlimitedConfirmedAt})`, o sea que su `maxConcurrent` es SIEMPRE
+        // nulo. Sin presupuesto previo, aprobar dejaba el único limitador en
+        // vuelo que existe apagado — "sin tope de concurrencia" decidido por
+        // omisión, en el camino más común de todos.
+        maxConcurrent: existingBudget?.maxConcurrent ?? budget.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
       };
       const budgetJson = JSON.stringify(merged);
       this.deps.repo.setMeta('coordination_budget:' + run.workId, budgetJson);
@@ -616,15 +624,25 @@ export class CoordinationEngine {
       // rol quedaba aprobado igual y el primer despacho lo contrataba y le
       // levantaba un proceso, sin un solo gate. La interfaz renderizaba un
       // rechazo que el motor ignoraba.
+      //
+      // Y guarda SÓLO lo CONTRATABLE (D11). Congelar acá los roles que ya eran
+      // miembros convertía una foto de "qué se puede contratar" en una foto del
+      // equipo, y las dos envejecen distinto: el miembro que se borraba después
+      // dejaba su rol aprobado para siempre, así que la primera tarea de ese rol
+      // lo RE-contrataba en silencio — una contratación que nadie aprobó,
+      // autorizada por un miembro que ya no existe. Un rol que ya está en el
+      // equipo no necesita aprobación porque no se contrata: se lo reutiliza, y
+      // eso `reserveTargetMember` lo resuelve EN VIVO contra el equipo de hoy.
       const approvedRoles = new Set<string>();
       for (const hire of proposal.membersToHire ?? []) approvedRoles.add(hire.roleId);
-      // Un rol que ya está en el equipo no necesita aprobación: nadie lo
-      // contrata de nuevo, se lo reutiliza (`resolveTargetMember`). Los
-      // terminados no cuentan: re-abrir uno ES una contratación.
-      for (const member of this.deps.repo.listMembers(run.workId)) {
-        if (!member.done) approvedRoles.add(member.roleId);
-      }
       this.deps.repo.setMeta(APPROVED_ROLES_META + run.id, JSON.stringify([...approvedRoles]));
+      // LAS ALTAS, anotadas donde pasan (D13). `resolveProposalGate` llamaba a
+      // `hub.addMember` por cada contratación y no llamaba a `recordHire`
+      // NUNCA: la bitácora de un equipo recién aprobado —justo el momento en
+      // que más altas hay— no mostraba una sola. Se escriben acá adentro, en la
+      // misma transacción que el resto: si la aprobación se va al rollback, las
+      // altas se van con ella (y el `catch` de arriba deshace los procesos).
+      for (const hire of hired) this.recordHire(run.id, hire.memberId, hire.roleId, now);
       const created: CoordinationTaskRecord[] = []; // index-based dependsOn, exactly like planSubmit's own loop
       for (const item of proposal.plan) {
         const dependsOnIds = (item.dependsOn ?? []).map((idx) => {
@@ -651,8 +669,19 @@ export class CoordinationEngine {
     const others = this.deps.repo.listActiveCoordinationRuns().filter((r) => r.id !== currentRun.id);
     let otherCommittedDispatches: number | null = 0;
     for (const other of others) {
-      const budget = JSON.parse(other.budgetJson) as CoordinationBudget;
-      if (budget.maxDispatches == null) { otherCommittedDispatches = null; break; }
+      // POR FILA (D12). Un `budget_json` ilegible en OTRA marca hacía tirar este
+      // `JSON.parse` y con él el `listGates` entero: la persona no podía ni ver
+      // —mucho menos aprobar o rechazar— la propuesta de SU Trabajo por culpa
+      // de una fila que no es suya. Una fila que no se puede leer no se suma, y
+      // eso vuelve el total honestamente desconocido, igual que un ilimitado.
+      let budget: CoordinationBudget;
+      try {
+        budget = JSON.parse(other.budgetJson) as CoordinationBudget;
+      } catch {
+        otherCommittedDispatches = null;
+        break;
+      }
+      if (budget?.maxDispatches == null) { otherCommittedDispatches = null; break; }
       otherCommittedDispatches = (otherCommittedDispatches as number) + budget.maxDispatches;
     }
     const mine = proposal.estimatedDispatches;
@@ -1920,6 +1949,23 @@ export class CoordinationEngine {
    * silencio, sin ningún gate. Un rol ya presente en el Trabajo se reutiliza
    * como siempre — esto sólo frena CONTRATAR a alguien nuevo.
    */
+  /**
+   * Si el Trabajo TIENE hoy un miembro de este rol (D11). El lookup es EN VIVO,
+   * contra el equipo de ahora, y no contra la foto que la aprobación congeló:
+   * un rol que ya está en el equipo no se contrata, se reutiliza, así que no
+   * necesita aprobación — pero si ese miembro se borró, el rol vuelve a
+   * necesitarla, y la foto vieja no puede seguir autorizándolo.
+   *
+   * Los terminados (`done`) no cuentan: re-abrir uno SÍ es una contratación.
+   */
+  private workHasMemberForRole(workId: string, roleId: string): boolean {
+    try {
+      return this.deps.repo.listMembers(workId).some((m) => m.roleId === roleId && !m.done);
+    } catch {
+      return false;
+    }
+  }
+
   private reserveTargetMember(workId: string, roleId: string, approvedRoles: Set<string> | null = null): { reuseMemberId: string | null; context: MemberContext } {
     const team = this.deps.hub.listTeam(workId);
     const candidates = team.filter((m) => m.roleId === roleId && m.status !== 'ended');
@@ -1928,7 +1974,7 @@ export class CoordinationEngine {
     // mismo rol elegían al mismo y el segundo `hub.send` pisaba al primero.
     const idle = candidates.find((m) => m.status !== 'working' && !this.assigning.has(m.id));
     if (candidates.length > 0 && !idle) throw new LatteError('MEMBER_BUSY', `Every ${roleId} member is already working`);
-    if (candidates.length === 0 && approvedRoles && !approvedRoles.has(roleId)) {
+    if (candidates.length === 0 && approvedRoles && !approvedRoles.has(roleId) && !this.workHasMemberForRole(workId, roleId)) {
       throw new LatteError('ROLE_NOT_APPROVED', `Hiring a ${roleId} was not part of the approved plan; it needs its own approval`);
     }
     const context = this.deps.memberContext(workId);

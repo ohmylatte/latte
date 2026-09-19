@@ -103,6 +103,73 @@ export function requireCleanContext(value: unknown, name: string, options: { all
   return clean;
 }
 
+/**
+ * La propuesta que la persona EDITÓ antes de aprobar, validada como propuesta.
+ *
+ * Llegaba a `resolveGate` como texto libre y entraba derecho a `JSON.parse` +
+ * `commitProposal`, que la consume sin mirar: `{"plan":null}` reventaba con un
+ * TypeError desde el fondo de la pila DESPUÉS de haber contratado y spawneado a
+ * todo el equipo (las altas van antes de la transacción, por diseño); un
+ * `{"plan":[]}` aprobaba un run sin una sola tarea; un `estimatedDispatches`
+ * cualquiera escribía un `budget_json` que después denegaba todo despacho.
+ *
+ * La forma que se exige es exactamente la que `commitProposal` consume, ni una
+ * más: objeto JSON, `plan` no vacío de `{roleId, spec}`, `membersToHire`
+ * opcional de `{roleId}`, y un `estimatedDispatches` entero ≥ 1 — o la forma de
+ * ilimitado que el motor ya acepta (`null` CON `unlimitedConfirmedAt`, la
+ * confirmación humana explícita que `requireCoordinationBudget` exige).
+ */
+export function requireCoordinationProposal(raw: string): string {
+  const text = requireText(raw, 'proposal', LIMITS.chatMessage);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new ValidationError('The edited proposal is not valid JSON');
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new ValidationError('The edited proposal must be a JSON object');
+  }
+  const proposal = parsed as Record<string, unknown>;
+
+  const estimated = proposal.estimatedDispatches;
+  if (estimated === null || estimated === undefined) {
+    // "Sin tope" sólo existe con la confirmación humana al lado: es la MISMA
+    // regla que `requireCoordinationBudget` aplica, re-afirmada acá para que un
+    // JSON editado no pueda inventarse un ilimitado implícito.
+    const confirmed = proposal.unlimitedConfirmedAt;
+    if (typeof confirmed !== 'string' || confirmed.trim().length === 0) {
+      throw new ValidationError('estimatedDispatches must be an integer of at least 1, or unlimited with an explicit confirmation');
+    }
+  } else {
+    requireInt(estimated, 'estimatedDispatches', 1, Number.MAX_SAFE_INTEGER);
+  }
+
+  if (!Array.isArray(proposal.plan) || proposal.plan.length === 0) {
+    throw new ValidationError('The edited proposal must keep at least one task in `plan`');
+  }
+  for (const [index, item] of proposal.plan.entries()) {
+    if (typeof item !== 'object' || item === null) throw new ValidationError(`Plan task ${index} must be an object`);
+    const task = item as Record<string, unknown>;
+    requireText(task.roleId, `Plan task ${index} roleId`, LIMITS.name);
+    requireText(task.spec, `Plan task ${index} spec`, LIMITS.chatMessage);
+    if (task.dependsOn !== undefined) {
+      if (!Array.isArray(task.dependsOn)) throw new ValidationError(`Plan task ${index} dependsOn must be an array`);
+      for (const dep of task.dependsOn) requireInt(dep, `Plan task ${index} dependsOn`, 0, proposal.plan.length - 1);
+    }
+  }
+
+  const hires = proposal.membersToHire;
+  if (hires !== undefined && hires !== null) {
+    if (!Array.isArray(hires)) throw new ValidationError('membersToHire must be an array');
+    for (const [index, item] of hires.entries()) {
+      if (typeof item !== 'object' || item === null) throw new ValidationError(`membersToHire ${index} must be an object`);
+      requireText((item as Record<string, unknown>).roleId, `membersToHire ${index} roleId`, LIMITS.name);
+    }
+  }
+  return text;
+}
+
 export function requireInt(value: unknown, name: string, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isInteger(value)) throw new ValidationError(`${name} must be an integer`);
   if (value < min || value > max) throw new ValidationError(`${name} must be between ${min} and ${max}`);

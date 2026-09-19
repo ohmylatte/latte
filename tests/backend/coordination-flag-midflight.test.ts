@@ -38,7 +38,9 @@ describe('el interruptor apagado también frena las aprobaciones (crítico 6)', 
       'coordination_budget:' + workId,
       'coordination_authority:' + workId,
       'coordination_approved_roles:' + runId,
-    ].filter((key) => b.repo.getMeta(key) != null);
+      // Vacío es "no concedido": cerrar un run BORRA el permiso de coordinador
+      // escribiendo `''` (D3), y eso no es una concesión — es su contrario.
+    ].filter((key) => (b.repo.getMeta(key) ?? '') !== '');
   }
 
   beforeEach(async () => {
@@ -138,6 +140,38 @@ describe('el interruptor apagado también frena las aprobaciones (crítico 6)', 
 
     expect(b.repo.listCoordinationTasks(runId)).toHaveLength(tasksBefore);
     expect(b.hub.send).not.toHaveBeenCalled();
+  });
+
+  /**
+   * D4: el MOTOR se niega (arriba), pero la puerta que aprieta la persona
+   * —`acceptHandoffAsTask` por IPC— degrada al borrador de chat, exactamente
+   * como promete su docstring. Bajar la bandera no puede convertir "aceptar un
+   * pedido" en un error: antes de que coordinación existiera, eso abría un chat.
+   */
+  it('`acceptHandoffAsTask` por IPC degrada con la bandera baja en vez de tirar', async () => {
+    await b.service.resolveCoordinationGate(`proposal:${runId}`, 'approve');
+    const tasksBefore = b.repo.listCoordinationTasks(runId).length;
+    turnFlagOff();
+
+    const result = await b.service.acceptHandoffAsTask(workId, 'pedido-que-no-existe.md');
+
+    expect(result).toEqual({ bridged: false, task: null });
+    expect(b.repo.listCoordinationTasks(runId)).toHaveLength(tasksBefore);
+    expect(b.hub.send).not.toHaveBeenCalled();
+  });
+
+  /**
+   * D4: un interruptor que sólo impide encender no es un interruptor — pero uno
+   * que también impide APAGAR es peor. `reject` y `cancelRun` son salidas.
+   */
+  it('con la bandera baja, RECHAZAR la propuesta sigue funcionando: apaga, no enciende', async () => {
+    turnFlagOff();
+
+    await b.service.resolveCoordinationGate(`proposal:${runId}`, 'reject');
+
+    expect(b.repo.getCoordinationRun(runId).status).toBe('cancelled');
+    expect(addMember).not.toHaveBeenCalled();
+    expect(metaKeysWritten()).toEqual([]);
   });
 
   function engineWithRealFlag(): CoordinationEngine {
