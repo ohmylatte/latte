@@ -39,7 +39,7 @@ const askView = (patch: Partial<CoordinationAskView> = {}): CoordinationAskView 
   answer: null, deadlineAt: '2026-09-02T00:00:00.000Z', answeredAt: null, createdAt: '2026-09-01T00:00:00.000Z', ...patch,
 });
 const support = (patch: Partial<CoordinationMemberSupport> = {}): CoordinationMemberSupport => ({
-  memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, ...patch,
+  memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true, ...patch,
 });
 const proposal = (patch: Partial<CoordinationProposal> = {}): CoordinationProposal => ({
   plan: [{ roleId: 'copywriter', spec: 'Escribir 3 posts para el lanzamiento' }],
@@ -550,6 +550,33 @@ describe('coordination support badges (additive, autonomous-coordination Phase 7
     expect(row.textContent).toContain('desactivada en esta instalación');
     // Memory is unaffected -- the two policies stay independent even in this new state.
     expect(row.textContent).toContain('Memoria disponible');
+  });
+
+  // Crítico 7 (c): hasta acá "sin restricciones para coordinar" se mostraba
+  // igual para un miembro cuyo runtime confirmó la inyección y para uno cuyo
+  // runtime nunca pudo decir nada. Latte escribió el archivo: eso es lo único
+  // que se sabía, y se leía como si el servidor estuviera andando.
+  it('un reclamo SIN confirmar del runtime no se muestra como conectado', () => {
+    const { container } = renderView('es-AR', {
+      team: [member({ id: 'm1', roleName: 'Estratega' })],
+      coordinationSupport: [support({ memberId: 'm1', canPropose: true, reason: null, memoryInjected: true, runtimeConfirmed: false })],
+    });
+    const row = container.querySelector('.decision-support-row')!;
+    expect(row.textContent).not.toContain('Sin restricciones para coordinar');
+    expect(row.textContent).toContain('El runtime todavía no confirmó');
+    // La memoria del mismo miembro tampoco se puede afirmar: la confirmación
+    // es una sola, y viene del mismo reporte.
+    expect(row.textContent).not.toContain('Memoria disponible');
+    expect(row.textContent).toContain('sin confirmar');
+  });
+
+  it('el mismo estado sin confirmar, en inglés, sin nada en castellano', () => {
+    const { container } = renderView('en-US', {
+      team: [member({ id: 'm1', roleName: 'Estratega' })],
+      coordinationSupport: [support({ memberId: 'm1', canPropose: true, reason: null, memoryInjected: true, runtimeConfirmed: false })],
+    });
+    expect(container.textContent).toContain('The runtime has not confirmed');
+    expect(container.textContent).not.toContain('El runtime todavía no confirmó');
   });
 
   it('renders the same badges in English, with nothing left in Spanish', () => {

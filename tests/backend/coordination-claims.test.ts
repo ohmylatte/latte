@@ -191,7 +191,36 @@ describe('los adaptadores reportan lo que el RUNTIME dijo, no lo que Latte pidi�
     removeDir(dir);
   });
 
-  it('un Codex viejo sin `mcpServerStatus/list` cae a lo que Latte decidió, nunca a una afirmación nueva', async () => {
+  it('Codex NO cuenta una entrada que el runtime lista pero no pudo conectar (crítico 7)', async () => {
+    const dir = makeTempDir();
+    const adapter = new CodexChatAdapter({
+      resolveExecutable: async () => ({ executable: process.execPath, version: '0.153.4' }),
+      emit: () => {},
+      accountEnv: () => ({}),
+      serverCwd: dir,
+      platform: 'linux',
+      // El runtime CONOCE las dos, pero `latte_coordination` quedó sin login:
+      // estar en el catálogo no es estar conectado. `notLoggedIn` es el único
+      // estado que el código de producción (`applyCodexAuth`) ya trata como
+      // "requiere iniciar sesión".
+      env: {
+        PATH: process.env.PATH ?? '',
+        FAKE_CODEX_MCP_STATUS: JSON.stringify(['latte_coordination', 'latte_memory']),
+        FAKE_CODEX_MCP_NOT_LOGGED_IN: JSON.stringify(['latte_coordination']),
+      },
+      spawnImpl: ((file: string, args: string[], options: unknown) => spawn(file, [FAKE_CODEX, ...args], options as Parameters<typeof spawn>[2])) as typeof spawn,
+      requestTimeoutMs: 5_000,
+    });
+    const result = await adapter.start({
+      workId: 'wrk_1', chatId: 'mem_x1', directory: dir, title: 't', label: 'Codex',
+      accountId: SYSTEM_ACCOUNT_ID, mcpServers: [COORD_SERVER, MEMORY_SERVER],
+    });
+    expect(result.injectedMcpServers).toEqual(['latte_memory']);
+    adapter.shutdown();
+    removeDir(dir);
+  });
+
+  it('un Codex viejo sin `mcpServerStatus/list` no sabe, y `no sé` es `undefined`, nunca el pedido de Latte', async () => {
     const dir = makeTempDir();
     const adapter = new CodexChatAdapter({
       resolveExecutable: async () => ({ executable: process.execPath, version: '0.153.4' }),
@@ -207,9 +236,58 @@ describe('los adaptadores reportan lo que el RUNTIME dijo, no lo que Latte pidi�
       workId: 'wrk_1', chatId: 'mem_x1', directory: dir, title: 't', label: 'Codex',
       accountId: SYSTEM_ACCOUNT_ID, mcpServers: [COORD_SERVER, MEMORY_SERVER],
     });
-    expect(result.injectedMcpServers).toEqual(['latte_coordination', 'latte_memory']);
+    // Antes esto devolvía `['latte_coordination', 'latte_memory']` — la lista
+    // que Latte PIDIÓ, presentada como la que el runtime CONECTÓ. Que no se
+    // pueda preguntar no es evidencia de nada: `undefined` deja el reclamo de
+    // Latte intacto Y sin confirmar, que es lo que de verdad pasó.
+    expect(result.injectedMcpServers).toBeUndefined();
     adapter.shutdown();
     removeDir(dir);
+  });
+});
+
+// --- Crítico 7 (c): un reclamo sin confirmar no se muestra como conectado ---
+
+describe('un reclamo que ningún runtime confirmó se distingue de uno confirmado', () => {
+  it('recién asignado, el reclamo NO está confirmado', async () => {
+    const planner = makePlanner();
+    const status = await planner.assign({ memberId: 'mem_a1', workId: 'wrk_a', brandId: 'brd_a', runtime: 'claude', accountId: null });
+    expect(status.status.coordinationInjected).toBe(true);
+    expect(status.status.runtimeConfirmed).toBe(false);
+  });
+
+  it('`undefined` (un adaptador que no puede preguntar) NO confirma nada', async () => {
+    const planner = makePlanner();
+    await planner.assign({ memberId: 'mem_a1', workId: 'wrk_a', brandId: 'brd_a', runtime: 'claude', accountId: null });
+    planner.confirmInjection('mem_a1', undefined);
+    const after = await planner.preview({ memberId: 'mem_a1', workId: 'wrk_a', brandId: 'brd_a', runtime: 'claude', accountId: null });
+    expect(after.coordinationInjected).toBe(true);
+    expect(after.runtimeConfirmed).toBe(false);
+  });
+
+  it('una lista concreta confirma, aunque coincida punto por punto con el reclamo', async () => {
+    const planner = makePlanner();
+    await planner.assign({ memberId: 'mem_a1', workId: 'wrk_a', brandId: 'brd_a', runtime: 'claude', accountId: null });
+    planner.confirmInjection('mem_a1', ['latte_coordination', 'latte_memory']);
+    const after = await planner.preview({ memberId: 'mem_a1', workId: 'wrk_a', brandId: 'brd_a', runtime: 'claude', accountId: null });
+    expect(after.runtimeConfirmed).toBe(true);
+    expect(after.reason).toBeNull();
+  });
+
+  it('una negativa del runtime también es una confirmación: se sabe, y se sabe que salió mal', async () => {
+    const planner = makePlanner();
+    await planner.assign({ memberId: 'mem_a1', workId: 'wrk_a', brandId: 'brd_a', runtime: 'claude', accountId: null });
+    planner.confirmInjection('mem_a1', []);
+    const after = await planner.preview({ memberId: 'mem_a1', workId: 'wrk_a', brandId: 'brd_a', runtime: 'claude', accountId: null });
+    expect(after.runtimeConfirmed).toBe(true);
+    expect(after.coordinationInjected).toBe(false);
+    expect(after.reason).toBe('runtime_refused_injection');
+  });
+
+  it('un miembro CERRADO (la previsión hipotética) nunca sale confirmado', async () => {
+    const planner = makePlanner();
+    const status = await planner.preview({ memberId: 'mem_nunca_abierto', workId: 'wrk_a', brandId: 'brd_a', runtime: 'claude', accountId: null });
+    expect(status.runtimeConfirmed).toBe(false);
   });
 });
 

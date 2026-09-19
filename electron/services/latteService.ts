@@ -1699,12 +1699,12 @@ export class LatteService implements BackendApi {
     const work = this.deps.repo.getWork(id);
     const members = this.deps.hub.listTeam(id);
     if (!this.deps.injection) {
-      return members.map((m) => ({ memberId: m.id, canPropose: false, memoryInjected: false, reason: null }));
+      return members.map((m) => ({ memberId: m.id, canPropose: false, memoryInjected: false, reason: null, runtimeConfirmed: false }));
     }
     const out: CoordinationMemberSupport[] = [];
     for (const m of members) {
       const status = await this.deps.injection.preview({ memberId: m.id, workId: id, brandId: work.brandId, runtime: m.runtime, accountId: m.accountId });
-      out.push({ memberId: m.id, canPropose: status.canPropose, memoryInjected: status.memoryInjected, reason: status.reason });
+      out.push({ memberId: m.id, canPropose: status.canPropose, memoryInjected: status.memoryInjected, reason: status.reason, runtimeConfirmed: status.runtimeConfirmed });
     }
     return out;
   }

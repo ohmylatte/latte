@@ -72,13 +72,19 @@ rl.on('line', (line) => {
       }
       // `FAKE_CODEX_MCP_STATUS` (una lista de nombres) reemplaza el catalogo:
       // es como se prueba que Latte reporta lo que el runtime CONOCE y no lo
-      // que Latte pidio.
-      reply({
-        data: (process.env.FAKE_CODEX_MCP_STATUS
-          ? JSON.parse(process.env.FAKE_CODEX_MCP_STATUS)
-          : ['remoto', 'engram']
-        ).map((name) => ({ name, authStatus: name === 'remoto' ? 'notLoggedIn' : 'unsupported', resourceTemplates: [], resources: [], tools: {} })),
-      });
+      // que Latte pidio. `FAKE_CODEX_MCP_NOT_LOGGED_IN` (otra lista de
+      // nombres) marca cuales de esas entradas el runtime CONOCE pero NO pudo
+      // conectar: `notLoggedIn` es el unico estado de auth que el codigo de
+      // produccion (`applyCodexAuth`) trata como "requiere iniciar sesion".
+      {
+        const notLoggedIn = new Set(process.env.FAKE_CODEX_MCP_NOT_LOGGED_IN ? JSON.parse(process.env.FAKE_CODEX_MCP_NOT_LOGGED_IN) : ['remoto']);
+        reply({
+          data: (process.env.FAKE_CODEX_MCP_STATUS
+            ? JSON.parse(process.env.FAKE_CODEX_MCP_STATUS)
+            : ['remoto', 'engram']
+          ).map((name) => ({ name, authStatus: notLoggedIn.has(name) ? 'notLoggedIn' : 'unsupported', resourceTemplates: [], resources: [], tools: {} })),
+        });
+      }
       return;
     case 'thread/start': {
       // `initialize` anduvo y el server quedo vivo: sin un chat que lo libere,

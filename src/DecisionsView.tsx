@@ -303,6 +303,10 @@ const DEGRADED_KEY: Record<CoordinationDegradedReason, string> = {
 
 /** The coordination line: nothing to flag when the member can propose; the reason's own sentence otherwise (it already says "dispatch manual"). */
 function describeCoordinationSupport(row: CoordinationMemberSupport): string {
+  // Crítico 7c: "sin restricciones" es una afirmación sobre un proceso que
+  // está andando. Mientras el runtime no diga qué levantó, lo único que Latte
+  // sabe es lo que PIDIÓ, y eso se dice con esas palabras — no como un verde.
+  if (row.canPropose && !row.runtimeConfirmed) return t('coordination.support.unconfirmed');
   if (row.canPropose) return t('coordination.support.available');
   // `reason` is one of the six ceiling/floor causes -- name it honestly. A
   // member that cannot propose with NO reason attached (task 8.1) means the
@@ -316,6 +320,10 @@ function describeCoordinationSupport(row: CoordinationMemberSupport): string {
 
 /** The memory line, independent of the coordination line (task 6.29): `engram_not_installed` explains a missing memory server specifically; any other reason falls back to an honest generic sentence rather than reusing a "dispatch manual" sentence under the wrong heading. */
 function describeMemorySupport(row: CoordinationMemberSupport): string {
+  // Mismo criterio que la línea de coordinación: la confirmación del runtime
+  // es UNA sola y viene del mismo reporte, así que una memoria reclamada y no
+  // confirmada tampoco se puede anunciar como disponible.
+  if (row.memoryInjected && !row.runtimeConfirmed) return t('coordination.memory.unconfirmed');
   if (row.memoryInjected) return t('coordination.memory.available');
   if (row.reason === 'engram_not_installed') return t('coordination.degraded.engramMissing');
   return t('coordination.memory.unavailable');

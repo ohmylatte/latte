@@ -861,6 +861,13 @@ export interface CoordinationMemberSupport {
   canPropose: boolean;
   memoryInjected: boolean;
   reason: CoordinationDegradedReason | null;
+  /**
+   * Whether the RUNTIME itself has reported what it actually brought up. `false`
+   * means Latte wrote the injection and nothing has contradicted it YET -- which
+   * is not the same as "it works", and the UI must never render it as such
+   * (crítico 7). A closed member's hypothetical preview is never confirmed.
+   */
+  runtimeConfirmed: boolean;
 }
 
 /** One row per active coordination run app-wide, for the global "Equipos activos" strip (task 6.34) -- the only app-scoped read in this change. */

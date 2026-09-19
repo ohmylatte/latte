@@ -86,12 +86,12 @@ describe('useCoordination(workId): a Work is open', () => {
     mocks.getCoordinationAuthority.mockResolvedValue('plan');
     mocks.getCoordinationBudget.mockResolvedValue({ maxDispatches: 20, unlimitedConfirmedAt: null });
     mocks.getCoordinatorGrant.mockResolvedValue('m1');
-    mocks.coordinationRuntimeSupport.mockResolvedValue([{ memberId: 'm1', canPropose: true, memoryInjected: true, reason: null }]);
+    mocks.coordinationRuntimeSupport.mockResolvedValue([{ memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true }]);
     const { result } = renderHook(() => useCoordination('w1'));
     await waitFor(() => expect(result.current.authority).toBe('plan'));
     expect(result.current.budget).toEqual({ maxDispatches: 20, unlimitedConfirmedAt: null });
     expect(result.current.coordinatorGrant).toBe('m1');
-    expect(result.current.support).toEqual([{ memberId: 'm1', canPropose: true, memoryInjected: true, reason: null }]);
+    expect(result.current.support).toEqual([{ memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true }]);
     expect(mocks.getCoordinationAuthority).toHaveBeenCalledWith('w1');
   });
 

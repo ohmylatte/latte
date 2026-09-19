@@ -64,6 +64,13 @@ export interface MemberInjectionStatus {
   canPropose: boolean;
   /** The primary reason a policy is degraded; `null` when both are as expected. */
   reason: CoordinationDegradedReason | null;
+  /**
+   * Si el RUNTIME ya dijo qué levantó (crítico 7). `false` es "Latte escribió
+   * la inyección y nadie la desmintió todavía" — que NO es lo mismo que
+   * "anda". Una previsión hipotética (un miembro cerrado) tampoco está
+   * confirmada: no hay proceso que pueda confirmar nada.
+   */
+  runtimeConfirmed: boolean;
 }
 
 export interface MemberInjectionInput {
@@ -217,6 +224,9 @@ export class CoordinationInjectionPlanner {
       memoryInjected: decision.memoryServer != null,
       canPropose: coordinated,
       reason,
+      // Todavía nadie del otro lado habló: `confirmInjection` es el único que
+      // puede prender esto.
+      runtimeConfirmed: false,
     };
     this.claims.set(input.memberId, { workId: input.workId, coordinated, memorySlotKey, status });
     return { servers: servers.length > 0 ? servers : undefined, status };
@@ -233,6 +243,9 @@ export class CoordinationInjectionPlanner {
       memoryInjected: decision.memoryServer != null,
       canPropose: decision.coordinationEligible,
       reason: decision.reason,
+      // Una hipótesis ("qué pasaría si se abriera ahora") no la confirmó
+      // ningún proceso, porque no hay proceso.
+      runtimeConfirmed: false,
     };
   }
 
@@ -250,6 +263,11 @@ export class CoordinationInjectionPlanner {
     if (!injectedServerNames) return;
     const claim = this.claims.get(memberId);
     if (!claim) return;
+    // El runtime HABLÓ. Aunque lo que diga coincida punto por punto con el
+    // reclamo, esto es lo que separa "anda" de "Latte lo escribió y nadie lo
+    // desmintió todavía" (crítico 7c). Va antes del `return` de abajo: una
+    // confirmación que confirma el reclamo tal cual también es evidencia.
+    claim.status = { ...claim.status, runtimeConfirmed: true };
     const coordination = injectedServerNames.includes('latte_coordination');
     const memory = injectedServerNames.includes('latte_memory');
     const refused = (claim.status.coordinationInjected && !coordination) || (claim.status.memoryInjected && !memory);

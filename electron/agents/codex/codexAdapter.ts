@@ -276,23 +276,36 @@ export class CodexChatAdapter implements RuntimeAdapter {
   }
 
   /**
-   * Lo que este app-server CONOCE de verdad, no lo que Latte le paso (juicio
-   * #1, ronda 4). `mcpServers` ya viene DEGRADADO por el tope de procesos de
-   * este adaptador, pero eso sigue siendo una decision de Latte: si el
-   * proceso arranco y un servidor no levanto, el runtime es el unico que lo
-   * sabe, y lo dice en `mcpServerStatus/list`. Un Codex viejo que no conoce
-   * ese metodo no puede desmentir nada: ahi se reporta la decision de Latte,
-   * que es la unica evidencia que hay -- nunca una afirmacion nueva.
+   * Lo que este app-server CONECTO de verdad, no lo que Latte le paso (juicio
+   * #1, ronda 4; critico 7). `mcpServers` ya viene DEGRADADO por el tope de
+   * procesos de este adaptador, pero eso sigue siendo una decision de Latte:
+   * si el proceso arranco y un servidor no levanto, el runtime es el unico
+   * que lo sabe, y lo dice en `mcpServerStatus/list`.
+   *
+   * Dos reglas, las dos contra la misma mentira:
+   *
+   * 1. Un Codex viejo que no conoce el metodo -- o cualquier otro fallo al
+   *    preguntar -- devuelve `undefined`: NO SE. Antes caia en
+   *    `catch { return requested }`, o sea devolvia LO QUE LATTE PIDIO como
+   *    si fuera lo que el runtime conecto, y `confirmInjection` lo tomaba por
+   *    una confirmacion. Que no se pueda preguntar no es evidencia de nada.
+   * 2. Estar en el catalogo no es estar conectado. `authStatus` es el campo
+   *    que el protocolo devuelve, y `notLoggedIn` es el unico valor que el
+   *    resto del repo (`applyCodexAuth`, en `electron/agents/mcp.ts`) ya
+   *    trata como "requiere iniciar sesion": una entrada asi se conoce pero
+   *    no sirve, y no cuenta.
    */
-  private async reportInjected(server: CodexAppServer, mcpServers: AdapterMcpServer[] | undefined): Promise<string[]> {
+  private async reportInjected(server: CodexAppServer, mcpServers: AdapterMcpServer[] | undefined): Promise<string[] | undefined> {
     const requested = (mcpServers ?? []).map((entry) => entry.name);
     if (requested.length === 0) return requested;
+    let statuses: Array<{ name: string; authStatus: string }>;
     try {
-      const known = new Set((await this.mcpStatusOn(server)).map((entry) => entry.name));
-      return requested.filter((name) => known.has(name));
+      statuses = await this.mcpStatusOn(server);
     } catch {
-      return requested;
+      return undefined;
     }
+    const connected = new Set(statuses.filter((entry) => entry.authStatus !== 'notLoggedIn').map((entry) => entry.name));
+    return requested.filter((name) => connected.has(name));
   }
 
   listMessages(chatId: string): ChatMessage[] {
