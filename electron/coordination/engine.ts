@@ -1905,17 +1905,22 @@ export class CoordinationEngine {
     // duda— suspendía el run entero con `all_blocked_on_ask` teniendo a un
     // miembro trabajando. El run quedaba detenido por un bloqueo que no existía.
     //
-    // La señal es el despacho vivo, no el estado de la tarea: es el mismo
-    // conjunto que `finishRunIfComplete` ya mira para no cerrar un run con
-    // trabajo en el aire.
+    // Q6: la señal es el despacho vivo, pero NO como exclusión del conjunto.
+    // Excluir la tarea en vuelo dejaba el conjunto con las trabadas solas, así
+    // que una tarea en cola trabada por una pregunta suspendía el run entero
+    // teniendo a otro miembro trabajando — la misma regresión que Q5 quiso
+    // arreglar, corrida un caso más allá. Con algo en el aire el equipo NO está
+    // bloqueado, punto: el reporte que entre volverá a evaluar esto. Es el mismo
+    // conjunto que `finishRunIfComplete` mira para no cerrar un run con trabajo
+    // en vuelo.
     const inFlight = new Set(
       this.deps.repo.listCoordinationDispatches(runId)
         .filter((d) => d.status === 'dispatched' || d.status === 'running')
         .map((d) => d.taskId),
     );
+    if (inFlight.size > 0) return false;
     const readyEligible = tasks.filter((t) =>
-      (t.status === 'ready' || t.status === 'blocked' || t.status === 'dispatched' || t.status === 'running')
-      && !inFlight.has(t.id));
+      t.status === 'ready' || t.status === 'blocked' || t.status === 'dispatched' || t.status === 'running');
     return readyEligible.length > 0 && readyEligible.every((t) => blockedTaskIds.has(t.id));
   }
 

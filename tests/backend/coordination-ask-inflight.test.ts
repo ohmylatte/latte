@@ -119,6 +119,51 @@ describe('Q5: una pregunta desde una tarea en vuelo', () => {
     expect(b.repo.getCoordinationRun(runId).status).toBe('suspended');
   });
 
+  /**
+   * Q6 (regresión de Q5): el arreglo de Q5 excluía del conjunto elegible las
+   * tareas con despacho vivo. Con UNA tarea en cola trabada y OTRA en vuelo, el
+   * conjunto quedaba con la trabada sola y `every` daba verdadero: el run se
+   * suspendía `all_blocked_on_ask` con un miembro trabajando. La señal correcta
+   * no es excluir: es que con algo EN VUELO no se suspende nada.
+   */
+  it('con una tarea en cola trabada y otra en vuelo el run sigue `running`', async () => {
+    const a = envelope(await call('latte_task_create', { roleId: 'role_a', spec: 'a' }));
+    const idA = (a.data as { taskId: string }).taskId;
+    const bTask = envelope(await call('latte_task_create', { roleId: 'role_a', spec: 'b' }));
+    const idB = (bTask.data as { taskId: string }).taskId;
+
+    await call('latte_dispatch', { taskId: idB });
+    expect(b.repo.getCoordinationTask(idB).status).toBe('dispatched');
+
+    const asked = envelope(await call('latte_ask', { question: '¿y esta?', taskId: idA }));
+
+    expect(asked.ok).toBe(true);
+    expect(b.repo.getCoordinationTask(idA).status).toBe('blocked');
+    // Hay alguien trabajando: el equipo no está bloqueado.
+    expect(b.repo.getCoordinationRun(runId).status).toBe('running');
+    expect(b.repo.getCoordinationRun(runId).suspendReason).toBeNull();
+  });
+
+  it('y cuando la tarea en vuelo termina, con la otra todavía trabada, ahí sí se suspende', async () => {
+    const a = envelope(await call('latte_task_create', { roleId: 'role_a', spec: 'a' }));
+    const idA = (a.data as { taskId: string }).taskId;
+    const bTask = envelope(await call('latte_task_create', { roleId: 'role_a', spec: 'b' }));
+    const idB = (bTask.data as { taskId: string }).taskId;
+    await call('latte_dispatch', { taskId: idB });
+    const memberId = b.repo.listCoordinationDispatches(runId).find((d) => d.taskId === idB)!.memberId;
+    const workerToken = b.coordinationTokens.mint(workId, memberId);
+    await call('latte_ask', { question: '¿y esta?', taskId: idA });
+    expect(b.repo.getCoordinationRun(runId).status).toBe('running');
+
+    await call('latte_report', { taskId: idB, outcome: 'succeeded', summary: 'listo' }, workerToken);
+    // El reporte no escribe la suspensión; el tick, que es quien barre, sí.
+    b.service.sweepCoordination();
+
+    // Ya no queda nada en vuelo y lo único despachable sigue trabado.
+    expect(b.repo.getCoordinationRun(runId).status).toBe('suspended');
+    expect(b.repo.getCoordinationRun(runId).suspendReason).toBe('all_blocked_on_ask');
+  });
+
   it('la descripción publicada de `latte_ask` dice la verdad de los dos casos', () => {
     const ask = MCP_TOOL_DEFINITIONS.find((d) => d.name === 'latte_ask');
     expect(ask).toBeDefined();
