@@ -572,7 +572,14 @@ export class CoordinationEngine {
       if (decision === 'reject') return this.cancelRun(runId);
       const snapshot: string[] = run.planJson ? JSON.parse(run.planJson) : [];
       const now = this.deps.clock();
-      for (const taskId of snapshot) this.deps.repo.updateCoordinationTask(taskId, { inPlan: true }, now);
+      // K7 (ronda 10): APROBAR EL PLAN NO LE CAMBIA EL DUEÑO A NADIE, así que
+      // no le mueve el reloj a nadie. Esto pasaba por `updateCoordinationTask`,
+      // que reescribe `updated_at` sobre TODA la fila: una tarea del snapshot
+      // que en ese instante estaba reclamada por un despacho levantando su
+      // proceso se quedaba sin token, y ese despacho volvía y abortaba con
+      // `CLAIM_LOST` —despidiendo al miembro recién contratado y diciéndole a
+      // la persona que otro había tomado la tarea— por haber aprobado el plan.
+      for (const taskId of snapshot) this.deps.repo.markCoordinationTaskInPlan(taskId);
       return this.deps.repo.approveCoordinationPlan(runId, now);
     }
     if (gateId.startsWith('budget:')) {
@@ -830,7 +837,10 @@ export class CoordinationEngine {
           return dep.id;
         });
         const task = this.createTaskRow(run.id, item.roleId, item.spec, dependsOnIds);
-        this.deps.repo.updateCoordinationTask(task.id, { inPlan: true }, now);
+        // K7: la pertenencia al plan se marca sin tocar el reloj de la tarea,
+        // igual que en el gate de plan. Acá la tarea acaba de nacer y no puede
+        // estar reclamada, pero es la misma forma y no hay dos.
+        this.deps.repo.markCoordinationTaskInPlan(task.id);
         created.push(task);
       }
       this.deps.repo.approveCoordinationPlan(run.id, now);

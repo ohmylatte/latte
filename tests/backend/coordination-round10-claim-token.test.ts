@@ -267,6 +267,46 @@ describe('Ronda 10: el reclamo se confirma primero, y soltarlo exige el token', 
     expect(b.repo.countOpenCoordinationCostReservations(runId)).toBe(0);
   });
 
+  // --- K7: una escritura que no cambia de dueño no pierde un reclamo --------
+
+  it('aprobar el gate del plan durante un spawn colgado NO le hace perder el reclamo al despacho', async () => {
+    members.push({ id: 'mem_a1', workId, roleId: 'role_a', status: 'idle' });
+    const slow = deferred();
+    rewire(() => slow.promise);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(T0));
+
+    // Un plan de verdad: `latte_plan_submit` es lo que escribe el snapshot que
+    // el gate de plan después recorre.
+    const submitted = envelope(await call('latte_plan_submit', { tasks: [{ roleId: 'role_a', spec: 'la del plan' }] }));
+    expect(submitted.ok).toBe(true);
+    const taskId = b.repo.listCoordinationTasks(runId)[0]!.id;
+
+    const inFlight = call('latte_dispatch', { taskId });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(b.repo.getCoordinationTask(taskId).status).toBe('dispatched');
+
+    // Y la persona aprueba el plan mientras el proceso levanta. Esto NO le
+    // cambia el dueño a ninguna tarea: sólo dice cuáles están en el plan.
+    vi.setSystemTime(at(5));
+    await b.service.resolveCoordinationGate('plan:' + runId, 'approve');
+    expect(b.repo.getCoordinationTask(taskId).inPlan).toBe(true);
+
+    // El despacho tiene que salir. Con `updated_at` reescrito por la
+    // aprobación, volvía con `CLAIM_LOST`: despedía al miembro y le decía a la
+    // persona que otro había tomado la tarea, por haber aprobado su plan.
+    vi.setSystemTime(at(6));
+    slow.resolve();
+    const done = envelope(await inFlight);
+    expect(done.error?.code).toBeUndefined();
+    expect(done.ok).toBe(true);
+    expect(b.repo.getCoordinationTask(taskId).status).toBe('dispatched');
+    expect(b.repo.getCoordinationTask(taskId).assignedMemberId).toBe('mem_a1');
+    expect(hub.send).toHaveBeenCalledTimes(1);
+    expect(removed).toEqual([]);
+    expect(b.repo.listCoordinationDispatches(runId).filter((d) => d.outcome === 'claim_lost')).toEqual([]);
+  });
+
   // --- K6: el compare-and-set también protege lo TERMINAL ------------------
 
   /**

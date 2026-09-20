@@ -1326,6 +1326,24 @@ export class LatteRepository {
   }
 
   /**
+   * K7 (ronda 10): EL PLAN APROBADO NO CAMBIA DE DUEÑO, ASÍ QUE NO TOCA EL
+   * RELOJ.
+   *
+   * `updateCoordinationTask(id, { inPlan: true }, now)` reescribía
+   * `updated_at` sobre TODAS las tareas del snapshot, incluidas las que en ese
+   * momento estaban `dispatched` y todavía sin miembro — o sea, reclamadas por
+   * un despacho que estaba levantando su proceso. Con el token roto, ese
+   * despacho volvía, no podía confirmar y abortaba con `CLAIM_LOST`:
+   * despedía al miembro recién contratado y le decía a la persona que otro
+   * había tomado la tarea, cuando lo único que había pasado era que ella
+   * aprobó el plan. Marcar la pertenencia al plan es un hecho del PLAN, no de
+   * la tarea, y no tiene por qué mover su reloj.
+   */
+  markCoordinationTaskInPlan(id: string): void {
+    this.db.run('UPDATE coordination_task SET in_plan = 1 WHERE id = ?', [id]);
+  }
+
+  /**
    * El compare-and-set inverso: mueve SOLO la tarea que este despacho había
    * reclamado, y sólo mientras siga siendo la que reclamó.
    *
