@@ -540,6 +540,109 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
     });
   });
 
+  /**
+   * O3: LO QUE SE CAE SE VE, SE ABRA O NO LA EDICIÓN.
+   *
+   * Los avisos de "se quitan N tareas" y "se quita N contratación sin tareas"
+   * vivían dentro del bloque `{editing && ...}`, y la lista de contrataciones
+   * no tachaba nada. Por el camino de "Aprobar" simple —un plan con un rol
+   * huérfano que arrastra la única tarea de un alta— el payload salía sin esa
+   * alta y la persona nunca se enteraba: leía una contratación que no iba a
+   * ocurrir.
+   *
+   * O12: y un plan ENTERAMENTE huérfano dejaba los dos botones primarios
+   * grises, sin una palabra afuera de la edición.
+   */
+  describe('O3/O12: el recorte automático se ve sin abrir la edición', () => {
+    /**
+     * Un huérfano (`ghost`) y un alta (`designer`) cuya única tarea depende de
+     * la del huérfano: al caerse el huérfano cae la tarea del diseñador por
+     * arrastre, y con ella el alta.
+     */
+    const orphanGate = () => gateView({
+      id: 'g-proposal', kind: 'proposal',
+      proposalJson: JSON.stringify(proposal({
+        plan: [
+          { roleId: 'ghost', spec: 'La que nadie puede hacer' },
+          { roleId: 'designer', spec: 'La que depende de la anterior', dependsOn: [0] },
+        ],
+        membersToHire: [{ roleId: 'designer', why: 'Nadie diseña todavía' }],
+      })),
+      roleCoverage: [{ roleId: 'ghost', coverage: 'orphan' }, { roleId: 'designer', coverage: 'hire' }],
+    });
+
+    it('la nota del alta caída y su renglón tachado se ven SIN abrir la edición, y el payload no la lleva', () => {
+      const onResolveGate = vi.fn();
+      const { container } = renderView('es-AR', {
+        gates: [orphanGate()],
+        roles: [role({ id: 'designer', name: 'Diseñador' })],
+        onResolveGate,
+      });
+      const card = container.querySelector('.decision-gate-proposal')!;
+      // Sin tocar "Editar y aprobar": el editor ni existe.
+      expect(card.querySelector('.decision-gate-edit')).toBeNull();
+
+      expect(card.querySelector('.decision-gate-edit-hire-dropped')).not.toBeNull();
+      const dropped = card.querySelector('.decision-gate-hire-dropped')!;
+      expect(dropped).not.toBeNull();
+      expect(dropped.querySelector('s')!.textContent).toContain('Diseñador');
+      expect(dropped.textContent).toContain('se quedó sin tareas');
+
+      // O12: con TODO el plan caído, la frase de la única salida.
+      expect(card.querySelector('.decision-gate-empty-plan')!.textContent).toContain('Ninguna tarea del plan tiene quien la haga');
+
+      // Y si hubiera algo que aprobar, el payload no llevaría esa alta. Acá no
+      // queda nada, así que el botón está deshabilitado: se comprueba que no
+      // mandó nada.
+      expect(onResolveGate).not.toHaveBeenCalled();
+    });
+
+    it('con una tarea que SÍ sobrevive, el "Aprobar" manda el payload derivado sin el alta caída', () => {
+      const onResolveGate = vi.fn();
+      const { container } = renderView('es-AR', {
+        gates: [gateView({
+          id: 'g-proposal', kind: 'proposal',
+          proposalJson: JSON.stringify(proposal({
+            plan: [
+              { roleId: 'ghost', spec: 'La que nadie puede hacer' },
+              { roleId: 'designer', spec: 'La que depende de la anterior', dependsOn: [0] },
+              { roleId: 'copywriter', spec: 'La que se puede hacer igual' },
+            ],
+            membersToHire: [{ roleId: 'designer', why: 'Nadie diseña todavía' }],
+          })),
+          roleCoverage: [
+            { roleId: 'ghost', coverage: 'orphan' },
+            { roleId: 'designer', coverage: 'hire' },
+            { roleId: 'copywriter', coverage: 'member' },
+          ],
+        })],
+        onResolveGate,
+      });
+      const card = container.querySelector('.decision-gate-proposal')!;
+      // El alta tachada, y la frase de plan vacío NO (queda una tarea).
+      expect(card.querySelector('.decision-gate-hire-dropped')).not.toBeNull();
+      expect(card.querySelector('.decision-gate-empty-plan')).toBeNull();
+
+      fireEvent.click(screen.getByText('Aprobar'));
+
+      const [, , editedJson] = onResolveGate.mock.calls[0]!;
+      const edited = JSON.parse(editedJson as string) as CoordinationProposal;
+      expect(edited.membersToHire).toEqual([]);
+      expect(edited.plan.map((task) => task.roleId)).toEqual(['copywriter']);
+    });
+
+    it('sin nada que recortar no se inventa ninguna nota ni ningún tachado', () => {
+      const { container } = renderView('es-AR', {
+        gates: [gateView({ id: 'g-proposal', kind: 'proposal', proposalJson: JSON.stringify(proposal()) })],
+      });
+      const card = container.querySelector('.decision-gate-proposal')!;
+      expect(card.querySelector('.decision-gate-hire-dropped')).toBeNull();
+      expect(card.querySelector('.decision-gate-edit-hire-dropped')).toBeNull();
+      expect(card.querySelector('.decision-gate-empty-plan')).toBeNull();
+      expect(card.querySelector('.decision-gate-edit-dropped')).toBeNull();
+    });
+  });
+
   describe('the aggregate — never hidden (task 7.6)', () => {
     it('shows this work, other teams now, and the total if approved', () => {
       const { container } = renderView('es-AR', {

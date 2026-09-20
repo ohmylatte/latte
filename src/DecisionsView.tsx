@@ -502,10 +502,34 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
     {orphanDropped > 0 && <p className="decision-gate-orphan-note">{t('coordination.proposal.orphanRolesDropped', { count: orphanDropped })}</p>}
     {hires.length > 0 && <>
       <h3>{t('coordination.proposal.hires')}</h3>
+      {/* O3: EL ALTA QUE NO SE VA A CONTRATAR SE VE TACHADA.
+          `hiresToSend` ya filtraba las que se quedaron sin una sola tarea, pero
+          esta lista las seguía mostrando iguales a las demás: por el camino
+          "Aprobar" simple, sin abrir la edición, la persona leía un alta que el
+          payload no iba a llevar. Se tacha y se dice por qué, con la misma
+          forma que la lista de tareas quitadas. */}
       <ul className="decision-gate-hire-list">
-        {hires.map((hire, i) => <li key={i}><strong>{resolveRoleName(hire.roleId, roles, team)}</strong><span>{t('coordination.proposal.hireReason', { reason: hire.why })}</span></li>)}
+        {hires.map((hire, i) => hiresToSend.includes(hire)
+          ? <li key={i}><strong>{resolveRoleName(hire.roleId, roles, team)}</strong><span>{t('coordination.proposal.hireReason', { reason: hire.why })}</span></li>
+          : <li key={i} className="decision-gate-hire-dropped">
+              <s><strong>{resolveRoleName(hire.roleId, roles, team)}</strong><span>{t('coordination.proposal.hireReason', { reason: hire.why })}</span></s>
+              <small>{t('coordination.proposal.hireDroppedLabel')}</small>
+            </li>)}
       </ul>
     </>}
+    {/* O3: Y LOS AVISOS VIVEN FUERA DE LA EDICIÓN, como ya vivía la lista de
+        tareas quitadas. Estaban adentro de `{editing && ...}`, así que por el
+        camino de "Aprobar" simple —un plan con un huérfano que arrastra la
+        única tarea de un alta— se recortaba el plan Y se caía un alta sin que
+        nada se dijera. El aviso de tareas sólo habla de lo que la persona
+        SACÓ: lo que se va por huérfanos ya tiene su propia frase arriba. */}
+    {trimmed.removed > orphanDropped && <p className="decision-gate-edit-dropped">{t('coordination.proposal.editDropsTasks', { count: trimmed.removed - orphanDropped })}</p>}
+    {hiresWithoutTasks > 0 && <p className="decision-gate-edit-dropped decision-gate-edit-hire-dropped">{t('coordination.proposal.editDropsHires', { count: hiresWithoutTasks })}</p>}
+    {/* O12: el plan 100 % huérfano. Sin esto los dos botones primarios quedaban
+        grises y no había una sola palabra afuera de la edición que dijera por
+        qué: "Editar y aprobar" tampoco servía, porque no queda nada que
+        aprobar. La única salida real se nombra. */}
+    {orphanDropped === proposal.plan.length && <p className="decision-gate-edit-dropped decision-gate-empty-plan">{t('coordination.proposal.nobodyCanDoIt')}</p>}
     <h3>{t('coordination.proposal.budget')}</h3>
     <p>{proposal.estimatedDispatches == null
       ? (proposal.unlimitedConfirmedAt ? t('coordination.budget.unlimited') : t('coordination.budget.unset'))
@@ -533,13 +557,10 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
           <span>{resolveRoleName(hire.roleId, roles, team)}</span>
         </label>)}
       </>}
-      {/* Q4: lo que se va del plan al destildar, ANTES de aprobar. Sin esta
-          línea la persona sacaba una contratación y no tenía forma de saber que
-          con ella se iban tareas — ni cuáles, ni cuántas. */}
-      {trimmed.removed > 0 && <p className="decision-gate-edit-dropped">{t('coordination.proposal.editDropsTasks', { count: trimmed.removed })}</p>}
-      {/* Q6/P8: y el alta que quedó sin una sola tarea. Contratarla igual levanta
-          un proceso y ocupa un cupo por alguien que no tiene nada que hacer. */}
-      {hiresWithoutTasks > 0 && <p className="decision-gate-edit-dropped decision-gate-edit-hire-dropped">{t('coordination.proposal.editDropsHires', { count: hiresWithoutTasks })}</p>}
+      {/* Q4/O3: los dos avisos de arriba (tareas y altas que se caen) ya se
+          renderizan SIEMPRE que aplican, fuera de este bloque: valen igual por
+          el camino del "Aprobar" simple. Acá queda sólo lo que es propio de
+          estar editando. */}
       {trimmed.plan.length === 0 && <p className="decision-gate-edit-dropped decision-gate-edit-empty">{t('coordination.proposal.editDropsAll')}</p>}
       <div className="decision-gate-edit-actions">
         <button className="primary" disabled={busy || trimmed.plan.length === 0} onClick={confirmEdit}>{t('coordination.proposal.editConfirm')}</button>
@@ -785,7 +806,16 @@ export function DecisionsView(props: DecisionsViewProps) {
           y ninguna pantalla del Trabajo lo renderizaba: el equipo tenía cada
           despacho denegado contra unos bytes rotos y la persona no tenía dónde
           enterarse. Va acá, al lado del editor que es la salida. */}
-      {props.coordinationRun?.budgetInvalid && <p className="decision-coordination-run-budget-invalid">{t('coordination.budget.invalid')}</p>}
+      {/* O5: SÓLO CON EL EQUIPO EN CURSO, Y CON SU PROPIA FRASE.
+          Se mostraba también con el run TERMINADO —donde ya no se deniega ni
+          se va a denegar ningún despacho— y reusaba la frase del presupuesto
+          del TRABAJO, que habla de otros bytes: `run.budget_json` es la foto
+          que se congeló al aprobar, el meta del Trabajo es el default. El
+          editor de abajo (`setCoordinationBudget`) escribe los dos —pasa por
+          `updateActiveCoordinationRunBudget`, que alcanza al run activo—, y
+          por eso la frase puede prometer que se aplica al equipo. */}
+      {props.coordinationRun?.active && props.coordinationRun.budgetInvalid
+        && <p className="decision-coordination-run-budget-invalid">{t('coordination.budget.runInvalid')}</p>}
       {props.onSetCoordinationBudget && <WorkBudgetEditor onSave={props.onSetCoordinationBudget} />}
       <p className="decision-coordination-grant">
         {props.coordinatorGrant

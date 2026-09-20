@@ -258,4 +258,44 @@ describe('P6: el presupuesto ilegible del run en curso', () => {
 
     expect(invalidNote(container)).toBeNull();
   });
+
+  /**
+   * O5: NI SOBRE UN RUN TERMINADO, NI CON LA FRASE DEL TRABAJO.
+   *
+   * Se renderizaba con sólo `budgetInvalid`, sin mirar `active`: un equipo que
+   * ya cerró mostraba un aviso sobre despachos que no se están denegando ni se
+   * van a denegar. Y reusaba `coordination.budget.invalid`, que habla del
+   * presupuesto del TRABAJO — otro byte, otro lugar donde se arregla.
+   */
+  const budgetProps = {
+    coordinationAuthority: 'manual' as const,
+    coordinationBudget: { state: 'set' as const, budget: { maxDispatches: 5, unlimitedConfirmedAt: null } },
+    onSetCoordinationBudget: () => {},
+  };
+
+  it('O5: con el run TERMINADO no se muestra, aunque sus bytes sigan rotos', () => {
+    const { container } = mount({ ...budgetProps, coordinationRun: run({ status: 'done', active: false, budgetInvalid: true }) });
+
+    expect(invalidNote(container)).toBeNull();
+  });
+
+  it('O5: con el run activo, la frase es PROPIA — no la del presupuesto del Trabajo', () => {
+    const { container } = mount({ ...budgetProps, coordinationRun: run({ budgetInvalid: true }) });
+
+    const note = invalidNote(container)!;
+    expect(note).not.toBeNull();
+    expect(note.textContent).toContain('equipo en curso');
+    // La otra frase, la del Trabajo, sigue existiendo en su propio párrafo y no
+    // es ésta: si fueran la misma, este test no distinguiría nada.
+    const workBudget = container.querySelector('.decision-coordination-budget')!;
+    expect(workBudget.textContent).not.toBe(note.textContent);
+  });
+
+  it('O5: y en inglés, sin nada en castellano', () => {
+    const { container } = mount({ ...budgetProps, coordinationRun: run({ budgetInvalid: true }) }, 'en-US');
+
+    const note = invalidNote(container)!;
+    expect(note.textContent).toContain('running team');
+    expect(note.textContent).not.toContain('equipo');
+  });
 });

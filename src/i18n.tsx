@@ -493,7 +493,11 @@ const es = {
   'error.coordination.memberBusy': 'Ese rol está ocupado ahora mismo. Probá de nuevo cuando termine lo que está haciendo.',
   'error.coordination.roleNotApproved': 'Ese rol no está en el equipo que aprobaste: necesita su propia aprobación.',
   'error.coordination.budgetInvalid': 'El presupuesto de este trabajo no se pudo leer: escribilo de nuevo antes de seguir.',
-  'error.coordination.planHasUnapprovedRoles': 'El plan tiene tareas para roles que nadie va a poder hacer. Abrí "Editar y aprobar": esas tareas se quitan solas, y podés aprobar el resto.',
+  // O12: la copy prometía "Editar y aprobar" sin más, y con el plan ENTERO
+  // huérfano ahí no queda nada que aprobar: la persona abría el editor, veía
+  // el botón gris y no tenía una sola palabra sobre qué hacer. Se nombran los
+  // dos casos.
+  'error.coordination.planHasUnapprovedRoles': 'El plan tiene tareas para roles que nadie va a poder hacer. Abrí "Editar y aprobar": esas tareas se quitan solas, y podés aprobar el resto. Si no queda ninguna, rechazá y pedí una propuesta nueva.',
   // Q6: los que la persona alcanza con un clic, y que hasta ahora le llegaban
   // en el idioma en que están escritos los mensajes del motor.
   'error.coordination.validation': 'Algo de lo que se mandó no es válido. Revisá los datos y probá de nuevo.',
@@ -527,6 +531,11 @@ const es = {
   'coordination.budget.unlimited': 'Sin límite de despachos (confirmado)',
   'coordination.budget.limited': 'Hasta {count} despachos',
   'coordination.budget.invalid': 'El presupuesto de este trabajo no se pudo leer, revisalo: hasta que lo escribas de nuevo, cada despacho se deniega',
+  // O5: el presupuesto del RUN EN CURSO es otro byte que el del Trabajo — la
+  // foto que se congeló al aprobar, no el default. Su frase lo dice, y promete
+  // exactamente lo que el editor de abajo cumple (`setCoordinationBudget` pasa
+  // por `updateActiveCoordinationRunBudget`).
+  'coordination.budget.runInvalid': 'El presupuesto del equipo en curso quedó ilegible. Escribí uno nuevo acá: se aplica al equipo',
   'coordination.coordinator.none': 'Sin coordinador asignado',
   'coordination.coordinator.assigned': 'Coordinador: {name}',
   // --- Coordinación: gates (autonomous-coordination, Phase 7) ------------
@@ -561,6 +570,11 @@ const es = {
   'coordination.proposal.editDropsHires': '{count, plural, one {# contratación sin tareas se quita.} other {# contrataciones sin tareas se quitan.}}',
   'coordination.proposal.orphanRolesDropped': '{count, plural, one {# tarea de roles sin contratación se quita del plan.} other {# tareas de roles sin contratación se quitan del plan.}}',
   'coordination.proposal.droppedTitle': 'Se quitan del plan',
+  // O3: el alta que no viaja en el payload, tachada en la lista que la persona lee.
+  'coordination.proposal.hireDroppedLabel': 'No se contrata: se quedó sin tareas',
+  // O12: el plan que nadie puede hacer. "Editar y aprobar" no sirve acá —no
+  // queda nada que aprobar—, así que la frase nombra la única salida real.
+  'coordination.proposal.nobodyCanDoIt': 'Ninguna tarea del plan tiene quien la haga: rechazá y pedí una propuesta nueva',
   'coordination.proposal.editConfirm': 'Confirmar edición y aprobar',
   'coordination.proposal.editCancel': 'Cancelar edición',
   // --- Coordinación: equipos activos, global (Phase 7, slice 7-B) --------
@@ -1168,7 +1182,7 @@ const en: Record<MessageKey, string> = {
   'error.coordination.memberBusy': 'That role is busy right now. Try again once it finishes what it is doing.',
   'error.coordination.roleNotApproved': 'That role is not part of the team you approved: it needs its own approval.',
   'error.coordination.budgetInvalid': "This project's budget could not be read: write it again before going on.",
-  'error.coordination.planHasUnapprovedRoles': 'The plan has tasks for roles nobody can do. Open “Edit and approve”: those tasks are dropped for you, and you can approve the rest.',
+  'error.coordination.planHasUnapprovedRoles': 'The plan has tasks for roles nobody can do. Open “Edit and approve”: those tasks are dropped for you, and you can approve the rest. If none are left, discard it and ask for a new proposal.',
   'error.coordination.validation': 'Something that was sent is not valid. Check the values and try again.',
   'error.coordination.budgetExceeded': 'This team has used up its dispatch budget. Raise it, or close the team here.',
   'error.coordination.maxConcurrent': 'This team already has all its concurrent dispatches running. Wait for one to finish.',
@@ -1196,6 +1210,7 @@ const en: Record<MessageKey, string> = {
   'coordination.budget.unlimited': 'No dispatch limit (confirmed)',
   'coordination.budget.limited': 'Up to {count} dispatches',
   'coordination.budget.invalid': 'This work’s budget could not be read, check it: until you set it again, every dispatch is denied',
+  'coordination.budget.runInvalid': 'The running team’s budget became unreadable. Write a new one here: it applies to the team',
   'coordination.coordinator.none': 'No coordinator assigned',
   'coordination.coordinator.assigned': 'Coordinator: {name}',
   // --- Coordination: gates (autonomous-coordination, Phase 7) ------------
@@ -1227,6 +1242,8 @@ const en: Record<MessageKey, string> = {
   'coordination.proposal.editDropsHires': '{count, plural, one {# hire with no tasks is dropped.} other {# hires with no tasks are dropped.}}',
   'coordination.proposal.orphanRolesDropped': '{count, plural, one {# task for roles nobody is hiring is dropped from the plan.} other {# tasks for roles nobody is hiring are dropped from the plan.}}',
   'coordination.proposal.droppedTitle': 'Dropped from the plan',
+  'coordination.proposal.hireDroppedLabel': 'Not hired: no tasks left for them',
+  'coordination.proposal.nobodyCanDoIt': 'No task in this plan has anyone to do it: discard it and ask for a new proposal',
   'coordination.proposal.editConfirm': 'Confirm edit and approve',
   'coordination.proposal.editCancel': 'Cancel edit',
   // --- Coordination: active teams, global (Phase 7, slice 7-B) -----------
