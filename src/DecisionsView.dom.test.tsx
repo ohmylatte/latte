@@ -379,6 +379,10 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
           aggregate: { otherActiveRuns: 0, otherCommittedDispatches: 0, totalIfApproved: 8 },
         })],
         roles: [role({ id: 'copywriter', name: 'Redactor' }), role({ id: 'designer', name: 'Diseñador' })],
+        // N10: las tres acciones existen PORQUE hay un handler. Sin
+        // `onResolveGate` la tarjeta es de sólo lectura y no las ofrece —ver
+        // `decisions-round7-proposal.dom.test.tsx`—; la app siempre lo pasa.
+        onResolveGate: vi.fn(),
       });
       const card = container.querySelector('.decision-gate-proposal')!;
       expect(card).not.toBeNull();
@@ -395,6 +399,7 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
     it('asserts there is no separate settings form anywhere in the flow: no dropdown, no modal dialog, just the plan', () => {
       const { container } = renderView('es-AR', {
         gates: [gateView({ id: 'g-proposal', kind: 'proposal', proposalJson: JSON.stringify(proposal()), aggregate: { otherActiveRuns: 0, otherCommittedDispatches: 0, totalIfApproved: 8 } })],
+        onResolveGate: vi.fn(), // N10: sin handler no hay botones que abrir
       });
       const card = container.querySelector('.decision-gate-proposal')!;
       expect(card.textContent).toContain('No hay ningún formulario de configuración');

@@ -310,7 +310,10 @@ describe('DecisionsView: el gate de propuesta no confunde el estado del formular
    * que descartar, así que el botón puede convivir con el editor abierto.
    */
   it('con una edición sin guardar, el "Aprobar" simple no se renderiza: no puede descartarla en silencio', () => {
-    const { container } = renderDecisions({ gates: [cappedGate] });
+    // N10: sin `onResolveGate` la tarjeta es de sólo lectura y no renderiza
+    // ningún botón. Lo que este test mira es el estado del FORMULARIO, así que
+    // el handler va puesto y no se usa.
+    const { container } = renderDecisions({ gates: [cappedGate], onResolveGate: vi.fn() });
     fireEvent.click(container.querySelector('.decision-gate-actions button:not(.primary)')!);
     // Abierto e intacto: nada que descartar, el botón sigue.
     expect(container.querySelector('.decision-gate-actions button.primary')).not.toBeNull();

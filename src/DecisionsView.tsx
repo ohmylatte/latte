@@ -364,15 +364,21 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
   const [unlimitedConfirmed, setUnlimitedConfirmed] = useState(false);
   const hires = proposal.membersToHire ?? [];
   const busy = Boolean(pending?.[`gate:${gate.id}`]);
-  // Deriva del estado de la PROPUESTA, no del formulario de edición (juicio
-  // ronda 4, ítem 15): con el formulario, abrir la edición de una propuesta
-  // CON tope, borrar el número y Cancelar dejaba `dispatches` en '' para
-  // siempre -- el "Aprobar" simple desaparecía y el aviso de ilimitado
-  // aparecía sobre una propuesta que SÍ tenía tope. El motor
-  // (`resolveProposalGate`) descarta cualquier `unlimitedConfirmedAt` en un
-  // "Aprobar" simple (sin `editedProposalJson`) — sólo `estimatedDispatches`
-  // decide si ese botón puede tener éxito.
-  const needsUnlimitedConfirmation = proposal.estimatedDispatches == null && proposal.unlimitedConfirmedAt == null;
+  // N8: LAS RAMAS DE "ILIMITADO" DE LA PROPUESTA GUARDADA NO EXISTEN MÁS.
+  //
+  // Acá vivía `needsUnlimitedConfirmation = estimatedDispatches == null &&
+  // unlimitedConfirmedAt == null`, y más abajo la tarjeta elegía entre
+  // "ilimitado" y "sin tope" según `proposal.unlimitedConfirmedAt`. Las dos
+  // ramas eran inalcanzables: `requestCoordination` valida
+  // `estimatedDispatches` con `requireInt(…, 1, …)` y guarda
+  // `unlimitedConfirmedAt: null` a la fuerza, así que una propuesta GUARDADA
+  // siempre tiene un entero y nunca una confirmación. Código muerto que
+  // describía un estado imposible, y que había que leer cada vez para
+  // convencerse de que no pasaba nada raro.
+  //
+  // Lo que SÍ existe y sigue acá es la casilla del EDITOR: la persona borra el
+  // número y confirma el ilimitado ella misma. Ése es el único camino, y
+  // `formPristine` lo cuenta como formulario modificado.
 
   // Q6: QUIÉN CUBRE CADA ROL LO DICE EL MOTOR, no esta pantalla.
   //
@@ -413,7 +419,12 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
   // quedó sin ellas acá, no.
   const rolesInTrimmedPlan = new Set(trimmed.plan.map((task) => task.roleId));
   const rolesInOriginalPlan = new Set(proposal.plan.map((task) => task.roleId));
-  const hiresToSend = keptHires.filter((hire) => !rolesInOriginalPlan.has(hire.roleId) || rolesInTrimmedPlan.has(hire.roleId));
+  const survives = (hire: { roleId: string }) => !rolesInOriginalPlan.has(hire.roleId) || rolesInTrimmedPlan.has(hire.roleId);
+  // N7: por ÍNDICE, no por referencia. La lista de abajo preguntaba
+  // `hiresToSend.includes(hire)`, y con dos altas idénticas del mismo rol el
+  // `includes` no puede distinguirlas.
+  const hiresToSendIndexes = new Set(hires.map((hire, i) => (included[i] && survives(hire) ? i : -1)).filter((i) => i >= 0));
+  const hiresToSend = hires.filter((_, i) => hiresToSendIndexes.has(i));
   const hiresWithoutTasks = keptHires.length - hiresToSend.length;
 
   /**
@@ -431,6 +442,11 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
    * el canal de error de la app, que es donde se ven todos.
    */
   const confirmEdit = async () => {
+    // N10: sin handler no hay a quién mandarle esto. `accepted` quedaba
+    // `undefined` —que no es `false`— y el editor cerraba como si el motor
+    // hubiera aceptado. Los botones ya no se renderizan sin handler; esta
+    // guarda es la del camino programático.
+    if (!onResolveGate) return;
     const edited: CoordinationProposal = {
       ...proposal,
       // Q4: el plan RECORTADO. Mandarlo entero dejaba tareas de un rol que la
@@ -444,7 +460,7 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
     };
     let accepted: boolean | void;
     try {
-      accepted = await onResolveGate?.(gate.id, 'approve', JSON.stringify(edited));
+      accepted = await onResolveGate(gate.id, 'approve', JSON.stringify(edited));
     } catch {
       return; // el motor rechazó y ya lo reportó: el editor se queda como está
     }
@@ -468,8 +484,13 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
    * derivado). En cualquier otro estado ese botón mandaría algo distinto de lo
    * que la pantalla muestra, así que no existe: el único camino es "Confirmar
    * edición y aprobar".
+   *
+   * N8: y la casilla de ilimitado cuenta. Tildarla NO cambia `dispatches` ni
+   * `included`, así que un formulario con el número borrado y el ilimitado
+   * confirmado se leía "intacto" y el "Aprobar" simple seguía ahí, listo para
+   * mandar la propuesta guardada en lugar de lo que la pantalla muestra.
    */
-  const formPristine = included.every(Boolean) && dispatches === initialDispatches();
+  const formPristine = included.every(Boolean) && dispatches === initialDispatches() && !unlimitedConfirmed;
 
   const editCancel = () => {
     // Sin esto, cancelar no reseteaba nada: el formulario quedaba con
@@ -508,13 +529,33 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
           "Aprobar" simple, sin abrir la edición, la persona leía un alta que el
           payload no iba a llevar. Se tacha y se dice por qué, con la misma
           forma que la lista de tareas quitadas. */}
+      {/* N7: Y EL MOTIVO DEL TACHADO ES EL VERDADERO.
+          Toda alta fuera de `hiresToSend` leía "No se contrata: se quedó sin
+          tareas", incluidas las que la persona acababa de DESTILDAR: se le
+          atribuía a una consecuencia del plan lo que fue una decisión suya. El
+          tachado y esa frase quedan SÓLO para el alta que la persona mantuvo
+          tildada y que se cayó por arrastre. La destildada se marca como lo
+          que es —la sacó ella— y sin tachado: la casilla ya lo dice.
+
+          Y la comparación es por ÍNDICE. `hiresToSend.includes(hire)` decidía
+          por referencia, así que dos altas idénticas del mismo rol se leían
+          como una sola. */}
       <ul className="decision-gate-hire-list">
-        {hires.map((hire, i) => hiresToSend.includes(hire)
-          ? <li key={i}><strong>{resolveRoleName(hire.roleId, roles, team)}</strong><span>{t('coordination.proposal.hireReason', { reason: hire.why })}</span></li>
-          : <li key={i} className="decision-gate-hire-dropped">
-              <s><strong>{resolveRoleName(hire.roleId, roles, team)}</strong><span>{t('coordination.proposal.hireReason', { reason: hire.why })}</span></s>
-              <small>{t('coordination.proposal.hireDroppedLabel')}</small>
-            </li>)}
+        {hires.map((hire, i) => {
+          const name = resolveRoleName(hire.roleId, roles, team);
+          const reason = <span>{t('coordination.proposal.hireReason', { reason: hire.why })}</span>;
+          if (!included[i]) {
+            return <li key={i} className="decision-gate-hire-unticked">
+              <strong>{name}</strong>{reason}
+              <small>{t('coordination.proposal.hireUntickedLabel')}</small>
+            </li>;
+          }
+          if (hiresToSendIndexes.has(i)) return <li key={i}><strong>{name}</strong>{reason}</li>;
+          return <li key={i} className="decision-gate-hire-dropped">
+            <s><strong>{name}</strong>{reason}</s>
+            <small>{t('coordination.proposal.hireDroppedLabel')}</small>
+          </li>;
+        })}
       </ul>
     </>}
     {/* O3: Y LOS AVISOS VIVEN FUERA DE LA EDICIÓN, como ya vivía la lista de
@@ -531,8 +572,12 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
         aprobar. La única salida real se nombra. */}
     {orphanDropped === proposal.plan.length && <p className="decision-gate-edit-dropped decision-gate-empty-plan">{t('coordination.proposal.nobodyCanDoIt')}</p>}
     <h3>{t('coordination.proposal.budget')}</h3>
+    {/* N8: sin la rama de `unlimitedConfirmedAt`, que una propuesta guardada no
+        puede tener (`requestCoordination` la fuerza a `null`). Queda el tope, y
+        el `null` —que el tipo permite y el motor no produce— se dice como lo
+        que sería: un tope que nadie escribió. Nunca "ilimitado". */}
     <p>{proposal.estimatedDispatches == null
-      ? (proposal.unlimitedConfirmedAt ? t('coordination.budget.unlimited') : t('coordination.budget.unset'))
+      ? t('coordination.budget.unset')
       : t('coordination.budget.limited', { count: proposal.estimatedDispatches })}</p>
     <h3>{t('coordination.proposal.rationale')}</h3>
     <p>{proposal.rationale}</p>
@@ -567,18 +612,23 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
         <button onClick={editCancel}>{t('coordination.proposal.editCancel')}</button>
       </div>
     </div>}
-    {needsUnlimitedConfirmation && <p className="decision-gate-note decision-gate-unlimited-note">{t('coordination.proposal.unlimitedBlocked')}</p>}
-    <div className="decision-gate-actions">
+    {/* N10: SIN HANDLER NO HAY BOTONES. Con `onResolveGate` sin definir los
+        tres no podían hacer nada, y "Confirmar edición y aprobar" era peor que
+        inerte: `accepted` quedaba `undefined`, no era `false`, y el editor se
+        cerraba como si el motor hubiera aceptado una aprobación que nunca
+        salió. La tarjeta se lee igual; lo que no se ofrece es una acción que no
+        existe. */}
+    {onResolveGate && <div className="decision-gate-actions">
       {/* O1: la condición es el ESTADO DEL FORMULARIO, no si el editor está
           abierto. Antes era `!editing`, y eso deja pasar el caso que importa:
           el editor cerrado sobre un formulario modificado (lo que producía
           `confirmEdit` cerrando sin esperar al motor). Con el formulario
           intacto no hay ninguna edición que este botón pueda descartar en
           silencio, así que puede convivir con el editor abierto. */}
-      {!needsUnlimitedConfirmation && formPristine && <button className="primary" disabled={busy || trimmed.plan.length === 0} onClick={approvePlain}>{t('coordination.gate.approve')}</button>}
+      {formPristine && <button className="primary" disabled={busy || trimmed.plan.length === 0} onClick={approvePlain}>{t('coordination.gate.approve')}</button>}
       <button disabled={busy} onClick={() => setEditing(true)}>{t('coordination.gate.editApprove')}</button>
-      <button disabled={busy} onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
-    </div>
+      <button disabled={busy} onClick={() => onResolveGate(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
+    </div>}
   </div>;
 }
 

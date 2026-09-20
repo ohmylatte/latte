@@ -581,6 +581,10 @@ const es = {
   'coordination.proposal.droppedTitle': 'Se quitan del plan',
   // O3: el alta que no viaja en el payload, tachada en la lista que la persona lee.
   'coordination.proposal.hireDroppedLabel': 'No se contrata: se quedó sin tareas',
+  // N7: el alta que la PERSONA destildó no se cayó sola. Decirle "se quedó
+  // sin tareas" le atribuía a una consecuencia del plan lo que fue una
+  // decisión suya, y el tachado la mostraba como una pérdida.
+  'coordination.proposal.hireUntickedLabel': 'La sacaste vos',
   // O12: el plan que nadie puede hacer. "Editar y aprobar" no sirve acá —no
   // queda nada que aprobar—, así que la frase nombra la única salida real.
   'coordination.proposal.nobodyCanDoIt': 'Ninguna tarea del plan tiene quien la haga: rechazá y pedí una propuesta nueva',
@@ -631,7 +635,6 @@ const es = {
   'coordination.degraded.runtimeRefused': 'El runtime no inyectó las herramientas que se habían decidido: este miembro no las tiene en su proceso.',
   'coordination.degraded.coordinationServerDown': 'El servidor de coordinación local no arrancó: este miembro trabaja con su memoria, pero sin coordinación.',
   'coordination.proposal.unlimitedConfirm': 'Confirmo un presupuesto ILIMITADO para este equipo',
-  'coordination.proposal.unlimitedBlocked': 'Esta propuesta no pone tope de despachos. Un presupuesto ilimitado lo confirmás vos: editá la propuesta y marcá la casilla, o poné un tope.',
   'decision.permissions.handoffs.accept': 'Aceptar como tarea',
   // El puente de handoffs tiene DOS finales distintos y uno solo estaba
   // escrito: con `bridged` no se abrio nada, se acuno una `coordination_task`
@@ -1252,6 +1255,7 @@ const en: Record<MessageKey, string> = {
   'coordination.proposal.orphanRolesDropped': '{count, plural, one {# task for roles nobody is hiring is dropped from the plan.} other {# tasks for roles nobody is hiring are dropped from the plan.}}',
   'coordination.proposal.droppedTitle': 'Dropped from the plan',
   'coordination.proposal.hireDroppedLabel': 'Not hired: no tasks left for them',
+  'coordination.proposal.hireUntickedLabel': 'You removed this one',
   'coordination.proposal.nobodyCanDoIt': 'No task in this plan has anyone to do it: discard it and ask for a new proposal',
   'coordination.proposal.editConfirm': 'Confirm edit and approve',
   'coordination.proposal.editCancel': 'Cancel edit',
@@ -1300,7 +1304,6 @@ const en: Record<MessageKey, string> = {
   'coordination.degraded.runtimeRefused': 'The runtime did not inject the tools that were decided for it: this member does not have them in its process.',
   'coordination.degraded.coordinationServerDown': 'The local coordination server did not start: this member works with its memory, but without coordination.',
   'coordination.proposal.unlimitedConfirm': 'I confirm an UNLIMITED budget for this team',
-  'coordination.proposal.unlimitedBlocked': 'This proposal sets no dispatch cap. An unlimited budget is yours to confirm: edit the proposal and tick the box, or set a cap.',
   'decision.permissions.handoffs.accept': 'Accept as task',
   'handoff.bridged.dispatched': 'Task created for {role} and dispatched to the team. Follow it in Decisions.',
   'handoff.bridged.queued': 'Task created for {role}, but it has not started yet: {reason}. It stays queued, in Decisions.',
