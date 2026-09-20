@@ -140,3 +140,39 @@ describe('the Resumen, in both interface languages', () => {
     expect(source).not.toMatch(/\b(?:aria-label|title|placeholder)="/);
   });
 });
+
+describe('the bitácora (additive, autonomous-coordination Phase 7 task 7.3)', () => {
+  it('does not render when the caller has not wired coordination state', () => {
+    const html = render('es-AR');
+    expect(html).not.toContain('data-item="bitacora"');
+  });
+
+  it('renders the header with zero entries when wired but there is nothing to report — never a zero', () => {
+    const html = render('es-AR', { coordinationLog: [], coordinationHires: [] });
+    expect(html).toContain('data-item="bitacora"');
+    expect(html).not.toContain('resumen-bitacora-row');
+  });
+
+  it('derives dispatch entries strictly from coordination_dispatch timestamps and adds one row for a hire', () => {
+    const html = render('es-AR', {
+      coordinationLog: [
+        { id: 'cd1', taskId: 't1', memberId: 'm1', status: 'reported', createdAt: '2026-09-01T10:00:00.000Z', startedAt: null, settledAt: '2026-09-01T10:05:00.000Z' },
+      ],
+      coordinationHires: [{ memberId: 'm2', roleName: 'Diseñador', hiredAt: '2026-09-01T09:00:00.000Z' }],
+    });
+    expect((html.match(/resumen-bitacora-row/g) ?? []).length).toBe(2);
+    expect(html).toContain('Diseñador');
+    expect(html).toContain('se sumó al equipo');
+    expect(html).toContain('Reportado');
+  });
+
+  it('renders the same bitácora in English, with nothing left in Spanish', () => {
+    const html = render('en-US', {
+      coordinationLog: [],
+      coordinationHires: [{ memberId: 'm2', roleName: 'Designer', hiredAt: '2026-09-01T09:00:00.000Z' }],
+    });
+    expect(html).toContain('>Log<');
+    expect(html).toContain('joined the team');
+    expect(html).not.toContain('sumó');
+  });
+});

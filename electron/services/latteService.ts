@@ -30,6 +30,21 @@ import type {
   BrandContextRevisionSource,
   BrandContextSaveResult,
   BrandContextStatus,
+  CoordinationActiveRunSummary,
+  CoordinationAskView,
+  CoordinationAuthorityMode,
+  CoordinationBudget,
+  CoordinationBudgetView,
+  CoordinationGlobalBudgetView,
+  CoordinationEvent,
+  CoordinationGateView,
+  CoordinationHireView,
+  CoordinationLogEntryView,
+  CoordinationMemberSupport,
+  CoordinationRunView,
+  CoordinationTaskView,
+  CoordinatorGrant,
+  HandoffTaskBridgeResult,
   Decision,
   DecisionAuthorityMode,
   DecisionProposalInput,
@@ -88,6 +103,9 @@ import { WORK_FILES } from '../core/paths';
 import { EngramClient, memoryProjectFor } from '../memory/engram';
 import { AccountStore } from '../agents/accounts';
 import { isAccountRuntime, isChatRuntime, type AgentHub, type MemberContext } from '../agents/hub';
+import { CoordinationEngine } from '../coordination/engine';
+import { mergeCoordinationBudget, readStoredCoordinationBudget, requireCoordinationBudget } from '../coordination/budget';
+import type { CoordinationInjectionPlanner } from '../coordination/injection';
 import type { McpCatalog } from '../agents/mcp';
 import { RoleCatalog } from '../agents/roles';
 import { isEffortTier } from '../agents/tiers';
@@ -99,7 +117,7 @@ import { LearningService } from '../learning/service';
 import type { SkillCandidateRecord } from '../learning/types';
 import type { CandidateGenerator } from '../learning/worker';
 import type { LearningRepository } from '../storage/learningRepository';
-import { briefDocumentId, type DocumentRecord, type LatteRepository } from '../storage/repository';
+import { briefDocumentId, type CoordinationRunRecord, type DocumentRecord, type LatteRepository } from '../storage/repository';
 import { collectBrandMemory, hasInheritedContent, type BrandMemorySnapshot } from '../workspace/brandMemory';
 import { brandContextNudge, electBrandContextOwner } from '../workspace/brandContextNudge';
 import { INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
@@ -110,7 +128,7 @@ import { DELIVERABLES_DIR, DeliverableFiles, deliverableName } from '../workspac
 import { documentFileName, fingerprintOf, type DocumentOnDisk, type WorkspaceFiles } from '../workspace/workspace';
 import { BRAND_CONTEXT_DRAFT_PROMPT_EN, BRAND_CONTEXT_DRAFT_PROMPT_ES, brandContextFingerprint, requireBrandContextInput } from '../workspace/brandContextProtocol';
 import { composeBrandContext } from '../../shared/brandContext';
-import { LIMITS, requireCleanContext, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
+import { LIMITS, requireCleanContext, requireCoordinationProposal, requireEditedPrompt, requireGateId, requireId, requireInt, requireLabel, requireRequestId, requireText } from './validation';
 import { BrandingService } from '../branding/service';
 
 /** Stable content identity; request identity handles retries, this flags similar proposals without merging them. */
@@ -133,6 +151,7 @@ export type BackendApi = Omit<
   LatteAPI,
   | 'onAgentEvent'
   | 'onChatEvent'
+  | 'onCoordinationEvent'
   | 'reportUnsaved'
   | 'windowControl'
   | 'onWindowState'
@@ -155,6 +174,22 @@ export interface LatteServiceDeps {
   /** Routes chats across OpenCode / Claude Code / Codex and owns the primary agent. */
   hub: AgentHub;
   engram: EngramClient;
+  /** sdd/autonomous-coordination, task 6.33: the SAME planner hub wiring uses, so `coordinationRuntimeSupport` reports what actually happened for a live member (`preview()`'s own claim-lookup) rather than a second, possibly-divergent guess. Absent (tests that never wire coordination) reports every member as unsupported. */
+  injection?: CoordinationInjectionPlanner;
+  /**
+   * Task 6.37: forwarded straight into this service's own `CoordinationEngine`,
+   * so an IPC-driven change fires the same event a real MCP `tools/call` does.
+   *
+   * Q11: y lo hace por la razón más simple, que es que SON EL MISMO MOTOR. Este
+   * comentario hablaba de "la instancia SEPARADA que bootstrap.ts construye
+   * para el servidor MCP de coordinación"; esa instancia se eliminó en R1 —el
+   * motor tiene estado en memoria y dos copias no se ven la una a la otra—, así
+   * que el servidor MCP usa `service.coordinationEngine`. Un comentario que
+   * describe una arquitectura que ya no existe es peor que no tener ninguno.
+   */
+  emitCoordination?: (event: CoordinationEvent) => void;
+  /** M3: el log del proceso, para que un paso del tick de coordinación que falla deje rastro en vez de perderse en un `catch` mudo. */
+  log?: (line: string) => void;
   /** MCP servers, read and written through each runtime's own CLI. */
   mcp?: McpCatalog;
   /** Opens a native save dialog; returns the chosen path or null on cancel. */
@@ -176,6 +211,14 @@ export interface LatteServiceDeps {
   /** The running app's version, sourced from `app.getVersion()`; tests pass a fixed string. */
   version: string;
   clock?: () => string;
+  /**
+   * Q7: el timer del barrido periódico de coordinación. Devuelve su propio
+   * cancelador, que `shutdown` llama. El default es un `setInterval`
+   * desreferenciado (`unref`), que no puede retener el proceso ni un
+   * milisegundo más de lo que la app vive; un test pasa el suyo y dispara el
+   * tick cuando quiere, sin esperar treinta segundos reales.
+   */
+  sweepTimer?: (tick: () => void, everyMs: number) => () => void;
   /** Brand-kit worktree owns the real adapter; default is a no-op (neutral, no kit). */
   brandContext?: BrandContextPort;
   /** Learned-skills worktree owns the real adapter; default returns no learned refs. */
@@ -199,6 +242,22 @@ function fsExistsSafe(target: string): boolean {
 }
 function fsCopySafe(source: string, target: string): void {
   nodeFs.copyFileSync(source, target, nodeFs.constants.COPYFILE_EXCL);
+}
+
+/**
+ * Q7: cada treinta segundos. Es un barrido idempotente y barato —sin preguntas
+ * abiertas no escribe una sola fila—, así que el número lo fija la otra punta:
+ * cuánto puede tardar la persona en enterarse de que su equipo terminó o de que
+ * una pregunta venció. Medio minuto es tan seguido como para que no se note y
+ * tan espaciado como para no ser trabajo de fondo.
+ */
+const COORDINATION_SWEEP_INTERVAL_MS = 30_000;
+
+/** El timer de verdad: desreferenciado, para que un barrido pendiente nunca sea el motivo por el que el proceso no cierra. */
+function defaultSweepTimer(tick: () => void, everyMs: number): () => void {
+  const handle = setInterval(tick, everyMs);
+  handle.unref?.();
+  return () => clearInterval(handle);
 }
 
 const FOLDER_TRUST_KEY = 'trust-folder:';
@@ -252,9 +311,22 @@ export class LatteService implements BackendApi {
   readonly learningService: LearningService;
   private readonly brandContextPort: BrandContextPort;
   private readonly skillResolverPort: SkillResolverPort;
+  private readonly coordination: CoordinationEngine;
+  /** Q7: el cancelador del tick periódico; lo llama `shutdown`, una sola vez. */
+  private readonly stopSweepTimer: () => void;
 
   constructor(private readonly deps: LatteServiceDeps) {
     this.clock = deps.clock ?? nowIso;
+    this.coordination = new CoordinationEngine({
+      repo: deps.repo,
+      hub: deps.hub,
+      clock: this.clock,
+      memberContext: (workId) => this.memberContext(workId),
+      emit: deps.emitCoordination,
+      // Task 8.1: the real flag, off by default like every other feature.
+      isCoordinationEnabled: () => featureEnabled((key) => deps.repo.getMeta(key), 'coordination'),
+      log: deps.log,
+    });
     this.branding = new BrandingService({
       repo: deps.repo,
       files: deps.files,
@@ -270,6 +342,88 @@ export class LatteService implements BackendApi {
     });
     this.brandContextPort = deps.brandContext ?? brandContextAdapter(this.branding);
     this.skillResolverPort = deps.skillResolver ?? skillResolverAdapter(this.learningService);
+    // Q7: el tick arranca con el servicio. Un fallo adentro del barrido no
+    // puede tumbar el loop de eventos de la app, así que se traga acá: el
+    // siguiente tick lo vuelve a intentar treinta segundos después.
+    const startTimer = deps.sweepTimer ?? defaultSweepTimer;
+    this.stopSweepTimer = startTimer(() => {
+      try { this.sweepCoordination(); } catch { /* el próximo tick lo reintenta */ }
+    }, COORDINATION_SWEEP_INTERVAL_MS);
+  }
+
+  /**
+   * Q7: EL BARRIDO PERIÓDICO DE COORDINACIÓN, el dueño que le faltaba al
+   * trabajo que las lecturas estaban haciendo a escondidas.
+   *
+   * `listGates` y `listOpenAsks` corrían `refreshAsks` —y con él
+   * `finishRunIfComplete` y `closeRun`, que le borra el permiso al
+   * coordinador—, así que abrir Decisiones podía terminar el equipo que la
+   * persona estaba yendo a mirar. Las lecturas volvieron a ser puras; esto
+   * corre solo, cada treinta segundos, escribiendo a propósito.
+   *
+   * Público porque un test necesita poder adelantar el tick sin esperar.
+   */
+  sweepCoordination(): void {
+    this.coordination.sweepActiveRuns();
+  }
+
+  /**
+   * EL motor de coordinación de este proceso, expuesto para que `bootstrap.ts`
+   * se lo pase al servidor MCP en vez de construirse uno propio (R1).
+   *
+   * No es un detalle de cableado: el motor TIENE ESTADO EN MEMORIA
+   * (`assigning`, la reserva de un miembro mientras se levanta su proceso; y
+   * `pendingClose`, los cierres aparcados esperando a que el coordinador
+   * termine su turno). Dos instancias sobre el mismo repo no ven ese estado la
+   * una de la otra: el último `latte_report` por MCP aparcaba el cierre en un
+   * motor y el fin de turno llegaba al otro, así que el run quedaba `running`
+   * para siempre; y un despacho por MCP y una aprobación por IPC elegían al
+   * MISMO miembro ocioso. Uno por proceso, y punto.
+   */
+  get coordinationEngine(): CoordinationEngine {
+    return this.coordination;
+  }
+
+  /**
+   * sdd/autonomous-coordination, task 6.33: attached AFTER construction, the
+   * same reasoning as `AgentHub.attachCoordinationInjection` -- the planner
+   * needs `this.memberContext` (via the coordination MCP server's own
+   * `CoordinationEngine` instance), which needs this service to already
+   * exist. Bootstrap.ts builds the planner once everything else is up and
+   * hands it to both the hub and this service.
+   */
+  attachCoordinationInjection(planner: CoordinationInjectionPlanner): void {
+    this.deps.injection = planner;
+  }
+
+  /**
+   * Reescribe los archivos de instrucciones de UN Trabajo despues de que el
+   * runtime confirmo (o desmintio) que inyecto los servidores MCP -- lo llama
+   * `AgentHub` via `attachCoordinationInjection` (juicio #2, ronda 4).
+   *
+   * La regla de quietud se afloja EXACTAMENTE un paso, no mas: se reescribe
+   * solo cuando este Trabajo tiene a lo sumo UN miembro vivo, o sea el que
+   * se acaba de abrir. `memberContext` ya habia escrito el archivo un
+   * instante antes (con `liveMemberCount === 0`) afirmando las herramientas
+   * que el planificador habia DECIDIDO; si el runtime despues se nego, ese
+   * mismo archivo queda mintiendole al unico proceso que lo va a leer, y
+   * todavia no leyo nada. Con dos o mas miembros vivos NO se toca: la
+   * garantia de que una conversacion en curso no ve cambiar sus archivos
+   * compartidos por debajo sigue entera.
+   */
+  refreshInstructionsAfterInjection(workId: string): void {
+    if (this.deps.hub.liveMemberCount(workId) > 1) return;
+    // Y solo si la respuesta CAMBIO: sin una negativa real del runtime no hay
+    // nada que corregir, y reescribir por reescribir pisaria los archivos
+    // compartidos en cada apertura, cambio de modelo o de esfuerzo.
+    const written = this.memoryClaimWritten.get(workId);
+    if (written === (this.deps.injection?.memoryToolsInjectedForWork(workId) ?? false)) return;
+    try {
+      const work = this.deps.repo.getWork(workId);
+      this.refreshInstructions(this.deps.repo.getBrand(work.brandId), work);
+    } catch {
+      // Mejor esfuerzo: una carpeta que ya no esta no puede tumbar una apertura.
+    }
   }
 
   // App ---------------------------------------------------------------------
@@ -1331,12 +1485,17 @@ export class LatteService implements BackendApi {
     const before = this.deps.repo.getBrandContextProposal(proposalId);
     const brand = this.requireActiveBrand(before.brandId);
     if (before.status === 'approved') return { proposal: before, brand, refresh: emptyRefreshReport() };
-    if (before.status !== 'pending') throw new LatteError('PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
+    // M2 (ronda 8): CÓDIGOS DE MARCA PARA ERRORES DE MARCA. Esto tiraba
+    // `PROPOSAL_DECIDED`/`PROPOSAL_STALE`, códigos del mapa de COORDINACIÓN,
+    // así que aprobar una propuesta de contexto de marca le mostraba a la
+    // persona copy escrita para equipos y tareas. El motor de coordinación no
+    // tiraba ninguno de los dos: eran de marca desde el principio.
+    if (before.status !== 'pending') throw new LatteError('BRAND_PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
     const clean = edited == null ? null : requireCleanContext(edited, 'Brand context');
     const text = clean ?? before.text;
     this.assertComposedFits(brand.context, text, before.mode);
     if (!acceptStale && before.baseFingerprint !== brandContextFingerprint(brand.context)) {
-      throw new LatteError('PROPOSAL_STALE', 'Brand context changed since this proposal');
+      throw new LatteError('BRAND_PROPOSAL_STALE', 'Brand context changed since this proposal');
     }
     const proposal = this.deps.repo.transaction(() => {
       const current = this.deps.repo.getBrand(brand.id);
@@ -1354,7 +1513,7 @@ export class LatteService implements BackendApi {
     const before = this.deps.repo.getBrandContextProposal(proposalId);
     const brand = this.requireActiveBrand(before.brandId);
     if (before.status === 'rejected') return { proposal: before, brand, refresh: emptyRefreshReport() };
-    if (before.status !== 'pending') throw new LatteError('PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
+    if (before.status !== 'pending') throw new LatteError('BRAND_PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
     const proposal = this.deps.repo.transitionBrandContextProposal(proposalId, 'rejected', null, this.clock());
     // Rejecting flips the nudge back to the owner, so the files must follow.
     return { proposal, brand, refresh: this.refreshBrandWorksInstructions(brand) };
@@ -1367,7 +1526,10 @@ export class LatteService implements BackendApi {
     const strategists = team.filter((m) => m.roleId === 'strategist' && m.status !== 'ended');
     const available = strategists.find((m) => m.status !== 'working');
     if (strategists.length > 0 && !available) {
-      throw new LatteError('MEMBER_BUSY', 'The strategist is already working on this work');
+      // M2: y éste tampoco es de coordinación. `MEMBER_BUSY` es del motor
+      // (`reserveTargetMember`), y su frase habla de despachos; acá lo único
+      // que pasa es que el estratega de esta marca está en medio de un turno.
+      throw new LatteError('STRATEGIST_BUSY', 'The strategist is already working on this work');
     }
     const session = available
       ? await this.deps.hub.openMember(available.id, this.memberContext(work.id))
@@ -1397,6 +1559,467 @@ export class LatteService implements BackendApi {
   private readDecisionAuthority(workId: string): DecisionAuthorityMode {
     const raw = this.deps.repo.getMeta('decision_authority:' + workId);
     return raw === 'off' || raw === 'auto-record' ? raw : 'suggest';
+  }
+
+  // Coordination (autonomous multi-agent runs) ------------------------------
+  // Per-Work settings only, following `readDecisionAuthority` literally: a
+  // closed union in `meta`, validated on write, safe default on an unset or
+  // invalid read. The run/task/dispatch engine itself is a later phase.
+
+  private readCoordinationAuthority(workId: string): CoordinationAuthorityMode {
+    const raw = this.deps.repo.getMeta('coordination_authority:' + workId);
+    return raw === 'plan' || raw === 'auto' ? raw : 'manual';
+  }
+
+  async getCoordinationAuthority(workId: string): Promise<CoordinationAuthorityMode> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    return this.readCoordinationAuthority(id);
+  }
+
+  async setCoordinationAuthority(workId: string, mode: CoordinationAuthorityMode): Promise<CoordinationAuthorityMode> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    if (mode !== 'manual' && mode !== 'plan' && mode !== 'auto') throw new ValidationError('Invalid coordination authority');
+    this.deps.repo.setMeta('coordination_authority:' + id, mode);
+    return mode;
+  }
+
+  /**
+   * TRES estados, por el MISMO parser que usa el motor. Antes esto devolvía
+   * `null` tanto para "nunca se configuró" como para "los bytes guardados no
+   * se pueden leer", y la pantalla renderiza ese `null` como "sin presupuesto
+   * configurado" — mientras el motor deniega cada despacho contra esos mismos
+   * bytes. Es el crítico 8 un nivel más abajo.
+   */
+  private readCoordinationBudget(workId: string): CoordinationBudgetView {
+    const read = readStoredCoordinationBudget(this.deps.repo.getMeta('coordination_budget:' + workId));
+    if (read.kind === 'unset') return { state: 'unset' };
+    if (read.kind === 'set') return { state: 'set', budget: read.budget };
+    return { state: 'invalid' }; // los bytes crudos no cruzan IPC: no son dato de la persona, son basura
+  }
+
+  async getCoordinationBudget(workId: string): Promise<CoordinationBudgetView> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    return this.readCoordinationBudget(id);
+  }
+
+  async setCoordinationBudget(workId: string, budget: CoordinationBudget): Promise<CoordinationBudget> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    const valid = requireCoordinationBudget(budget);
+    // F2: se FUNDE sobre lo que había, no lo reemplaza. `requireCoordinationBudget`
+    // normaliza a `null` todo campo ausente, y el editor de Decisiones manda
+    // sólo `{maxDispatches}`: subir el tope apagaba `maxConcurrent` —el único
+    // limitador en vuelo que existe—, `maxTokens`, `maxCostMicros` y
+    // `maxWallMinutes` de un equipo que ya estaba andando. Es la misma fusión
+    // que `commitProposal` ya hace al aprobar una propuesta.
+    //
+    // La distinción es AUSENTE vs. `null` EXPLÍCITO, y por eso se mira el
+    // payload crudo y no el normalizado: no nombrar un tope conserva el que
+    // había; nombrarlo `null` lo apaga, que es la única forma de apagarlo.
+    const previous = readStoredCoordinationBudget(this.deps.repo.getMeta('coordination_budget:' + id));
+    const merged = previous.kind === 'set' ? mergeCoordinationBudget(previous.budget, budget, valid) : valid;
+    const json = JSON.stringify(merged);
+    this.deps.repo.setMeta('coordination_budget:' + id, json);
+    // A raised cap must also reach a run already in flight — the run's own
+    // snapshot is never a live read, so it has to be written here too (design
+    // decision 1: "raising a cap writes BOTH the run row and the Work default").
+    this.deps.repo.updateActiveCoordinationRunBudget(id, json, this.clock());
+    return merged;
+  }
+
+  /** `null`/empty stored value, or a member id that no longer belongs to this Work, both read back as "no coordinator". */
+  private readCoordinatorGrant(workId: string): CoordinatorGrant {
+    const raw = this.deps.repo.getMeta('coordination_coordinator:' + workId);
+    if (!raw) return null;
+    const member = this.deps.repo.findMember(raw);
+    return member && member.workId === workId ? raw : null;
+  }
+
+  async getCoordinatorGrant(workId: string): Promise<CoordinatorGrant> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    return this.readCoordinatorGrant(id);
+  }
+
+  /**
+   * A capability grant, not a role: this never touches the member's `roleId`
+   * or prompt. Writing a new holder implicitly revokes whoever held it before
+   * — the meta key holds exactly one id, so both can never be true at once.
+   */
+  async setCoordinatorGrant(workId: string, memberId: string | null): Promise<CoordinatorGrant> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    if (memberId === null) {
+      this.deps.repo.setMeta('coordination_coordinator:' + id, '');
+      return null;
+    }
+    const mid = requireId(memberId, 'memberId');
+    const member = this.deps.repo.findMember(mid);
+    if (!member || member.workId !== id) throw new ValidationError('Coordinator grant must reference a team member of this Work');
+    this.deps.repo.setMeta('coordination_coordinator:' + id, mid);
+    return mid;
+  }
+
+  // Coordination run lifecycle, gates, bitácora, asks and the handoff bridge.
+  // Phase 3: IPC-only — `electron/coordination/engine.ts` is the single
+  // dispatch choke point; nothing here reaches `hub.send` a second way.
+
+  private toCoordinationRunView(run: CoordinationRunRecord): CoordinationRunView {
+    // Contado acá, sobre las tareas del run, cada vez: la misma regla que la
+    // bitácora ya usa para sus entradas de cierre. Una fila ilegible no puede
+    // tumbar la vista del run, así que el conteo cae a ceros — y ceros es lo
+    // que la interfaz muestra, nunca un número inventado.
+    let tasksDone = 0, tasksFailed = 0, tasksPending = 0;
+    try {
+      for (const task of this.deps.repo.listCoordinationTasks(run.id)) {
+        if (task.status === 'done') tasksDone += 1;
+        else if (task.status === 'failed') tasksFailed += 1;
+        else tasksPending += 1;
+      }
+    } catch { /* una bitácora ilegible no puede romper la vista del run */ }
+    // Q10: por el MISMO parser discriminado que usan la tira global, el getter
+    // del presupuesto del Trabajo y el camino de despacho. Acá había un
+    // `JSON.parse` a pelo, y con él una fila rota tiraba desde el fondo de
+    // `getCoordinationRun` y de `cancelCoordinationRun`: la persona se quedaba
+    // sin ver el run Y sin la única salida que le queda, que es cancelarlo.
+    // Ilegible no es "sin tope": se dice que está roto.
+    const budgetRead = readStoredCoordinationBudget(run.budgetJson);
+    return {
+      id: run.id,
+      workId: run.workId,
+      status: run.status,
+      coordinatorMemberId: run.coordinatorMemberId,
+      budget: budgetRead.kind === 'set' ? budgetRead.budget : null,
+      budgetInvalid: budgetRead.kind === 'invalid',
+      planApproved: run.planApprovedAt != null,
+      suspendReason: run.suspendReason,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+      // El mismo conjunto que el índice único parcial y que la tira global:
+      // `done`/`cancelled` quedan afuera, y por eso se marcan como no activos.
+      active: run.status === 'planning' || run.status === 'running' || run.status === 'suspended',
+      lastEventAt: this.lastCoordinationEventAt(run),
+      tasksDone, tasksFailed, tasksPending,
+    };
+  }
+
+  /**
+   * El instante del último hecho del run: el máximo entre su propio
+   * `updatedAt` (que ya cubre el cierre, porque cerrar lo reescribe) y el
+   * `createdAt` de la fila de despacho más nueva — que es también la de todo
+   * gate de despacho pendiente. Un gate que nace no toca la fila del run, así
+   * que con `updatedAt` solo "Desde tu última visita" se perdía justamente lo
+   * que la persona tenía que ver.
+   */
+  private lastCoordinationEventAt(run: CoordinationRunRecord): string {
+    let latest = run.updatedAt;
+    try {
+      for (const dispatch of this.deps.repo.listCoordinationDispatches(run.id)) {
+        for (const at of [dispatch.createdAt, dispatch.startedAt, dispatch.settledAt]) {
+          if (at && at > latest) latest = at;
+        }
+      }
+    } catch { /* una bitácora ilegible no puede romper la vista del run */ }
+    return latest;
+  }
+
+  async startCoordinationRun(workId: string): Promise<CoordinationRunView> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    const coordinatorMemberId = this.readCoordinatorGrant(id);
+    const run = await this.coordination.startRun(id, coordinatorMemberId);
+    return this.toCoordinationRunView(run);
+  }
+
+  async pauseCoordinationRun(runId: string): Promise<CoordinationRunView> {
+    return this.toCoordinationRunView(this.coordination.pauseRun(requireId(runId, 'runId')));
+  }
+
+  async resumeCoordinationRun(runId: string): Promise<CoordinationRunView> {
+    return this.toCoordinationRunView(this.coordination.resumeRun(requireId(runId, 'runId')));
+  }
+
+  async cancelCoordinationRun(runId: string): Promise<CoordinationRunView> {
+    return this.toCoordinationRunView(this.coordination.cancelRun(requireId(runId, 'runId')));
+  }
+
+  /** The Work's active run, or `null` when none is running — never throws for "no run", that is the normal case. */
+  async getCoordinationRun(workId: string): Promise<CoordinationRunView | null> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    // El run vivo si lo hay; si no, el ÚLTIMO terminado. Devolver `null` en
+    // cuanto el run terminaba hacía que la interfaz limpiara bitácora, gates y
+    // preguntas, así que la entrada de cierre `run_done` que el motor deriva
+    // no se veía NUNCA. El `active: false` que lleva la vista es lo que impide
+    // que un run terminado parezca vivo; un run nuevo lo reemplaza solo.
+    const run = this.deps.repo.findActiveCoordinationRun(id) ?? this.deps.repo.findLatestFinishedCoordinationRun(id);
+    return run ? this.toCoordinationRunView(run) : null;
+  }
+
+  async listCoordinationGates(runId: string): Promise<CoordinationGateView[]> {
+    return this.coordination.listGates(requireId(runId, 'runId'));
+  }
+
+  async resolveCoordinationGate(gateId: string, decision: 'approve' | 'reject', editedPrompt: string | null = null): Promise<CoordinationRunView> {
+    const clean = requireGateId(gateId);
+    if (decision !== 'approve' && decision !== 'reject') throw new ValidationError('Invalid gate decision');
+    // Crítico 12: esto cruzaba la frontera IPC sin un solo chequeo y llegaba
+    // tal cual hasta `hub.send`. Se valida en la frontera (acá) y de nuevo,
+    // defensivamente, adentro del motor.
+    // Un gate de propuesta no recibe un "prompt editado": recibe la PROPUESTA
+    // ENTERA en JSON, y el motor la consume campo por campo. Validarla con
+    // `requireEditedPrompt` —que sólo mira largo y NULs— dejaba pasar
+    // `{"plan":null}` hasta después de contratar y spawnear al equipo (D12).
+    const cleanPrompt = editedPrompt == null
+      ? undefined
+      : (clean.startsWith('proposal:') ? requireCoordinationProposal(editedPrompt) : requireEditedPrompt(editedPrompt));
+    const resolved = await this.coordination.resolveGate(clean, decision, cleanPrompt);
+    const runId = 'runId' in resolved ? resolved.runId : (resolved as CoordinationRunRecord).id;
+    return this.toCoordinationRunView(this.coordination.getRun(runId));
+  }
+
+  async listCoordinationLog(runId: string): Promise<CoordinationLogEntryView[]> {
+    return this.coordination.listLog(requireId(runId, 'runId'));
+  }
+
+  /**
+   * Las contrataciones de este run, con el rol resuelto a NOMBRE. La bitácora
+   * dibujaba filas de alta desde una prop que no llenaba nadie; ésta es su
+   * fuente. El nombre sale del miembro real si sigue en el equipo, y si no del
+   * catálogo de roles; en última instancia queda el id, que es lo único que
+   * hay — nunca un nombre inventado.
+   */
+  async listCoordinationHires(runId: string): Promise<CoordinationHireView[]> {
+    const id = requireId(runId, 'runId');
+    const run = this.coordination.getRun(id);
+    const byMember = new Map(this.deps.hub.listTeam(run.workId).map((m) => [m.id, m]));
+    const roles = new Map(this.deps.hub.listRoles().map((role) => [role.id, role.name]));
+    return this.coordination.listHires(id).map((hire) => ({
+      memberId: hire.memberId,
+      roleId: hire.roleId,
+      roleName: byMember.get(hire.memberId)?.roleName ?? roles.get(hire.roleId) ?? hire.roleId,
+      hiredAt: hire.hiredAt,
+    }));
+  }
+
+  /** Las preguntas abiertas de un run, para que la persona pueda responderlas con `answerCoordinationAsk` en vez de quedarse sólo con "cancelar". */
+  async listOpenCoordinationAsks(runId: string): Promise<CoordinationAskView[]> {
+    return this.coordination.listOpenAsks(requireId(runId, 'runId'));
+  }
+
+  async answerCoordinationAsk(askId: string, answer: string): Promise<CoordinationAskView> {
+    const clean = requireId(askId, 'askId');
+    const cleanAnswer = requireText(answer, 'Answer', LIMITS.decision);
+    return this.coordination.answerAsk(clean, cleanAnswer);
+  }
+
+  /**
+   * WHEN the Work has an active run, mints a `coordination_task` for the
+   * accepted handoff and attempts to dispatch it through the exact same
+   * choke point `latte_dispatch` uses; the handoff file is then dismissed,
+   * matching the existing "accepting consumes the request" behaviour.
+   * Outside an active run this is a pure no-op: `listHandoffs`/`dismissHandoff`
+   * are untouched, and the caller falls back to opening a chat draft exactly
+   * as it did before this change.
+   */
+  async acceptHandoffAsTask(workId: string, fileName: string): Promise<HandoffTaskBridgeResult> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    if (!this.deps.repo.findActiveCoordinationRun(id)) return { bridged: false, task: null, outcome: null, reason: null };
+    // D4: con la bandera baja esto DEGRADA, no tira. El docstring de arriba
+    // promete "el llamador cae al borrador de chat exactamente como antes", y
+    // dejar escapar `FEATURE_DISABLED` rompía esa promesa justo donde importa:
+    // la persona apagaba coordinación y aceptar un pedido pasaba a fallar en
+    // vez de abrirle el chat que tenía antes de que coordinación existiera.
+    if (!featureEnabled((key) => this.deps.repo.getMeta(key), 'coordination')) return { bridged: false, task: null, outcome: null, reason: null };
+    const pending = await this.listHandoffs(id);
+    const handoff = pending.find((h) => h.fileName === fileName);
+    if (!handoff) throw new ValidationError('Ese pedido ya no está en la carpeta');
+    const result = await this.coordination.bridgeHandoffToTask(id, handoff.roleId, handoff.request);
+    if (!result.bridged) return { bridged: false, task: null, outcome: null, reason: null };
+    await this.dismissHandoff(id, fileName).catch(() => undefined);
+    // R3/Q1: el pedido se consumió igual — la tarea existe — pero el despacho
+    // pudo no salir, Y PUDO QUEDAR ESPERANDO UNA APROBACIÓN. Eran tres hechos
+    // metidos en un booleano: `result.dispatch != null` daba `true` tanto para
+    // un despacho que salió como para una fila `pending_approval`, o sea que
+    // bajo la autoridad por defecto (`manual`) la interfaz anunciaba
+    // "despachada al equipo" sobre una tarea que nadie había aprobado todavía.
+    // El estado del motor viaja tal cual y la pantalla elige la frase.
+    return {
+      bridged: true,
+      task: { id: result.task.id, roleId: result.task.roleId, spec: result.task.spec, status: result.task.status },
+      outcome: result.dispatch ? result.dispatch.status : 'not_dispatched',
+      reason: result.reason,
+    };
+  }
+
+  /**
+   * Manual dispatch settlement via IPC, zero MCP (task 3.19 — the "close"
+   * half of the safety line): `latte_report` is called by the worker, but
+   * without MCP no worker has tools, so nothing ever settled a dispatch. A
+   * human reads the worker's own chat and records the outcome here instead —
+   * coherent with `manual` authority mode, where the human already IS the
+   * coordinator. Enters through `CoordinationEngine.settleDispatch`, which
+   * re-enters `report()` — the exact function `latte_report` calls — so
+   * idempotency, wrong-reporter rejection, ledger settlement and the
+   * dispatch's settling timestamp all behave identically to an agent's own
+   * report.
+   */
+  async settleCoordinationDispatch(taskId: string, outcome: 'succeeded' | 'failed', summary: string, files: string | null = null): Promise<CoordinationTaskView> {
+    const id = requireId(taskId, 'taskId');
+    if (outcome !== 'succeeded' && outcome !== 'failed') throw new ValidationError('Invalid dispatch outcome');
+    const cleanSummary = requireText(summary, 'Summary', LIMITS.decision);
+    const task = await this.coordination.settleDispatch(id, outcome, cleanSummary, files ?? null);
+    return { id: task.id, runId: task.runId, roleId: task.roleId, spec: task.spec, status: task.status, attempts: task.attempts, resultSummary: task.resultSummary };
+  }
+
+  /**
+   * Per-member coordination/memory status for this Work (task 6.33). Reuses
+   * `CoordinationInjectionPlanner.preview` -- the SAME decision function hub
+   * wiring's `open()` calls for real -- so a live member's row reports what
+   * ACTUALLY happened (its committed claim), not a second, possibly-stale
+   * guess; a paused/never-opened member gets an honest "if opened now"
+   * preview. Deliberately NOT gated by any coordination flag: memory status
+   * matters with coordination off, so with no `injection` wired at all
+   * (only a test-harness reality; production always wires one) every row
+   * simply reports "not supported here" rather than refusing to answer.
+   */
+  async coordinationRuntimeSupport(workId: string): Promise<CoordinationMemberSupport[]> {
+    const id = requireId(workId, 'workId');
+    const work = this.deps.repo.getWork(id);
+    const members = this.deps.hub.listTeam(id);
+    if (!this.deps.injection) {
+      return members.map((m) => ({
+        memberId: m.id, canPropose: false, memoryInjected: false, reason: null, runtimeConfirmed: false,
+        runtimeReportsInjection: this.deps.hub.confirmsMcpInjection(m.runtime),
+      }));
+    }
+    const out: CoordinationMemberSupport[] = [];
+    for (const m of members) {
+      const status = await this.deps.injection.preview({ memberId: m.id, workId: id, brandId: work.brandId, runtime: m.runtime, accountId: m.accountId });
+      out.push({
+        memberId: m.id, canPropose: status.canPropose, memoryInjected: status.memoryInjected, reason: status.reason,
+        runtimeConfirmed: status.runtimeConfirmed,
+        // La capacidad la declara el adaptador, no una lista paralela acá.
+        runtimeReportsInjection: this.deps.hub.confirmsMcpInjection(m.runtime),
+      });
+    }
+    return out;
+  }
+
+  /** The global "Equipos activos" strip (task 6.34) -- the only app-scoped read in this change. */
+  async listActiveCoordinationRuns(): Promise<CoordinationActiveRunSummary[]> {
+    // Y los que ACABAN de terminar (D18). Un equipo que termina desaparecía de
+    // la tira en el mismo instante en que había algo que contar: Inicio no
+    // podía decir "tu equipo terminó" porque la fuente ya no lo traía. Se
+    // incluye el último run terminado de cada Trabajo mientras la persona no
+    // haya pasado por ahí después de que cerró; su `active:false`/`status` es
+    // lo que impide que parezca vivo.
+    const finished = this.deps.repo.listLatestFinishedCoordinationRuns().filter((run) => {
+      const seen = this.deps.repo.getMeta('coordination_last_seen:' + run.workId);
+      return !seen || run.updatedAt > seen;
+    });
+    const runs = [...this.deps.repo.listActiveCoordinationRuns(), ...finished].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return runs.map((run) => {
+      const work = this.deps.repo.getWork(run.workId);
+      const brand = this.deps.repo.getBrand(work.brandId);
+      // Lectura TOLERANTE POR FILA (crítico 4): un `budget_json` ilegible en
+      // UNA marca hacía tirar este `map` entero, o sea que una fila rota
+      // borraba de la pantalla los equipos activos de todas las demás marcas.
+      // La fila rota se declara rota y el resto de la lista sobrevive.
+      let dispatchesUsed = 0;
+      let maxDispatches: number | null = null;
+      let pendingGates = 0;
+      let budgetInvalid = false;
+      try {
+        const budget = this.coordination.budgetBlockForEnvelope(run.id);
+        dispatchesUsed = budget.dispatchesUsed;
+        maxDispatches = budget.maxDispatches;
+      } catch {
+        budgetInvalid = true;
+      }
+      // Los gates se cuentan en su PROPIO try (D12): compartirlo con el
+      // presupuesto hacía que un `budget_json` ilegible dejara `pendingGates`
+      // en 0 — o sea, la tira decía "nada que decidir" justo en la fila que
+      // tiene un problema y más necesita que la persona la mire.
+      try {
+        pendingGates = this.coordination.listGates(run.id).length;
+      } catch { /* una fila rota no puede borrar el resto de la tira */ }
+      return {
+        runId: run.id,
+        workId: run.workId,
+        workTitle: work.title,
+        brandId: brand.id,
+        brandName: brand.name,
+        status: run.status,
+        dispatchesUsed,
+        maxDispatches,
+        pendingGates,
+        budgetInvalid,
+        updatedAt: run.updatedAt,
+        lastEventAt: this.lastCoordinationEventAt(run),
+        lastSeenAt: this.deps.repo.getMeta('coordination_last_seen:' + run.workId),
+      };
+    });
+  }
+
+  /**
+   * Deja constancia de que la persona está mirando la coordinación de ESTE
+   * Trabajo ahora mismo. Es el dato que faltaba: "Desde tu última visita" no
+   * medía ninguna visita — no había timestamp persistido en ningún lado, así
+   * que la tarjeta mostraba el estado ACTUAL bajo un título que habla del
+   * pasado. Meta key namespaced, como `decisionAuthority`: sin subir de
+   * versión de esquema.
+   */
+  async markCoordinationSeen(workId: string): Promise<string> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id); // un Trabajo que no existe no tiene visitas
+    const at = this.clock();
+    this.deps.repo.setMeta('coordination_last_seen:' + id, at);
+    return at;
+  }
+
+  /**
+   * The OPTIONAL advanced app-wide dispatch cap (task 6.35): same
+   * `decisionAuthority`/`requireCoordinationBudget` precedent as every other
+   * coordination budget, meta key `coordination_budget_global`. Unset ⇒
+   * `null` and no extra cap applied -- never an invented limit. Unlike
+   * `setCoordinationBudget`, there is no per-run snapshot to also update:
+   * this cap is read fresh at dispatch time, app-wide, never copied into a
+   * `coordination_run` row.
+   *
+   * Lo que cuenta son los despachos de los runs VIVOS, no el histórico de la
+   * instalación; ver `CoordinationEngine.globalUsage`.
+   */
+  async getCoordinationGlobalBudget(): Promise<CoordinationGlobalBudgetView> {
+    // EL MISMO parser que usa el camino de despacho (crítico 8). Devolver
+    // `null` ante bytes ilegibles hacía que la pantalla dijera "sin tope
+    // global" mientras cada despacho se denegaba contra ese mismo valor.
+    const read = readStoredCoordinationBudget(this.deps.repo.getMeta('coordination_budget_global'));
+    if (read.kind === 'unset') return { state: 'unset' };
+    if (read.kind === 'set') return { state: 'set', budget: read.budget };
+    return { state: 'invalid' }; // los bytes crudos no cruzan IPC: no son dato de la persona, son basura
+  }
+
+  /**
+   * `null` BORRA el tope. Antes todo pasaba por `requireCoordinationBudget`,
+   * que rechaza cualquier valor que signifique "sin tope", así que un tope
+   * app-wide, una vez puesto, no había forma de sacarlo desde la interfaz: la
+   * persona quedaba encerrada con su propio número. "Sin tope configurado" y
+   * "tope ilimitado confirmado" siguen siendo cosas distintas — esto es la
+   * primera, volver al estado de fábrica, no un ilimitado implícito.
+   */
+  async setCoordinationGlobalBudget(budget: CoordinationBudget | null): Promise<CoordinationBudget | null> {
+    if (budget == null) {
+      this.deps.repo.deleteMeta('coordination_budget_global');
+      return null;
+    }
+    const valid = requireCoordinationBudget(budget);
+    this.deps.repo.setMeta('coordination_budget_global', JSON.stringify(valid));
+    return valid;
   }
 
   // Agents ------------------------------------------------------------------
@@ -1579,7 +2202,14 @@ export class LatteService implements BackendApi {
    * context change underneath. This is a real guarantee about the managed
    * files, not about the work directory, which any process can still write.
    */
-  private memberContext(workId: string): MemberContext {
+  /**
+   * Public (not just internal) since sdd/autonomous-coordination task 6.28+:
+   * lo necesita el `CoordinationEngine` que este servicio construye, y que
+   * `bootstrap.ts` le pasa al servidor MCP. Es EL MISMO motor: tiene estado en
+   * memoria (`assigning`, `pendingClose`), así que es único por proceso — ver
+   * `coordinationEngine`, arriba. Behaviour unchanged; visibility only.
+   */
+  memberContext(workId: string): MemberContext {
     const work = this.syncFromDisk(this.deps.repo.getWork(requireId(workId, 'workId')));
     const brand = this.deps.repo.getBrand(work.brandId);
     const refreshed = this.deps.hub.liveMemberCount(work.id) === 0;
@@ -1879,9 +2509,60 @@ export class LatteService implements BackendApi {
   // Lifecycle ---------------------------------------------------------------
 
   shutdown(): void {
+    // Q7: el tick primero. Un barrido que arranque mientras la base se está
+    // cerrando escribiría contra un repo muerto, y nada de lo que haga sirve ya.
+    try { this.stopSweepTimer(); } catch { /* cerrar los recursos manda */ }
+    // Antes de soltar los procesos: lo que quedó en vuelo se liquida acá, o
+    // no se liquida nunca. Un fallo barriendo no puede impedir que la app
+    // cierre sus recursos, así que se registra y se sigue.
+    try {
+      this.coordination.sweepUncertainDispatches();
+    } catch { /* cerrar los recursos manda: el barrido de arranque lo vuelve a intentar */ }
     this.deps.hub.shutdown();
     this.deps.terminal.stopAll();
     this.deps.repo.close();
+  }
+
+  /**
+   * El barrido de arranque, hermano del de `sweepStrayCodexServers`: reconcilia
+   * los despachos que una caída o un cierre forzado dejó en vuelo. Lo llama
+   * `createBackend` una sola vez, apenas la base está migrada.
+   */
+  sweepUncertainCoordinationDispatches(): number {
+    const swept = this.coordination.sweepUncertainDispatches();
+    // Y en el mismo arranque, la reparación del estado final: las bases que
+    // dejó la versión sin `done` tienen runs `running` con todas sus tareas
+    // terminales, ocupando un cupo app-wide para siempre. Va DESPUÉS del
+    // barrido: éste puede devolver tareas a `ready`, y ésas no cierran nada.
+    this.coordination.sweepFinishedRuns();
+    return swept;
+  }
+
+  /**
+   * La liquidación EN CALIENTE: el proceso de un miembro se murió y su despacho
+   * en vuelo no lo va a reportar nadie nunca. Lo llama el único chokepoint por
+   * el que pasa un `closed` de cualquier adaptador (`createBackend`), justo
+   * después de `hub.stop`, que es donde el reclamo de inyección ya se soltó.
+   * Nunca tira: la muerte de un proceso no puede tumbar el loop de eventos.
+   */
+  settleCoordinationDispatchesForMember(memberId: string, options: { incrementAttempts?: boolean } = {}): number {
+    try {
+      return this.coordination.settleMemberDispatches(memberId, options);
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * El turno de un miembro terminó. Si ese miembro es el coordinador y el
+   * cierre del run había quedado esperándolo (D17), se re-evalúa ahora. Para
+   * cualquier otro miembro es un no-op barato: `noteTurnEnded` mira primero si
+   * había algo pendiente.
+   */
+  noteCoordinationTurnEnded(memberId: string): void {
+    try {
+      this.coordination.noteTurnEnded(memberId);
+    } catch { /* el fin de un turno nunca puede voltear el evento de chat */ }
   }
 
   // Internals ---------------------------------------------------------------
@@ -1988,6 +2669,20 @@ export class LatteService implements BackendApi {
     }
   }
 
+  /**
+   * Lo ultimo que el archivo de instrucciones de este Trabajo AFIRMO sobre las
+   * herramientas de engram. Es lo que deja a `refreshInstructionsAfterInjection`
+   * reescribir solo cuando la respuesta CAMBIO, en vez de pisar los archivos
+   * compartidos en cada apertura (juicio #2, ronda 4).
+   */
+  private readonly memoryClaimWritten = new Map<string, boolean>();
+
+  private recordMemoryClaim(workId: string): boolean {
+    const claim = this.deps.injection?.memoryToolsInjectedForWork(workId) ?? false;
+    this.memoryClaimWritten.set(workId, claim);
+    return claim;
+  }
+
   private refreshInstructions(brand: Brand, work: Work): void {
     this.renderAndWriteInstructions(brand, work);
   }
@@ -1998,6 +2693,11 @@ export class LatteService implements BackendApi {
    * elected work of an empty brand may draft it, and the others get a reason.
    */
   private renderAndWriteInstructions(brand: Brand, work: Work) {
+    // `memoryToolsInjected` (task 6.27) sale del planificador real, no de un
+    // `undefined`: esa bandera decide si el archivo lleva la frase que sostiene
+    // el aislamiento entre Marcas ("nunca pases un argumento `project`: uno
+    // explícito pisa el default fijado y podría leer o escribir la memoria de
+    // otra Marca"). Sin pasarla, esa frase no llegaba a NINGÚN agente.
     const decisions = this.deps.repo.listDecisions(work.id);
     const records = this.deps.repo.listDocuments(work.id);
     const byId = new Map(records.map((r) => [r.id, r]));
@@ -2024,7 +2724,7 @@ export class LatteService implements BackendApi {
       workId: work.id,
       ownerWorkId: electBrandContextOwner(this.deps.repo.listWorks(brand.id)),
     });
-    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation, brandMemory, brandContextNudge: nudge });
+    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), memoryToolsInjected: this.recordMemoryClaim(work.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation, brandMemory, brandContextNudge: nudge });
     return this.deps.files.writeInstructions(brand.id, work.id, bundle.text, bundle.files);
   }
 

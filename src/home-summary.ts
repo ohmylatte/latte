@@ -1,5 +1,5 @@
 import type { MessageKey } from './i18n';
-import type { Decision, DocumentState, Work, WorkDocument } from '../shared/contracts';
+import type { CoordinationActiveRunSummary, Decision, DocumentState, Work, WorkDocument } from '../shared/contracts';
 import { needsReview } from './document-organizer';
 
 /**
@@ -75,6 +75,8 @@ export interface HomeInput {
   documents: readonly WorkDocument[];
   states: Readonly<Record<string, DocumentState>>;
   checking: boolean;
+  /** Additive, optional (autonomous-coordination Phase 7 task 7.2): `undefined` means the caller has not wired coordination state yet — see `HomeSinceLastVisitInput`. */
+  coordinationSinceLastVisit?: readonly HomeSinceLastVisitInput[];
 }
 
 export interface HomeContinueRow {
@@ -100,6 +102,37 @@ export interface HomeReviewRow {
   title: string;
 }
 
+/**
+ * What "since your last visit" can report about a coordination run, kept to
+ * exactly what a persisted `coordination_dispatch`/run row can answer — never
+ * a narrative guess. `awaitingYou` is a pending gate; the other three are
+ * lifecycle facts (autonomous-coordination, Phase 7 task 7.2).
+ */
+export type SinceLastVisitKind = 'done' | 'failed' | 'awaitingYou' | 'budgetConsumed';
+
+/** What the caller hands over, already reduced to persisted facts. `undefined` means unwired (Phase 2's `!== undefined` pattern) — the card renders exactly like an empty list. */
+export interface HomeSinceLastVisitInput {
+  id: string;
+  workId: string;
+  kind: SinceLastVisitKind;
+  /**
+   * Si esta fila se mide contra una visita REAL (`markCoordinationSeen`) o
+   * contra el arranque de la coordinación, porque nunca se registró ninguna.
+   * El título de la tarjeta se elige con esto: prometer "desde tu última
+   * visita" sin ninguna visita medida era la mentira original.
+   */
+  sinceVisit: boolean;
+}
+
+export interface HomeSinceLastVisitRow {
+  id: string;
+  workId: string;
+  /** '' when the work is not in the list handed over: never an invented title. */
+  workTitle: string;
+  kind: SinceLastVisitKind;
+  sinceVisit: boolean;
+}
+
 export interface HomeSummary {
   step: HomeStep;
   stepKey: MessageKey;
@@ -110,6 +143,8 @@ export interface HomeSummary {
   reviewRows: HomeReviewRow[];
   /** The brand has no work yet: Continuar collapses to the one action. */
   showNewWork: boolean;
+  /** Empty for both an unwired caller (`undefined` input) and a wired caller with nothing to report — zero rows is never a zero. */
+  sinceLastVisitRows: HomeSinceLastVisitRow[];
 }
 
 /**
@@ -131,6 +166,50 @@ export function homeStep(input: HomeLadderInput): HomeStep {
   if (input.liveWorkIds.length > 0) return 'live';
   if (input.workCount === 0) return 'works';
   return 'none';
+}
+
+/**
+ * Derives `HomeSinceLastVisitInput` rows straight from `listActiveCoordinationRuns()`
+ * (task 6.34, the one app-scoped read the change ships) — zero extra IPC
+ * calls (task 7.11's `useCoordination` already fetches this for the global
+ * strip). `awaitingYou` (a pending gate), `budgetConsumed` (the cap reached)
+ * y `done` (el equipo cerró) salen de ese resumen y de nada más: desde D18 la
+ * tira incluye el último run terminado de cada Trabajo mientras la persona no
+ * haya pasado por ahí, que es lo que hace derivable el tercero.
+ *
+ * `failed` sigue sin derivarse: "un despacho falló" necesitaría historial por
+ * run que ningún método con alcance de marca expone hoy. Se declara, no se
+ * inventa.
+ */
+export function sinceLastVisitFromActiveRuns(runs: readonly CoordinationActiveRunSummary[], brandId: string): HomeSinceLastVisitInput[] {
+  const rows: HomeSinceLastVisitInput[] = [];
+  for (const run of runs) {
+    if (run.brandId !== brandId) continue;
+    // La visita, por fin medida. Un run que no cambió DESPUÉS de la última
+    // visita no es novedad: la persona ya lo vio. Se pide estrictamente
+    // posterior — el instante exacto de la visita es lo que se miró.
+    const sinceVisit = run.lastSeenAt != null;
+    // Contra `lastEventAt`, NUNCA contra `updatedAt`. Un gate que nace o un
+    // despacho que arranca no reescriben la fila del run, así que comparar
+    // `updatedAt` hacía que la tarjeta se perdiera justamente lo que la
+    // persona tenía que ver: la aprobación que está esperando.
+    if (sinceVisit && !(run.lastEventAt > run.lastSeenAt!)) continue;
+    // Un equipo que TERMINÓ es la novedad más grande que esta tarjeta puede
+    // dar, y hasta D18 no llegaba acá: la tira sólo traía runs activos, así
+    // que el momento en que había algo que contar era exactamente el momento
+    // en que la fila desaparecía. Un run terminado no tiene gates pendientes
+    // ni presupuesto que se agote: su única fila es ésta.
+    if (run.status === 'done' || run.status === 'cancelled') {
+      // `cancelled` NO se reporta: cancelar lo aprieta la persona, y lo que
+      // uno mismo acaba de hacer no es novedad. `done` sí — ese final lo
+      // decidió el motor, no ella.
+      if (run.status === 'done') rows.push({ id: `${run.runId}:done`, workId: run.workId, kind: 'done', sinceVisit });
+      continue;
+    }
+    if (run.pendingGates > 0) rows.push({ id: `${run.runId}:gates`, workId: run.workId, kind: 'awaitingYou', sinceVisit });
+    if (run.maxDispatches != null && run.dispatchesUsed >= run.maxDispatches) rows.push({ id: `${run.runId}:budget`, workId: run.workId, kind: 'budgetConsumed', sinceVisit });
+  }
+  return rows;
 }
 
 /** The ladder plus every row, ready to render. */
@@ -171,5 +250,12 @@ export function homeSummary(input: HomeInput): HomeSummary {
       title: document.title,
     })),
     showNewWork: input.works.length === 0,
+    sinceLastVisitRows: (input.coordinationSinceLastVisit ?? []).map((event) => ({
+      id: event.id,
+      workId: event.workId,
+      workTitle: titles.get(event.workId) ?? '',
+      kind: event.kind,
+      sinceVisit: event.sinceVisit,
+    })),
   };
 }

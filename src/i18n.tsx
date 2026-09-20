@@ -483,6 +483,247 @@ const es = {
   'decision.permissions.lead': 'Aprobación ≠ autorización: aprobar una decisión no cambia los permisos de este trabajo.',
   'decision.permissions.handoffs': 'Solicitudes de permiso',
   'decision.permissions.handoffs.empty': 'Sin solicitudes de permiso',
+  // --- Coordinación autónoma: resumen de solo lectura (autonomous-coordination, Phase 2) --
+  // Q8: los errores del motor que la persona puede ver, en castellano. Antes
+  // llegaban crudos: `ASK_CLOSED` en castellano desde la base y
+  // `RUN_NOT_RUNNING` en inglés desde el motor, en la misma pantalla.
+  'error.coordination.askClosed': 'Esa pregunta ya está cerrada: o alguien la contestó, o se le pasó el plazo.',
+  'error.coordination.runNotRunning': 'Ese equipo no está en curso, así que no hay nada que pausar.',
+  'error.coordination.runNotActive': 'Ese equipo ya terminó o se canceló: no acepta trabajo nuevo.',
+  'error.coordination.memberBusy': 'Ese rol está ocupado ahora mismo. Probá de nuevo cuando termine lo que está haciendo.',
+  'error.coordination.roleNotApproved': 'Ese rol no está en el equipo que aprobaste: necesita su propia aprobación.',
+  'error.coordination.budgetInvalid': 'El presupuesto de este trabajo no se pudo leer: escribilo de nuevo antes de seguir.',
+  // O12: la copy prometía "Editar y aprobar" sin más, y con el plan ENTERO
+  // huérfano ahí no queda nada que aprobar: la persona abría el editor, veía
+  // el botón gris y no tenía una sola palabra sobre qué hacer. Se nombran los
+  // dos casos.
+  'error.coordination.planHasUnapprovedRoles': 'El plan tiene tareas para roles que nadie va a poder hacer. Abrí "Editar y aprobar": esas tareas se quitan solas, y podés aprobar el resto. Si no queda ninguna, rechazá y pedí una propuesta nueva.',
+  // Q6: los que la persona alcanza con un clic, y que hasta ahora le llegaban
+  // en el idioma en que están escritos los mensajes del motor.
+  'error.coordination.budgetExceeded': 'Este equipo ya usó todo su presupuesto de despachos. Subilo, o cerralo acá.',
+  'error.coordination.maxConcurrent': 'Este equipo ya tiene todos sus despachos simultáneos en curso. Esperá a que alguno termine.',
+  'error.coordination.invalidGate': 'Esa decisión ya no existe: alguien la resolvió, o el equipo cambió de estado.',
+  'error.coordination.coordinationNotApproved': 'Ese equipo todavía no está aprobado: primero hay que resolver su propuesta.',
+  'error.coordination.runAlreadyActive': 'Este trabajo ya tiene un equipo coordinando. Cerrá ése antes de arrancar otro.',
+  'error.coordination.taskNotReady': 'Esa tarea no está lista para despacharse: todavía espera algo de lo que depende.',
+  'error.coordination.claimLost': 'Esa tarea dejó de ser de este despacho mientras el miembro levantaba: ya la tomó otro, o volvió a la cola. Nada se gastó.',
+  'error.coordination.noActiveRun': 'Este trabajo no tiene ningún equipo coordinando ahora mismo.',
+  'error.coordination.globalBudgetInvalid': 'El presupuesto global no se pudo leer: escribilo de nuevo antes de seguir.',
+  'error.coordination.tooManyActiveRuns': 'Ya hay demasiados equipos coordinando a la vez. Cerrá alguno antes de arrancar éste.',
+  'error.coordination.taskCap': 'Este plan tiene más tareas de las que un equipo puede llevar. Recortalo y volvé a proponerlo.',
+  'error.coordination.depthCap': 'Este plan encadena demasiadas dependencias seguidas. Acortá la cadena y volvé a proponerlo.',
+  // M2 (ronda 8): la copy del contexto de MARCA, en el namespace de marca.
+  // Estas tres frases vivían en `error.coordination.*` —una de ellas hablando
+  // de marca dentro del vocabulario de los equipos— porque el backend tiraba
+  // códigos prestados del motor.
+  'error.brand.proposalStale': 'El contexto de marca cambió desde que se escribió esta propuesta: volvé a abrirla.',
+  'error.brand.proposalDecided': 'Esa propuesta de contexto ya se resolvió.',
+  'error.brand.strategistBusy': 'El estratega está en medio de una respuesta. Probá de nuevo cuando termine.',
+  // L5 (ronda 9): los tres que salían del mismo "Aprobar" sin una sola frase.
+  'error.brand.contextTooLong': 'El contexto de marca no entra: sumando esto se pasa del largo máximo. Recortá el texto de la propuesta, o acortá el contexto antes de aprobarla.',
+  'error.brand.contextEmpty': 'El contexto de marca no se puede vaciar guardando: si querés borrarlo, borralo a mano y guardá eso.',
+  'error.brand.archived': 'Esa marca está archivada: restaurala antes de cambiarle nada.',
+  // O2: los de las SUBCLASES, que el escáner del mapa no veía.
+  'error.coordination.budgetUnset': 'Este trabajo todavía no tiene presupuesto de despachos: escribí un tope antes de arrancar el equipo.',
+  // N2 (ronda 7): LOS GENÉRICOS DE TODA LA APP, CON COPY NEUTRA.
+  //
+  // Estos cinco códigos no son de coordinación: `FEATURE_DISABLED` lo tiran
+  // CUATRO features (coordinación, kits de marca, generación, aprendizaje),
+  // `NOT_FOUND`/`CONFLICT`/`UNAVAILABLE`/`VALIDATION` los tira medio backend.
+  // Escritos en el idioma de los equipos, aparecían hablando de tareas y
+  // preguntas cuando alguien abría un kit de marca o no arrancaba un runtime.
+  // Ninguna de estas frases nombra equipos ni tareas.
+  //
+  // N3: y `FEATURE_DISABLED` no promete Ajustes. NO EXISTE tal interruptor en
+  // la pantalla: los flags se escriben en `meta`. Mandar a la persona a
+  // buscar un control que no está es peor que no decirle nada.
+  'error.app.featureDisabled': 'Esta función está apagada en esta instalación.',
+  'error.app.notFound': 'Eso ya no está: se cerró o se borró mientras lo mirabas. Volvé a abrir la pantalla.',
+  'error.app.unavailable': 'Algo que hacía falta no está disponible ahora mismo. Probá de nuevo en un rato.',
+  'error.app.conflict': 'Alguien más cambió esto mientras lo mirabas. Volvé a abrir la pantalla y decidí sobre lo que hay ahora.',
+  'error.app.validation': 'Algo de lo que se mandó no es válido. Revisá los datos y probá de nuevo.',
+  'coordination.settings.kicker': 'COORDINACIÓN AUTÓNOMA',
+  'coordination.authority.manual': 'Manual: cada despacho pide tu aprobación',
+  'coordination.authority.plan': 'Por plan: aprobás el plan una vez y después despacha solo',
+  'coordination.authority.auto': 'Automático: despacha sin pedir aprobación',
+  'coordination.budget.unset': 'Sin presupuesto configurado',
+  'coordination.budget.unlimited': 'Sin límite de despachos (confirmado)',
+  'coordination.budget.limited': 'Hasta {count} despachos',
+  'coordination.budget.invalid': 'El presupuesto de este trabajo no se pudo leer, revisalo: hasta que lo escribas de nuevo, cada despacho se deniega',
+  // O5: el presupuesto del RUN EN CURSO es otro byte que el del Trabajo — la
+  // foto que se congeló al aprobar, no el default. Su frase lo dice, y promete
+  // exactamente lo que el editor de abajo cumple (`setCoordinationBudget` pasa
+  // por `updateActiveCoordinationRunBudget`).
+  'coordination.budget.runInvalid': 'El presupuesto del equipo en curso quedó ilegible. Escribí uno nuevo acá: se aplica al equipo',
+  'coordination.coordinator.none': 'Sin coordinador asignado',
+  'coordination.coordinator.assigned': 'Coordinador: {name}',
+  // --- Coordinación: gates (autonomous-coordination, Phase 7) ------------
+  'coordination.gate.approve': 'Aprobar',
+  'coordination.gate.editApprove': 'Editar y aprobar',
+  'coordination.gate.reject': 'Rechazar',
+  // M4 (ronda 8): la nota de sólo lectura, una sola para las cinco tarjetas
+  // de decisión. Sin quien resuelva, no se ofrece un botón que no hace nada —
+  // y tampoco se esconde en silencio.
+  'coordination.gate.readOnly': 'Esta decisión se muestra de sólo lectura: desde acá no se puede resolver.',
+  'coordination.gate.plan.title': 'Plan de trabajo pendiente de aprobar',
+  'coordination.gate.dispatch.title': 'Despacho pendiente de aprobar',
+  'coordination.gate.budget.title': 'Presupuesto agotado',
+  'coordination.gate.budget.body': 'Este equipo llegó al tope de despachos configurado. Aprobar reanuda el trabajo con el mismo presupuesto; rechazar cancela la coordinación.',
+  'coordination.ask.title': 'El equipo necesita una respuesta',
+  'coordination.ask.placeholder': 'Tu respuesta',
+  'coordination.ask.answer': 'Responder',
+  'coordination.ask.deadline': 'Vence: {date}',
+  // --- Coordinación: la propuesta, la superficie WOW (Phase 7) -----------
+  'coordination.proposal.kicker': 'PROPUESTA DE COORDINACIÓN',
+  'coordination.proposal.plan': 'Plan de trabajo',
+  'coordination.proposal.hires': 'Se suman al equipo',
+  'coordination.proposal.budget': 'Presupuesto propuesto',
+  'coordination.proposal.aggregate': 'Este trabajo: {mine}. Otros equipos ahora: {otherRuns} ({otherDispatches} despachos comprometidos). Total si aprobás: {total}.',
+  'coordination.proposal.aggregateUnlimited': 'Este trabajo: {mine}. Otros equipos ahora: {otherRuns}. Uno de esos equipos no tiene límite de despachos: no podemos calcular el total.',
+  'coordination.proposal.rationale': 'Por qué',
+  'coordination.proposal.hireReason': 'Motivo: {reason}',
+  // L6 (ronda 9): "en este flujo", como en inglés. La frase afirmaba que no
+  // existe NINGÚN formulario de configuración, y sí existe: el tope global de
+  // despachos se escribe en una pantalla de la app. Lo que es cierto es que
+  // acá, decidiendo esta propuesta, no hay nada que configurar.
+  'coordination.proposal.noSettingsNote': 'En este flujo no hay ningún formulario de configuración: leé el plan y decidí.',
+  'coordination.proposal.editDispatches': 'Tope de despachos',
+  'coordination.proposal.editHires': 'Incluir en la contratación',
+  // Q4: destildar una contratación se lleva puestas tareas, y las que dependían
+  // de ellas. Se dice cuántas antes de aprobar, no después de que el motor las
+  // haya matado una por una.
+  'coordination.proposal.editDropsTasks': '{count, plural, one {Sin esas contrataciones se quita # tarea del plan, contando las que dependían de ella.} other {Sin esas contrataciones se quitan # tareas del plan, contando las que dependían de ellas.}}',
+  'coordination.proposal.editDropsAll': 'Sin esas contrataciones no queda ninguna tarea en el plan. Volvé a incluir alguna, o rechazá la propuesta.',
+  'coordination.proposal.editDropsHires': '{count, plural, one {# contratación sin tareas se quita.} other {# contrataciones sin tareas se quitan.}}',
+  'coordination.proposal.orphanRolesDropped': '{count, plural, one {# tarea de roles sin contratación se quita del plan.} other {# tareas de roles sin contratación se quitan del plan.}}',
+  'coordination.proposal.droppedTitle': 'Se quitan del plan',
+  // O3: el alta que no viaja en el payload, tachada en la lista que la persona lee.
+  'coordination.proposal.hireDroppedLabel': 'No se contrata: se quedó sin tareas',
+  // N7: el alta que la PERSONA destildó no se cayó sola. Decirle "se quedó
+  // sin tareas" le atribuía a una consecuencia del plan lo que fue una
+  // decisión suya, y el tachado la mostraba como una pérdida.
+  'coordination.proposal.hireUntickedLabel': 'La sacaste vos',
+  // O12: el plan que nadie puede hacer. "Editar y aprobar" no sirve acá —no
+  // queda nada que aprobar—, así que la frase nombra la única salida real.
+  'coordination.proposal.nobodyCanDoIt': 'Ninguna tarea del plan tiene quien la haga: rechazá y pedí una propuesta nueva',
+  'coordination.proposal.editConfirm': 'Confirmar edición y aprobar',
+  'coordination.proposal.editCancel': 'Cancelar edición',
+  // --- Coordinación: equipos activos, global (Phase 7, slice 7-B) --------
+  'coordination.teams.kicker': 'EQUIPOS ACTIVOS',
+  'coordination.teams.empty': 'Sin equipos coordinando ahora',
+  'coordination.teams.gatesWaiting': '{count, plural, one {# aprobación pendiente} other {# aprobaciones pendientes}}',
+  'coordination.teams.budgetInvalid': 'Presupuesto ilegible',
+  // --- Coordinación: motivos degradados, por miembro (Phase 7, slice 7-B) --
+  'coordination.degraded.claudeBelowFloor': 'Esta versión de Claude Code es anterior a la mínima soportada: despacha en modo manual.',
+  'coordination.degraded.codexRunCap': 'Este equipo llegó al tope de miembros de Codex coordinados por corrida: despacha en modo manual.',
+  'coordination.degraded.codexGlobalCap': 'Se llegó al tope de procesos de Codex coordinados en toda la app: despacha en modo manual.',
+  'coordination.degraded.codexProcessCeiling': 'Se llegó al tope total de procesos de Codex en toda la app: despacha en modo manual.',
+  'coordination.degraded.opencodeSharedServer': 'OpenCode comparte un solo servidor por carpeta de trabajo: despacha en modo manual.',
+  'coordination.degraded.engramMissing': 'Falta el binario de Engram: este miembro trabaja sin memoria compartida.',
+  // --- Memoria de marca: aviso cuando falta Engram (Phase 7, slice 7-B) --
+  'memory.notice.missingTitle': 'La memoria de marca no está disponible',
+  'memory.notice.missingBody': 'Falta el binario «engram». Cada miembro arranca de cero y no ve lo que los demás ya decidieron: no hay memoria compartida entre ellos.',
+  'memory.notice.installLink': 'Cómo instalarlo',
+  // --- Inicio: desde tu última visita (autonomous-coordination, Phase 7) --
+  'home.since.title': 'Desde tu última visita',
+  'home.since.titleNoVisit': 'Desde que empezó la coordinación',
+  'home.since.kind.done': '{workTitle}: el equipo terminó su trabajo',
+  'home.since.kind.failed': '{workTitle}: un despacho falló',
+  'home.since.kind.awaitingYou': '{workTitle}: espera tu aprobación',
+  'home.since.kind.budgetConsumed': '{workTitle}: se agotó el presupuesto de despachos',
+  // --- Resumen: bitácora de coordinación (autonomous-coordination, Phase 7) --
+  'resumen.bitacora': 'Bitácora',
+  'resumen.bitacora.status.pending_approval': 'Esperando aprobación',
+  'resumen.bitacora.status.dispatched': 'Despachado',
+  'resumen.bitacora.status.running': 'En curso',
+  'resumen.bitacora.status.reported': 'Reportado',
+  'resumen.bitacora.status.failed': 'Falló',
+  'resumen.bitacora.status.rejected': 'Rechazado',
+  'resumen.bitacora.status.cancelled': 'Cancelado',
+  'resumen.bitacora.hired': '{roleName} se sumó al equipo',
+  'resumen.bitacora.runDone': 'El equipo terminó: {done} tareas listas, {failed} fallidas',
+  'resumen.bitacora.runCancelled': 'Se canceló la coordinación: {done} tareas listas, {failed} fallidas, {pending} sin empezar',
+  // --- Coordinación: pausar el equipo mid-dispatch (autonomous-coordination, Phase 7) --
+  'coordination.run.pause': 'Pausar equipo',
+  'coordination.run.pauseHelp': 'El despacho en curso termina y reporta; no arranca uno nuevo.',
+  'coordination.run.resume': 'Reanudar equipo',
+  'coordination.run.resumeHelp': 'Vuelve a habilitar los despachos. El presupuesto se revisa recién en el próximo intento.',
+  'coordination.run.cancel': 'Cancelar equipo',
+  'coordination.run.cancelHelp': 'Cierra la coordinación de este Trabajo y libera su cupo. No se puede deshacer.',
+  'coordination.degraded.runtimeRefused': 'El runtime no inyectó las herramientas que se habían decidido: este miembro no las tiene en su proceso.',
+  'coordination.degraded.coordinationServerDown': 'El servidor de coordinación local no arrancó: este miembro trabaja con su memoria, pero sin coordinación.',
+  'coordination.proposal.unlimitedConfirm': 'Confirmo un presupuesto ILIMITADO para este equipo',
+  'decision.permissions.handoffs.accept': 'Aceptar como tarea',
+  // El puente de handoffs tiene DOS finales distintos y uno solo estaba
+  // escrito: con `bridged` no se abrio nada, se acuno una `coordination_task`
+  // y ya salio despachada -- decirle a la persona "revisalo antes de
+  // enviarlo" la manda a revisar algo que no existe, con la plata ya gastada.
+  'handoff.bridged.dispatched': 'Tarea creada para {role} y despachada al equipo. Miralo en Decisiones.',
+  // R3: y el TERCER final. El puente crea la tarea y el despacho puede
+  // denegarse igual (presupuesto agotado, concurrencia al tope). Antes eso
+  // subia como excepcion y la persona veia un error rojo despues de aceptar un
+  // pedido; ahora vuelve en el resultado, y decir "despachada" seria mentir.
+  'handoff.bridged.queued': 'Tarea creada para {role}, pero todavía no salió: {reason}. Queda en la cola, en Decisiones.',
+  // Q1: el tercer final. Con la autoridad por defecto el despacho queda
+  // esperando un gesto de la persona, y si la frase no se lo dice nadie va a ir
+  // a darlo.
+  'handoff.bridged.pendingApproval': 'Tarea creada para {role}. Esperando tu aprobación en Decisiones.',
+  // --- Coordinación: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
+  'coordination.teams.status.planning': 'Planificando',
+  'coordination.teams.status.running': 'En curso',
+  'coordination.teams.status.suspended': 'Suspendido',
+  'coordination.teams.status.done': 'Terminado',
+  'coordination.teams.status.cancelled': 'Cancelado',
+  'coordination.support.available': 'Sin restricciones para coordinar',
+  'coordination.support.disabled': 'La coordinación de equipo está desactivada en esta instalación',
+  'coordination.support.unconfirmed': 'El runtime todavía no confirmó la coordinación: Latte la pidió, falta que el agente diga que la levantó',
+  'coordination.support.notReported': 'Este runtime no informa la conexión: Latte pidió la coordinación y no hay forma de que el agente confirme que la levantó',
+  'coordination.memory.available': 'Memoria disponible',
+  'coordination.memory.unconfirmed': 'Memoria pedida, sin confirmar por el runtime',
+  'coordination.memory.notReported': 'Memoria pedida; este runtime no informa la conexión',
+  'coordination.memory.unavailable': 'Sin memoria compartida para este miembro',
+  'coordination.settle.succeeded': 'Marcar como terminado',
+  'coordination.settle.failed': 'Marcar como fallido',
+  'coordination.settle.summaryPrompt': 'Resumen del resultado',
+  'coordination.globalBudget.kicker': 'TOPE GLOBAL DE DESPACHOS (AVANZADO)',
+  'coordination.globalBudget.help': 'Opcional, se suma al presupuesto de cada Trabajo, nunca lo reemplaza. Cuenta los despachos de los equipos que están activos ahora — no el histórico —, así que se libera solo cuando un equipo termina o se cancela. Sin configurar, no aplica ningún tope extra.',
+  'coordination.globalBudget.setLabel': 'Nuevo tope',
+  'coordination.globalBudget.save': 'Guardar',
+  'coordination.globalBudget.clear': 'Sacar el tope',
+  'coordination.globalBudget.invalid': 'El tope global no se pudo leer, revisalo: mientras tanto cada despacho se deniega.',
+  // --- Coordinación: el run terminado, la salida y el presupuesto editable ---
+  // Un run que cerró no ofrece ninguna acción de run vivo: dice CÓMO terminó,
+  // con las cuentas separadas. "Terminado" a secas no distingue un equipo que
+  // entregó de uno donde falló todo.
+  'coordination.run.finished.done': 'Este equipo terminó: {done} tareas listas, {failed} fallidas',
+  'coordination.run.finished.cancelled': 'Cancelaste este equipo: {done} tareas listas, {failed} fallidas, {pending} sin empezar',
+  'coordination.run.planning': 'Planificando: todavía no salió ningún despacho',
+  // Una propuesta que no se puede leer no se dibuja como un plan vacío: se
+  // dice que está rota, porque aprobar algo ilegible no es aprobar nada.
+  'coordination.proposal.unreadable': 'Esta propuesta llegó rota y no se puede leer. No hay nada que aprobar acá: cancelá el equipo o pedile al agente que la vuelva a proponer.',
+  'coordination.budget.editLabel': 'Tope de despachos de este Trabajo',
+  'coordination.budget.save': 'Guardar el tope',
+  // --- Copy del panel de equipo que estaba escrito a mano en el componente ---
+  'team.status.attention': 'Te necesita',
+  'team.status.paused': 'En pausa',
+  'team.opening': 'Abriendo…',
+  'team.checkingAgents': 'Buscando agentes…',
+  'team.checkingModels': 'Buscando modelos…',
+  'team.recheck': 'Volver a comprobar',
+  'team.providers.label': 'Proveedores de IA',
+  'team.providers.title': 'Agentes y proveedores',
+  'team.finish.label': 'Marcar como finalizado',
+  'team.rolePicker.group': 'Rol',
+  'team.model.isDefault': ' · por defecto',
+  'team.model.openCodeDetail': 'Modelos configurados en OpenCode{suffix}.',
+  'team.model.openCodeDefault': ' · por defecto {model}',
+  'handoff.unknownRole': ' — ese rol no existe en Latte.',
+  'handoff.wants': 'vea esto:',
+  // --- Decisiones: el encabezado y el campo, que estaban escritos a mano ---
+  'decision.kicker': 'CRITERIO QUE PERMANECE',
+  'decision.headline.first': 'No empezar',
+  'decision.headline.second': 'de cero otra vez.',
+  'decision.draftPlaceholder': '¿Qué elegimos? ¿Por qué?',
   // --- Resultados: lo que el trabajo entregó ----------------------------
   'resultados.tab': 'Resultados',
   'resultados.region': 'Resultados',
@@ -964,6 +1205,184 @@ const en: Record<MessageKey, string> = {
   'decision.permissions.lead': 'Approval ≠ authorization: approving a decision does not change this work’s permissions.',
   'decision.permissions.handoffs': 'Permission requests',
   'decision.permissions.handoffs.empty': 'No permission requests',
+  // --- Autonomous coordination: read-only summary (autonomous-coordination, Phase 2) --
+  'error.coordination.askClosed': 'That question is already closed: either someone answered it, or its deadline passed.',
+  'error.coordination.runNotRunning': 'That team is not running, so there is nothing to pause.',
+  'error.coordination.runNotActive': 'That team already finished or was cancelled: it takes no new work.',
+  'error.coordination.memberBusy': 'That role is busy right now. Try again once it finishes what it is doing.',
+  'error.coordination.roleNotApproved': 'That role is not part of the team you approved: it needs its own approval.',
+  'error.coordination.budgetInvalid': "This project's budget could not be read: write it again before going on.",
+  'error.coordination.planHasUnapprovedRoles': 'The plan has tasks for roles nobody can do. Open “Edit and approve”: those tasks are dropped for you, and you can approve the rest. If none are left, discard it and ask for a new proposal.',
+  'error.coordination.budgetExceeded': 'This team has used up its dispatch budget. Raise it, or close the team here.',
+  'error.coordination.maxConcurrent': 'This team already has all its concurrent dispatches running. Wait for one to finish.',
+  'error.coordination.invalidGate': 'That decision no longer exists: someone resolved it, or the team changed state.',
+  'error.coordination.coordinationNotApproved': 'That team is not approved yet: its proposal has to be resolved first.',
+  'error.coordination.runAlreadyActive': 'This project already has a team coordinating. Close that one before starting another.',
+  'error.coordination.taskNotReady': 'That task is not ready to dispatch: it is still waiting on something it depends on.',
+  'error.coordination.claimLost': 'That task stopped being this dispatch’s while the member was starting up: someone else took it, or it went back to the queue. Nothing was spent.',
+  'error.coordination.noActiveRun': 'This project has no team coordinating right now.',
+  'error.coordination.globalBudgetInvalid': 'The global budget could not be read: write it again before going on.',
+  'error.coordination.tooManyActiveRuns': 'Too many teams are coordinating at once. Close one before starting this one.',
+  'error.coordination.taskCap': 'This plan has more tasks than one team can carry. Trim it and propose it again.',
+  'error.coordination.depthCap': 'This plan chains too many dependencies in a row. Shorten the chain and propose it again.',
+  'error.brand.proposalStale': 'The brand context changed since this proposal was written: open it again.',
+  'error.brand.proposalDecided': 'That context proposal was already resolved.',
+  'error.brand.strategistBusy': 'The strategist is in the middle of an answer. Try again once it finishes.',
+  'error.brand.contextTooLong': 'The brand context does not fit: adding this goes over the maximum length. Trim the proposal’s text, or shorten the context before approving it.',
+  'error.brand.contextEmpty': 'The brand context cannot be emptied by saving: if you want it gone, clear it by hand and save that.',
+  'error.brand.archived': 'That brand is archived: restore it before changing anything on it.',
+  'error.coordination.budgetUnset': 'This project has no dispatch budget yet: set a cap before starting the team.',
+  'error.app.featureDisabled': 'This feature is switched off in this installation.',
+  'error.app.notFound': 'That is gone: it was closed or deleted while you were looking at it. Open the screen again.',
+  'error.app.unavailable': 'Something that was needed is not available right now. Try again in a while.',
+  'error.app.conflict': 'Someone else changed this while you were looking at it. Open the screen again and decide on what is there now.',
+  'error.app.validation': 'Something that was sent is not valid. Check the values and try again.',
+  'coordination.settings.kicker': 'AUTONOMOUS COORDINATION',
+  'coordination.authority.manual': 'Manual: every dispatch asks for your approval',
+  'coordination.authority.plan': 'By plan: approve the plan once, then it dispatches on its own',
+  'coordination.authority.auto': 'Automatic: dispatches without asking for approval',
+  'coordination.budget.unset': 'No budget configured',
+  'coordination.budget.unlimited': 'No dispatch limit (confirmed)',
+  'coordination.budget.limited': 'Up to {count} dispatches',
+  'coordination.budget.invalid': 'This work’s budget could not be read, check it: until you set it again, every dispatch is denied',
+  'coordination.budget.runInvalid': 'The running team’s budget became unreadable. Write a new one here: it applies to the team',
+  'coordination.coordinator.none': 'No coordinator assigned',
+  'coordination.coordinator.assigned': 'Coordinator: {name}',
+  // --- Coordination: gates (autonomous-coordination, Phase 7) ------------
+  'coordination.gate.approve': 'Approve',
+  'coordination.gate.editApprove': 'Edit and approve',
+  'coordination.gate.reject': 'Reject',
+  'coordination.gate.readOnly': 'This decision is shown read-only: it cannot be resolved from here.',
+  'coordination.gate.plan.title': 'Work plan pending approval',
+  'coordination.gate.dispatch.title': 'Dispatch pending approval',
+  'coordination.gate.budget.title': 'Budget exhausted',
+  'coordination.gate.budget.body': 'This team reached its configured dispatch cap. Approving resumes the work with the same budget; rejecting cancels the coordination.',
+  'coordination.ask.title': 'The team needs an answer',
+  'coordination.ask.placeholder': 'Your answer',
+  'coordination.ask.answer': 'Answer',
+  'coordination.ask.deadline': 'Deadline: {date}',
+  // --- Coordination: the proposal, the WOW surface (Phase 7) -------------
+  'coordination.proposal.kicker': 'COORDINATION PROPOSAL',
+  'coordination.proposal.plan': 'Work plan',
+  'coordination.proposal.hires': 'Joining the team',
+  'coordination.proposal.budget': 'Proposed budget',
+  'coordination.proposal.aggregate': 'This work: {mine}. Other teams now: {otherRuns} ({otherDispatches} committed dispatches). Total if approved: {total}.',
+  'coordination.proposal.aggregateUnlimited': 'This work: {mine}. Other teams now: {otherRuns}. One of those teams has no dispatch limit: we cannot calculate a total.',
+  'coordination.proposal.rationale': 'Why',
+  'coordination.proposal.hireReason': 'Reason: {reason}',
+  'coordination.proposal.noSettingsNote': 'There is no settings form anywhere in this flow: read the plan and decide.',
+  'coordination.proposal.editDispatches': 'Dispatch cap',
+  'coordination.proposal.editHires': 'Include in the hire',
+  'coordination.proposal.editDropsTasks': '{count, plural, one {Without those hires, # task is dropped from the plan, counting the ones that depended on it.} other {Without those hires, # tasks are dropped from the plan, counting the ones that depended on them.}}',
+  'coordination.proposal.editDropsAll': 'Without those hires the plan has no tasks left. Put one back, or reject the proposal.',
+  'coordination.proposal.editDropsHires': '{count, plural, one {# hire with no tasks is dropped.} other {# hires with no tasks are dropped.}}',
+  'coordination.proposal.orphanRolesDropped': '{count, plural, one {# task for roles nobody is hiring is dropped from the plan.} other {# tasks for roles nobody is hiring are dropped from the plan.}}',
+  'coordination.proposal.droppedTitle': 'Dropped from the plan',
+  'coordination.proposal.hireDroppedLabel': 'Not hired: no tasks left for them',
+  'coordination.proposal.hireUntickedLabel': 'You removed this one',
+  'coordination.proposal.nobodyCanDoIt': 'No task in this plan has anyone to do it: discard it and ask for a new proposal',
+  'coordination.proposal.editConfirm': 'Confirm edit and approve',
+  'coordination.proposal.editCancel': 'Cancel edit',
+  // --- Coordination: active teams, global (Phase 7, slice 7-B) -----------
+  'coordination.teams.kicker': 'ACTIVE TEAMS',
+  'coordination.teams.empty': 'No teams coordinating right now',
+  'coordination.teams.gatesWaiting': '{count, plural, one {# approval pending} other {# approvals pending}}',
+  'coordination.teams.budgetInvalid': 'Budget unreadable',
+  // --- Coordination: degraded reasons, per member (Phase 7, slice 7-B) ---
+  'coordination.degraded.claudeBelowFloor': 'This Claude Code version is older than the minimum supported: dispatch falls back to manual.',
+  'coordination.degraded.codexRunCap': 'This team reached the per-run cap of coordinated Codex members: dispatch falls back to manual.',
+  'coordination.degraded.codexGlobalCap': 'The app-wide cap of coordinated Codex processes was reached: dispatch falls back to manual.',
+  'coordination.degraded.codexProcessCeiling': 'The app-wide total cap of Codex processes was reached: dispatch falls back to manual.',
+  'coordination.degraded.opencodeSharedServer': 'OpenCode shares a single server per work folder: dispatch falls back to manual.',
+  'coordination.degraded.engramMissing': 'The Engram binary is missing: this member works without shared memory.',
+  // --- Brand memory: notice when Engram is missing (Phase 7, slice 7-B) --
+  'memory.notice.missingTitle': 'Brand memory is not available',
+  'memory.notice.missingBody': 'The «engram» binary is missing. Each member starts from zero and cannot see what the others already decided: there is no shared memory between them.',
+  'memory.notice.installLink': 'How to install it',
+  // --- Inicio: since your last visit (autonomous-coordination, Phase 7) --
+  'home.since.title': 'Since your last visit',
+  'home.since.titleNoVisit': 'Since coordination started',
+  'home.since.kind.done': '{workTitle}: the team finished its work',
+  'home.since.kind.failed': '{workTitle}: a dispatch failed',
+  'home.since.kind.awaitingYou': '{workTitle}: waiting on your approval',
+  'home.since.kind.budgetConsumed': '{workTitle}: the dispatch budget ran out',
+  // --- Resumen: coordination log (autonomous-coordination, Phase 7) ------
+  'resumen.bitacora': 'Log',
+  'resumen.bitacora.status.pending_approval': 'Awaiting approval',
+  'resumen.bitacora.status.dispatched': 'Dispatched',
+  'resumen.bitacora.status.running': 'Running',
+  'resumen.bitacora.status.reported': 'Reported',
+  'resumen.bitacora.status.failed': 'Failed',
+  'resumen.bitacora.status.rejected': 'Rejected',
+  'resumen.bitacora.status.cancelled': 'Cancelled',
+  'resumen.bitacora.hired': '{roleName} joined the team',
+  'resumen.bitacora.runDone': 'The team finished: {done} tasks done, {failed} failed',
+  'resumen.bitacora.runCancelled': 'Coordination was cancelled: {done} tasks done, {failed} failed, {pending} never started',
+  // --- Coordination: pausing the team mid-dispatch (autonomous-coordination, Phase 7) --
+  'coordination.run.pause': 'Pause team',
+  'coordination.run.pauseHelp': 'The in-flight dispatch finishes and reports; no new dispatch starts.',
+  'coordination.run.resume': 'Resume team',
+  'coordination.run.resumeHelp': 'Dispatching is allowed again. The budget is re-checked at the next attempt, not now.',
+  'coordination.run.cancel': 'Cancel team',
+  'coordination.run.cancelHelp': 'Closes this Work\u2019s coordination and frees its slot. This cannot be undone.',
+  'coordination.degraded.runtimeRefused': 'The runtime did not inject the tools that were decided for it: this member does not have them in its process.',
+  'coordination.degraded.coordinationServerDown': 'The local coordination server did not start: this member works with its memory, but without coordination.',
+  'coordination.proposal.unlimitedConfirm': 'I confirm an UNLIMITED budget for this team',
+  'decision.permissions.handoffs.accept': 'Accept as task',
+  'handoff.bridged.dispatched': 'Task created for {role} and dispatched to the team. Follow it in Decisions.',
+  'handoff.bridged.queued': 'Task created for {role}, but it has not started yet: {reason}. It stays queued, in Decisions.',
+  'handoff.bridged.pendingApproval': 'Task created for {role}. Waiting for your approval in Decisions.',
+  // --- Coordination: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
+  'coordination.teams.status.planning': 'Planning',
+  'coordination.teams.status.running': 'Running',
+  'coordination.teams.status.suspended': 'Suspended',
+  'coordination.teams.status.done': 'Done',
+  'coordination.teams.status.cancelled': 'Cancelled',
+  'coordination.support.available': 'No coordination restrictions',
+  'coordination.support.disabled': 'Team coordination is disabled on this install',
+  'coordination.support.unconfirmed': 'The runtime has not confirmed coordination yet: Latte requested it, the agent has not reported bringing it up',
+  'coordination.support.notReported': 'This runtime does not report the connection: Latte requested coordination and the agent has no way to confirm it came up',
+  'coordination.memory.available': 'Memory available',
+  'coordination.memory.unconfirmed': 'Memory requested, not confirmed by the runtime',
+  'coordination.memory.notReported': 'Memory requested; this runtime does not report the connection',
+  'coordination.memory.unavailable': 'No shared memory for this member',
+  'coordination.settle.succeeded': 'Mark as done',
+  'coordination.settle.failed': 'Mark as failed',
+  'coordination.settle.summaryPrompt': 'Outcome summary',
+  'coordination.globalBudget.kicker': 'GLOBAL DISPATCH CAP (ADVANCED)',
+  'coordination.globalBudget.help': "Optional, adds on top of each Work's own budget, never replaces it. It counts the dispatches of the teams active right now — not your history — so it frees up as each team finishes or is cancelled. Unset, no extra cap applies.",
+  'coordination.globalBudget.setLabel': 'New cap',
+  'coordination.globalBudget.save': 'Save',
+  'coordination.globalBudget.clear': 'Remove the cap',
+  'coordination.globalBudget.invalid': 'The global cap could not be read — take a look: until it is fixed, every dispatch is denied.',
+  // --- Coordination: the finished run, the way out, the editable budget ---
+  'coordination.run.finished.done': 'This team finished: {done} tasks done, {failed} failed',
+  'coordination.run.finished.cancelled': 'You cancelled this team: {done} tasks done, {failed} failed, {pending} never started',
+  'coordination.run.planning': 'Planning: no dispatch has gone out yet',
+  'coordination.proposal.unreadable': 'This proposal arrived broken and cannot be read. There is nothing to approve here: cancel the team, or ask the agent to propose again.',
+  'coordination.budget.editLabel': "This Work's dispatch cap",
+  'coordination.budget.save': 'Save the cap',
+  // --- Team panel copy that used to be written by hand in the component ---
+  'team.status.attention': 'Needs you',
+  'team.status.paused': 'Paused',
+  'team.opening': 'Opening…',
+  'team.checkingAgents': 'Looking for agents…',
+  'team.checkingModels': 'Looking for models…',
+  'team.recheck': 'Check again',
+  'team.providers.label': 'AI providers',
+  'team.providers.title': 'Agents and providers',
+  'team.finish.label': 'Mark as finished',
+  'team.rolePicker.group': 'Role',
+  'team.model.isDefault': ' · default',
+  'team.model.openCodeDetail': 'Models configured in OpenCode{suffix}.',
+  'team.model.openCodeDefault': ' · default {model}',
+  'handoff.unknownRole': ' — that role does not exist in Latte.',
+  'handoff.wants': 'sees this:',
+  // --- Decisions: the heading and the field, written by hand until now ---
+  'decision.kicker': 'CRITERIA THAT STAY',
+  'decision.headline.first': 'Never start',
+  'decision.headline.second': 'from zero again.',
+  'decision.draftPlaceholder': 'What did we choose? Why?',
   // --- Resultados: what the work delivered ------------------------------
   'resultados.tab': 'Results',
   'resultados.region': 'Results',

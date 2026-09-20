@@ -18,6 +18,25 @@ export interface AppServerOptions {
   requestTimeoutMs?: number;
   log?: (line: string) => void;
   clientVersion?: string;
+  /**
+   * Extra argv appended after `app-server` itself -- e.g. the coordination
+   * `-c mcp_servers.*` overrides (sdd/autonomous-coordination, Phase 5).
+   * These belong on the PROCESS argv, never on a `thread/start` call: the
+   * spike found any per-thread config override hangs the following
+   * `turn/start` forever on the installed 0.154.0 (openai/codex#45361).
+   */
+  extraArgs?: string[];
+  /**
+   * El pid del hijo, EN CUANTO existe — antes de `initialize`, no después de
+   * que `ensure()` salió bien. El barrido de arranque
+   * (`sweepStrayCodexServers`) sólo puede reapear lo que alguien anotó, y el
+   * camino que más procesos huérfanos dejaba era justamente el del arranque
+   * fallido: el hijo ya estaba spawneado y el pid se grababa recién al final,
+   * así que nunca se grababa. `serverKey` lleva un token aleatorio adentro, así
+   * que nadie puede recomputar esa clave nunca: sin el pid file, ese proceso
+   * quedaba inalcanzable para siempre.
+   */
+  onSpawn?: (pid: number) => void;
 }
 
 interface Pending { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -81,6 +100,11 @@ export class CodexAppServer {
     return this.child !== null && this.child.exitCode === null && this.initialised;
   }
 
+  /** The OS pid of the live child, or null before launch / after it exits. Recorded by the caller (`codexAdapter.ts`) for the startup stray-process sweep. */
+  get pid(): number | null {
+    return this.child?.pid ?? null;
+  }
+
   async ensure(): Promise<void> {
     if (this.running) return;
     if (this.starting) return this.starting;
@@ -140,7 +164,7 @@ export class CodexAppServer {
 
   private async launch(): Promise<void> {
     const binary = resolveCodexBinary(this.options.executable, this.platform);
-    const spec = spawnSpecFor(binary, ['app-server'], this.platform, this.options.env);
+    const spec = spawnSpecFor(binary, ['app-server', ...(this.options.extraArgs ?? [])], this.platform, this.options.env);
     const env = { ...this.options.env, CODEX_MANAGED_BY_NPM: '1' };
     let child: ChildProcess;
     try {
@@ -149,6 +173,11 @@ export class CodexAppServer {
       throw new Error(`Could not start Codex: ${describe(error)}`);
     }
     this.child = child;
+    // Antes de `initialize`: a partir de acá el proceso EXISTE, y todo lo que
+    // sigue puede fallar. Ver `onSpawn`.
+    if (typeof child.pid === 'number') {
+      try { this.options.onSpawn?.(child.pid); } catch { /* anotar el pid nunca puede tumbar un arranque */ }
+    }
     this.buffer = '';
     child.stdout?.on('data', (chunk: Buffer) => this.onData(chunk));
     child.stderr?.on('data', (chunk: Buffer) => this.options.log?.(`[codex] ${chunk.toString('utf8').trim().slice(0, 300)}`));

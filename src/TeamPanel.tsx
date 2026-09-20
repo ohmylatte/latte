@@ -1,7 +1,7 @@
-import { currentLocale, translate as t } from './i18n';
+import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Check, CircleAlert, CircleCheck, FolderCheck, FolderLock, Forward, LoaderCircle, MessageSquare, MessageSquarePlus, Pause, Play, Plug, Plus, Settings2, Trash2, UserPlus, X, Zap } from 'lucide-react';
-import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
+import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { ChatPane } from './ChatPane';
 import { useChatState } from './chat-store';
@@ -75,6 +75,33 @@ export interface TeamPanelProps {
   /** Only the permission mutation is pending; chat activity must not disable this control. */
   permissionBusy: boolean;
   onPermissions: (mode: WorkPermissionMode) => void;
+  /**
+   * Additive, optional (autonomous-coordination Phase 7 task 7.7): `undefined`
+   * or `null` means no active run to pause — the control does not render, so
+   * an unwired caller sees zero change. `pauseCoordinationRun` already exists
+   * (Phase 3); this is UI only. Pausing lets the in-flight dispatch finish
+   * and report; no new dispatch starts.
+   */
+  coordinationRun?: CoordinationRunView | null;
+  onPauseCoordination?: (runId: string) => void;
+  /**
+   * La vuelta de la pausa, en el MISMO control que la ofrece. Pausar hacía
+   * desaparecer su propio botón y dejaba el run `suspended` para siempre:
+   * `findActiveCoordinationRun` bloqueaba todo run futuro de ese Trabajo y el
+   * run seguía ocupando uno de los cuatro cupos app-wide, sin ninguna salida.
+   */
+  onResumeCoordination?: (runId: string) => void;
+  onCancelCoordination?: (runId: string) => void;
+  /**
+   * Additive, optional (juicio ronda 4, ítem 14): `useCoordination`'s
+   * per-action in-flight flags, keyed `run:<runId>` for the pause/resume/
+   * cancel trio. `undefined` disables nothing, same as every other additive
+   * coordination prop here. `busy` (the app-wide flag above) never covered
+   * this: a mutation issued through `useCoordination` does not touch it, so
+   * the run-control buttons stayed clickable for the whole time a pause/
+   * resume/cancel was in flight.
+   */
+  pending?: Record<string, boolean>;
 }
 
 const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex' };
@@ -103,9 +130,15 @@ export function TeamPanel(props: TeamPanelProps) {
   const workTotal = useTeamUsageTotal(team);
 
   return <div className="team">
+    {/* FUERA del guard `team.length > 0`: un run `planning` es exactamente el
+        momento en el que el equipo todavía no tiene un solo miembro, y ahí los
+        controles del run desaparecían enteros — la persona se quedaba sin
+        ninguna salida justo cuando la coordinación recién arranca. */}
+    <CoordinationRunControls run={props.coordinationRun ?? null} busy={busy} pending={props.pending}
+      onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination} />
     {work && props.handoffs.map(handoff => <div key={handoff.fileName} className="doc-banner handoff" role="status">
       <UserPlus size={14} />
-      <span>{t('ui.auto.266')} <strong>{handoff.roleName}</strong> vea esto: <em>{handoff.request.split(/\r?\n/)[0].slice(0, 140)}</em>{handoff.known ? '' : ' — ese rol no existe en Latte.'}</span>
+      <span>{t('ui.auto.266')} <strong>{handoff.roleName}</strong> {t('handoff.wants')} <em>{handoff.request.split(/\r?\n/)[0].slice(0, 140)}</em>{handoff.known ? '' : t('handoff.unknownRole')}</span>
       {handoff.known && <button className="primary" disabled={busy} onClick={() => void props.onAcceptHandoff(handoff)}>{t('ui.auto.267')}</button>}
       <button disabled={busy} onClick={() => void props.onDismissHandoff(handoff)}>{t('ui.auto.379')}</button>
     </div>)}
@@ -117,7 +150,7 @@ export function TeamPanel(props: TeamPanelProps) {
         {activity && <span className={'team-activity' + (activity.needsAttention ? ' attention' : '')} role="status" title={activity.detail}>{activity.label}</span>}
         {workTotal > 0 && <span className="team-usage-total" title={t('usage.help')}>{t('usage.workTotal', { tokens: formatTokens(workTotal, currentLocale()) })}</span>}
         <button className="team-tab-add" aria-label={t('ui.auto.269')} title={t('ui.auto.269')} disabled={busy || !isDesktop} onClick={() => setAdding(true)}><UserPlus size={15} /></button>
-        <button className="team-tab-add" aria-label="Proveedores de IA" title="Agentes y proveedores" onClick={props.onProviders}><Settings2 size={15} /></button>
+        <button className="team-tab-add" aria-label={t('team.providers.label')} title={t('team.providers.title')} onClick={props.onProviders}><Settings2 size={15} /></button>
         {selected && <div className="team-tab-actions">
           {mode === 'advanced' && <>
             <ModelPicker member={selected} busy={busy} onModel={props.onModel} />
@@ -125,7 +158,7 @@ export function TeamPanel(props: TeamPanelProps) {
           </>}
           <button className="icon-button" aria-label={t('continue.action')} title={t('continue.actionHelp')} disabled={busy || !isDesktop} onClick={() => setContinuing(selected.id)}><Forward size={13} /></button>
           {selectedLive && <button className="icon-button" aria-label={t('ui.auto.087')} title={t('ui.auto.270')} disabled={busy} onClick={() => void props.onPause(selected.id)}><Pause size={13} /></button>}
-          {selectedStatus !== 'ended' && <button className="icon-button" aria-label="Marcar como finalizado" title={t('ui.auto.271')} disabled={busy} onClick={() => void props.onFinish(selected.id)}><CircleCheck size={13} /></button>}
+          {selectedStatus !== 'ended' && <button className="icon-button" aria-label={t('team.finish.label')} title={t('ui.auto.271')} disabled={busy} onClick={() => void props.onFinish(selected.id)}><CircleCheck size={13} /></button>}
           <button className="icon-button" aria-label={t('ui.auto.272')} title={t('ui.auto.273')} disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.401', { p0: selected.roleName, p1: selected.roleName }))) void props.onRestart(selected.id); }}><MessageSquarePlus size={13} /></button>
           <button className="icon-button" aria-label={t('ui.auto.274')} title={t('ui.auto.274')} disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.402', { p0: selected.roleName }))) void props.onRemove(selected.id); }}><Trash2 size={13} /></button>
         </div>}
@@ -142,6 +175,65 @@ export function TeamPanel(props: TeamPanelProps) {
     {!work && <div className="agent-idle"><div className="agent-symbol"><MessageSquare size={27} /></div><h3>{t('ui.auto.276')}<br />{t('ui.auto.277')}</h3><p className="footnote">{t('ui.auto.278')}</p></div>}
     {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} onAttachFiles={props.onAttachFiles} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}
     {!showPicker && !selected && team.length > 0 && <p className="chat-empty">{t('ui.auto.279')}</p>}
+  </div>;
+}
+
+/**
+ * Qué controles tiene un run, decidido UNA vez y de forma exhaustiva.
+ *
+ * Antes cada botón traía su propia condición suelta y "Cancelar" viajaba
+ * pegado a "Reanudar": un run `planning` o `running` no tenía NINGUNA salida —
+ * para cancelar había que pausar primero, y pausar un run que todavía no
+ * despachó nada es una instrucción que no le cabe en la cabeza a nadie.
+ *
+ * El `switch` es exhaustivo contra `CoordinationRunStatus` (`never` en el
+ * default): un estado nuevo en el contrato no compila hasta que alguien
+ * decida, mirando el producto, qué salida le corresponde. Es exactamente la
+ * clase de decisión que no puede quedar en un `else` implícito.
+ */
+interface RunControlPlan { cancel: boolean; pause: boolean; resume: boolean; statusKey: MessageKey | null }
+
+function planRunControls(run: CoordinationRunView): RunControlPlan {
+  switch (run.status) {
+    // Planificando: nada que pausar todavía (no hay despacho en vuelo), pero
+    // sí hay algo que cancelar — el run ocupa un cupo desde que nace.
+    case 'planning': return { cancel: true, pause: false, resume: false, statusKey: 'coordination.run.planning' };
+    case 'running': return { cancel: true, pause: true, resume: false, statusKey: null };
+    case 'suspended': return { cancel: true, pause: false, resume: true, statusKey: 'coordination.teams.status.suspended' };
+    // Los dos finales: se dice cómo terminó y nada más. Ninguna acción de run
+    // vivo sobre algo que el motor ya cerró.
+    case 'done': return { cancel: false, pause: false, resume: false, statusKey: 'coordination.teams.status.done' };
+    case 'cancelled': return { cancel: false, pause: false, resume: false, statusKey: 'coordination.teams.status.cancelled' };
+    default: {
+      const exhaustive: never = run.status;
+      return exhaustive;
+    }
+  }
+}
+
+function CoordinationRunControls({ run, busy, pending, onPause, onResume, onCancel }: {
+  run: CoordinationRunView | null;
+  busy: boolean;
+  pending?: Record<string, boolean>;
+  onPause?: (runId: string) => void;
+  onResume?: (runId: string) => void;
+  onCancel?: (runId: string) => void;
+}) {
+  if (!run) return null;
+  const plan = planRunControls(run);
+  // `active` se cruza con el plan a propósito: dos candados, no uno. Un
+  // `status` que alguien marque mal en el backend no puede devolverle botones
+  // de run vivo a algo que ya cerró.
+  const live = run.active;
+  const inFlight = busy || Boolean(pending?.[`run:${run.id}`]);
+  return <div className="team-coordination-controls">
+    {/* `team-finished-coordination` se conserva como segunda clase para los
+        dos finales: es el gancho con el que el resto del producto ya
+        distingue "este equipo cerró" de "este equipo está en un estado". */}
+    {plan.statusKey && <span className={'team-coordination-status' + (live ? '' : ' team-finished-coordination')} data-run-status={run.status} role="status">{t(plan.statusKey)}</span>}
+    {live && plan.pause && <button className="team-pause-coordination" title={t('coordination.run.pauseHelp')} disabled={inFlight} onClick={() => onPause?.(run.id)}><Pause size={13} />{t('coordination.run.pause')}</button>}
+    {live && plan.resume && <button className="team-resume-coordination" title={t('coordination.run.resumeHelp')} disabled={inFlight} onClick={() => onResume?.(run.id)}><Play size={13} />{t('coordination.run.resume')}</button>}
+    {live && plan.cancel && <button className="team-cancel-coordination" title={t('coordination.run.cancelHelp')} disabled={inFlight} onClick={() => onCancel?.(run.id)}><X size={13} />{t('coordination.run.cancel')}</button>}
   </div>;
 }
 
@@ -285,12 +377,12 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', onSel
 }
 
 function statusLabel(status: TeamMemberStatus, attention: boolean) {
-  if (attention) return <><i className="busy-dot" />Te necesita</>;
+  if (attention) return <><i className="busy-dot" />{t('team.status.attention')}</>;
   switch (status) {
     case 'working': return <><Loading size={16} />{t('ui.auto.403')}</>;
     case 'idle': return <><i className="live-dot" />{t('ui.auto.404')}</>;
     case 'ended': return <>{t('ui.auto.285')}<CircleCheck size={13} /></>;
-    default: return <>En pausa<Pause size={12} /></>;
+    default: return <>{t('team.status.paused')}<Pause size={12} /></>;
   }
 }
 
@@ -301,7 +393,7 @@ function ResumeCard({ member, origin, busy, isDesktop, onOpen, onRestart, onRemo
     <span className="team-avatar large" data-role={member.roleId} aria-hidden="true">{member.initial}</span>
     <h3>{member.roleName}<br /><small>{member.label}</small>{origin && <small>{t('continue.from', { role: origin.roleName })}</small>}</h3>
     <p>{member.status === 'ended' ? t('ui.auto.286') : t('ui.auto.287')}</p>
-    <button className="primary" disabled={busy || opening} onClick={() => void open()}>{opening ? <Loading size={16} /> : <Play size={15} />}{opening ? 'Abriendo…' : member.status === 'ended' ? t('ui.auto.288') : t('ui.auto.289')}</button>
+    <button className="primary" disabled={busy || opening} onClick={() => void open()}>{opening ? <Loading size={16} /> : <Play size={15} />}{opening ? t('team.opening') : member.status === 'ended' ? t('ui.auto.288') : t('ui.auto.289')}</button>
     {/* A paused or finished member is where an exhausted account usually leaves you: continuing elsewhere belongs right here. */}
     <button className="subtle" title={t('continue.actionHelp')} disabled={busy || opening || !isDesktop} onClick={onContinue}><Forward size={13} />{t('continue.action')}</button>
     <button className="subtle" disabled={busy || opening} onClick={() => { if (window.confirm(t('ui.auto.401', { p0: member.roleName, p1: member.roleName }))) void onRestart(); }}><MessageSquarePlus size={13} />{t('ui.auto.272')}</button>
@@ -327,7 +419,7 @@ function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady,
   return <div className="role-picker">
     <div className="role-picker-head"><span className="field-label">{canCancel ? t('ui.auto.290') : t('ui.auto.291')}</span>{canCancel && <button className="icon-button" aria-label={t('ui.auto.241')} onClick={onCancel}><X size={15} /></button>}</div>
     <p className="agent-explanation">{t('ui.auto.292')}</p>
-    <div className="role-list" role="radiogroup" aria-label="Rol">
+    <div className="role-list" role="radiogroup" aria-label={t('team.rolePicker.group')}>
       {roles.map(role => <button key={role.id} role="radio" aria-checked={roleId === role.id} className={'role-card' + (roleId === role.id ? ' selected' : '')} onClick={() => setRoleId(role.id)}><span className="team-avatar" data-role={role.id} aria-hidden="true">{role.initial}</span><span><strong>{role.name}</strong><small>{role.summary}</small></span>{roleId === role.id && <Check size={14} />}</button>)}
     </div>
     <TierPicker tier={tier} busy={busy || opening} onChange={setTier} />
@@ -347,9 +439,9 @@ function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady,
     </select>
     {choice === 'primary' && <small className="runtime-detail">{checking ? t('ui.auto.296') : primaryDetail}</small>}
     <div className="chat-card-actions">
-      <button className="primary" disabled={busy || opening || checking || !ready || !isDesktop} onClick={() => void add()}>{opening || checking ? <Loading size={16} /> : <Plus size={15} />}{opening ? 'Abriendo…' : checking ? 'Buscando agentes…' : t('ui.auto.297')}</button>
+      <button className="primary" disabled={busy || opening || checking || !ready || !isDesktop} onClick={() => void add()}>{opening || checking ? <Loading size={16} /> : <Plus size={15} />}{opening ? t('team.opening') : checking ? t('team.checkingAgents') : t('ui.auto.297')}</button>
       {isDesktop && !checking && <button className="subtle" onClick={onProviders}><Plug size={13} />{primaryReady ? t('ui.auto.298') : t('ui.auto.299')}</button>}
-      {isDesktop && !checking && !primaryReady && <button className="subtle" onClick={onRecheck}>Volver a comprobar</button>}
+      {isDesktop && !checking && !primaryReady && <button className="subtle" onClick={onRecheck}>{t('team.recheck')}</button>}
     </div>
     {!isDesktop && <small className="preview-note">{t('ui.auto.300')}</small>}
   </div>;
@@ -499,7 +591,7 @@ function modelListFor(runtime: ChatRuntime, accountId: string | null): Promise<A
   return runtime === 'opencode'
     ? api.chatStatus().then((status): AgentModelList => ({
       source: 'catalog',
-      detail: `Modelos configurados en OpenCode${status.defaultModel ? ` · por defecto ${status.defaultModel}` : ''}.`,
+      detail: t('team.model.openCodeDetail', { suffix: status.defaultModel ? t('team.model.openCodeDefault', { model: status.defaultModel }) : '' }),
       models: status.models.map(id => ({ id, label: id, description: '', isDefault: id === status.defaultModel })),
     }))
     : api.listAccountModels(runtime, accountId ?? 'system');
@@ -524,7 +616,7 @@ function ModelPicker({ member, busy, onModel }: { member: TeamMember; busy: bool
     groups.set(group, [...(groups.get(group) ?? []), model]);
   }
   const grouped = groups.size > 1 || (groups.size === 1 && !groups.has(''));
-  const option = (m: AgentModelList['models'][number]) => <option key={m.id} value={m.id}>{m.label}{m.isDefault ? ' · por defecto' : ''}</option>;
+  const option = (m: AgentModelList['models'][number]) => <option key={m.id} value={m.id}>{m.label}{m.isDefault ? t('team.model.isDefault') : ''}</option>;
 
   return <select
     className="team-model"
@@ -534,7 +626,7 @@ function ModelPicker({ member, busy, onModel }: { member: TeamMember; busy: bool
     disabled={busy || !list}
     onChange={e => onModel(member.id, e.target.value || null)}
   >
-    <option value="">{list ? t('ui.auto.302') : 'Buscando modelos…'}</option>
+    <option value="">{list ? t('ui.auto.302') : t('team.checkingModels')}</option>
     {current !== '' && !models.some(m => m.id === current) && <option value={current}>{current}</option>}
     {grouped
       ? [...groups.entries()].map(([group, items]) => group ? <optgroup key={group} label={group}>{items.map(option)}</optgroup> : items.map(option))

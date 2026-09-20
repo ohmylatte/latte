@@ -102,7 +102,7 @@ export const browserAPI: LatteAPI = {
   },
   clearOnboardingDraft: async () => change(s => { s.onboardingDraft = undefined; }),
   appInfo: async () => ({ dataDir: '', engine: 'localStorage (vista previa)', engineReason: 'La vista web no usa SQLite', pack: null, packRoles: 0, version: 'web' }),
-  featureFlags: async () => ({ generation: false, brandKits: false, learning: false }),
+  featureFlags: async () => ({ generation: false, brandKits: false, learning: false, coordination: false }),
   listBrands: async () => read().brands.filter(b => !b.archivedAt),
   getBrand: async brandId => {
     const b = read().brands.find(x => x.id === brandId);
@@ -202,6 +202,26 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   addDecision: async (workId, text) => change(s => { const createdAt=now(); const d:Decision = { id:id(),workId,text,rationale:'',alternativesRejected:[],evidenceRefs:[],status:'approved',source:{chatId:null,messageId:null,memberId:null,roleId:null,runtime:null},clientRequestId:null,fingerprint:'',createdAt,decidedAt:createdAt }; s.decisions.push(d); return d; }),
   getDecisionAuthority:async workId=>(localStorage.getItem('latte:decision-authority:'+workId) as 'off'|'suggest'|'auto-record'|null)??'suggest',
   setDecisionAuthority:async(workId,mode)=>{localStorage.setItem('latte:decision-authority:'+workId,mode);return mode;},
+  // Coordination is a desktop-only feature (real runtime processes, a loopback
+  // MCP server); the preview has neither, so it reports the safe defaults and
+  // refuses writes, exactly like getWorkPermissions/setWorkPermissions above.
+  getCoordinationAuthority:async()=>'manual' as const,setCoordinationAuthority:unavailable,
+  getCoordinationBudget:async()=>({state:'unset'}),setCoordinationBudget:unavailable,
+  getCoordinatorGrant:async()=>null,setCoordinatorGrant:unavailable,
+  // Phase 3: run lifecycle, gates, bitácora, asks and the handoff bridge —
+  // same desktop-only reasoning as above. No run ever exists in the preview.
+  startCoordinationRun:unavailable,pauseCoordinationRun:unavailable,resumeCoordinationRun:unavailable,cancelCoordinationRun:unavailable,
+  getCoordinationRun:async()=>null,listCoordinationGates:async()=>[],resolveCoordinationGate:unavailable,listCoordinationLog:async()=>[],listOpenCoordinationAsks:async()=>[],answerCoordinationAsk:unavailable,
+  acceptHandoffAsTask:async()=>({bridged:false,task:null,outcome:null,reason:null}),
+  // Task 3.19: manual settlement is desktop-only too — same reasoning as the
+  // rest of this section, no run and no dispatch ever exist in the preview.
+  settleCoordinationDispatch:unavailable,
+  // Phase 6 (tasks 6.33-6.37): same desktop-only reasoning — no real
+  // runtime process, no loopback MCP server, no coordination event ever
+  // fires in the browser preview.
+  coordinationRuntimeSupport:async()=>[],listActiveCoordinationRuns:async()=>[],
+  getCoordinationGlobalBudget:async()=>({state:'unset'}),setCoordinationGlobalBudget:unavailable,markCoordinationSeen:unavailable,listCoordinationHires:async()=>[],
+  onCoordinationEvent:()=>()=>{},
   approveDecision:async(decisionId,edited)=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='approved';if(edited)d.text=edited;d.decidedAt=now();return d;}),
   rejectDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='rejected';d.decidedAt=now();return d;}),
   archiveDecision:async decisionId=>change(s=>{const d=s.decisions.find(x=>x.id===decisionId)!;d.status='archived';d.decidedAt=now();return d;}),
@@ -256,16 +276,22 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   }),
   approveBrandContextProposal: async (proposalId, edited, acceptStale = false) => change(s => {
     s.brandContextProposals ??= [];
-    const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
-    const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw new Error('Brand not found: ' + p.brandId);
-    if (brand.archivedAt) throw new Error('Brand is archived: ' + brand.id);
+    // L12 (ronda 9): CON CÓDIGO, igual que el backend. Estos `throw` salían
+    // pelados, así que en modo navegador la pantalla mostraba el texto crudo
+    // en vez de la frase traducida: `error.brand.proposalStale` y sus vecinas
+    // no se aplicaban nunca. El mock del navegador es una implementación de la
+    // misma interfaz — si no manda el código, miente sobre lo que el backend
+    // manda.
+    const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw contextError('NOT_FOUND', 'Propuesta no encontrada');
+    const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw contextError('NOT_FOUND', 'Brand not found: ' + p.brandId);
+    if (brand.archivedAt) throw contextError('BRAND_ARCHIVED', 'Brand is archived: ' + brand.id);
     const report = { updated: [], unchanged: [], live: [], userOwned: [] };
     if (p.status === 'approved') return { proposal: p, brand, refresh: report };
-    if (p.status !== 'pending') throw new Error('La propuesta ya no está pendiente');
+    if (p.status !== 'pending') throw contextError('BRAND_PROPOSAL_DECIDED', 'La propuesta ya no está pendiente');
     if (edited != null) p.text = edited;
     const composed = composeBrandContext(brand.context, p.text, p.mode);
-    if (composed.length > 60_000) throw new Error(`Brand context is ${composed.length - 60_000} characters over the 60000-character limit`);
-    if (!acceptStale && p.baseFingerprint && p.baseFingerprint !== brand.context) throw new Error('Brand context changed since this proposal');
+    if (composed.length > 60_000) throw contextError('CONTEXT_TOO_LONG', `Brand context is ${composed.length - 60_000} characters over the 60000-character limit`);
+    if (!acceptStale && p.baseFingerprint && p.baseFingerprint !== brand.context) throw contextError('BRAND_PROPOSAL_STALE', 'Brand context changed since this proposal');
     p.status = 'approved'; p.decidedAt = now(); p.decidedReason = 'approved';
     recordRevision(s, brand, composed, 'proposal', p.id);
     brand.context = composed;
@@ -273,12 +299,12 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   }),
   rejectBrandContextProposal: async proposalId => change(s => {
     s.brandContextProposals ??= [];
-    const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
-    const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw new Error('Brand not found: ' + p.brandId);
-    if (brand.archivedAt) throw new Error('Brand is archived: ' + p.brandId);
+    const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw contextError('NOT_FOUND', 'Propuesta no encontrada');
+    const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw contextError('NOT_FOUND', 'Brand not found: ' + p.brandId);
+    if (brand.archivedAt) throw contextError('BRAND_ARCHIVED', 'Brand is archived: ' + p.brandId);
     const report = { updated: [], unchanged: [], live: [], userOwned: [] };
     if (p.status === 'rejected') return { proposal: p, brand, refresh: report };
-    if (p.status !== 'pending') throw new Error('La propuesta ya no está pendiente');
+    if (p.status !== 'pending') throw contextError('BRAND_PROPOSAL_DECIDED', 'La propuesta ya no está pendiente');
     p.status = 'rejected'; p.decidedAt = now(); p.decidedReason = 'rejected';
     return { proposal: p, brand, refresh: report };
   }),

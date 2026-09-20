@@ -12,8 +12,18 @@ describe('work permission UX', () => {
 
   it('places the permission control next to the conversation composer', () => {
     const pane = fs.readFileSync('src/ChatPane.tsx', 'utf8');
-    expect(pane.indexOf('{beforeComposer}')).toBeGreaterThan(pane.indexOf('conversation-new-messages'));
-    expect(pane.indexOf('{beforeComposer}')).toBeLessThan(pane.indexOf('<form className="prompt-form"'));
+    // Las TRES anclas, verificadas antes de compararlas. Un `indexOf` que no
+    // encuentra devuelve -1, y `posición > -1` es verdadero para cualquier
+    // posición: si el aviso de mensajes nuevos desaparecía o se renombraba,
+    // este test seguía verde sin haber comparado nada real.
+    const unread = pane.indexOf('conversation-new-messages');
+    const slot = pane.indexOf('{beforeComposer}');
+    const composer = pane.indexOf('<form className="prompt-form"');
+    expect(unread).toBeGreaterThan(-1);
+    expect(slot).toBeGreaterThan(-1);
+    expect(composer).toBeGreaterThan(-1);
+    expect(slot).toBeGreaterThan(unread);
+    expect(slot).toBeLessThan(composer);
   });
 
   it('uses a mutation-specific pending state instead of the global busy state', () => {

@@ -73,6 +73,13 @@ const MESSAGE_LIMIT = 400;
  */
 export class ChatManager implements RuntimeAdapter {
   readonly runtime = 'opencode' as const;
+  // One shared server for every member of a Work; MCP config there is per-Work
+  // at best, never per-member, so it can't isolate coordination tools by grant.
+  readonly mcpInjection = 'none' as const;
+  // El servidor de OpenCode no expone NINGUN endpoint que liste servidores MCP
+  // (ver `client.ts`: sesion, mensajes, permisos, preguntas, proveedores). No
+  // hay forma de que confirme una inyeccion, ni ahora ni esperando mas.
+  readonly confirmsMcpInjection = false;
   private server: OpenCodeServer | null = null;
   private client: OpenCodeClient | null = null;
   private endpoint: OpenCodeEndpoint | null = null;

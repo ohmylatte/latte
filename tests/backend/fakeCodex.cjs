@@ -6,8 +6,14 @@ const readline = require('node:readline');
 
 const out = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
 const notify = (method, params) => out({ jsonrpc: '2.0', method, params });
-let counter = 0;
-let serverRequestId = 100;
+// Seeded by this process's own pid: two coordinated members each spawn their
+// OWN fake app-server process (sdd/autonomous-coordination, Phase 5), and a
+// counter starting at 0 in every process would make both mint the exact
+// same thread/turn ids ("thr_1", "turn_1", ...), colliding in the adapter's
+// shared byThread map. Real Codex generates globally-unique ids per process;
+// this keeps the fake honest about that instead of only working by luck.
+let counter = process.pid * 1000;
+let serverRequestId = process.pid * 1000 + 100;
 const threads = new Map();
 const pendingApprovals = new Map();
 
@@ -27,6 +33,12 @@ rl.on('line', (line) => {
   const reply = (result) => out({ jsonrpc: '2.0', id, result });
   switch (method) {
     case 'initialize':
+      // El arranque que falla DESPUES del spawn: el proceso ya existe, y ese es
+      // exactamente el camino que dejaba huerfanos (critico 9).
+      if (process.env.FAKE_CODEX_FAIL_INITIALIZE) {
+        out({ jsonrpc: '2.0', id, error: { code: -32000, message: 'initialize refused by the fake' } });
+        return;
+      }
       reply({ userAgent: 'fake-codex', codexHome: process.env.CODEX_HOME || 'default-home', platformFamily: 'test' });
       return;
     case 'model/list':
@@ -58,14 +70,29 @@ rl.on('line', (line) => {
         out({ jsonrpc: '2.0', id, error: { code: -32601, message: 'unknown method mcpServerStatus/list' } });
         return;
       }
-      reply({
-        data: [
-          { name: 'remoto', authStatus: 'notLoggedIn', resourceTemplates: [], resources: [], tools: {} },
-          { name: 'engram', authStatus: 'unsupported', resourceTemplates: [], resources: [], tools: {} },
-        ],
-      });
+      // `FAKE_CODEX_MCP_STATUS` (una lista de nombres) reemplaza el catalogo:
+      // es como se prueba que Latte reporta lo que el runtime CONOCE y no lo
+      // que Latte pidio. `FAKE_CODEX_MCP_NOT_LOGGED_IN` (otra lista de
+      // nombres) marca cuales de esas entradas el runtime CONOCE pero NO pudo
+      // conectar: `notLoggedIn` es el unico estado de auth que el codigo de
+      // produccion (`applyCodexAuth`) trata como "requiere iniciar sesion".
+      {
+        const notLoggedIn = new Set(process.env.FAKE_CODEX_MCP_NOT_LOGGED_IN ? JSON.parse(process.env.FAKE_CODEX_MCP_NOT_LOGGED_IN) : ['remoto']);
+        reply({
+          data: (process.env.FAKE_CODEX_MCP_STATUS
+            ? JSON.parse(process.env.FAKE_CODEX_MCP_STATUS)
+            : ['remoto', 'engram']
+          ).map((name) => ({ name, authStatus: notLoggedIn.has(name) ? 'notLoggedIn' : 'unsupported', resourceTemplates: [], resources: [], tools: {} })),
+        });
+      }
       return;
     case 'thread/start': {
+      // `initialize` anduvo y el server quedo vivo: sin un chat que lo libere,
+      // este es el otro camino que dejaba un app-server sin duenio (critico 9).
+      if (process.env.FAKE_CODEX_FAIL_THREAD_START) {
+        out({ jsonrpc: '2.0', id, error: { code: -32000, message: 'thread/start refused by the fake' } });
+        return;
+      }
       const threadId = `thr_${++counter}`;
       threads.set(threadId, { cwd: params.cwd, turns: [], dev: params.developerInstructions || '' });
       reply({ thread: { id: threadId, cwd: params.cwd, createdAt: Date.now() / 1000 }, model: params.model || 'gpt-fake', modelProvider: 'openai', approvalPolicy: params.approvalPolicy, cwd: params.cwd });
@@ -232,6 +259,8 @@ rl.on('line', (line) => {
         threads.get(threadId).slowTurn = turnId;
         return; // waits for turn/interrupt
       }
+      // Simulates the whole app-server process dying mid-turn (sdd/autonomous-coordination, Phase 5's re-key regression test): no reply, the process just exits.
+      if (/crash-server/i.test(text)) { process.exit(9); }
       // Lets a test see the reasoning effort the turn was actually started with.
       if (/effort/i.test(text)) { finish(`EFFORT ${params.effort || 'none'}`, 'completed'); return; }
       if (/fail/i.test(text)) { finish('', 'failed'); return; }

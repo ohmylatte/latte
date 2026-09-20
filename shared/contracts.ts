@@ -92,6 +92,7 @@ export interface FeatureFlags {
   generation: boolean;
   brandKits: boolean;
   learning: boolean;
+  coordination: boolean;
 }
 export interface AgencyProfilePatch { publicName: string; website?: string | null; contact?: string | null }
 export interface AgencyProfileView {
@@ -627,6 +628,484 @@ export interface PrepareGenerationOutcome {
   instructionsRefreshed: boolean;
 }
 
+/**
+ * Coordination (autonomous multi-agent runs): per-Work settings that cross
+ * the IPC boundary. Everything else about a run (tasks, dispatches, the
+ * mailbox) is Phase 3's `electron/coordination/engine.ts`; these three types
+ * are only what a human configures ahead of time, following the
+ * `DecisionAuthorityMode` precedent exactly — a closed union, validated on
+ * write, defaulting to a safe value on an unset or invalid read.
+ */
+export type CoordinationAuthorityMode = 'manual' | 'plan' | 'auto';
+
+/**
+ * A Work's coordination budget default. `startCoordinationRun` (Phase 3)
+ * copies this into `coordination_run.budget_json` at run start, so raising a
+ * cap later never rewrites a run already in flight.
+ *
+ * `maxDispatches` is the primary, required unit: it is always countable
+ * (`SUM(dispatches) WHERE kind='spend'`) with zero cost data. The other caps
+ * are optional and secondary because `ChatUsage.costUsd` is nullable per
+ * runtime — `maxCostMicros` is inherently best-effort, never authoritative.
+ * `maxDispatches: null` means "no cap" and is only ever valid alongside an
+ * explicit `unlimitedConfirmedAt` timestamp: an unlimited budget is always a
+ * human choice, never an implicit default.
+ */
+export interface CoordinationBudget {
+  maxDispatches: number | null;
+  unlimitedConfirmedAt?: string | null;
+  maxTokens?: number | null;
+  maxCostMicros?: number | null;
+  maxWallMinutes?: number | null;
+  maxConcurrent?: number | null;
+}
+
+/**
+ * The single team member (by id) holding the `coordinator` capability grant
+ * for a Work, or `null` when none does. A capability, not a role: granting it
+ * never changes the member's `roleId` or prompt.
+ */
+export type CoordinatorGrant = string | null;
+
+/**
+ * El tope app-wide, tal como cruza la frontera IPC: TRES estados, no dos.
+ *
+ * Antes este getter devolvía `CoordinationBudget | null` y colapsaba
+ * "nunca se configuró" con "los bytes guardados no se pueden leer" en el
+ * mismo `null`, que la pantalla renderiza como "sin tope global". Mientras
+ * tanto el camino de despacho denegaba cada despacho contra esos mismos
+ * bytes. La pantalla mentía, y la mentira era exactamente la inversa de lo
+ * que pasaba. `invalid` existe para que la interfaz pueda decir "el tope no
+ * se pudo leer, revisalo" en vez de "sin tope".
+ */
+export type CoordinationBudgetView =
+  | { state: 'unset' }
+  | { state: 'set'; budget: CoordinationBudget }
+  | { state: 'invalid' };
+
+/** El tope app-wide. Mismo contrato de tres estados que el presupuesto de un Trabajo, porque es el mismo dato guardado del mismo modo. */
+export type CoordinationGlobalBudgetView = CoordinationBudgetView;
+
+/**
+ * Phase 3: the run/task/dispatch surface, reachable only through IPC in this
+ * phase (no MCP transport exists yet — see `electron/coordination/engine.ts`).
+ * These are read views over `LatteRepository`'s coordination rows, never the
+ * rows themselves: the storage layer stays free to evolve independently of
+ * what crosses the process boundary.
+ */
+export type CoordinationRunStatus = 'planning' | 'running' | 'suspended' | 'done' | 'cancelled';
+
+/**
+ * POR QUÉ ESTÁ DETENIDO UN EQUIPO. La lista COMPLETA de lo que el motor puede
+ * escribir en `suspend_reason`, cerrada a propósito: el campo lo leen la
+ * pantalla de Decisiones (`listGates` decide con él si hay una decisión de
+ * presupuesto que tomar) y el tick (decide con él si puede reactivar). Un
+ * motivo nuevo que nadie enumeró aparecía como una decisión de presupuesto
+ * inventada.
+ *
+ * M9 (ronda 8): `coordination_disabled` es el que faltaba. Con
+ * `feature:coordination` abajo, contestar una pregunta no reactiva el equipo
+ * (N6) — pero el motivo tampoco puede seguir siendo `all_blocked_on_ask`
+ * cuando ya no queda nada trabado: lo detiene el interruptor.
+ *
+ * Los `max_*` y `global_*` son los veredictos de presupuesto, y son
+ * exactamente los que SÍ abren la decisión de presupuesto.
+ */
+export type CoordinationSuspendReason =
+  | 'paused_by_human'
+  | 'all_blocked_on_ask'
+  | 'coordination_disabled'
+  | 'budget_invalid'
+  | 'global_budget_invalid'
+  | 'max_dispatches' | 'max_tokens' | 'max_cost' | 'max_wall_minutes'
+  | 'global_max_dispatches' | 'global_max_tokens' | 'global_max_cost' | 'global_max_wall_minutes';
+
+/** Los dos motivos que nacen de una pregunta abierta y mueren cuando deja de haberla. */
+export function isAskSuspendReason(reason: string | null): boolean {
+  return reason === 'all_blocked_on_ask' || reason === 'coordination_disabled';
+}
+
+export interface CoordinationRunView {
+  id: string;
+  workId: string;
+  status: CoordinationRunStatus;
+  coordinatorMemberId: string | null;
+  /**
+   * Q10: `null` cuando los bytes de `budget_json` no se pueden leer, nunca un
+   * presupuesto inventado. Acá se hacía un `JSON.parse` a pelo mientras todos
+   * sus vecinos —la tira global, el getter del Trabajo, el camino de despacho—
+   * ya toleraban una fila rota: una sola fila ilegible tumbaba `getCoordinationRun`
+   * y con él la única salida que la persona tenía, que es cancelar ese run.
+   */
+  budget: CoordinationBudget | null;
+  /** Q10: los bytes están rotos, que NO es lo mismo que "sin tope". Igual que en la tira global. */
+  budgetInvalid: boolean;
+  planApproved: boolean;
+  /**
+   * Lo que escribió el motor, tal como salió de la base. Se lee con
+   * `CoordinationSuspendReason` en mente —esa unión es la lista completa de lo
+   * que el motor PUEDE escribir— pero el tipo queda abierto a propósito: una
+   * base vieja puede tener un motivo que esta versión ya no emite, y la
+   * pantalla tiene que poder mostrarlo en vez de tumbarse.
+   */
+  suspendReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /**
+   * Whether this run is still one of the Work's ACTIVE runs
+   * (`planning`/`running`/`suspended`). `getCoordinationRun` also answers with
+   * the Work's LAST finished run (`done`/`cancelled`), so its bitácora — the
+   * `run_done` closing entry included — does not vanish the moment the team
+   * finishes; the renderer used to clear log, gates and asks on the `null`
+   * this getter returned, so that entry was never seen once. A run with
+   * `active: false` must never be offered live-run actions, and never appears
+   * in the app-wide active strip.
+   */
+  active: boolean;
+  /**
+   * El instante del último hecho de este run: el máximo entre su propio
+   * `updatedAt`, el `createdAt` del gate o del despacho más nuevo, y el
+   * instante en que cerró. `updatedAt` solo no alcanzaba para "desde tu última
+   * visita": un gate que nace o un despacho que arranca son exactamente lo que
+   * la persona no vio, y ninguno de los dos reescribe la fila del run.
+   */
+  lastEventAt: string;
+  /**
+   * Cómo le fue a este run, contado sobre sus propias tareas y nunca guardado
+   * como frase: `tasksDone` las que terminaron bien, `tasksFailed` las que
+   * fracasaron y `tasksPending` todo lo demás (lo que quedó sin terminar).
+   *
+   * La interfaz los necesita para poder decir "este equipo terminó: N listas,
+   * M fallidas" en vez de un "terminado" pelado que no dice si salió bien.
+   * Un run cancelado no hace fracasar a nadie: ahí lo que importa es
+   * `tasksPending`, y por eso las tres cuentas viajan separadas en vez de
+   * colapsar `failed` dentro de "sin terminar".
+   */
+  tasksDone: number;
+  tasksFailed: number;
+  tasksPending: number;
+}
+
+/**
+ * The gate kinds a human resolves with approve/reject. An open `latte_ask`
+ * is a separate surface (`answerCoordinationAsk`) — its middle action is the
+ * answer itself, not an edit. `'proposal'` (Phase 6, design-v2-conversational
+ * D1): a worker's `latte_request_coordination` — the sentence becomes this
+ * ONE gate. Unlike `'plan'` (which only appears under `'plan'` authority),
+ * `'proposal'` appears in every authority mode: it decides the authority.
+ */
+export type CoordinationGateKind = 'plan' | 'dispatch' | 'budget' | 'proposal';
+
+/** The aggregate across every OTHER active run, shown at a `proposal` gate — never hidden (design-v2-conversational D2). `null` fields mean an honest "can't sum this", never a fabricated number (e.g. another run is explicitly unlimited). */
+export interface CoordinationGateAggregate {
+  otherActiveRuns: number;
+  otherCommittedDispatches: number | null;
+  totalIfApproved: number | null;
+}
+
+/**
+ * The shape of a `proposal` gate's `proposalJson`, mirrored from
+ * `electron/coordination/engine.ts`'s own `CoordinationProposal` (Phase 7,
+ * task 7.5) — the renderer parses `CoordinationGateView.proposalJson` into
+ * this, never into a narrative summary. Kept in sync by hand: this type never
+ * crosses IPC as its own `LatteAPI` method, it is only what a JSON string
+ * field decodes to on both sides of the process boundary.
+ */
+export interface CoordinationProposalTask {
+  roleId: string;
+  spec: string;
+  dependsOn?: number[];
+}
+
+export interface CoordinationProposalHire {
+  roleId: string;
+  why: string;
+}
+
+export interface CoordinationProposal {
+  plan: CoordinationProposalTask[];
+  /** `null` only ever means "unlimited", and only alongside `unlimitedConfirmedAt` — "no implicit unlimited" applies to a proposal exactly as it does to a Work's own budget default. */
+  estimatedDispatches: number | null;
+  unlimitedConfirmedAt?: string | null;
+  membersToHire?: CoordinationProposalHire[];
+  rationale: string;
+}
+
+export interface CoordinationGateView {
+  id: string;
+  kind: CoordinationGateKind;
+  runId: string;
+  taskId?: string | null;
+  dispatchId?: string | null;
+  /** Only present on a `dispatch` gate: the task prompt, editable before approval. */
+  prompt?: string | null;
+  /** Only present on a `proposal` gate: the whole proposal, JSON-encoded. */
+  proposalJson?: string | null;
+  /** Only present on a `proposal` gate. */
+  aggregate?: CoordinationGateAggregate;
+  /**
+   * Q6: only present on a legible `proposal` gate — who can do each role the
+   * plan names, decided by the engine. The renderer trims the plan with THIS
+   * and never recomputes the team on its own: two different answers to
+   * "who can do this role" is exactly how an approval bounces with an error
+   * the screen did not see coming.
+   */
+  roleCoverage?: CoordinationGateRoleCoverage[];
+  createdAt: string;
+}
+
+/**
+ * `hire`: covered by a hire in this very proposal — unticking it trims its tasks.
+ * `member`: the Work already has someone for it; nothing to hire.
+ * `orphan`: nobody covers it. Possible on rows written by an older version, or
+ * when the team changed between the proposal and the approval.
+ */
+export interface CoordinationGateRoleCoverage {
+  roleId: string;
+  coverage: 'hire' | 'member' | 'orphan';
+}
+
+export type CoordinationDispatchStatus = 'pending_approval' | 'dispatched' | 'running' | 'reported' | 'failed' | 'rejected' | 'cancelled';
+
+/** One bitácora entry, derived only from a `coordination_dispatch` row's own timestamps — never narrative text. */
+export interface CoordinationDispatchLogEntryView {
+  /** Absent means the same as `'dispatch'`: every entry but the run's own closing one is a dispatch. */
+  kind?: 'dispatch';
+  id: string;
+  taskId: string;
+  memberId: string;
+  status: CoordinationDispatchStatus;
+  createdAt: string;
+  startedAt: string | null;
+  settledAt: string | null;
+}
+
+/**
+ * The run's closing entry: the only bitácora row that does not come from a
+ * dispatch. Also derived, never stored — the counts are read off the run's own
+ * tasks each time, so the sentence cannot drift from what happened.
+ */
+export interface CoordinationRunDoneLogEntryView {
+  kind: 'run_done';
+  id: string;
+  runId: string;
+  tasksDone: number;
+  tasksFailed: number;
+  createdAt: string;
+}
+
+/**
+ * The run's other ending. A cancelled run is as finished as a done one — it
+ * never dispatches again — and it used to leave the bitácora with no closing
+ * line at all: the last thing on screen was the dispatch that got cut off, as
+ * if the team were still working. Derived the same way, never stored.
+ *
+ * Las TRES cuentas van separadas. `tasksPending` contaba antes todo lo que no
+ * llegó a `done`, las `failed` adentro: eso borraba la única diferencia que
+ * importa acá. Una tarea que FRACASÓ (se intentó, no salió) y una que nunca
+ * empezó son dos hechos distintos, y son justo los que la persona necesita
+ * para decidir si vuelve a intentarlo. Cancelar no hace fracasar a nadie —
+ * pero tampoco des-fracasa a quien ya había fracasado antes del corte.
+ */
+export interface CoordinationRunCancelledLogEntryView {
+  kind: 'run_cancelled';
+  id: string;
+  runId: string;
+  tasksDone: number;
+  tasksFailed: number;
+  /** Ni `done` ni `failed`: lo que quedó sin terminar cuando se cortó. */
+  tasksPending: number;
+  createdAt: string;
+}
+
+export type CoordinationLogEntryView = CoordinationDispatchLogEntryView | CoordinationRunDoneLogEntryView | CoordinationRunCancelledLogEntryView;
+
+export type CoordinationTaskStatus = 'pending' | 'ready' | 'dispatched' | 'running' | 'done' | 'failed' | 'blocked';
+
+/** A task's own state after `settleCoordinationDispatch` (task 3.19) settles its current dispatch. */
+export interface CoordinationTaskView {
+  id: string;
+  runId: string;
+  roleId: string;
+  spec: string;
+  status: CoordinationTaskStatus;
+  attempts: number;
+  resultSummary: string | null;
+}
+
+export interface CoordinationAskView {
+  id: string;
+  runId: string;
+  taskId: string | null;
+  memberId: string;
+  question: string;
+  answer: string | null;
+  deadlineAt: string;
+  answeredAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * Phase 6, tasks 6.28-6.33 (design-v2-conversational D2/D3): why a member's
+ * runtime does not carry a working `latte_coordination`/`latte_memory`
+ * entry right now. Six named reasons, never a silent gap.
+ */
+export type CoordinationDegradedReason =
+  | 'claude_below_floor'
+  | 'codex_run_cap'
+  | 'codex_global_cap'
+  | 'codex_process_ceiling'
+  | 'opencode_shared_server'
+  | 'engram_not_installed'
+  /**
+   * El adaptador entregó MENOS de lo que el planificador había reclamado: el
+   * runtime se negó a inyectar después de la decisión (Claude sin `promptDir`
+   * o con el archivo de config MCP fallando; Codex con su propio contador de
+   * procesos lleno). La UI nunca puede afirmar una capacidad que el proceso
+   * no tiene.
+   */
+  | 'runtime_refused_injection'
+  /**
+   * El cupo se había reservado y el servidor MCP local no pudo arrancar. La
+   * reserva se soltó (si no, un servidor que nunca levantó se comía el cupo de
+   * otra Marca para siempre) y el miembro quedó sin coordinación, pero con su
+   * memoria: degradar la coordinación nunca se lleva puesta a engram.
+   */
+  | 'coordination_server_unavailable';
+
+/**
+ * One row per team member of the Work, from `coordinationRuntimeSupport`
+ * (task 6.33). `memoryInjected` is a SEPARATE field from `reason`/
+ * `canPropose` on purpose -- the two injection policies are independent
+ * (task 6.29): a member can carry memory with no coordination (the ordinary
+ * case, `canPropose:false`, `memoryInjected:true`, `reason` explaining only
+ * the coordination side, or `null`), never the reverse.
+ */
+export interface CoordinationMemberSupport {
+  memberId: string;
+  canPropose: boolean;
+  memoryInjected: boolean;
+  reason: CoordinationDegradedReason | null;
+  /**
+   * Whether the RUNTIME itself has reported what it actually brought up. `false`
+   * means Latte wrote the injection and nothing has contradicted it YET -- which
+   * is not the same as "it works", and the UI must never render it as such
+   * (crítico 7). A closed member's hypothetical preview is never confirmed.
+   */
+  runtimeConfirmed: boolean;
+  /**
+   * Whether this member's runtime is CAPABLE of reporting what it actually
+   * connected — ever. Claude reports it in `system/init`, Codex answers
+   * `mcpStatus`; OpenCode's server exposes no such endpoint, so for it
+   * `runtimeConfirmed` can never turn true.
+   *
+   * Without this field the UI could only say "not confirmed yet", which reads
+   * as "wait a moment" about something that is never going to arrive. Never a
+   * reason to claim it works: `false` here only changes the SENTENCE, never
+   * the verdict.
+   */
+  runtimeReportsInjection: boolean;
+}
+
+/**
+ * A member hired for a run, as the bitácora shows it. `roleName` is resolved
+ * by the backend: the surface never renders a raw id.
+ */
+export interface CoordinationHireView {
+  memberId: string;
+  roleId: string;
+  roleName: string;
+  hiredAt: string;
+}
+
+/** One row per active coordination run app-wide, for the global "Equipos activos" strip (task 6.34) -- the only app-scoped read in this change. */
+export interface CoordinationActiveRunSummary {
+  runId: string;
+  workId: string;
+  workTitle: string;
+  brandId: string;
+  brandName: string;
+  status: CoordinationRunStatus;
+  dispatchesUsed: number;
+  maxDispatches: number | null;
+  pendingGates: number;
+  /**
+   * `true` cuando el `budget_json` de ESTE run no se pudo leer. Antes, una
+   * sola fila así hacía tirar el mapeo entero y la tira global —que es
+   * app-wide, de TODAS las marcas— se caía para todo el mundo. Ahora la fila
+   * se marca y las demás marcas se listan igual; `maxDispatches`/
+   * `dispatchesUsed` vienen en `null`/`0`, que NO significa "sin tope": sólo
+   * significa que no se pudo leer, y por eso existe este campo.
+   */
+  budgetInvalid: boolean;
+  /** When this run last changed — the instant "since your last visit" is measured against. */
+  updatedAt: string;
+  /**
+   * El último hecho de este run, igual que en `CoordinationRunView`: el máximo
+   * entre `updatedAt`, el gate/despacho más nuevo y el cierre. Es contra ESTO
+   * que se compara `lastSeenAt`, no contra `updatedAt`.
+   */
+  lastEventAt: string;
+  /**
+   * When the person last opened this Work's coordination panel
+   * (`markCoordinationSeen`), or `null` if never. Inicio's "since your last
+   * visit" card used to measure NO visit at all: it rendered the CURRENT state
+   * under a title that speaks about the past. With `null`, the card must say
+   * what it is really reporting from, never invent a visit.
+   */
+  lastSeenAt: string | null;
+}
+
+/**
+ * `{brandId, workId, runId}` only -- never the payload itself (the renderer
+ * re-reads via the existing IPC methods; this channel is a "something
+ * changed, go look" nudge, not a data transport). `runId` is `null` for a
+ * change that has no run yet (e.g. a fresh `latte_request_coordination`
+ * proposal before its gate exists is still reported through the run it just
+ * created, so in practice this is rarely null -- kept nullable for honesty
+ * with `CoordinationGrant.runId`'s own shape). Lets the renderer route an
+ * event from a Brand the person is not currently looking at (task 6.37).
+ */
+export interface CoordinationEvent {
+  brandId: string;
+  workId: string;
+  runId: string | null;
+}
+
+/**
+ * `acceptHandoffAsTask` bridges a handoff into a `coordination_task` only
+ * when the Work has an active run; `bridged:false` means "do nothing new" —
+ * the existing handoff flow (open a member, draft the request, dismiss the
+ * file) is unaffected, exactly as the spec requires outside an active run.
+ */
+/**
+ * Q1: los TRES finales que puede tener un puente de handoff, porque el motor
+ * tiene tres y no dos. `startDispatch` devuelve `pending_approval` cuando la
+ * autoridad gatea —el modo por defecto, `manual`, y también `plan`, porque la
+ * tarea del puente nace fuera del plan—, así que un booleano `dispatched`
+ * obligaba a la interfaz a elegir entre dos frases para tres hechos, y elegía
+ * la que mentía: "despachada al equipo" sobre una tarea esperando aprobación.
+ */
+export type HandoffBridgeOutcome = 'dispatched' | 'pending_approval' | 'not_dispatched';
+
+export interface HandoffTaskBridgeResult {
+  bridged: boolean;
+  task: { id: string; roleId: string; spec: string; status: string } | null;
+  /**
+   * R3/Q1: qué pasó de verdad con el despacho que sigue al puente. `null`
+   * cuando no hubo puente y no hay nada que despachar.
+   *
+   * Aceptar un pedido no puede explotarle en la cara a la persona: cuando el
+   * despacho se deniega —presupuesto agotado, concurrencia al tope— el puente
+   * ya creó la tarea y eso no se deshace, así que el fallo se DEVUELVE acá en
+   * vez de subir como excepción. La interfaz necesita saberlo para no anunciar
+   * un despacho que no pasó.
+   */
+  outcome: HandoffBridgeOutcome | null;
+  /** El código del motor cuando `outcome` es `not_dispatched` (`BUDGET_EXCEEDED`, `MAX_CONCURRENT`, …). Nunca un texto inventado. */
+  reason: string | null;
+}
+
 export interface LatteAPI {
   getUiLocale(): Promise<UiLocale>;
   setUiLocale(locale: UiLocale): Promise<UiLocale>;
@@ -885,5 +1364,87 @@ export interface LatteAPI {
   installUpdate(): Promise<InstallOutcome>;
   /** Fires on every phase change, including the progress of a download. */
   onUpdateState(callback: (state: UpdateState) => void): () => void;
+  // Coordination (autonomous multi-agent runs) — per-Work settings only; the
+  // run/task/dispatch surface arrives in a later phase.
+  getCoordinationAuthority(workId: string): Promise<CoordinationAuthorityMode>;
+  setCoordinationAuthority(workId: string, mode: CoordinationAuthorityMode): Promise<CoordinationAuthorityMode>;
+  /**
+   * `unset` means no budget was ever configured (`BUDGET_UNSET`) — never an
+   * implicit unlimited default; `invalid` means the stored bytes cannot be
+   * read, which is NOT "unset" (the dispatch path denies against those same
+   * bytes). Writing a valid budget over an `invalid` one repairs it.
+   */
+  getCoordinationBudget(workId: string): Promise<CoordinationBudgetView>;
+  setCoordinationBudget(workId: string, budget: CoordinationBudget): Promise<CoordinationBudget>;
+  getCoordinatorGrant(workId: string): Promise<CoordinatorGrant>;
+  /** `memberId: null` revokes the grant outright; granting to a new member implicitly revokes whoever held it before. */
+  setCoordinatorGrant(workId: string, memberId: string | null): Promise<CoordinatorGrant>;
+  // Coordination (Phase 3): run lifecycle, gates, bitácora, asks and the
+  // handoff bridge — reachable only through IPC in this phase, no MCP yet.
+  /** Starts a run for this Work. Throws `BUDGET_UNSET` unless a budget was already configured — no implicit unlimited run. */
+  startCoordinationRun(workId: string): Promise<CoordinationRunView>;
+  /** "Pausar equipo": in-flight dispatches finish and report; nothing new starts. */
+  pauseCoordinationRun(runId: string): Promise<CoordinationRunView>;
+  /** Unconditional: whether budget actually allows a next dispatch is re-checked at dispatch time, not here. */
+  resumeCoordinationRun(runId: string): Promise<CoordinationRunView>;
+  cancelCoordinationRun(runId: string): Promise<CoordinationRunView>;
+  /** The Work's active run, or `null` when none is running. */
+  getCoordinationRun(workId: string): Promise<CoordinationRunView | null>;
+  listCoordinationGates(runId: string): Promise<CoordinationGateView[]>;
+  /** `editedPrompt` only applies to a `dispatch` gate (edit-then-approve); ignored otherwise. */
+  resolveCoordinationGate(gateId: string, decision: 'approve' | 'reject', editedPrompt?: string | null): Promise<CoordinationRunView>;
+  /** The bitácora: one entry per `coordination_dispatch` lifecycle event, oldest first. */
+  listCoordinationLog(runId: string): Promise<CoordinationLogEntryView[]>;
+  /**
+   * Las `latte_ask` todavía sin responder de un run. `listCoordinationGates`
+   * excluye a propósito el motivo `all_blocked_on_ask` (una pregunta no es un
+   * gate de aprobar/rechazar), así que sin esta lista un run suspendido por
+   * una pregunta no tenía ninguna salida en la UI salvo cancelar.
+   */
+  listOpenCoordinationAsks(runId: string): Promise<CoordinationAskView[]>;
+  answerCoordinationAsk(askId: string, answer: string): Promise<CoordinationAskView>;
+  /** WHEN the Work has an active run, mints a `coordination_task` for the accepted handoff instead of only opening a chat draft. */
+  acceptHandoffAsTask(workId: string, fileName: string): Promise<HandoffTaskBridgeResult>;
+  /**
+   * Manual dispatch settlement via IPC, zero MCP (task 3.19): a human reads
+   * the worker's own chat and records the outcome directly, coherent with
+   * `manual` authority mode where the human already IS the coordinator.
+   * Enters through the exact same choke point `latte_report` uses, so
+   * idempotency, wrong-reporter rejection, ledger settlement and the
+   * dispatch's settling timestamp all behave identically to an agent's own
+   * report.
+   */
+  settleCoordinationDispatch(taskId: string, outcome: 'succeeded' | 'failed', summary: string, files?: string | null): Promise<CoordinationTaskView>;
+  /**
+   * Per-member coordination/memory status for this Work (task 6.33): six
+   * named degraded reasons, `canPropose` and `memoryInjected` reported
+   * SEPARATELY. NOT gated by any coordination flag -- memory status matters
+   * even with coordination off, so the coordination-specific reasons simply
+   * come back empty/`null` rather than this method refusing to answer.
+   */
+  coordinationRuntimeSupport(workId: string): Promise<CoordinationMemberSupport[]>;
+  /** The global "Equipos activos" strip: every active run across every Brand, newest-updated first. The only app-scoped read in this change. */
+  listActiveCoordinationRuns(): Promise<CoordinationActiveRunSummary[]>;
+  /** The OPTIONAL advanced app-wide dispatch cap, on top of (never instead of) each Work's own budget. `unset` = no extra cap applied -- never an invented limit; `invalid` = the stored value cannot be read, which is NOT "no cap" (the dispatch path denies against those same bytes). It counts the dispatches of the runs that are CURRENTLY active, not the install's whole history. */
+  getCoordinationGlobalBudget(): Promise<CoordinationGlobalBudgetView>;
+  /** `null` clears the cap (back to unset, no extra cap) -- a cap you cannot take off is a trap, not a setting. Any other value goes through the same validator every coordination budget does. */
+  setCoordinationGlobalBudget(budget: CoordinationBudget | null): Promise<CoordinationBudget | null>;
+  /**
+   * Records that the person is looking at this Work's coordination panel right
+   * now, and answers with the ISO instant stored. That instant is what
+   * "since your last visit" is measured against — before this existed, that
+   * card measured no visit at all. Calling it again overwrites the previous
+   * visit: the last visit is the last one.
+   */
+  markCoordinationSeen(workId: string): Promise<string>;
+  /**
+   * The run's hires, oldest first: who joined the team, with which role, when.
+   * The bitácora rendered hire rows from a prop nothing ever filled; this is
+   * its source. An unreadable record reads as an empty list — a bitácora never
+   * falls over because one stored value went bad.
+   */
+  listCoordinationHires(runId: string): Promise<CoordinationHireView[]>;
+  /** Fires on a run/task/dispatch/gate change, so the renderer can route an event from a Brand the person is not currently looking at (task 6.37). */
+  onCoordinationEvent(callback: (event: CoordinationEvent) => void): () => void;
 }
 declare global { interface Window { latte?: LatteAPI } }

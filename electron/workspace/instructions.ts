@@ -182,6 +182,16 @@ export interface InstructionsInput {
   pack?: InstructionPack | null;
   /** Engram project for this brand, stated explicitly (shared runtimes cannot rely on env). */
   memoryProject?: string | null;
+  /**
+   * Whether this member's runtime actually received `latte_memory` MCP
+   * tools at spawn (task 6.27, design-v2-conversational D3 — engram ships
+   * BY DEFAULT wherever the runtime supports per-member injection). TRUE
+   * changes the memory instruction's wording; FALSE or omitted keeps the
+   * existing conditional line verbatim — still honest for a member whose
+   * runtime (OpenCode) or environment (engram not installed) cannot receive
+   * the tools, but who may have configured their own server anyway.
+   */
+  memoryToolsInjected?: boolean;
   /** Skills the human left on. They travel here, once per session, not per request. */
   skills?: PackSkill[];
   /** Who is already open on this work: an agent that cannot see its team cannot ask for one. */
@@ -334,7 +344,7 @@ function renderCore(
   inheritedArtifactsMax: number,
   protocol: BrandContextProtocolOpts,
 ): { text: string; files: RenderedInstructionFile[]; brandTruncated: boolean; decisionsTruncated: boolean; brandMemoryTruncated: boolean; learnedOmitted: boolean } {
-  const { brand, work, decisions, memory, pack, memoryProject } = input;
+  const { brand, work, decisions, memory, pack, memoryProject, memoryToolsInjected } = input;
   const files: RenderedInstructionFile[] = [];
   const documentLines = (input.documents ?? [])
     .map((d) => {
@@ -490,8 +500,19 @@ function renderCore(
     '- To ask for a role, write a Markdown file at the top level whose front matter is a line `---`, then `para: <role id>`, then a line `---`, and put the request in the body: what you need from them, and what you already checked so they do not redo it. Latte offers it to the human, who opens that conversation with your request loaded. Ask only when the other role would genuinely do it better; doing the work yourself is usually the right answer.',
   );
   if (memoryProject) {
+    // Task 6.27: the wording follows whether the tools actually arrived.
+    // TRUE (the normal case once engram ships by default) drops the
+    // conditional entirely — it no longer applies — and, since spike 6.26
+    // proved a tool-supplied `project` argument WINS over the pinned
+    // `--project`/`ENGRAM_PROJECT`, adds the explicit instruction never to
+    // pass one: the pinning sets the right default, but it is not a jail.
+    // FALSE/omitted (OpenCode, or engram missing) keeps the EXISTING line
+    // verbatim — still the honest instruction for a member that may have
+    // configured its own server, since nothing was actually injected here.
     parts.push(
-      `- Memory: if you have Engram tools, always pass project \`${memoryProject}\` explicitly when saving or searching. Never rely on auto-detected project names; other brands must not see this brand's memories.`,
+      memoryToolsInjected
+        ? `- Memory: you have Engram tools, already scoped to this brand (project \`${memoryProject}\`). Save and search without passing a project — it is fixed for you. Never pass a \`project\` argument to a memory tool: an explicit one overrides the pinned default and could write into or read another brand's memory.`
+        : `- Memory: if you have Engram tools, always pass project \`${memoryProject}\` explicitly when saving or searching. Never rely on auto-detected project names; other brands must not see this brand's memories.`,
     );
   }
   parts.push('');

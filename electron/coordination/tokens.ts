@@ -1,0 +1,125 @@
+/**
+ * The in-memory MCP token registry: mint / verify / revoke. Never persisted —
+ * a token's lifetime is the member's PROCESS lifetime (injection is
+ * per-spawn), so a Latte restart naturally invalidates every token by simply
+ * not existing anymore. No `mcpServer.ts` here — that is a later slice; this
+ * module is the registry alone.
+ *
+ * Grant resolution is LAZY (design-v2-conversational, overruling design v1):
+ * a token binds ONLY `{workId, memberId}`. `runId` and `role` are resolved
+ * PER REQUEST by `CoordinationEngine.resolveGrant`, never frozen here — see
+ * that method for why (kills the chicken-and-egg: no run must not mean no
+ * tools, and a grant transfer needs no revocation dance).
+ */
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+
+export interface CoordinationTokenEntry {
+  workId: string;
+  memberId: string;
+  mintedAt: string;
+}
+
+/**
+ * One live token per `(workId, memberId)`: minting again replaces the old one.
+ *
+ * El separador es `|`, imprimible a propósito: todo id matchea
+ * `^[a-z][a-z0-9_-]{2,63}$`, así que nunca puede aparecer dentro de uno y dos
+ * pares distintos jamás colisionan. Acá vivía un byte NUL literal: git
+ * clasificaba este archivo como binario (indiffeable e immergeable en una
+ * review), `file(1)` lo reportaba como `data`, y el carácter era invisible en
+ * cualquier editor — cualquier herramienta que limpiara caracteres de control
+ * colapsaba la clave y habilitaba colisiones entre pares distintos.
+ */
+function memberKey(workId: string, memberId: string): string {
+  return `${workId}|${memberId}`;
+}
+
+export class CoordinationTokenRegistry {
+  private readonly tokens = new Map<string, CoordinationTokenEntry>();
+  private readonly byMember = new Map<string, string>();
+  /** Live tokens actually handed to a runtime process (task 10) -- see `markDelivered`. */
+  private readonly delivered = new Set<string>();
+
+  constructor(private readonly clock: () => string = () => new Date().toISOString()) {}
+
+  /** 64 hex characters (32 random bytes). Replaces any token already minted for this member. */
+  mint(workId: string, memberId: string): string {
+    const key = memberKey(workId, memberId);
+    const previous = this.byMember.get(key);
+    if (previous) {
+      this.tokens.delete(previous);
+      this.delivered.delete(previous); // a fresh token starts undelivered, even if the old one was
+    }
+    const token = randomBytes(32).toString('hex');
+    this.tokens.set(token, { workId, memberId, mintedAt: this.clock() });
+    this.byMember.set(key, token);
+    return token;
+  }
+
+  /**
+   * Constant-time compare against every live token, so a caller cannot learn
+   * anything about a near-miss from how long the check took — the `Map`
+   * lookup this loop avoids is a hash lookup, not the byte-by-byte compare
+   * that actually decides "did the request supply the right bytes". Unknown
+   * or revoked token resolves to `null`.
+   */
+  verify(token: string): CoordinationTokenEntry | null {
+    if (typeof token !== 'string' || token.length === 0) return null;
+    const supplied = Buffer.from(token, 'utf8');
+    for (const [candidate, entry] of this.tokens) {
+      const known = Buffer.from(candidate, 'utf8');
+      if (known.length === supplied.length && timingSafeEqual(known, supplied)) return entry;
+    }
+    return null;
+  }
+
+  revoke(token: string): void {
+    const entry = this.tokens.get(token);
+    if (!entry) return;
+    this.tokens.delete(token);
+    this.delivered.delete(token);
+    const key = memberKey(entry.workId, entry.memberId);
+    if (this.byMember.get(key) === token) this.byMember.delete(key);
+  }
+
+  /**
+   * Revokes by identity rather than by token (task 6.28): the caller closing
+   * a member -- `stop()`/`removeMember()`/`shutdown()` in hub wiring -- knows
+   * WHO is closing, not its live token. A no-op when this member never had a
+   * live token (never minted, or already revoked).
+   */
+  revokeMember(workId: string, memberId: string): void {
+    const key = memberKey(workId, memberId);
+    const token = this.byMember.get(key);
+    if (token) this.revoke(token);
+  }
+
+  /** How many tokens are currently live. Feeds the coordination MCP server's stop-when-idle rule (task 6.19). */
+  get size(): number {
+    return this.tokens.size;
+  }
+
+  /**
+   * Records that this member's CURRENT live token was actually handed to a
+   * runtime process (task 10). A no-op if the member has no live token --
+   * never minted, or already revoked. `mint()`/`revoke()` are the only other
+   * writers of `delivered`: a re-mint always starts undelivered, and revoking
+   * (by token or by identity) always clears delivery along with the token.
+   *
+   * The distinction from `size` matters because the injection planner mints
+   * a token unconditionally for every member of every Work of every Brand,
+   * regardless of coordination eligibility -- most of those tokens are never
+   * handed to anything. `size` alone cannot tell "minted" from "delivered",
+   * so `stopIfIdle` (task 6.19/task 10) keys off `deliveredSize` instead.
+   */
+  markDelivered(workId: string, memberId: string): void {
+    const key = memberKey(workId, memberId);
+    const token = this.byMember.get(key);
+    if (token) this.delivered.add(token);
+  }
+
+  /** How many live tokens were actually DELIVERED to a runtime — see `markDelivered`. Feeds `stopIfIdle` (task 10). */
+  get deliveredSize(): number {
+    return this.delivered.size;
+  }
+}

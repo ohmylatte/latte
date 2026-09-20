@@ -11,6 +11,14 @@ const model = args.includes('--model') ? args[args.indexOf('--model') + 1] : 'cl
 const stdioPermissions = args.includes('--permission-prompt-tool') && args[args.indexOf('--permission-prompt-tool') + 1] === 'stdio';
 const out = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
 
+// El `mcp_servers` que el `system/init` real trae, con el ESTADO de conexion
+// de cada servidor. `FAKE_CLAUDE_MCP_STATUS` (un objeto nombre->estado) lo
+// reemplaza, para probar que Latte lee el reporte del runtime y no su propia
+// lista de pedidos.
+const mcpServers = process.env.FAKE_CLAUDE_MCP_STATUS
+  ? Object.entries(JSON.parse(process.env.FAKE_CLAUDE_MCP_STATUS)).map(([name, status]) => ({ name, status }))
+  : [{ name: 'The-agentcy', status: 'needs-auth' }, { name: 'efecto', status: 'connected' }];
+
 let initialised = false;
 let counter = 0;
 let pendingTool = null;
@@ -68,7 +76,7 @@ rl.on('line', (line) => {
     const text = typeof msg.message?.content === 'string' ? msg.message.content : '';
     if (!initialised) {
       initialised = true;
-      out({ type: 'system', subtype: 'init', session_id: sessionId, model, permissionMode: 'default', tools: ['Write'], cwd: process.cwd(), mcp_servers: [{ name: 'The-agentcy', status: 'needs-auth' }, { name: 'efecto', status: 'connected' }] });
+      out({ type: 'system', subtype: 'init', session_id: sessionId, model, permissionMode: 'default', tools: ['Write'], cwd: process.cwd(), mcp_servers: mcpServers });
     }
     out({ type: 'system', subtype: 'status', status: 'requesting', session_id: sessionId });
     if (/razonar/i.test(text)) {

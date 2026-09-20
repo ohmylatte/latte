@@ -27,7 +27,12 @@ describe('i18n catalogs', () => {
     vi.stubGlobal('window', {});
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined });
     const { catalogs } = await import('./i18n');
-    for (const key of Object.keys(catalogs['es-AR']).filter((k) => k.startsWith('context.'))) {
+    const contextKeys = Object.keys(catalogs['es-AR']).filter((k) => k.startsWith('context.'));
+    // El largo primero, como los cuatro tests de abajo: un `for … of` sobre
+    // una lista vacía no ejecuta una sola aserción y el test queda verde sin
+    // haber mirado ninguna clave.
+    expect(contextKeys.length).toBeGreaterThan(0);
+    for (const key of contextKeys) {
       expect(catalogs['es-AR'][key as keyof typeof catalogs['es-AR']], `es-AR ${key}`).toBeTruthy();
       expect(catalogs['en-US'][key as keyof typeof catalogs['en-US']], `en-US ${key}`).toBeTruthy();
     }

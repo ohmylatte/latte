@@ -81,6 +81,9 @@ export const API_METHODS = [
   'addDecision',
   'getDecisionAuthority','setDecisionAuthority','approveDecision','rejectDecision','archiveDecision',
   'listBrandContextProposals','saveBrandContext','clearBrandContext','approveBrandContextProposal','rejectBrandContextProposal','requestBrandContextDraft','brandContextStatus','listBrandContextRevisions','restoreBrandContextRevision',
+  'getCoordinationAuthority','setCoordinationAuthority','getCoordinationBudget','setCoordinationBudget','getCoordinatorGrant','setCoordinatorGrant',
+  'startCoordinationRun','pauseCoordinationRun','resumeCoordinationRun','cancelCoordinationRun','getCoordinationRun','listCoordinationGates','resolveCoordinationGate','listCoordinationLog','listOpenCoordinationAsks','answerCoordinationAsk','acceptHandoffAsTask','settleCoordinationDispatch',
+  'coordinationRuntimeSupport','listActiveCoordinationRuns','getCoordinationGlobalBudget','setCoordinationGlobalBudget','markCoordinationSeen','listCoordinationHires',
   'runtimeStatus',
   'startAgent',
   'writeAgent',
@@ -214,6 +217,9 @@ export const API_ARITY: Record<ApiMethod, number> = {
   addDecision: 2,
   getDecisionAuthority:1,setDecisionAuthority:2,approveDecision:2,rejectDecision:1,archiveDecision:1,
   listBrandContextProposals:1,saveBrandContext:3,clearBrandContext:2,approveBrandContextProposal:3,rejectBrandContextProposal:1,requestBrandContextDraft:1,brandContextStatus:1,listBrandContextRevisions:1,restoreBrandContextRevision:3,
+  getCoordinationAuthority:1,setCoordinationAuthority:2,getCoordinationBudget:1,setCoordinationBudget:2,getCoordinatorGrant:1,setCoordinatorGrant:2,
+  startCoordinationRun:1,pauseCoordinationRun:1,resumeCoordinationRun:1,cancelCoordinationRun:1,getCoordinationRun:1,listCoordinationGates:1,resolveCoordinationGate:3,listCoordinationLog:1,listOpenCoordinationAsks:1,answerCoordinationAsk:2,acceptHandoffAsTask:2,settleCoordinationDispatch:4,
+  coordinationRuntimeSupport:1,listActiveCoordinationRuns:0,getCoordinationGlobalBudget:0,setCoordinationGlobalBudget:1,markCoordinationSeen:1,listCoordinationHires:1,
   runtimeStatus: 0,
   startAgent: 2,
   writeAgent: 2,
@@ -266,6 +272,8 @@ export const API_ARITY: Record<ApiMethod, number> = {
 export const CHANNEL_PREFIX = 'latte:';
 export const AGENT_EVENT_CHANNEL = 'latte:agent-event';
 export const CHAT_EVENT_CHANNEL = 'latte:chat-event';
+/** sdd/autonomous-coordination, task 6.37: a run/task/dispatch/gate change, so the renderer can route an event from a Brand the person is not looking at. */
+export const COORDINATION_EVENT_CHANNEL = 'latte:coordination-event';
 
 /**
  * Updates live outside API_METHODS on purpose: they are not backend

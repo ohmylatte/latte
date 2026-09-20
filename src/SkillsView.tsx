@@ -4,7 +4,7 @@ import { Sparkles } from 'lucide-react';
 import type { AgentSkill, FeatureFlags, LatteAPI, SkillCandidate } from '../shared/contracts';
 import { api, isDesktop } from './browser-api';
 
-const FLAGS_OFF: FeatureFlags = { generation: false, brandKits: false, learning: false };
+const FLAGS_OFF: FeatureFlags = { generation: false, brandKits: false, learning: false, coordination: false };
 
 export async function loadSkillsViewState(client: Pick<LatteAPI, 'featureFlags' | 'listSkills' | 'listSkillCandidates'>): Promise<{
   learningOn: boolean;

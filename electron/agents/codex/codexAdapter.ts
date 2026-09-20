@@ -4,12 +4,15 @@ import { DEFAULT_EFFORT_TIER, EMPTY_USAGE, type AccountLoginStart, type AgentMod
 import { NotFoundError, UnavailableError, ValidationError } from '../../core/errors';
 import { newId } from '../../core/ids';
 import { addUsage, tokenCount } from '../../core/usage';
+import { MAX_COORDINATED_CODEX_PROCESSES } from '../../coordination/limits';
 import { scrubEnv } from '../../runtime/terminalManager';
 import { SYSTEM_ACCOUNT_ID } from '../accounts';
 import { codexEffortForTier } from '../tiers';
-import { sessionFrom, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../types';
+import { sessionFrom, type AdapterMcpServer, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../types';
 import { CodexAppServer, isRecord } from './appServer';
 import { contentFromAnswers, errorMessage, isHttpUrl, mapElicitationForm, mcpToolOutput, type ElicitationFormField } from './elicitation';
+import { codexMcpConfigEnv, codexMcpConfigOverrides, mcpFingerprint } from './mcpFingerprint';
+import { forgetServerPid, recordServerPid } from './staleServers';
 
 export interface CodexAdapterDeps {
   resolveExecutable: () => Promise<{ executable: string; version: string | null } | null>;
@@ -40,6 +43,8 @@ interface LiveChat {
   chatId: string;
   workId: string;
   accountId: string;
+  /** `accountId + '|' + mcpFingerprint`: the actual server-map key this chat's app-server lives under. Ordinary (non-coordinated) chats share one process per account (`fingerprint === ''`); a coordinated member's own token gives it a unique key and its own process. `onExit`/`stop()` must sweep by THIS, never by `accountId` alone -- see sdd/autonomous-coordination Phase 5, task 5.3/5.4. */
+  serverKey: string;
   threadId: string;
   directory: string;
   turnId: string | null;
@@ -62,6 +67,18 @@ interface LiveChat {
   usageTurnId: string | null;
 }
 
+/**
+ * Los `authStatus` que `mcpServerStatus/list` devuelve para un servidor que el
+ * proceso CONECTÓ de verdad. Allowlist, no denylist (D7): los estados buenos
+ * son enumerables y los malos no — un valor nuevo que Codex agregue mañana cae
+ * del lado seguro, que es "no cuenta", en vez de pasar por conectado.
+ *
+ * `unsupported` es el que devuelve un servidor que no requiere auth (el caso de
+ * `latte_coordination` y `latte_memory`, ver `fakeCodex.cjs` y `applyCodexAuth`
+ * en `agents/mcp.ts`, el único otro lector de este campo en el repo).
+ */
+const CODEX_CONNECTED_AUTH: ReadonlySet<string> = new Set(['unsupported', 'loggedIn', 'connected', 'authenticated', 'ok']);
+
 const MESSAGE_LIMIT = 400;
 const TOOL_TEXT_LIMIT = 12_000;
 
@@ -73,9 +90,29 @@ const TOOL_TEXT_LIMIT = 12_000;
  */
 export class CodexChatAdapter implements RuntimeAdapter {
   readonly runtime = 'codex' as const;
+  // Per-thread MCP config is broken in the installed app-server (thread/start
+  // override hangs, see spike sdd/autonomous-coordination/spike-mcp-injection).
+  // Per-PROCESS `-c mcp_servers.*` overrides are verified on 0.154.0 (both the
+  // http and stdio shapes) and implemented below (Phase 5): a coordinated
+  // member gets its own re-keyed app-server. Unlike Claude's Phase 4 (left at
+  // 'none' per that task's literal wording, deferred to Phase 6), nothing
+  // held Codex's flag back, so it flips here now that the translation is
+  // real and tested -- nothing reads this field yet (that is Phase 6's
+  // coordinationRuntimeSupport), so the flip has zero behavioural effect
+  // today.
+  readonly mcpInjection = 'per-member' as const;
+  // `mcpStatus` sobre el app-server: se le pregunta y contesta (ver
+  // `reportInjected`). Que una llamada puntual falle no cambia la capacidad.
+  readonly confirmsMcpInjection = true;
   private readonly servers = new Map<string, CodexAppServer>();
+  /** serverKeys whose live server carries a `latte_coordination` (`kind:'http'`) entry -- what `countCoordinatedServers()` counts. A memory-only (`stdio`, `latte_memory`) server's key is never added here, even though its fingerprint half is non-empty too (task 6.39). */
+  private readonly coordinatedServerKeys = new Set<string>();
   private readonly chats = new Map<string, LiveChat>();
   private readonly byThread = new Map<string, string>();
+  /** Los chatIds que estan arrancando ahora mismo: el guard de `start()` vive antes de varios `await` y el `set` recien despues (juicio #7, ronda 4). */
+  private readonly starting = new Set<string>();
+  /** `serverKey` -> resolucion EN VUELO. `serverFor` fallaba el `get` y hacia el `set` despues de un `await`: dos aperturas concurrentes spawneaban dos app-servers y el segundo pisaba al primero, dejando un proceso vivo que nadie podia parar. */
+  private readonly startingServers = new Map<string, Promise<CodexAppServer>>();
   private readonly env: NodeJS.ProcessEnv;
   private readonly platform: NodeJS.Platform;
   private readonly maxChats: number;
@@ -121,7 +158,14 @@ export class CodexChatAdapter implements RuntimeAdapter {
   }
 
   async listMcpStatus(accountId: string): Promise<Array<{ name: string; authStatus: string }>> {
-    const server = await this.serverFor(accountId);
+    // Hacia afuera, un `authStatus` ausente se sigue viendo como `'unknown'`:
+    // `applyCodexAuth` sólo pregunta por `notLoggedIn`, y ninguna pantalla
+    // necesita distinguir. Adentro sí (ver `mcpStatusOn`).
+    return (await this.mcpStatusOn(await this.serverFor(accountId))).map((entry) => ({ name: entry.name, authStatus: entry.authStatus ?? 'unknown' }));
+  }
+
+  /** `mcpServerStatus/list` sobre UN app-server concreto: lo que ESE proceso conoce de verdad. */
+  private async mcpStatusOn(server: CodexAppServer): Promise<Array<{ name: string; authStatus: string | null }>> {
     let result: unknown;
     try {
       result = await server.request('mcpServerStatus/list', { detail: 'toolsAndAuthOnly' });
@@ -129,10 +173,13 @@ export class CodexChatAdapter implements RuntimeAdapter {
       throw new UnavailableError(`Este Codex no soporta mcpServerStatus/list: ${describe(error)}`);
     }
     const data = isRecord(result) && Array.isArray(result.data) ? result.data : [];
-    const out: Array<{ name: string; authStatus: string }> = [];
+    // `null` = el campo NO vino. Antes se normalizaba a la cadena `'unknown'`,
+    // que `reportInjected` no distinguía de un estado real y terminaba contando
+    // como conectado. Ausente y "no sé" son lo mismo, y ninguno es "anda" (D7).
+    const out: Array<{ name: string; authStatus: string | null }> = [];
     for (const entry of data) {
       if (!isRecord(entry) || typeof entry.name !== 'string' || !entry.name) continue;
-      out.push({ name: entry.name, authStatus: typeof entry.authStatus === 'string' ? entry.authStatus : 'unknown' });
+      out.push({ name: entry.name, authStatus: typeof entry.authStatus === 'string' ? entry.authStatus : null });
     }
     return out;
   }
@@ -140,47 +187,169 @@ export class CodexChatAdapter implements RuntimeAdapter {
   // Chats --------------------------------------------------------------------------
 
   async start(input: AdapterStartInput): Promise<AdapterStartResult> {
-    if (this.chats.size >= this.maxChats) throw new ValidationError(`Too many open Codex chats (max ${this.maxChats})`);
+    // `starting` cuenta (D9). El guard miraba solo `chats`, y una fila entra
+    // ahi recien cuando el proceso ya arranco: N aperturas simultaneas leian
+    // las N el mismo tamanio —cero— y pasaban todas, asi que el tope no topaba
+    // nada justo cuando mas hace falta, que es cuando llegan todas juntas.
+    if (this.chats.size + this.starting.size >= this.maxChats) throw new ValidationError(`Too many open Codex chats (max ${this.maxChats})`);
     const chatId = input.chatId ?? newId('ses');
-    if (this.chats.has(chatId)) throw new ValidationError('This chat is already open');
+    if (this.chats.has(chatId) || this.starting.has(chatId)) throw new ValidationError('This chat is already open');
+    this.starting.add(chatId);
+    try {
+      return await this.startChat(chatId, input);
+    } finally {
+      this.starting.delete(chatId);
+    }
+  }
+
+  private async startChat(chatId: string, input: AdapterStartInput): Promise<AdapterStartResult> {
     const accountId = input.accountId ?? SYSTEM_ACCOUNT_ID;
-    const server = await this.serverFor(accountId);
-    // The role personality rides as developer instructions on the thread (start and resume alike).
-    const instructions = input.instructions?.trim() ?? '';
-    const threadOptions = { cwd: input.directory, approvalPolicy: 'on-request', sandbox: 'workspace-write', ...(input.model ? { model: input.model } : {}), ...(instructions ? { developerInstructions: instructions } : {}) };
-    let threadId: string | null = null;
-    let resumed = false;
-    if (input.previousSessionId) {
-      try {
-        const result = await server.request('thread/resume', { threadId: input.previousSessionId, ...threadOptions });
-        const thread = isRecord(result) && isRecord(result.thread) ? result.thread : null;
-        if (thread && typeof thread.id === 'string') {
-          threadId = thread.id;
-          resumed = true;
+    // Coordination MCP (sdd/autonomous-coordination, Phase 5). A coordinated
+    // member gets its own app-server, re-keyed by account+fingerprint so its
+    // crash never sweeps an unrelated chat on the same account (task 5.3/5.4).
+    // App-wide, the process budget is finite: past MAX_COORDINATED_CODEX_PROCESSES
+    // this member degrades to no injection rather than spawning an Nth
+    // process -- visibly logged, never a silent failure (task 5.7).
+    let mcpServers = input.mcpServers;
+    let serverKey = `${accountId}|${mcpFingerprint(mcpServers)}`;
+    // Only an `http` entry (`latte_coordination`) consumes a coordination
+    // slot -- a member carrying just `stdio` (`latte_memory`, engram ships to
+    // every member by default since slice 6-C) is memory-only and must never
+    // be gated by this ceiling (task 6.39).
+    const wantsCoordination = mcpServers?.some((server) => server.kind === 'http') ?? false;
+    if (wantsCoordination && !this.servers.has(serverKey) && this.countCoordinatedServers() >= MAX_COORDINATED_CODEX_PROCESSES) {
+      this.deps.log?.(`[codex ${chatId}] coordination MCP not injected: ${MAX_COORDINATED_CODEX_PROCESSES} coordinated codex app-server processes already running app-wide`);
+      // Drop ONLY the coordination entry -- a degraded member keeps its
+      // memory (mirrors CoordinationInjectionPlanner, task 6.31: never
+      // coordination without memory, memory survives a coordination degrade).
+      const withoutCoordination = mcpServers?.filter((server) => server.kind !== 'http') ?? [];
+      mcpServers = withoutCoordination.length > 0 ? withoutCoordination : undefined;
+      serverKey = `${accountId}|${mcpFingerprint(mcpServers)}`;
+    }
+    const server = await this.serverFor(accountId, serverKey, mcpServers);
+    // Todo lo que sigue corre sobre un proceso QUE YA EXISTE. Si algo falla
+    // —`thread/start` es el caso real— el server se quedaba en `this.servers`
+    // sin un solo chat que lo pudiera liberar: `stop(chatId)` es el único que
+    // lo apaga, y nunca hubo un chat. Como el `serverKey` lleva un token
+    // aleatorio adentro, tampoco se podía recomputar la clave para alcanzarlo
+    // (crítico 9). Por eso el cuerpo entero está compensado.
+    try {
+      // The role personality rides as developer instructions on the thread (start and resume alike).
+      const instructions = input.instructions?.trim() ?? '';
+      const threadOptions = { cwd: input.directory, approvalPolicy: 'on-request', sandbox: 'workspace-write', ...(input.model ? { model: input.model } : {}), ...(instructions ? { developerInstructions: instructions } : {}) };
+      let threadId: string | null = null;
+      let resumed = false;
+      if (input.previousSessionId) {
+        try {
+          const result = await server.request('thread/resume', { threadId: input.previousSessionId, ...threadOptions });
+          const thread = isRecord(result) && isRecord(result.thread) ? result.thread : null;
+          if (thread && typeof thread.id === 'string') {
+            threadId = thread.id;
+            resumed = true;
+          }
+        } catch (error) {
+          this.deps.log?.(`[codex] resume failed, starting fresh: ${describe(error)}`);
         }
-      } catch (error) {
-        this.deps.log?.(`[codex] resume failed, starting fresh: ${describe(error)}`);
       }
-    }
-    if (!threadId) {
-      let result: unknown;
-      try {
-        result = await server.request('thread/start', threadOptions);
-      } catch (error) {
-        throw new UnavailableError(`Could not start a Codex thread: ${describe(error)}`);
+      if (!threadId) {
+        let result: unknown;
+        try {
+          result = await server.request('thread/start', threadOptions);
+        } catch (error) {
+          throw new UnavailableError(`Could not start a Codex thread: ${describe(error)}`);
+        }
+        const thread = isRecord(result) && isRecord(result.thread) ? result.thread : null;
+        if (!thread || typeof thread.id !== 'string') throw new UnavailableError('Codex returned no thread id');
+        threadId = thread.id;
       }
-      const thread = isRecord(result) && isRecord(result.thread) ? result.thread : null;
-      if (!thread || typeof thread.id !== 'string') throw new UnavailableError('Codex returned no thread id');
-      threadId = thread.id;
+      const live: LiveChat = { chatId, workId: input.workId, accountId, serverKey, threadId, directory: input.directory, turnId: null, assistantId: null, messages: new Map(), order: [], pending: new Map(), busy: false, tier: input.tier ?? DEFAULT_EFFORT_TIER, usage: EMPTY_USAGE, usageSoFar: null, usageTurnId: null };
+      this.chats.set(chatId, live);
+      this.byThread.set(threadId, chatId);
+      if (resumed) await this.loadHistory(live, server);
+      return {
+        session: { ...sessionFrom(input, 'codex', input.model ?? null, accountId, input.label, resumed), id: chatId },
+        runtimeSessionId: threadId,
+        injectedMcpServers: await this.reportInjected(server, mcpServers),
+      };
+    } catch (error) {
+      this.forgetPartialChat(chatId);
+      this.releaseServerIfUnused(serverKey);
+      throw error;
     }
-    const live: LiveChat = { chatId, workId: input.workId, accountId, threadId, directory: input.directory, turnId: null, assistantId: null, messages: new Map(), order: [], pending: new Map(), busy: false, tier: input.tier ?? DEFAULT_EFFORT_TIER, usage: EMPTY_USAGE, usageSoFar: null, usageTurnId: null };
-    this.chats.set(chatId, live);
-    this.byThread.set(threadId, chatId);
-    if (resumed) await this.loadHistory(live, server);
-    return {
-      session: { ...sessionFrom(input, 'codex', input.model ?? null, accountId, input.label, resumed), id: chatId },
-      runtimeSessionId: threadId,
-    };
+  }
+
+  /** Un chat que no llegó a nacer no puede quedar a medias en los mapas. */
+  private forgetPartialChat(chatId: string): void {
+    const live = this.chats.get(chatId);
+    if (!live) return;
+    this.chats.delete(chatId);
+    if (this.byThread.get(live.threadId) === chatId) this.byThread.delete(live.threadId);
+  }
+
+  /**
+   * Apaga el app-server que ya no tiene dueño. Un server que todavía sirve a
+   * otro chat vivo no se toca: dos miembros coordinados de la misma cuenta
+   * viven en servers DISTINTOS (task 5.3/5.4), pero dos chats comunes comparten
+   * uno solo y el fallo de uno no puede llevarse puesto al otro.
+   */
+  private releaseServerIfUnused(serverKey: string): void {
+    if ([...this.chats.values()].some((c) => c.serverKey === serverKey)) return;
+    this.servers.get(serverKey)?.stop();
+    this.servers.delete(serverKey);
+    this.coordinatedServerKeys.delete(serverKey);
+    forgetServerPid(this.deps.serverCwd, serverKey);
+  }
+
+  /**
+   * Lo que este app-server CONECTO de verdad, no lo que Latte le paso (juicio
+   * #1, ronda 4; critico 7). `mcpServers` ya viene DEGRADADO por el tope de
+   * procesos de este adaptador, pero eso sigue siendo una decision de Latte:
+   * si el proceso arranco y un servidor no levanto, el runtime es el unico
+   * que lo sabe, y lo dice en `mcpServerStatus/list`.
+   *
+   * Dos reglas, las dos contra la misma mentira:
+   *
+   * 1. Un Codex viejo que no conoce el metodo -- o cualquier otro fallo al
+   *    preguntar -- devuelve `undefined`: NO SE. Antes caia en
+   *    `catch { return requested }`, o sea devolvia LO QUE LATTE PIDIO como
+   *    si fuera lo que el runtime conecto, y `confirmInjection` lo tomaba por
+   *    una confirmacion. Que no se pueda preguntar no es evidencia de nada.
+   * 2. Estar en el catalogo no es estar conectado. `authStatus` es el campo
+   *    que el protocolo devuelve, y `notLoggedIn` es el unico valor que el
+   *    resto del repo (`applyCodexAuth`, en `electron/agents/mcp.ts`) ya
+   *    trata como "requiere iniciar sesion": una entrada asi se conoce pero
+   *    no sirve, y no cuenta.
+   */
+  private async reportInjected(server: CodexAppServer, mcpServers: AdapterMcpServer[] | undefined): Promise<string[] | undefined> {
+    const requested = (mcpServers ?? []).map((entry) => entry.name);
+    // F10: sin nada que preguntar, la respuesta honesta es "NO SÉ", no "el
+    // runtime reportó cero servidores". `confirmInjection` lee CUALQUIER array
+    // —el vacío incluido— como "el runtime HABLÓ" y prende `runtimeConfirmed`,
+    // así que este atajo hacía que la pantalla afirmara una confirmación que
+    // nadie pidió y que ningún proceso dio. Es la misma regla que ya cumple
+    // Claude, que devuelve `undefined` en los dos casos.
+    if (requested.length === 0) return undefined;
+    let statuses: Array<{ name: string; authStatus: string | null }>;
+    try {
+      statuses = await this.mcpStatusOn(server);
+    } catch {
+      return undefined;
+    }
+    // ALLOWLIST, no denylist (D7). `!== 'notLoggedIn'` daba por conectado
+    // CUALQUIER valor que el protocolo devolviera: un `failed`, un `error`, un
+    // estado que Codex agregue el mes que viene, todos contaban como "anda". La
+    // denylist de un solo valor tiene que acertarle a todos los estados malos
+    // presentes y futuros; la allowlist sólo tiene que acertarle a los buenos,
+    // que son los que este repo puede nombrar (ver `applyCodexAuth` en
+    // `agents/mcp.ts` y el catálogo que devuelve `mcpServerStatus/list`).
+    //
+    // Y un `authStatus` AUSENTE no es un estado: es "no sé". Asumirlo conectado
+    // repetía la mentira de raíz, así que la respuesta entera se descarta y el
+    // reclamo previo queda intacto, igual que con un Codex que no conoce el
+    // método.
+    if (statuses.some((entry) => entry.authStatus === null)) return undefined;
+    const connected = new Set(statuses.filter((entry) => CODEX_CONNECTED_AUTH.has(entry.authStatus as string)).map((entry) => entry.name));
+    return requested.filter((name) => connected.has(name));
   }
 
   listMessages(chatId: string): ChatMessage[] {
@@ -191,7 +360,9 @@ export class CodexChatAdapter implements RuntimeAdapter {
   async send(chatId: string, text: string): Promise<void> {
     const live = this.require(chatId);
     if (live.busy) throw new ValidationError('Codex is still working on the previous message');
-    const server = await this.serverFor(live.accountId);
+    // The chat's OWN server, not just any server for the account: a
+    // coordinated member's thread lives on its own re-keyed app-server.
+    const server = this.existingServer(live);
     const userMessage: ChatMessage = { id: `user-${randomUUID()}`, chatId, role: 'user', parts: [{ type: 'text', id: `user-${randomUUID()}`, text }], createdAt: new Date().toISOString(), completed: true, error: null };
     this.upsertMessage(live, userMessage);
     this.deps.emit({ chatId, type: 'message', message: userMessage });
@@ -212,10 +383,24 @@ export class CodexChatAdapter implements RuntimeAdapter {
     }
   }
 
+  /**
+   * El app-server QUE YA EXISTE para este chat. `serverFor` no sirve acá: ante
+   * una clave ausente SPAWNEA, y la clave de un miembro coordinado lleva el
+   * fingerprint de su inyección adentro — sin `mcpServers` levantaría un
+   * proceso PELADO bajo esa misma clave, y el miembro perdería la coordinación
+   * en silencio, creyendo que la tiene. Un chat vivo sin server es un estado
+   * imposible: se dice en voz alta, no se repara inventando un proceso.
+   */
+  private existingServer(live: LiveChat): CodexAppServer {
+    const server = this.servers.get(live.serverKey);
+    if (!server) throw new UnavailableError(`El app-server de este chat de Codex ya no está vivo; cerrá el chat y volvé a abrirlo (${live.chatId})`);
+    return server;
+  }
+
   async abort(chatId: string): Promise<void> {
     const live = this.require(chatId);
     if (!live.turnId) return;
-    const server = await this.serverFor(live.accountId);
+    const server = this.existingServer(live);
     try {
       await server.request('turn/interrupt', { threadId: live.threadId, turnId: live.turnId });
     } catch (error) {
@@ -276,18 +461,32 @@ export class CodexChatAdapter implements RuntimeAdapter {
     if (!live) return;
     this.settlePending(live, 'Chat closed in Latte');
     this.chats.delete(chatId);
-    this.byThread.delete(live.threadId);
+    if (this.byThread.get(live.threadId) === chatId) this.byThread.delete(live.threadId);
     this.deps.emit({ chatId, type: 'closed', reason: 'stopped' });
-    if (![...this.chats.values()].some((c) => c.accountId === live.accountId)) {
-      this.servers.get(live.accountId)?.stop();
-      this.servers.delete(live.accountId);
+    // Keyed by serverKey, not accountId: two coordinated members of the same
+    // account own DIFFERENT app-servers (task 5.3/5.4). Stopping one must
+    // never touch the other's still-live process.
+    if (![...this.chats.values()].some((c) => c.serverKey === live.serverKey)) {
+      this.servers.get(live.serverKey)?.stop();
+      this.servers.delete(live.serverKey);
+      this.coordinatedServerKeys.delete(live.serverKey);
+      forgetServerPid(this.deps.serverCwd, live.serverKey);
     }
   }
 
   shutdown(): void {
     for (const id of [...this.chats.keys()]) this.stop(id);
-    for (const server of this.servers.values()) server.stop();
+    for (const [key, server] of this.servers) {
+      server.stop();
+      forgetServerPid(this.deps.serverCwd, key);
+    }
     this.servers.clear();
+    this.coordinatedServerKeys.clear();
+  }
+
+  /** How many live app-servers currently carry a coordination injection (an `http` `latte_coordination` entry) -- the count MAX_COORDINATED_CODEX_PROCESSES bounds. A memory-only (`stdio` `latte_memory`) server never counts, even though its fingerprint half of the key is non-empty too (task 6.39 -- see `coordinatedServerKeys`). */
+  private countCoordinatedServers(): number {
+    return this.coordinatedServerKeys.size;
   }
 
   // Internals ---------------------------------------------------------------------
@@ -308,10 +507,23 @@ export class CodexChatAdapter implements RuntimeAdapter {
    * when the Settings screen needs it and never while the app starts.
    */
   async listModels(accountId: string): Promise<AgentModel[]> {
-    const live = this.servers.get(accountId);
+    // Any server for this account answers a model list identically,
+    // coordinated or not -- reuse whichever one is already up rather than
+    // spawning a new one just to ask this.
+    const prefix = `${accountId}|`;
+    const live = [...this.servers.entries()].find(([key]) => key.startsWith(prefix))?.[1];
     if (live) return parseModelList(await live.request('model/list', {}));
     const runtime = await this.deps.resolveExecutable();
     if (!runtime) throw new UnavailableError('Codex is not installed or not on PATH');
+    // F9: ÚNICA POR INVOCACIÓN. La clave era `<cuenta>|ephemeral-models`, o sea
+    // compartida: dos `listModels` concurrentes de la misma cuenta escriben el
+    // mismo pid-file, el segundo pisa el pid del primero y el primero que
+    // termina BORRA la anotación del que sigue vivo. Ese proceso queda fuera
+    // del barrido de arranque para siempre. Va con `randomUUID` y no con
+    // `newId`: esto no es el id de ninguna entidad del repo (`IdPrefix` es una
+    // unión cerrada a propósito), es una clave de archivo, y `pidFile` la sanea
+    // igual que a cualquier otra.
+    const ephemeralKey = `${accountId}|ephemeral-models-${randomUUID()}`;
     const server = new CodexAppServer({
       executable: runtime.executable,
       env: { ...scrubEnv(this.env), ...this.deps.accountEnv(accountId === SYSTEM_ACCOUNT_ID ? null : accountId) },
@@ -320,48 +532,128 @@ export class CodexChatAdapter implements RuntimeAdapter {
       spawnImpl: this.deps.spawnImpl,
       requestTimeoutMs: this.deps.requestTimeoutMs,
       log: this.deps.log,
+      // D14: el efímero se anota igual que el administrado. Era el ÚNICO
+      // `codex app-server` que Latte spawnea sin registrar su pid, y si la app
+      // se cae o la matan mientras este proceso vive, el barrido de arranque no
+      // tiene forma de enterarse: queda un `codex app-server` huérfano para
+      // siempre. Su clave es propia, para que apagarlo no borre la anotación
+      // del servidor administrado de la misma cuenta.
+      onSpawn: (pid) => recordServerPid(this.deps.serverCwd, ephemeralKey, pid),
     });
     try {
       return parseModelList(await server.request('model/list', {}));
     } finally {
       server.stop();
+      // Y se olvida al cerrar: un pid fantasma hace que el barrido siguiente
+      // señale un proceso que ya no existe — o uno que el sistema reasignó.
+      forgetServerPid(this.deps.serverCwd, ephemeralKey);
     }
   }
 
-  private async serverFor(accountId: string): Promise<CodexAppServer> {
-    let server = this.servers.get(accountId);
+  /**
+   * `serverKey` defaults to the plain "ordinary" key (`accountId|`, empty
+   * fingerprint) for the account-scoped call sites (login, MCP status,
+   * ephemeral model list) that have no per-member servers to inject.
+   * `mcpServers`, when present, is translated to `-c mcp_servers.*`
+   * overrides on the PROCESS argv (verified on 0.154.0, spike
+   * sdd/autonomous-coordination/spike-mcp-injection) -- never per-thread.
+   */
+  private serverFor(accountId: string, serverKey: string = `${accountId}|`, mcpServers?: AdapterMcpServer[]): Promise<CodexAppServer> {
+    const inFlight = this.startingServers.get(serverKey);
+    if (inFlight) return inFlight;
+    const started = this.resolveServer(accountId, serverKey, mcpServers);
+    this.startingServers.set(serverKey, started);
+    const clear = () => { if (this.startingServers.get(serverKey) === started) this.startingServers.delete(serverKey); };
+    started.then(clear, clear);
+    return started;
+  }
+
+  private async resolveServer(accountId: string, serverKey: string, mcpServers?: AdapterMcpServer[]): Promise<CodexAppServer> {
+    let server = this.servers.get(serverKey);
     if (!server) {
-      const runtime = await this.deps.resolveExecutable();
-      if (!runtime) throw new UnavailableError('Codex is not installed or not on PATH');
+      const hasMcp = mcpServers !== undefined && mcpServers.length > 0;
+      const hasCoordination = mcpServers?.some((s) => s.kind === 'http') ?? false;
+      // LA RESERVA DEL CUPO, antes del primer `await`. `startChat` cuenta
+      // `countCoordinatedServers()` y después llama acá; con el `add` al final
+      // —después de esperar a `resolveExecutable()` y a `ensure()`— dos
+      // miembros distintos abriendo a la vez leían los dos el mismo contador
+      // viejo y entraban los dos. Todo el camino desde ese conteo hasta esta
+      // línea es sincrónico, así que nadie se puede meter en el medio.
+      if (hasCoordination) this.coordinatedServerKeys.add(serverKey);
+      let runtime: Awaited<ReturnType<CodexAdapterDeps['resolveExecutable']>>;
+      try {
+        runtime = await this.deps.resolveExecutable();
+      } catch (error) {
+        if (hasCoordination) this.coordinatedServerKeys.delete(serverKey);
+        throw error;
+      }
+      if (!runtime) {
+        // Compensación: el cupo reservado se suelta, o un Codex ausente lo
+        // quemaba para siempre en cada intento.
+        if (hasCoordination) this.coordinatedServerKeys.delete(serverKey);
+        throw new UnavailableError('Codex is not installed or not on PATH');
+      }
       server = new CodexAppServer({
         executable: runtime.executable,
-        env: { ...scrubEnv(this.env), ...this.deps.accountEnv(accountId === SYSTEM_ACCOUNT_ID ? null : accountId) },
+        env: {
+          ...scrubEnv(this.env),
+          ...this.deps.accountEnv(accountId === SYSTEM_ACCOUNT_ID ? null : accountId),
+          // The bearer token lives ONLY here, never on argv (visible in
+          // process listings) -- task 5.6.
+          ...(hasMcp ? codexMcpConfigEnv(mcpServers) : {}),
+        },
         cwd: this.deps.serverCwd,
         platform: this.platform,
         spawnImpl: this.deps.spawnImpl,
         requestTimeoutMs: this.deps.requestTimeoutMs,
         log: this.deps.log,
+        extraArgs: hasMcp ? codexMcpConfigOverrides(mcpServers) : [],
+        // El pid se anota EN CUANTO el hijo existe, no después de `ensure()`:
+        // el camino que dejaba procesos huérfanos era justamente el del
+        // arranque fallido, y ahí la línea de abajo nunca se alcanzaba.
+        onSpawn: (pid) => recordServerPid(this.deps.serverCwd, serverKey, pid),
       });
       server.notifications.add((method, params) => this.onNotification(method, params));
       server.serverRequests.add((method, params, respond, fail) => this.onServerRequest(method, params, respond, fail));
       server.onExit = (reason) => {
-        for (const live of [...this.chats.values()].filter((c) => c.accountId === accountId)) {
+        // Keyed by serverKey (account+fingerprint), never by accountId
+        // alone: two coordinated members of the same account live on
+        // DIFFERENT servers, so one's crash must sweep only its own chats
+        // (task 5.3/5.4 -- the single highest-risk edit in this change).
+        for (const live of [...this.chats.values()].filter((c) => c.serverKey === serverKey)) {
           this.settlePending(live, reason);
           if (live.busy) this.deps.emit({ chatId: live.chatId, type: 'error', message: reason });
           this.chats.delete(live.chatId);
-          this.byThread.delete(live.threadId);
+          // Identidad, no clave: un hilo huerfano de un spawn duplicado no
+          // puede borrar el mapeo que hoy es de OTRO chat vivo (juicio #7).
+          if (this.byThread.get(live.threadId) === live.chatId) this.byThread.delete(live.threadId);
           this.deps.emit({ chatId: live.chatId, type: 'closed', reason });
         }
-        this.servers.delete(accountId);
+        this.servers.delete(serverKey);
+        this.coordinatedServerKeys.delete(serverKey);
+        forgetServerPid(this.deps.serverCwd, serverKey);
       };
-      this.servers.set(accountId, server);
+      this.servers.set(serverKey, server);
     }
     try {
       await server.ensure();
     } catch (error) {
-      this.servers.delete(accountId);
+      // El hijo YA está spawneado: `launch()` lo crea y recién después habla
+      // `initialize`. Borrar los mapas no lo mataba, y como el `serverKey`
+      // lleva un token aleatorio adentro nadie podía recomputar esa clave
+      // nunca: el proceso quedaba vivo, inalcanzable y contando contra el cupo
+      // (crítico 9). `stop()` lo mata; el pid file se olvida porque ya no hay
+      // nada que reapear.
+      server.stop();
+      this.servers.delete(serverKey);
+      this.coordinatedServerKeys.delete(serverKey);
+      forgetServerPid(this.deps.serverCwd, serverKey);
       throw new UnavailableError(describe(error));
     }
+    // Recorded on every resolution (new or reused), so the pid file always
+    // names the live process -- the startup sweep (task 5.8) reaps only
+    // what is left behind after a crash never reaches this line again.
+    if (server.pid !== null) recordServerPid(this.deps.serverCwd, serverKey, server.pid);
     return server;
   }
 

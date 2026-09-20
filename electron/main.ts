@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
-import type { AgentEvent, ChatEvent, InstallOutcome, UpdateState } from '../shared/contracts';
+import type { AgentEvent, ChatEvent, CoordinationEvent, InstallOutcome, UpdateState } from '../shared/contracts';
 import { createBackend, type Backend } from './bootstrap';
 import { errorMessage } from './core/errors';
 import { ensureUserBinPath } from './core/linuxPath';
@@ -8,6 +8,7 @@ import { installProcessStreamErrorGuards } from './core/processStreams';
 import {
   AGENT_EVENT_CHANNEL,
   CHAT_EVENT_CHANNEL,
+  COORDINATION_EVENT_CHANNEL,
   UPDATE_CHECK_CHANNEL,
   UPDATE_DOWNLOAD_CHANNEL,
   UPDATE_INSTALL_CHANNEL,
@@ -100,6 +101,7 @@ async function start(): Promise<void> {
       version: app.getVersion(),
       emit: emitAgentEvent,
       emitChat: emitChatEvent,
+      emitCoordination: emitCoordinationEvent,
       chooseExportPath,
       chooseFolder,
       chooseFiles,
@@ -491,6 +493,12 @@ function emitAgentEvent(event: AgentEvent): void {
 function emitChatEvent(event: ChatEvent): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(CHAT_EVENT_CHANNEL, event);
+}
+
+/** sdd/autonomous-coordination, task 6.37: a run/task/dispatch/gate change, so the renderer can route an event from a Brand the person is not looking at. */
+function emitCoordinationEvent(event: CoordinationEvent): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(COORDINATION_EVENT_CHANNEL, event);
 }
 
 async function chooseExportPath(suggestedFileName: string): Promise<string | null> {

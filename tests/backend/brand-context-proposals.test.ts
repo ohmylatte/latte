@@ -211,7 +211,7 @@ describe('brand context proposals', () => {
       text: 'Propuesto', rationale: 'x', mode: 'replace', clientRequestId: 'req_stale',
     });
     await b.service.updateBrand(brandId, 'Base Y');
-    await expect(b.service.approveBrandContextProposal(pending!.id, null)).rejects.toMatchObject({ code: 'PROPOSAL_STALE' });
+    await expect(b.service.approveBrandContextProposal(pending!.id, null)).rejects.toMatchObject({ code: 'BRAND_PROPOSAL_STALE' });
     expect((await b.service.listBrands())[0].context).toBe('Base Y');
     await b.service.approveBrandContextProposal(pending!.id, null, true);
     expect((await b.service.listBrands())[0].context).toBe('Propuesto');
@@ -281,7 +281,7 @@ describe('requestBrandContextDraft', () => {
     }
   });
 
-  it('throws MEMBER_BUSY and does not send when the only strategist is working', async () => {
+  it('throws STRATEGIST_BUSY and does not send when the only strategist is working', async () => {
     const b = await makeBackend();
     const send = vi.spyOn(b.hub, 'send');
     const open = vi.spyOn(b.hub, 'openMember');
@@ -295,7 +295,7 @@ describe('requestBrandContextDraft', () => {
         tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: at, updatedAt: at,
       };
       vi.spyOn(b.hub, 'listTeam').mockReturnValue([busy]);
-      await expect(b.service.requestBrandContextDraft(work.id)).rejects.toMatchObject({ code: 'MEMBER_BUSY' });
+      await expect(b.service.requestBrandContextDraft(work.id)).rejects.toMatchObject({ code: 'STRATEGIST_BUSY' });
       expect(send).not.toHaveBeenCalled();
       expect(open).not.toHaveBeenCalled();
     } finally {

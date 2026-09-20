@@ -1,5 +1,6 @@
 import type { MemoryResult } from '../../shared/contracts';
 import type { CommandRunner } from '../runtime/commandRunner';
+import type { AdapterMcpServer } from '../agents/types';
 
 export interface EngramClientDeps {
   runner: CommandRunner;
@@ -67,4 +68,29 @@ function unavailable(text: string): MemoryResult {
 /** One Engram project per brand, keyed by the immutable brand id only. */
 export function memoryProjectFor(brandId: string): string {
   return `latte-${brandId}`;
+}
+
+/**
+ * Builds the `latte_memory` stdio MCP entry for a brand, or `null` when the
+ * `engram` binary was not found on PATH (task 6.25, design-v2-conversational
+ * D3). A caller resolves the binary itself (mirrors `EngramClient`'s own
+ * `locate()` dependency, e.g. `locateExecutable(runner, 'engram', ...)`) and
+ * passes the result straight through -- `null` here means the `latte_memory`
+ * entry is OMITTED ENTIRELY by whoever builds a member's `mcpServers` array,
+ * never a broken entry the agent discovers failing mid-turn. Both places
+ * `engram help` documents for the project override are pinned from the SAME
+ * `memoryProjectFor(brandId)` call: the `--project=` argv flag AND
+ * `env.ENGRAM_PROJECT`, since the runtimes translate argv and env with
+ * different reliability (see `latte/mcp-y-engram-por-defecto`).
+ */
+export function memoryMcpServerFor(engramBinary: string | null, brandId: string): AdapterMcpServer | null {
+  if (!engramBinary) return null;
+  const project = memoryProjectFor(brandId);
+  return {
+    kind: 'stdio',
+    name: 'latte_memory',
+    command: engramBinary,
+    args: ['mcp', '--tools=agent', `--project=${project}`],
+    env: { ENGRAM_PROJECT: project },
+  };
 }

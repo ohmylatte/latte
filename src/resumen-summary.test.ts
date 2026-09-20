@@ -214,3 +214,39 @@ describe('the summary the Resumen renders', () => {
     expect(resumenSummary(facts)).toEqual(resumenSummary(facts));
   });
 });
+
+describe('the bitácora (additive, autonomous-coordination Phase 7 task 7.3)', () => {
+  it('is empty when no dispatch log and no hires are given', () => {
+    expect(resumenSummary(input()).bitacoraRows).toEqual([]);
+  });
+
+  it('derives one row per coordination_dispatch entry, strictly from its own timestamps', () => {
+    const summary = resumenSummary(input({
+      coordinationLog: [
+        { id: 'cd1', taskId: 't1', memberId: 'm1', status: 'reported', createdAt: '2026-09-01T10:00:00.000Z', startedAt: '2026-09-01T10:01:00.000Z', settledAt: '2026-09-01T10:05:00.000Z' },
+      ],
+    }));
+    expect(summary.bitacoraRows).toEqual([
+      { kind: 'dispatch', id: 'cd1', taskId: 't1', memberId: 'm1', status: 'reported', at: '2026-09-01T10:00:00.000Z' },
+    ]);
+  });
+
+  it('adds one row for a member hired by an approved proposal, distinct from a dispatch row', () => {
+    const summary = resumenSummary(input({
+      coordinationHires: [{ memberId: 'm2', roleName: 'Diseñador', hiredAt: '2026-09-01T09:00:00.000Z' }],
+    }));
+    expect(summary.bitacoraRows).toEqual([
+      { kind: 'hire', id: 'hire:m2:0', memberId: 'm2', roleName: 'Diseñador', at: '2026-09-01T09:00:00.000Z' },
+    ]);
+  });
+
+  it('merges dispatch and hire rows in chronological order, oldest first', () => {
+    const summary = resumenSummary(input({
+      coordinationLog: [
+        { id: 'cd1', taskId: 't1', memberId: 'm1', status: 'reported', createdAt: '2026-09-01T10:00:00.000Z', startedAt: null, settledAt: null },
+      ],
+      coordinationHires: [{ memberId: 'm2', roleName: 'Diseñador', hiredAt: '2026-09-01T09:00:00.000Z' }],
+    }));
+    expect(summary.bitacoraRows.map((r) => r.kind)).toEqual(['hire', 'dispatch']);
+  });
+});

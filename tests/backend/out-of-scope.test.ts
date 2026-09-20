@@ -29,7 +29,7 @@ describe.each<DriverPreference>(['node:sqlite', 'sql.js'])('Out-of-scope column 
       expect(repo.getWork('wrk_1')).toEqual({ id: 'wrk_1', brandId: 'brd_1', title: 'Uno', brief: '# Viejo', folder: null, expectedOutput: null, resultPath: null, outOfScopeStages: [], updatedAt: '2026-01-02T00:00:00.000Z' });
       expect(repo.getMeta('schema_version')).toBe(SCHEMA_VERSION);
       // The out-of-scope column adds no schema version of its own.
-      expect(SCHEMA_VERSION).toBe('11');
+      expect(SCHEMA_VERSION).toBe('12');
       // What an older build still does after this one ran: insert naming only the columns it knows.
       driver.run('INSERT INTO works(id, brand_id, title, brief, dir, updated_at) VALUES (?, ?, ?, ?, ?, ?)', ['wrk_2', 'brd_1', 'Dos', '', null, '2026-01-03T00:00:00.000Z']);
       expect(repo.getWork('wrk_2')).toMatchObject({ outOfScopeStages: [] });

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
-import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
+import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type CoordinationSuspendReason, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
 import type { ArtifactCheck, DeliveryEvidence, GenerationReceipt } from '../../shared/generationContracts';
 import { GenerationContractError } from '../generation/errors';
 import { hashGenerationContext } from '../generation/canon';
 import { newId } from '../core/ids';
-import { NotFoundError, ValidationError } from '../core/errors';
+import { LatteError, NotFoundError, ValidationError } from '../core/errors';
 import { addUsage, parseUsage, serializeUsage } from '../core/usage';
 import type { SqlDriver, SqlRow } from './driver';
 import { BrandingRepository } from './brandingRepository';
@@ -33,6 +33,13 @@ interface MemberRow extends SqlRow { id: string; work_id: string; role_id: strin
 interface GenerationRow extends SqlRow { id: string; work_id: string; brand_id: string; context_json: string; context_hash: string; created_at: string }
 interface EvidenceRow extends SqlRow { id: string; generation_id: string; runtime: string; chat_id: string | null; projected_at: string; files_written: string }
 interface CheckRow extends SqlRow { id: string; generation_id: string; relative_path: string; file_hash: string | null; checks_json: string; brand_compliant: number | null; created_at: string }
+interface CoordinationRunRow extends SqlRow { id: string; work_id: string; status: string; coordinator_member_id: string | null; budget_json: string; plan_json: string | null; plan_approved_at: string | null; suspend_reason: string | null; created_at: string; updated_at: string }
+interface CoordinationTaskRow extends SqlRow { id: string; run_id: string; seq: number; role_id: string; spec: string; status: string; depth: number; attempts: number; in_plan: number; assigned_member_id: string | null; result_summary: string | null; result_files_json: string | null; created_at: string; updated_at: string }
+interface CoordinationDispatchRow extends SqlRow { id: string; run_id: string; task_id: string; member_id: string; attempt: number; status: string; gate_id: string | null; prompt: string; outcome: string | null; summary: string | null; files_json: string | null; reservation_id: string | null; created_at: string; started_at: string | null; settled_at: string | null }
+interface CoordinationMessageRow extends SqlRow { id: string; run_id: string; to_member_id: string; from_member_id: string | null; kind: string; body: string; delivered_at: string | null; created_at: string }
+interface CoordinationAskRow extends SqlRow { id: string; run_id: string; task_id: string | null; member_id: string; question: string; answer: string | null; deadline_at: string; answered_at: string | null; created_at: string }
+interface CoordinationCostReservationRow extends SqlRow { id: string; run_id: string; dispatch_id: string | null; member_id: string; runtime: string; model: string; max_input_tokens: number; max_output_tokens: number; max_cost_micros: number; state: string; usage_json: string | null; created_at: string; settled_at: string | null }
+interface CoordinationCostLedgerRow extends SqlRow { id: string; run_id: string; reservation_id: string | null; kind: string; dispatches: number; cost_micros: number; detail_json: string; created_at: string }
 
 /** Persisted part of a tracked document. Titles and status are UI-facing; the file name is Latte-generated. */
 export interface DocumentRecord {
@@ -75,6 +82,148 @@ export interface TeamMemberRecord {
   usage?: ChatUsage;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Autonomous coordination records (schema 12). Kept local to the storage
+ * layer for now: Phase 1 only ships the store and the pure `dag`/`budget`
+ * modules, wired to nothing, so there is no IPC surface yet to justify
+ * promoting these to `shared/contracts.ts` (that is Phase 2, task 2.1).
+ */
+export type CoordinationRunStatus = 'planning' | 'running' | 'suspended' | 'done' | 'cancelled';
+
+export interface CoordinationRunRecord {
+  id: string;
+  workId: string;
+  status: CoordinationRunStatus;
+  coordinatorMemberId: string | null;
+  /** The per-run budget snapshot, copied from the Work's default at run start. */
+  budgetJson: string;
+  planJson: string | null;
+  planApprovedAt: string | null;
+  suspendReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CoordinationTaskStatus = 'pending' | 'ready' | 'dispatched' | 'running' | 'done' | 'failed' | 'blocked';
+
+export interface CoordinationTaskRecord {
+  id: string;
+  runId: string;
+  seq: number;
+  roleId: string;
+  spec: string;
+  status: CoordinationTaskStatus;
+  depth: number;
+  attempts: number;
+  /** Whether this task was part of the plan snapshot approved under `'plan'` authority. A column, never a JSON diff. */
+  inPlan: boolean;
+  assignedMemberId: string | null;
+  resultSummary: string | null;
+  resultFilesJson: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * K1 (ronda 10): LA FOTO DEL RECLAMO, que es lo que autoriza a escribir sobre
+ * una tarea DESPUÉS del `await` que levanta el proceso del miembro.
+ *
+ * `token` es el `updated_at` que este despacho dejó escrito —al reclamar, o al
+ * confirmar—; `memberId` es el dueño que esa misma escritura dejó: `null`
+ * mientras el reclamo no está confirmado, el miembro una vez que lo está.
+ * Todo compare-and-set posterior compara contra ESTA foto: si no coincide, la
+ * tarea ya es de otro y no se la toca.
+ */
+export interface CoordinationTaskClaim {
+  token: string;
+  memberId: string | null;
+}
+
+/** One dependency edge: `taskId` depends on `dependsOnId`. */
+export interface CoordinationTaskDep {
+  taskId: string;
+  dependsOnId: string;
+}
+
+export type CoordinationDispatchStatus = 'pending_approval' | 'dispatched' | 'running' | 'reported' | 'failed' | 'rejected' | 'cancelled';
+
+/** One row per dispatch attempt. The bitácora's only source: never write narrative text that isn't backed by one of these. */
+export interface CoordinationDispatchRecord {
+  id: string;
+  runId: string;
+  taskId: string;
+  memberId: string;
+  attempt: number;
+  status: CoordinationDispatchStatus;
+  gateId: string | null;
+  prompt: string;
+  outcome: string | null;
+  summary: string | null;
+  filesJson: string | null;
+  reservationId: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  settledAt: string | null;
+}
+
+export type CoordinationMessageKind = 'task' | 'answer' | 'note';
+
+export interface CoordinationMessageRecord {
+  id: string;
+  runId: string;
+  toMemberId: string;
+  fromMemberId: string | null;
+  kind: CoordinationMessageKind;
+  body: string;
+  deliveredAt: string | null;
+  createdAt: string;
+}
+
+export interface CoordinationAskRecord {
+  id: string;
+  runId: string;
+  taskId: string | null;
+  memberId: string;
+  question: string;
+  answer: string | null;
+  deadlineAt: string;
+  answeredAt: string | null;
+  createdAt: string;
+}
+
+export type CoordinationCostReservationState = 'reserved' | 'settled' | 'uncertain';
+
+/** Column-for-column `learning_cost_reservations` (see learningSchema.ts). */
+export interface CoordinationCostReservationRecord {
+  id: string;
+  runId: string;
+  dispatchId: string | null;
+  memberId: string;
+  runtime: string;
+  model: string;
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  maxCostMicros: number;
+  state: CoordinationCostReservationState;
+  usageJson: string | null;
+  createdAt: string;
+  settledAt: string | null;
+}
+
+export type CoordinationCostLedgerKind = 'spend' | 'duplicate_spend' | 'denied';
+
+/** Column-for-column `learning_cost_ledger`; the row is append-only by trigger, never by convention alone. */
+export interface CoordinationCostLedgerRecord {
+  id: string;
+  runId: string;
+  reservationId: string | null;
+  kind: CoordinationCostLedgerKind;
+  dispatches: number;
+  costMicros: number;
+  detailJson: string;
+  createdAt: string;
 }
 
 const BRAND_SELECT = 'SELECT b.id, b.name, b.context, b.created_at, a.archived_at FROM brands b LEFT JOIN brand_archives a ON a.brand_id = b.id';
@@ -201,6 +350,98 @@ const toMember = (r: MemberRow): TeamMemberRecord => ({
   updatedAt: r.updated_at,
 });
 
+const toCoordinationRun = (r: CoordinationRunRow): CoordinationRunRecord => ({
+  id: r.id,
+  workId: r.work_id,
+  status: r.status as CoordinationRunStatus,
+  coordinatorMemberId: r.coordinator_member_id,
+  budgetJson: r.budget_json,
+  planJson: r.plan_json,
+  planApprovedAt: r.plan_approved_at,
+  suspendReason: r.suspend_reason,
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+});
+const toCoordinationTask = (r: CoordinationTaskRow): CoordinationTaskRecord => ({
+  id: r.id,
+  runId: r.run_id,
+  seq: Number(r.seq),
+  roleId: r.role_id,
+  spec: r.spec,
+  status: r.status as CoordinationTaskStatus,
+  depth: Number(r.depth),
+  attempts: Number(r.attempts),
+  inPlan: Number(r.in_plan) === 1,
+  assignedMemberId: r.assigned_member_id,
+  resultSummary: r.result_summary,
+  resultFilesJson: r.result_files_json,
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+});
+const toCoordinationDispatch = (r: CoordinationDispatchRow): CoordinationDispatchRecord => ({
+  id: r.id,
+  runId: r.run_id,
+  taskId: r.task_id,
+  memberId: r.member_id,
+  attempt: Number(r.attempt),
+  status: r.status as CoordinationDispatchStatus,
+  gateId: r.gate_id,
+  prompt: r.prompt,
+  outcome: r.outcome,
+  summary: r.summary,
+  filesJson: r.files_json,
+  reservationId: r.reservation_id,
+  createdAt: r.created_at,
+  startedAt: r.started_at,
+  settledAt: r.settled_at,
+});
+const toCoordinationMessage = (r: CoordinationMessageRow): CoordinationMessageRecord => ({
+  id: r.id,
+  runId: r.run_id,
+  toMemberId: r.to_member_id,
+  fromMemberId: r.from_member_id,
+  kind: r.kind as CoordinationMessageKind,
+  body: r.body,
+  deliveredAt: r.delivered_at,
+  createdAt: r.created_at,
+});
+const toCoordinationAsk = (r: CoordinationAskRow): CoordinationAskRecord => ({
+  id: r.id,
+  runId: r.run_id,
+  taskId: r.task_id,
+  memberId: r.member_id,
+  question: r.question,
+  answer: r.answer,
+  deadlineAt: r.deadline_at,
+  answeredAt: r.answered_at,
+  createdAt: r.created_at,
+});
+const toCoordinationCostReservation = (r: CoordinationCostReservationRow): CoordinationCostReservationRecord => ({
+  id: r.id,
+  runId: r.run_id,
+  dispatchId: r.dispatch_id,
+  memberId: r.member_id,
+  runtime: r.runtime,
+  model: r.model,
+  maxInputTokens: Number(r.max_input_tokens),
+  maxOutputTokens: Number(r.max_output_tokens),
+  maxCostMicros: Number(r.max_cost_micros),
+  state: r.state as CoordinationCostReservationState,
+  usageJson: r.usage_json,
+  createdAt: r.created_at,
+  settledAt: r.settled_at,
+});
+const toCoordinationCostLedger = (r: CoordinationCostLedgerRow): CoordinationCostLedgerRecord => ({
+  id: r.id,
+  runId: r.run_id,
+  reservationId: r.reservation_id,
+  kind: r.kind as CoordinationCostLedgerKind,
+  dispatches: Number(r.dispatches),
+  costMicros: Number(r.cost_micros),
+  detailJson: r.detail_json,
+  createdAt: r.created_at,
+});
+
 /** Deterministic id for a member created by the v2 -> v3 migration (idempotent re-runs). */
 function legacyMemberSuffix(workId: string, runtime: string): string {
   return createHash('sha1').update(`${workId}\0${runtime}`).digest('hex').slice(0, 20);
@@ -318,6 +559,11 @@ export class LatteRepository {
 
   setMeta(key: string, value: string): void {
     this.db.run('INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)', [key, value]);
+  }
+
+  /** Borra la clave entera. "No configurado" y "configurado en algo que no sirve" son estados distintos: un ajuste opcional tiene que poder volver a NO estar. */
+  deleteMeta(key: string): void {
+    this.db.run('DELETE FROM meta WHERE key = ?', [key]);
   }
 
   get engine(): SqlDriver['kind'] {
@@ -858,5 +1104,543 @@ export class LatteRepository {
     return this.db
       .all<CheckRow>('SELECT * FROM artifact_checks WHERE generation_id = ? ORDER BY created_at ASC, id ASC', [generationId])
       .map(toCheck);
+  }
+
+  // Coordination (autonomous runs, schema 12) ---------------------------------
+  // Phase 1: storage only. Nothing here is called from any IPC method yet.
+
+  insertCoordinationRun(run: CoordinationRunRecord): CoordinationRunRecord {
+    this.db.run(
+      'INSERT INTO coordination_run(id, work_id, status, coordinator_member_id, budget_json, plan_json, plan_approved_at, suspend_reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [run.id, run.workId, run.status, run.coordinatorMemberId, run.budgetJson, run.planJson, run.planApprovedAt, run.suspendReason, run.createdAt, run.updatedAt],
+    );
+    return this.getCoordinationRun(run.id);
+  }
+
+  getCoordinationRun(id: string): CoordinationRunRecord {
+    const row = this.db.get<CoordinationRunRow>('SELECT * FROM coordination_run WHERE id = ?', [id]);
+    if (!row) throw new NotFoundError('CoordinationRun', id);
+    return toCoordinationRun(row);
+  }
+
+  /** The Work's live run, if any: `planning`/`running`/`suspended` — the same set the partial unique index enforces one of. */
+  findActiveCoordinationRun(workId: string): CoordinationRunRecord | null {
+    const row = this.db.get<CoordinationRunRow>(
+      "SELECT * FROM coordination_run WHERE work_id = ? AND status IN ('planning','running','suspended')",
+      [workId],
+    );
+    return row ? toCoordinationRun(row) : null;
+  }
+
+  /**
+   * El ÚLTIMO run terminado de este Trabajo (`done`/`cancelled`), o `null` si
+   * nunca terminó ninguno. Terminar no es desaparecer: sin esto, en cuanto un
+   * run pasaba a `done` la interfaz se quedaba sin run, y con él se iba la
+   * bitácora entera — la entrada de cierre `run_done` incluida, que es
+   * justamente la que cuenta cómo terminó.
+   */
+  findLatestFinishedCoordinationRun(workId: string): CoordinationRunRecord | null {
+    const row = this.db.get<CoordinationRunRow>(
+      "SELECT * FROM coordination_run WHERE work_id = ? AND status IN ('done','cancelled') ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1",
+      [workId],
+    );
+    return row ? toCoordinationRun(row) : null;
+  }
+
+  /**
+   * El ÚLTIMO run terminado de cada Trabajo, app-wide, del más nuevo al más
+   * viejo. Uno por Trabajo y nada más: la tira de Inicio tiene que poder decir
+   * "tu equipo terminó" desde que terminó hasta que la persona lo mira, y para
+   * eso alcanza el último — el historial completo no es una novedad, es un
+   * archivo.
+   */
+  listLatestFinishedCoordinationRuns(limit = 25): CoordinationRunRecord[] {
+    return this.db
+      .all<CoordinationRunRow>(
+        `SELECT r.* FROM coordination_run r
+         WHERE r.status IN ('done','cancelled')
+           AND r.updated_at = (SELECT MAX(o.updated_at) FROM coordination_run o WHERE o.work_id = r.work_id AND o.status IN ('done','cancelled'))
+         ORDER BY r.updated_at DESC, r.id DESC LIMIT ?`,
+        [limit],
+      )
+      .map(toCoordinationRun);
+  }
+
+  /**
+   * Every active run app-wide, across every Work and every Brand —
+   * `planning`/`running`/`suspended`, the same set `idx_coordination_run_active`
+   * enforces one-per-Work of. Feeds a proposal gate's `aggregate` (task 6.13:
+   * "the aggregate is shown, not hidden") and, later, the global "Equipos
+   * activos" strip (task 6.34, out of this slice).
+   */
+  listActiveCoordinationRuns(): CoordinationRunRecord[] {
+    return this.db
+      .all<CoordinationRunRow>("SELECT * FROM coordination_run WHERE status IN ('planning','running','suspended') ORDER BY created_at ASC, id ASC", [])
+      .map(toCoordinationRun);
+  }
+
+  /**
+   * The same app-wide active set `listActiveCoordinationRuns` returns, but a
+   * bare count — no row materialization. Feeds the `MAX_ACTIVE_COORDINATION_RUNS`
+   * ceiling (task 6.15) and the coordination MCP server's stop-when-idle rule
+   * (task 6.19), both of which only need "how many", not "which ones".
+   */
+  countActiveCoordinationRuns(): number {
+    const row = this.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM coordination_run WHERE status IN ('planning','running','suspended')");
+    return row?.count ?? 0;
+  }
+
+  /**
+   * M9 (ronda 8): EL MOTIVO ES UNA UNIÓN CERRADA EN LA ESCRITURA. La LECTURA
+   * sigue siendo `string | null` —una base vieja puede tener un motivo que
+   * esta versión ya no emite—, pero nadie puede ESCRIBIR uno que `listGates` y
+   * el tick no sepan interpretar: un motivo desconocido le hacía inventar a
+   * Decisiones una decisión de presupuesto que no existía.
+   */
+  updateCoordinationRunStatus(id: string, status: CoordinationRunStatus, updatedAt: string, suspendReason: CoordinationSuspendReason | null = null): CoordinationRunRecord {
+    this.getCoordinationRun(id);
+    this.db.run('UPDATE coordination_run SET status = ?, suspend_reason = ?, updated_at = ? WHERE id = ?', [status, suspendReason, updatedAt, id]);
+    return this.getCoordinationRun(id);
+  }
+
+  /** Records the plan snapshot (the task ids `latte_plan_submit` just created), still unapproved. */
+  setCoordinationPlan(id: string, planJson: string, updatedAt: string): CoordinationRunRecord {
+    this.getCoordinationRun(id);
+    this.db.run('UPDATE coordination_run SET plan_json = ?, updated_at = ? WHERE id = ?', [planJson, updatedAt, id]);
+    return this.getCoordinationRun(id);
+  }
+
+  /** The one human approval `'plan'` authority requires before any snapshot task can skip its dispatch gate. */
+  approveCoordinationPlan(id: string, approvedAt: string): CoordinationRunRecord {
+    this.getCoordinationRun(id);
+    this.db.run('UPDATE coordination_run SET plan_approved_at = ?, updated_at = ? WHERE id = ?', [approvedAt, approvedAt, id]);
+    return this.getCoordinationRun(id);
+  }
+
+  /** Also updates the active run's own snapshot when one exists: a raised cap must reach a run already in flight, never only the Work's future default. */
+  updateActiveCoordinationRunBudget(workId: string, budgetJson: string, updatedAt: string): void {
+    const run = this.findActiveCoordinationRun(workId);
+    if (!run) return;
+    this.db.run('UPDATE coordination_run SET budget_json = ?, updated_at = ? WHERE id = ?', [budgetJson, updatedAt, run.id]);
+  }
+
+  insertCoordinationTask(task: CoordinationTaskRecord): CoordinationTaskRecord {
+    this.db.run(
+      'INSERT INTO coordination_task(id, run_id, seq, role_id, spec, status, depth, attempts, in_plan, assigned_member_id, result_summary, result_files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [task.id, task.runId, task.seq, task.roleId, task.spec, task.status, task.depth, task.attempts, task.inPlan ? 1 : 0, task.assignedMemberId, task.resultSummary, task.resultFilesJson, task.createdAt, task.updatedAt],
+    );
+    return this.getCoordinationTask(task.id);
+  }
+
+  getCoordinationTask(id: string): CoordinationTaskRecord {
+    const row = this.db.get<CoordinationTaskRow>('SELECT * FROM coordination_task WHERE id = ?', [id]);
+    if (!row) throw new NotFoundError('CoordinationTask', id);
+    return toCoordinationTask(row);
+  }
+
+  listCoordinationTasks(runId: string): CoordinationTaskRecord[] {
+    return this.db.all<CoordinationTaskRow>('SELECT * FROM coordination_task WHERE run_id = ? ORDER BY seq ASC, id ASC', [runId]).map(toCoordinationTask);
+  }
+
+  /** Partial patch: only the fields named are changed, everything else keeps its current value. */
+  updateCoordinationTask(id: string, patch: {
+    status?: CoordinationTaskStatus; depth?: number; attempts?: number; assignedMemberId?: string | null;
+    resultSummary?: string | null; resultFilesJson?: string | null; inPlan?: boolean;
+  }, updatedAt: string): CoordinationTaskRecord {
+    const current = this.getCoordinationTask(id);
+    this.db.run(
+      'UPDATE coordination_task SET status = ?, depth = ?, attempts = ?, assigned_member_id = ?, result_summary = ?, result_files_json = ?, in_plan = ?, updated_at = ? WHERE id = ?',
+      [
+        patch.status ?? current.status,
+        patch.depth ?? current.depth,
+        patch.attempts ?? current.attempts,
+        patch.assignedMemberId === undefined ? current.assignedMemberId : patch.assignedMemberId,
+        patch.resultSummary === undefined ? current.resultSummary : patch.resultSummary,
+        patch.resultFilesJson === undefined ? current.resultFilesJson : patch.resultFilesJson,
+        patch.inPlan === undefined ? (current.inPlan ? 1 : 0) : (patch.inPlan ? 1 : 0),
+        updatedAt,
+        id,
+      ],
+    );
+    return this.getCoordinationTask(id);
+  }
+
+  /**
+   * Compare-and-set: se queda con una tarea `ready` para despacharla, en UNA
+   * sola sentencia. `null` significa que otro la reclamó primero — es lo que
+   * hace que dos `latte_dispatch` simultáneos sobre la misma tarea no puedan
+   * despachar los dos. Se llama SIEMPRE antes de cualquier `await`.
+   *
+   * L1 (ronda 9): DEVUELVE EL TOKEN DEL RECLAMO, que es el `updated_at` que
+   * acaba de escribir. Reclamar no alcanza: entre el reclamo y el commit hay
+   * un spawn entero, y desde la ronda 8 existe un escritor de la tarea en esa
+   * ventana (el caso 3 de `settleOrphanDispatches`). Con este token, la
+   * transacción que commitea puede CONFIRMAR que el reclamo sigue siendo suyo
+   * — ver `confirmCoordinationTaskClaim`.
+   *
+   * `assigned_member_id` se pone en NULL explícitamente: una tarea `ready` ya
+   * lo tiene así por todos los caminos que la sueltan, y dejarlo escrito acá
+   * es lo que vuelve cierta la condición `assigned_member_id IS NULL` de la
+   * confirmación en vez de dejarla descansando sobre una costumbre.
+   */
+  claimCoordinationTaskForDispatch(id: string, updatedAt: string): string | null {
+    const claimed = this.db.run(
+      "UPDATE coordination_task SET status = 'dispatched', assigned_member_id = NULL, updated_at = ? WHERE id = ? AND status = 'ready'",
+      [updatedAt, id],
+    ) > 0;
+    return claimed ? updatedAt : null;
+  }
+
+  /**
+   * L1 (ronda 9): LA CONFIRMACIÓN DEL RECLAMO, en la misma transacción que
+   * escribe la reserva y la fila.
+   *
+   * Cuatro condiciones en una sola sentencia: la tarea sigue `dispatched`
+   * (nadie la soltó), sigue sin miembro asignado (nadie la confirmó antes),
+   * y su `updated_at` sigue siendo el del reclamo (nadie la tocó en el medio).
+   * Cero filas afectadas significa que el reclamo se perdió, y entonces este
+   * despacho no escribe NADA: ni reserva, ni fila, ni `hub.send`.
+   *
+   * K3 (ronda 10): `claimToken` NULO es el camino por gate. Ahí el reclamo no
+   * lo guarda la tarea sino la fila (`started_at`), así que el token de la
+   * tarea no existe; lo que sí sigue valiendo son las otras dos condiciones
+   * —`dispatched` y sin miembro—, y el gate las necesita porque antes de esto
+   * confirmaba la FILA y escribía la tarea a ciegas.
+   *
+   * K7 (ronda 10): `updated_at` COMO TOKEN ES UNA APROXIMACIÓN, y se sabe.
+   * Lo reescribe cualquier UPDATE de la tabla, incluidos los que no cambian
+   * de dueño, así que un escritor inocente puede provocar un `CLAIM_LOST`
+   * falso: nada se corrompe (abortar es la salida segura) pero se despide a
+   * un miembro recién contratado. Por eso todo escritor que NO cambia de
+   * dueño tiene que dejar `updated_at` en paz — ver
+   * `markCoordinationTaskInPlan`. EL ARREGLO DEFINITIVO es una columna propia
+   * del reclamo (`dispatch_claim_id`, esquema v13): un token que sólo escribe
+   * quien toma o suelta la tarea, inmune a cualquier otra escritura. Queda
+   * fuera de este slice porque sube la versión del esquema.
+   */
+  confirmCoordinationTaskClaim(id: string, memberId: string, claimToken: string | null, updatedAt: string): boolean {
+    const base = "UPDATE coordination_task SET assigned_member_id = ?, updated_at = ? WHERE id = ? AND status = 'dispatched' AND assigned_member_id IS NULL";
+    return claimToken == null
+      ? this.db.run(base, [memberId, updatedAt, id]) > 0
+      : this.db.run(base + ' AND updated_at = ?', [memberId, updatedAt, id, claimToken]) > 0;
+  }
+
+  /**
+   * K7 (ronda 10): EL PLAN APROBADO NO CAMBIA DE DUEÑO, ASÍ QUE NO TOCA EL
+   * RELOJ.
+   *
+   * `updateCoordinationTask(id, { inPlan: true }, now)` reescribía
+   * `updated_at` sobre TODAS las tareas del snapshot, incluidas las que en ese
+   * momento estaban `dispatched` y todavía sin miembro — o sea, reclamadas por
+   * un despacho que estaba levantando su proceso. Con el token roto, ese
+   * despacho volvía, no podía confirmar y abortaba con `CLAIM_LOST`:
+   * despedía al miembro recién contratado y le decía a la persona que otro
+   * había tomado la tarea, cuando lo único que había pasado era que ella
+   * aprobó el plan. Marcar la pertenencia al plan es un hecho del PLAN, no de
+   * la tarea, y no tiene por qué mover su reloj.
+   */
+  markCoordinationTaskInPlan(id: string): void {
+    this.db.run('UPDATE coordination_task SET in_plan = 1 WHERE id = ?', [id]);
+  }
+
+  /**
+   * El compare-and-set inverso: mueve SOLO la tarea que este despacho había
+   * reclamado, y sólo mientras siga siendo la que reclamó.
+   *
+   * K1 (ronda 10): EL `WHERE status = 'dispatched'` NO ALCANZABA. Decía "la
+   * tarea sigue despachada", que es cierto también cuando quien la despachó es
+   * OTRO: entre el reclamo y esta llamada hay un spawn entero, y en esa
+   * ventana el caso 3 del barrido puede soltarla y el coordinador
+   * re-despacharla legítimamente. Con la condición vieja, un spawn que volvía
+   * tarde devolvía a `ready` la tarea que otro miembro estaba trabajando, y el
+   * legítimo se quedaba con una fila abierta sobre una tarea que ya no era
+   * suya. `expect` es la foto EXACTA de lo que este despacho dejó: su
+   * `updated_at` y su dueño (nadie, mientras el reclamo no esté confirmado;
+   * el miembro, después). Si algo de eso cambió, este UPDATE no toca nada y
+   * devuelve `false` — y el llamador anota la bitácora en vez de escribir.
+   */
+  releaseCoordinationTaskFromDispatch(
+    id: string,
+    updatedAt: string,
+    expect: CoordinationTaskClaim,
+    status: 'ready' | 'failed' = 'ready',
+  ): boolean {
+    const owner = expect.memberId == null ? 'assigned_member_id IS NULL' : 'assigned_member_id = ?';
+    const params: Array<string | null> = [status, updatedAt, id, expect.token];
+    if (expect.memberId != null) params.push(expect.memberId);
+    return this.db.run(
+      `UPDATE coordination_task SET status = ?, assigned_member_id = NULL, updated_at = ? WHERE id = ? AND status = 'dispatched' AND updated_at = ? AND ${owner}`,
+      params,
+    ) > 0;
+  }
+
+  /** Compare-and-set sobre el gate: dos clics en "Aprobar" compiten por esta fila y uno solo gana. */
+  claimCoordinationDispatchFromGate(id: string, startedAt: string): boolean {
+    return this.db.run("UPDATE coordination_dispatch SET status = 'dispatched', started_at = ? WHERE id = ? AND status = 'pending_approval'", [startedAt, id]) > 0;
+  }
+
+  /**
+   * Devuelve el gate a la mesa cuando el despacho no llegó a concretarse (por
+   * ejemplo, todos los miembros del rol están ocupados).
+   *
+   * K2 (ronda 10): y es un COMPARE-AND-SET, igual que el que lo reclamó. Era
+   * un UPDATE por id pelado: un gate que el barrido ya había liquidado
+   * mientras el proceso levantaba volvía a `pending_approval` desde el `catch`
+   * de un spawn tardío, y la persona veía reaparecer en la mesa una decisión
+   * que ya estaba cerrada. `startedAt` es el token: sólo revive la fila que
+   * ESTE reclamo marcó.
+   */
+  releaseCoordinationDispatchToGate(id: string, startedAt: string): boolean {
+    return this.db.run(
+      "UPDATE coordination_dispatch SET status = 'pending_approval', started_at = NULL WHERE id = ? AND status = 'dispatched' AND started_at = ?",
+      [id, startedAt],
+    ) > 0;
+  }
+
+  /** Edges live on their own table so cycle detection is a graph query, never a JSON parse. */
+  insertCoordinationTaskDep(taskId: string, dependsOnId: string): void {
+    this.db.run('INSERT INTO coordination_task_dep(task_id, depends_on_id) VALUES (?, ?)', [taskId, dependsOnId]);
+  }
+
+  /** Every edge for every task in a run, for feeding `dag.ts`'s pure functions. */
+  listCoordinationTaskDeps(runId: string): CoordinationTaskDep[] {
+    return this.db
+      .all<{ task_id: string; depends_on_id: string }>(
+        'SELECT d.task_id, d.depends_on_id FROM coordination_task_dep d INNER JOIN coordination_task t ON t.id = d.task_id WHERE t.run_id = ?',
+        [runId],
+      )
+      .map((r) => ({ taskId: r.task_id, dependsOnId: r.depends_on_id }));
+  }
+
+  insertCoordinationDispatch(dispatch: CoordinationDispatchRecord): CoordinationDispatchRecord {
+    this.db.run(
+      'INSERT INTO coordination_dispatch(id, run_id, task_id, member_id, attempt, status, gate_id, prompt, outcome, summary, files_json, reservation_id, created_at, started_at, settled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [dispatch.id, dispatch.runId, dispatch.taskId, dispatch.memberId, dispatch.attempt, dispatch.status, dispatch.gateId, dispatch.prompt, dispatch.outcome, dispatch.summary, dispatch.filesJson, dispatch.reservationId, dispatch.createdAt, dispatch.startedAt, dispatch.settledAt],
+    );
+    return this.getCoordinationDispatch(dispatch.id);
+  }
+
+  getCoordinationDispatch(id: string): CoordinationDispatchRecord {
+    const row = this.db.get<CoordinationDispatchRow>('SELECT * FROM coordination_dispatch WHERE id = ?', [id]);
+    if (!row) throw new NotFoundError('CoordinationDispatch', id);
+    return toCoordinationDispatch(row);
+  }
+
+  /** Newest last: the bitácora's own source, in the order the events actually happened. */
+  /**
+   * Todo despacho todavía en vuelo, de toda la app: `dispatched` o `running`.
+   * Es lo que el barrido de arranque y el de cierre reconcilian — sin esto,
+   * una caída con tres despachos en vuelo dejaba esas tres tareas y sus tres
+   * reservas abiertas PARA SIEMPRE, quemando cupo del Trabajo y de la app.
+   */
+  listOpenCoordinationDispatches(): CoordinationDispatchRecord[] {
+    return this.db
+      .all<CoordinationDispatchRow>("SELECT * FROM coordination_dispatch WHERE status IN ('dispatched','running') ORDER BY created_at ASC, id ASC", [])
+      .map(toCoordinationDispatch);
+  }
+
+  listCoordinationDispatches(runId: string): CoordinationDispatchRecord[] {
+    return this.db.all<CoordinationDispatchRow>('SELECT * FROM coordination_dispatch WHERE run_id = ? ORDER BY created_at ASC, id ASC', [runId]).map(toCoordinationDispatch);
+  }
+
+  updateCoordinationDispatch(id: string, patch: {
+    status?: CoordinationDispatchStatus; memberId?: string; gateId?: string | null; prompt?: string; outcome?: string | null; summary?: string | null;
+    filesJson?: string | null; reservationId?: string | null; startedAt?: string | null; settledAt?: string | null;
+  }): CoordinationDispatchRecord {
+    const current = this.getCoordinationDispatch(id);
+    this.db.run(
+      'UPDATE coordination_dispatch SET status = ?, member_id = ?, gate_id = ?, prompt = ?, outcome = ?, summary = ?, files_json = ?, reservation_id = ?, started_at = ?, settled_at = ? WHERE id = ?',
+      [
+        patch.status ?? current.status,
+        patch.memberId ?? current.memberId,
+        patch.gateId === undefined ? current.gateId : patch.gateId,
+        patch.prompt ?? current.prompt,
+        patch.outcome === undefined ? current.outcome : patch.outcome,
+        patch.summary === undefined ? current.summary : patch.summary,
+        patch.filesJson === undefined ? current.filesJson : patch.filesJson,
+        patch.reservationId === undefined ? current.reservationId : patch.reservationId,
+        patch.startedAt === undefined ? current.startedAt : patch.startedAt,
+        patch.settledAt === undefined ? current.settledAt : patch.settledAt,
+        id,
+      ],
+    );
+    return this.getCoordinationDispatch(id);
+  }
+
+  insertCoordinationMessage(message: CoordinationMessageRecord): CoordinationMessageRecord {
+    this.db.run(
+      'INSERT INTO coordination_message(id, run_id, to_member_id, from_member_id, kind, body, delivered_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [message.id, message.runId, message.toMemberId, message.fromMemberId, message.kind, message.body, message.deliveredAt, message.createdAt],
+    );
+    return message;
+  }
+
+  /** FIFO: enqueue order, undelivered only. One index scan (`idx_coordination_message_undelivered`). */
+  listUndeliveredCoordinationMessages(runId: string, toMemberId: string): CoordinationMessageRecord[] {
+    return this.db
+      .all<CoordinationMessageRow>(
+        'SELECT * FROM coordination_message WHERE run_id = ? AND to_member_id = ? AND delivered_at IS NULL ORDER BY created_at ASC, id ASC',
+        [runId, toMemberId],
+      )
+      .map(toCoordinationMessage);
+  }
+
+  markCoordinationMessageDelivered(id: string, deliveredAt: string): void {
+    this.db.run('UPDATE coordination_message SET delivered_at = ? WHERE id = ?', [deliveredAt, id]);
+  }
+
+  insertCoordinationAsk(ask: CoordinationAskRecord): CoordinationAskRecord {
+    this.db.run(
+      'INSERT INTO coordination_ask(id, run_id, task_id, member_id, question, answer, deadline_at, answered_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [ask.id, ask.runId, ask.taskId, ask.memberId, ask.question, ask.answer, ask.deadlineAt, ask.answeredAt, ask.createdAt],
+    );
+    return this.getCoordinationAsk(ask.id);
+  }
+
+  getCoordinationAsk(id: string): CoordinationAskRecord {
+    const row = this.db.get<CoordinationAskRow>('SELECT * FROM coordination_ask WHERE id = ?', [id]);
+    if (!row) throw new NotFoundError('CoordinationAsk', id);
+    return toCoordinationAsk(row);
+  }
+
+  /** Unanswered asks for a run (`idx_coordination_ask_open`). */
+  listOpenCoordinationAsks(runId: string): CoordinationAskRecord[] {
+    return this.db.all<CoordinationAskRow>('SELECT * FROM coordination_ask WHERE run_id = ? AND answered_at IS NULL ORDER BY created_at ASC, id ASC', [runId]).map(toCoordinationAsk);
+  }
+
+  /**
+   * Las preguntas de UNA tarea, oldest first (R7). Alimenta el prompt del
+   * re-despacho: sin esto, la tarea que volvía a la cola porque su pregunta
+   * fue contestada se despachaba EXACTAMENTE igual que la primera vez, y la
+   * respuesta que la persona escribió no salía nunca de la base.
+   */
+  /**
+   * L2 (ronda 9): TODAS las preguntas de un run, contestadas y vencidas
+   * incluidas. `listOpenCoordinationAsks` no alcanza para el barrido: además
+   * de saber si alguien espera AHORA, hay que saber desde CUÁNDO dejó de
+   * esperar, y eso vive en las que ya se cerraron.
+   */
+  listCoordinationAsksForRun(runId: string): CoordinationAskRecord[] {
+    return this.db.all<CoordinationAskRow>('SELECT * FROM coordination_ask WHERE run_id = ? ORDER BY created_at ASC, id ASC', [runId]).map(toCoordinationAsk);
+  }
+
+  listCoordinationAsksForTask(taskId: string): CoordinationAskRecord[] {
+    return this.db.all<CoordinationAskRow>('SELECT * FROM coordination_ask WHERE task_id = ? ORDER BY created_at ASC, id ASC', [taskId]).map(toCoordinationAsk);
+  }
+
+  /**
+   * La pregunta que se venció sin respuesta, CERRADA (F5).
+   *
+   * `answered_at` con la marca del cierre y `answer` intacto en `null`: ninguna
+   * respuesta real puede verse así (`answerCoordinationAsk` siempre escribe un
+   * texto), y así `listOpenCoordinationAsks` —que filtra por `answered_at IS
+   * NULL`— deja de publicarla sin que haga falta una columna nueva ni subir
+   * `SCHEMA_VERSION`. El `WHERE answered_at IS NULL` impide pisar una respuesta
+   * que entró en el mismo instante.
+   */
+  expireCoordinationAsk(id: string, expiredAt: string): void {
+    this.db.run('UPDATE coordination_ask SET answered_at = ? WHERE id = ? AND answered_at IS NULL', [expiredAt, id]);
+  }
+
+  /**
+   * R9: un COMPARE-AND-SET, no una escritura a ciegas.
+   *
+   * Sin el `AND answered_at IS NULL`, dos respuestas a la misma pregunta —dos
+   * personas, dos pestañas, dos clics— se pisaban en silencio, y una pregunta
+   * CERRADA POR VENCIMIENTO se "contestaba" igual: el vencimiento ya había
+   * devuelto la tarea a la cola, así que la persona escribía una respuesta que
+   * no iba a leer nadie y la interfaz le decía que había salido bien. Cero
+   * filas es un error con nombre, no un éxito silencioso.
+   */
+  answerCoordinationAsk(id: string, answer: string, answeredAt: string): CoordinationAskRecord {
+    this.getCoordinationAsk(id); // que exista es un NotFound, no un ASK_CLOSED: son dos cosas distintas
+    const changed = this.db.run('UPDATE coordination_ask SET answer = ?, answered_at = ? WHERE id = ? AND answered_at IS NULL', [answer, answeredAt, id]);
+    if (changed === 0) throw new LatteError('ASK_CLOSED', 'Esa pregunta ya no esperaba respuesta: se contestó o se venció.');
+    return this.getCoordinationAsk(id);
+  }
+
+  // Coordination cost ledger (column-for-column learning_cost_reservations/ledger) --
+
+  insertCoordinationCostReservation(row: CoordinationCostReservationRecord): void {
+    this.db.run(
+      'INSERT INTO coordination_cost_reservations(id, run_id, dispatch_id, member_id, runtime, model, max_input_tokens, max_output_tokens, max_cost_micros, state, usage_json, created_at, settled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [row.id, row.runId, row.dispatchId, row.memberId, row.runtime, row.model, row.maxInputTokens, row.maxOutputTokens, row.maxCostMicros, row.state, row.usageJson, row.createdAt, row.settledAt],
+    );
+  }
+
+  /**
+   * Compare-and-set: sólo cierra una reserva que TODAVÍA está abierta. Devuelve
+   * si ganó — el llamador necesita saberlo, porque el asiento de gasto se
+   * escribe una sola vez por reserva y quien pierde el CAS no tiene que
+   * escribir nada (ver `CoordinationEngine.settleUncertain`).
+   */
+  settleCoordinationCostReservation(id: string, usageJson: string | null, settledAt: string, uncertain: boolean): boolean {
+    return this.db.run(
+      "UPDATE coordination_cost_reservations SET state = ?, usage_json = ?, settled_at = ? WHERE id = ? AND state = 'reserved'",
+      [uncertain ? 'uncertain' : 'settled', usageJson, settledAt, id],
+    ) > 0;
+  }
+
+  getCoordinationCostReservation(id: string): CoordinationCostReservationRecord | null {
+    const row = this.db.get<CoordinationCostReservationRow>('SELECT * FROM coordination_cost_reservations WHERE id = ?', [id]);
+    return row ? toCoordinationCostReservation(row) : null;
+  }
+
+  /** Append-only by trigger: no code path here ever issues an UPDATE/DELETE against this table. */
+  insertCoordinationCostLedger(row: CoordinationCostLedgerRecord): void {
+    this.db.run(
+      'INSERT INTO coordination_cost_ledger(id, run_id, reservation_id, kind, dispatches, cost_micros, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [row.id, row.runId, row.reservationId, row.kind, row.dispatches, row.costMicros, row.detailJson, row.createdAt],
+    );
+  }
+
+  /**
+   * Reservas todavía abiertas (`state = 'reserved'`): gasto ya comprometido al
+   * despachar, que nadie liquidó aún. Sin esto el tope sólo contaría lo que el
+   * agente se dignó a reportar — un agente que nunca llama a `latte_report`
+   * tendría presupuesto infinito. Sin `runId` es el total de la app.
+   */
+  countOpenCoordinationCostReservations(runId?: string): number {
+    const row = runId
+      ? this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM coordination_cost_reservations WHERE state = 'reserved' AND run_id = ?", [runId])
+      : this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM coordination_cost_reservations WHERE state = 'reserved'");
+    return row?.n ?? 0;
+  }
+
+  /** Las reservas abiertas de los runs vivos, la contraparte de `sumActiveCoordinationSpentDispatches` para el tope app-wide. */
+  countOpenActiveCoordinationCostReservations(): number {
+    const row = this.db.get<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM coordination_cost_reservations WHERE state = 'reserved' AND run_id IN (SELECT id FROM coordination_run WHERE status IN ('planning','running','suspended'))",
+    );
+    return row?.n ?? 0;
+  }
+
+  /** `SUM(dispatches) WHERE kind = 'spend'` de UN run. La otra mitad del tope del Trabajo. */
+  sumCoordinationSpentDispatches(runId: string): number {
+    const row = this.db.get<{ n: number | null }>("SELECT SUM(dispatches) AS n FROM coordination_cost_ledger WHERE kind = 'spend' AND run_id = ?", [runId]);
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Lo mismo, pero sumando sólo los runs VIVOS
+   * (`planning`/`running`/`suspended`). El tope app-wide se calculaba sobre el
+   * libro mayor entero, para toda la vida de la instalación: quien ponía 40
+   * tenía 40 despachos y nunca más, y después cada run de cada Marca se
+   * suspendía sin salida posible. Un tope app-wide describe cuánto puede estar
+   * pasando A LA VEZ, no cuánto pasó alguna vez; el asiento igual queda
+   * retenido, que es lo que la inmutabilidad del libro promete.
+   */
+  sumActiveCoordinationSpentDispatches(): number {
+    const row = this.db.get<{ n: number | null }>(
+      "SELECT SUM(dispatches) AS n FROM coordination_cost_ledger WHERE kind = 'spend' AND run_id IN (SELECT id FROM coordination_run WHERE status IN ('planning','running','suspended'))",
+    );
+    return row?.n ?? 0;
+  }
+
+  /** Every ledger row for a run, oldest first — the source `budget.ts`'s caller sums into a `BudgetUsage` snapshot. */
+  listCoordinationCostLedger(runId: string): CoordinationCostLedgerRecord[] {
+    return this.db
+      .all<CoordinationCostLedgerRow>('SELECT * FROM coordination_cost_ledger WHERE run_id = ? ORDER BY created_at ASC, id ASC', [runId])
+      .map(toCoordinationCostLedger);
   }
 }

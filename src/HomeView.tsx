@@ -1,7 +1,7 @@
 import { Plus } from 'lucide-react';
 import type { Brand, Decision, DocumentState, WorkDocument } from '../shared/contracts';
 import { translate as t } from './i18n';
-import { homeSummary } from './home-summary';
+import { homeSummary, type HomeSinceLastVisitInput } from './home-summary';
 
 /**
  * Inicio: the decision-first landing, before any work is open.
@@ -37,6 +37,13 @@ export interface HomeViewProps {
   liveWorkIds: readonly string[];
   /** Pending brand-context proposals. */
   pendingContextProposals: number;
+  /**
+   * Additive, optional (autonomous-coordination Phase 7 task 7.2): `undefined`
+   * means the caller has not wired coordination state yet — the card simply
+   * does not render, same as an empty list. Persisted facts only, never a
+   * narrative guess.
+   */
+  coordinationSinceLastVisit?: readonly HomeSinceLastVisitInput[];
   formatDate: (value: string) => string;
   onOpenWork: (workId: string) => void;
   onOpenDecisions: (workId: string) => void;
@@ -60,6 +67,7 @@ export function HomeView(props: HomeViewProps) {
     documents: props.documents,
     states: props.states,
     checking: props.checking,
+    coordinationSinceLastVisit: props.coordinationSinceLastVisit,
   });
 
   // A card renders only when it has at least one row — or, for Continuar on a
@@ -68,6 +76,8 @@ export function HomeView(props: HomeViewProps) {
   const showContinue = Boolean(props.brand) && (summary.continueRows.length > 0 || summary.showNewWork);
   const showDecisions = Boolean(props.brand) && (summary.decisionRows.length > 0 || props.pendingContextProposals > 0);
   const showReview = Boolean(props.brand) && summary.reviewRows.length > 0;
+  const showSinceLastVisit = Boolean(props.brand) && summary.sinceLastVisitRows.length > 0;
+  const sinceTitleKey = summary.sinceLastVisitRows.every((row) => row.sinceVisit) ? 'home.since.title' : 'home.since.titleNoVisit';
 
   return <section className="home-view" role="region" aria-label={t('home.region')}>
     <div className="home-next" data-step={summary.step}>
@@ -109,6 +119,20 @@ export function HomeView(props: HomeViewProps) {
       <div className="home-rows">{summary.reviewRows.map((row) => <button type="button" className="home-row" key={row.id} onClick={() => props.onOpenDocument(row.id)}>
         <span className="home-row-title">{row.title}</span>
         {row.workTitle && <span className="home-row-meta">{row.workTitle}</span>}
+      </button>)}</div>
+    </section>}
+
+    {/* El título se elige por la EVIDENCIA que hay: "desde tu última visita"
+        sólo se puede afirmar si TODA fila se mide contra una visita real. Una
+        sola sin visita registrada y la tarjeta dice desde cuándo habla de
+        verdad — prometer una visita que nunca se midió era la mentira. */}
+    {showSinceLastVisit && <section className="home-card home-since" aria-label={t(sinceTitleKey)}>
+      <h2 className="home-card-title">{t(sinceTitleKey)}</h2>
+      {/* El `kind` viaja al DOM: un equipo que TERMINÓ no es una novedad
+          cualquiera y su fila tiene que poder verse distinta sin que el estilo
+          dependa de leer el texto de la frase. */}
+      <div className="home-rows">{summary.sinceLastVisitRows.map((row) => <button type="button" className={'home-row' + (row.kind === 'done' || row.kind === 'failed' ? ' home-row-finished' : '')} data-kind={row.kind} key={row.id} onClick={() => row.kind === 'awaitingYou' ? props.onOpenDecisions(row.workId) : props.onOpenWork(row.workId)}>
+        <span className="home-row-title">{t(`home.since.kind.${row.kind}` as 'home.since.kind.done', { workTitle: row.workTitle })}</span>
       </button>)}</div>
     </section>}
   </section>;

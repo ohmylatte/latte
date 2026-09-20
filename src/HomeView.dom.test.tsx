@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { configure, fireEvent, render, screen } from '@testing-library/react';
+import { configure, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { HomeView, type HomeViewProps } from './HomeView';
 import { I18nProvider } from './i18n';
 import type { Brand, Decision, DocumentState, WorkDocument } from '../shared/contracts';
@@ -179,5 +179,112 @@ describe('Inicio, the attention surface', () => {
     const input = props({ works: [work({ updatedAt: '2026-09-01T00:00:00.000Z' })], formatDate: (value) => `d:${value}` });
     mount(input);
     expect(screen.getByText('d:2026-09-01T00:00:00.000Z')).toBeDefined();
+  });
+});
+
+describe('the since-last-visit card (additive, autonomous-coordination Phase 7)', () => {
+  it('does not render when the caller has not wired coordination state', () => {
+    const { container } = mount(props({ works: [work()] }));
+    expect(container.querySelector('.home-since')).toBeNull();
+  });
+
+  it('renders no card for an explicitly empty list — zero rows is never a zero', () => {
+    const { container } = mount(props({ works: [work()], coordinationSinceLastVisit: [] }));
+    expect(container.querySelector('.home-since')).toBeNull();
+  });
+
+  it('renders one row per event and routes a pending-approval row to Decisiones, the rest to the work', () => {
+    const input = props({
+      works: [work({ id: 'w1', title: 'Lanzamiento' })],
+      coordinationSinceLastVisit: [
+        { id: 'e1', workId: 'w1', kind: 'done', sinceVisit: true },
+        { id: 'e2', workId: 'w1', kind: 'awaitingYou', sinceVisit: true },
+      ],
+    });
+    const { container } = mount(input);
+    const rows = [...container.querySelectorAll<HTMLButtonElement>('.home-since .home-row')];
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain('Lanzamiento');
+    expect(rows[0].textContent).toContain('terminó su trabajo');
+    fireEvent.click(rows[0]);
+    expect(input.onOpenWork).toHaveBeenCalledWith('w1');
+    expect(rows[1].textContent).toContain('espera tu aprobación');
+    fireEvent.click(rows[1]);
+    expect(input.onOpenDecisions).toHaveBeenCalledWith('w1');
+  });
+
+  // U3c: un equipo que terminó se lee como terminado, no como una novedad
+  // cualquiera. La fila lleva su `kind` en el DOM para que el estilo de
+  // terminado exista de verdad y no dependa de leer el texto.
+  it('la fila de un equipo terminado se marca como terminada', () => {
+    const { container } = mount(props({
+      works: [work({ id: 'w1', title: 'Lanzamiento' })],
+      coordinationSinceLastVisit: [
+        { id: 'e1', workId: 'w1', kind: 'done', sinceVisit: true },
+        { id: 'e2', workId: 'w1', kind: 'awaitingYou', sinceVisit: true },
+      ],
+    }));
+    const rows = [...container.querySelectorAll<HTMLButtonElement>('.home-since .home-row')];
+    expect(rows).toHaveLength(2);
+    expect(rows[0].dataset.kind).toBe('done');
+    expect(rows[0].className).toContain('home-row-finished');
+    expect(rows[1].dataset.kind).toBe('awaitingYou');
+    expect(rows[1].className).not.toContain('home-row-finished');
+  });
+
+  // La tarjeta prometía "desde tu última visita" sin ninguna visita medida.
+  // Con una visita registrada el título se sostiene; sin ella, el copy tiene
+  // que decir desde CUÁNDO habla de verdad.
+  it('con una visita registrada, el título habla de la visita', () => {
+    const { container } = mount(props({
+      works: [work({ id: 'w1', title: 'Lanzamiento' })],
+      coordinationSinceLastVisit: [{ id: 'e1', workId: 'w1', kind: 'awaitingYou', sinceVisit: true }],
+    }));
+    expect(container.querySelector('.home-since')!.textContent).toContain('Desde tu última visita');
+  });
+
+  it('SIN ninguna visita registrada, el título no inventa una visita', () => {
+    const { container } = mount(props({
+      works: [work({ id: 'w1', title: 'Lanzamiento' })],
+      coordinationSinceLastVisit: [{ id: 'e1', workId: 'w1', kind: 'awaitingYou', sinceVisit: false }],
+    }));
+    const card = container.querySelector('.home-since')!;
+    expect(card.textContent).not.toContain('Desde tu última visita');
+    expect(card.textContent).toContain('Desde que empezó la coordinación');
+  });
+
+  it('una sola fila sin visita alcanza para que el título no afirme una visita', () => {
+    const { container } = mount(props({
+      works: [work({ id: 'w1', title: 'Lanzamiento' })],
+      coordinationSinceLastVisit: [
+        { id: 'e1', workId: 'w1', kind: 'awaitingYou', sinceVisit: true },
+        { id: 'e2', workId: 'w1', kind: 'budgetConsumed', sinceVisit: false },
+      ],
+    }));
+    expect(container.querySelector('.home-since')!.textContent).toContain('Desde que empezó la coordinación');
+  });
+
+  it('el título sin visita, en inglés', async () => {
+    localStorage.setItem('latte-ui-locale', 'en-US');
+    const input = props({
+      works: [work({ id: 'w1', title: 'Launch' })],
+      coordinationSinceLastVisit: [{ id: 'e1', workId: 'w1', kind: 'awaitingYou', sinceVisit: false }],
+    });
+    const { container } = render(<I18nProvider><HomeView {...input} /></I18nProvider>);
+    await waitFor(() => expect(container.textContent).toContain('Since coordination started'));
+    expect(container.textContent).not.toContain('Since your last visit');
+    localStorage.removeItem('latte-ui-locale');
+  });
+
+  it('renders the same card in English, with nothing left in Spanish', async () => {
+    localStorage.setItem('latte-ui-locale', 'en-US');
+    const input = props({
+      works: [work({ id: 'w1', title: 'Launch' })],
+      coordinationSinceLastVisit: [{ id: 'e1', workId: 'w1', kind: 'budgetConsumed', sinceVisit: true }],
+    });
+    const { container } = render(<I18nProvider><HomeView {...input} /></I18nProvider>);
+    await waitFor(() => expect(container.textContent).toContain('Since your last visit'));
+    expect(container.textContent).toContain('dispatch budget ran out');
+    localStorage.removeItem('latte-ui-locale');
   });
 });

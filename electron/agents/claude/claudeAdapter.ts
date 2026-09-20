@@ -10,9 +10,9 @@ import { killProcessTree, spawnInOwnProcessGroup } from '../../core/processTree'
 import { addUsage, tokenCount } from '../../core/usage';
 import { spawnSpecFor } from '../../runtime/commandRunner';
 import { scrubEnv } from '../../runtime/terminalManager';
-import { claudeArgsForTier } from '../tiers';
+import { claudeArgsForTier, claudeSupportsMcpInjection } from '../tiers';
 import type { TranscriptStore } from '../transcripts';
-import { sessionFrom, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../types';
+import { sessionFrom, type AdapterMcpServer, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../types';
 
 export interface ClaudeAdapterDeps {
   resolveExecutable: () => Promise<{ executable: string; version: string | null } | null>;
@@ -21,6 +21,14 @@ export interface ClaudeAdapterDeps {
   accountEnv: (accountId: string | null) => Record<string, string>;
   /** Called once the CLI reveals its session id, so the hub can persist it for resume. */
   onSessionId?: (chatId: string, sessionId: string) => void;
+  /**
+   * Lo que el RUNTIME reporta en su `system/init`: los servidores MCP que
+   * CONECTO de verdad, no los que Latte le pidio (juicio #1, ronda 4).
+   * Llega asincronicamente, despues de que `start()` ya volvio, asi que es
+   * una CORRECCION posterior del reclamo -- ver el comentario del
+   * `injectedMcpServers` que devuelve `startChat`.
+   */
+  onMcpServers?: (chatId: string, connected: string[]) => void;
   /**
    * Where role prompts are written for `--append-system-prompt-file` (one file
    * per chat, Latte-owned). Without it the prompt goes inline on the command line.
@@ -72,6 +80,8 @@ interface LiveChat {
    */
   epoch: string;
   mcpServers: Array<{ name: string; status: string }>;
+  /** The coordination mcp-config file written for this chat, if any. Deleted when the chat ends. */
+  mcpConfigFile: string | null;
   /** What this process has consumed since it started. The lifetime total is the hub's job. */
   usage: ChatUsage;
   /**
@@ -114,7 +124,29 @@ export const FOLDER_TOOLS = ['Read(./**)', 'Write(./**)', 'Edit(./**)'];
  */
 export class ClaudeChatAdapter implements RuntimeAdapter {
   readonly runtime = 'claude' as const;
+  // Task 4.1's baseline was 'none'; the translation (tasks 4.2-4.4) was real
+  // and tested but flipping this flag was deliberately left for Phase 6
+  // (task 6.23), since nothing read it yet. It flips now: engram ships BY
+  // DEFAULT to every Claude member (design-v2-conversational D3), and
+  // nothing about that decision is gated on coordination, so this adapter
+  // must always be able to receive an mcpServers array, run or no run,
+  // coordination flag on or off. Nothing calls coordinationRuntimeSupport's
+  // eligibility rules from here — that stays hub wiring's job (6f/6.29+);
+  // this field only says the adapter CAN translate whatever it is given.
+  readonly mcpInjection = 'per-member' as const;
+  // El `system/init` del propio CLI lista los servidores que CONECTO, con su
+  // `status`; `deps.onMcpServers` lo trae apenas el proceso habla.
+  readonly confirmsMcpInjection = true;
   private readonly chats = new Map<string, LiveChat>();
+  /**
+   * Los chatIds que estan ARRANCANDO ahora mismo (juicio #7, ronda 4). El
+   * guard `this.chats.has(chatId)` vive antes de `await resolveExecutable()` y
+   * el `set` recien despues: dos `start()` concurrentes con el mismo chatId lo
+   * pasaban los dos y spawneaban DOS procesos, el segundo pisando al primero
+   * en el mapa. Cuando el primero (ya huerfano) termina, `finish()` borraba la
+   * entrada VIVA. Reservar el id sincronicamente cierra la ventana.
+   */
+  private readonly starting = new Set<string>();
   private readonly env: NodeJS.ProcessEnv;
   private readonly platform: NodeJS.Platform;
   private readonly maxChats: number;
@@ -143,9 +175,22 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
   }
 
   async start(input: AdapterStartInput): Promise<AdapterStartResult> {
-    if (this.chats.size >= this.maxChats) throw new ValidationError(`Too many open Claude chats (max ${this.maxChats})`);
+    // `starting` cuenta (D9). El guard miraba solo `chats`, y una fila entra
+    // ahi recien cuando el proceso ya arranco: N aperturas simultaneas leian
+    // las N el mismo tamanio —cero— y pasaban todas, asi que el tope no topaba
+    // nada justo cuando mas hace falta, que es cuando llegan todas juntas.
+    if (this.chats.size + this.starting.size >= this.maxChats) throw new ValidationError(`Too many open Claude chats (max ${this.maxChats})`);
     const chatId = input.chatId ?? newId('ses');
-    if (this.chats.has(chatId)) throw new ValidationError('This chat is already open');
+    if (this.chats.has(chatId) || this.starting.has(chatId)) throw new ValidationError('This chat is already open');
+    this.starting.add(chatId);
+    try {
+      return await this.startChat(chatId, input);
+    } finally {
+      this.starting.delete(chatId);
+    }
+  }
+
+  private async startChat(chatId: string, input: AdapterStartInput): Promise<AdapterStartResult> {
     const runtime = await this.deps.resolveExecutable();
     if (!runtime) throw new UnavailableError('Claude Code is not installed or not on PATH');
 
@@ -162,6 +207,28 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       if (promptFile) args.push('--append-system-prompt-file', promptFile);
       else args.push('--append-system-prompt', instructions);
     }
+    // MCP injection (sdd/autonomous-coordination, Phase 4; the http|stdio
+    // union and engram-by-default, Phase 6 task 6.21-6.23). Only
+    // `--mcp-config` is pushed, NEVER `--strict-mcp-config`: strict mode would
+    // also strip the human's own MCP servers from this member for the whole
+    // session, a capability removal AGENTS.md forbids. Isolation of Latte's
+    // own coordination tool comes from the per-member bearer token inside the
+    // file, not from strict mode (design decision, sdd/autonomous-coordination/design).
+    // The token itself never touches argv: it is off in the config file, and
+    // the version floor guards against a headless process hanging forever on
+    // an approval prompt no human can answer. `latte_memory` (engram) carries
+    // no token at all and rides the SAME file/flag — see writeMcpConfigFile.
+    let mcpConfigFile: string | null = null;
+    if (input.mcpServers && input.mcpServers.length > 0) {
+      if (!claudeSupportsMcpInjection(runtime.version)) {
+        this.deps.log?.(`[claude ${chatId}] CLI ${runtime.version ?? 'unknown'} predates 2.1.246, MCP servers not injected this session`);
+      } else if (!this.deps.promptDir) {
+        this.deps.log?.(`[claude ${chatId}] no promptDir configured, MCP servers not injected this session`);
+      } else {
+        mcpConfigFile = this.writeMcpConfigFile(chatId, input.mcpServers);
+      }
+    }
+    if (mcpConfigFile) args.push('--mcp-config', mcpConfigFile);
     const spec = spawnSpecFor(runtime.executable, args, this.platform, this.env);
     const env = { ...scrubEnv(this.env), ...this.deps.accountEnv(input.accountId ?? null), ...(input.extraEnv ?? {}) };
 
@@ -191,6 +258,7 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       restoredIds: new Set(),
       epoch: randomUUID().slice(0, 8),
       mcpServers: [],
+      mcpConfigFile,
       usage: EMPTY_USAGE,
       costSoFar: null,
     };
@@ -225,7 +293,28 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       // Honest about legacy sessions: resumed in the runtime, but with no local record to show.
       historyRecovered: live.restored > 0,
     };
-    return { session, runtimeSessionId: input.previousSessionId ?? '' };
+    // Ronda 4, juicio #1: esto era una TAUTOLOGIA. Con el archivo escrito se
+    // devolvia la lista que Latte habia pedido -- "escribimos un archivo", no
+    // "el runtime los levanto". Si `claude` arranca, parsea el config y
+    // `latte_memory` no lanza (engram movido de lugar, arquitectura
+    // equivocada), la persona igual leia que el miembro tiene memoria.
+    //
+    // El unico reporte honesto es el del propio runtime, y llega en el
+    // `system/init` -- DESPUES de que esta funcion vuelve. Asi que aca:
+    //   - con archivo escrito => `undefined`: "todavia no se", que
+    //     `confirmInjection` respeta dejando el reclamo previo intacto. La
+    //     correccion llega por `deps.onMcpServers` apenas el proceso habla.
+    //   - SIN archivo escrito => `undefined` TAMBIEN (D7c). Devolver `[]` era la
+    //     ultima tautologia que quedaba, dada vuelta: convertia la negativa de
+    //     LATTE (sin `promptDir`, un EACCES al escribir el config, el piso de
+    //     version) en "el runtime reporto cero servidores", y `confirmInjection`
+    //     prendia `runtimeConfirmed` — o sea, la UI afirmaba que el proceso
+    //     habia hablado cuando el proceso no habia dicho una palabra. La
+    //     negativa es real y hay que contarla, pero por su propio campo: es un
+    //     hecho sobre Latte, no sobre el runtime.
+    const injectedMcpServers = undefined;
+    const injectionRefusedByLatte = Boolean(input.mcpServers && input.mcpServers.length > 0 && !mcpConfigFile);
+    return { session, runtimeSessionId: input.previousSessionId ?? '', injectedMcpServers, injectionRefusedByLatte };
   }
 
   listMessages(chatId: string): ChatMessage[] {
@@ -322,6 +411,37 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
     }
   }
 
+  /**
+   * The MCP server(s) for this chat alone, in the shape Claude Code's
+   * `--mcp-config` expects. Both kinds ride in the SAME file (task 6.22):
+   * Claude's `--mcp-config` format already supports an `http` entry and a
+   * `stdio` entry side by side, so `latte_coordination` and `latte_memory`
+   * cost no second seam. Written next to the prompt file so it dies with
+   * the session; mode 0600 because the file can hold a live bearer token
+   * and, unlike the prompt text, is not meant for anything but this process
+   * to read. No inline-JSON fallback: the token would then sit in argv,
+   * exactly what this whole design keeps off the command line.
+   */
+  private writeMcpConfigFile(chatId: string, servers: AdapterMcpServer[]): string | null {
+    try {
+      const dir = this.deps.promptDir as string;
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `${chatId}.mcp.json`);
+      const mcpServers: Record<string, unknown> = {};
+      for (const server of servers) {
+        mcpServers[server.name] = server.kind === 'http'
+          ? { type: 'http', url: server.url, headers: { Authorization: `Bearer ${server.token}` } }
+          : { type: 'stdio', command: server.command, args: server.args, ...(server.env ? { env: server.env } : {}) };
+      }
+      writeFileAtomic(file, JSON.stringify({ mcpServers }));
+      try { fs.chmodSync(file, 0o600); } catch { /* best-effort; some filesystems ignore it */ }
+      return file;
+    } catch (error) {
+      this.deps.log?.(`[claude ${chatId}] mcp config file failed, MCP servers not injected this session: ${describe(error)}`);
+      return null;
+    }
+  }
+
   private write(live: LiveChat, payload: unknown): void {
     try {
       live.child.stdin?.write(`${JSON.stringify(payload)}\n`);
@@ -334,9 +454,14 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
     if (live.closed) return;
     live.closed = true;
     live.busy = false;
-    this.chats.delete(live.chatId);
+    // Juicio #7: `delete` incondicional borraba la entrada VIVA cuando quien
+    // terminaba era un proceso huerfano de un spawn duplicado, emitiendo un
+    // `closed` espurio y dejando al hijo que si corre sin dueno para siempre.
+    if (this.chats.get(live.chatId) === live) this.chats.delete(live.chatId);
     try { live.child.stdin?.end(); } catch { /* ignore */ }
     killProcessTree(live.child, this.platform);
+    // The bearer token lives only in this file. It must not outlive the chat.
+    if (live.mcpConfigFile) { try { fs.rmSync(live.mcpConfigFile, { force: true }); } catch { /* ignore */ } }
     this.deps.emit({ chatId: live.chatId, type: 'closed', reason });
   }
 
@@ -373,6 +498,20 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
             this.deps.onSessionId?.(live.chatId, msg.session_id);
           }
           live.mcpServers = parseInitMcpServers(msg.mcp_servers);
+          // El estado por servidor que el CLI publica. Solo `connected` es una
+          // herramienta que el agente puede usar; `failed` o `needs-auth` son un
+          // servidor que NO esta, y eso SI es una negativa del runtime.
+          //
+          // `pending` (o cualquier estado transitorio) NO lo es (D7b): es "todavia
+          // esta levantando". Contarlo como no-conectado degradaba el reclamo por
+          // una foto sacada medio segundo antes de tiempo, y el reclamo degradado
+          // no vuelve a subir solo: el miembro quedaba marcado "el runtime se
+          // nego" para siempre, con el servidor andando. Ante un transitorio no
+          // se informa nada y el reclamo previo queda intacto, hasta el proximo
+          // `system/init`.
+          if (!live.mcpServers.some((server) => TRANSIENT_MCP_STATUS.has(server.status))) {
+            this.deps.onMcpServers?.(live.chatId, live.mcpServers.filter((server) => server.status === 'connected').map((server) => server.name));
+          }
         } else if (msg.subtype === 'permission_denied') {
           const toolUseId = str(msg.tool_use_id);
           const message = str(msg.message, 'Permission denied');
@@ -692,6 +831,12 @@ function patternsFromInput(input: unknown): string[] {
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+/**
+ * Estados que el CLI publica mientras TODAVIA esta levantando un servidor MCP.
+ * No son una negativa: son un "no se". Ver el uso en `system/init`.
+ */
+const TRANSIENT_MCP_STATUS: ReadonlySet<string> = new Set(['pending', 'connecting', 'starting', '']);
 
 function parseInitMcpServers(raw: unknown): Array<{ name: string; status: string }> {
   if (!Array.isArray(raw)) return [];

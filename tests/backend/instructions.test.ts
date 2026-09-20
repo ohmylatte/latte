@@ -398,3 +398,46 @@ describe('renderInstructionBundle: pinned generation pointer', () => {
     expect(bundle.text.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX_CHARS + 400);
   });
 });
+
+// --- task 6.27: the memory instruction follows the tools ------------------------------
+//
+// Once engram ships BY DEFAULT (design-v2-conversational D3), the old
+// conditional wording ("if you have Engram tools, always pass project X") is
+// wrong twice over on an injected member: the conditional no longer applies,
+// and telling the agent to pass a project invites it to pass a DIFFERENT one
+// (spike 6.26 proved a tool-supplied `project` argument wins over the
+// server's pinned `--project`/`ENGRAM_PROJECT`).
+describe('renderInstructionBundle: the memory instruction follows the tools (task 6.27)', () => {
+  const OLD_CONDITIONAL = /if you have Engram tools, always pass project/i;
+
+  it('memoryToolsInjected:true — the injected wording, scoped-and-fixed, plus the explicit never-pass-project clause (spike 6.26: a tool argument wins)', () => {
+    const bundle = renderInstructionBundle({ brand, work, decisions: [], memoryProject: 'latte-brd_1', memoryToolsInjected: true });
+    expect(bundle.text).toContain('you have Engram tools, already scoped to this brand');
+    expect(bundle.text).toContain('Save and search without passing a project');
+    expect(bundle.text).toMatch(/never pass a `project` argument/i);
+    expect(bundle.text).not.toMatch(OLD_CONDITIONAL);
+  });
+
+  it('memoryToolsInjected:false (OpenCode, or engram missing) — the EXISTING conditional line stays verbatim', () => {
+    const bundle = renderInstructionBundle({ brand, work, decisions: [], memoryProject: 'latte-brd_1', memoryToolsInjected: false });
+    expect(bundle.text).toMatch(OLD_CONDITIONAL);
+    expect(bundle.text).toContain('Never rely on auto-detected project names; other brands must not see this brand\'s memories.');
+    expect(bundle.text).not.toContain('already scoped to this brand');
+  });
+
+  it('memoryToolsInjected omitted defaults to the existing (non-injected) wording — no behavior change for a caller that does not pass it yet', () => {
+    const bundle = renderInstructionBundle({ brand, work, decisions: [], memoryProject: 'latte-brd_1' });
+    expect(bundle.text).toMatch(OLD_CONDITIONAL);
+  });
+
+  it('no memoryProject at all — no memory instruction of either form (unchanged)', () => {
+    const bundle = renderInstructionBundle({ brand, work, decisions: [], memoryToolsInjected: true });
+    expect(bundle.text).not.toContain('Engram tools');
+    expect(bundle.text).not.toMatch(/never pass a `project` argument/i);
+  });
+
+  it('the old conditional wording NEVER appears on an injected member — it is wrong twice over there', () => {
+    const bundle = renderInstructionBundle({ brand, work, decisions: [], memoryProject: 'latte-brd_9', memoryToolsInjected: true });
+    expect(bundle.text).not.toMatch(OLD_CONDITIONAL);
+  });
+});

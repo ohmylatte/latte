@@ -1,0 +1,123 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, waitFor } from '@testing-library/react';
+import { I18nProvider } from './i18n';
+import type { CoordinationBudget, CoordinationGlobalBudgetView } from '../shared/contracts';
+
+/**
+ * The optional app-wide coordination budget cap (autonomous-coordination
+ * Phase 7 task 7.13): advanced settings only, progressive disclosure. Unset
+ * shows an honest "no global cap" and applies nothing; the primary flow
+ * (starting/approving a run) never routes through this control at all — it
+ * is reachable only from Ajustes > Avanzado.
+ */
+
+const mocks = vi.hoisted(() => ({
+  getCoordinationGlobalBudget: vi.fn<() => Promise<CoordinationGlobalBudgetView>>(),
+  setCoordinationGlobalBudget: vi.fn<(budget: CoordinationBudget) => Promise<CoordinationBudget>>(),
+}));
+
+vi.mock('./browser-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./browser-api')>();
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      appInfo: async () => ({ version: '0.0.0', dataDir: '/tmp', engine: 'sqlite', engineReason: null, pack: 'marketing-core', packRoles: 5 }),
+      getCoordinationGlobalBudget: mocks.getCoordinationGlobalBudget,
+      setCoordinationGlobalBudget: mocks.setCoordinationGlobalBudget,
+    },
+  };
+});
+
+const { SettingsScreen } = await import('./SettingsScreen');
+
+function settingsProps(patch: Record<string, unknown> = {}) {
+  return {
+    controls: null, onProfileDirtyChange: () => {}, section: 'advanced' as const, onSection: () => {},
+    onClose: () => {}, onChanged: () => {}, onNotice: () => {}, onError: () => {}, notice: '', error: '',
+    onDismiss: () => {}, mode: 'simple' as const, onModeChange: () => {}, ...patch,
+  };
+}
+
+const mount = (patch: Record<string, unknown> = {}) => render(<I18nProvider><SettingsScreen {...settingsProps()} {...patch} /></I18nProvider>);
+
+describe('the global coordination budget cap in advanced settings (task 7.13)', () => {
+  beforeEach(() => { mocks.getCoordinationGlobalBudget.mockReset(); mocks.setCoordinationGlobalBudget.mockReset(); });
+
+  it('shows an honest "no global cap" when unset', async () => {
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'unset' });
+    const { container } = mount();
+    await waitFor(() => expect(container.querySelector('.coordination-global-budget')?.textContent).toContain('Sin presupuesto configurado'));
+  });
+
+  it('shows the configured cap when set', async () => {
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'set', budget: { maxDispatches: 40 } });
+    const { container } = mount();
+    await waitFor(() => expect(container.querySelector('.coordination-global-budget')?.textContent).toContain('40'));
+  });
+
+  it('saves a new cap through setCoordinationGlobalBudget, never inventing a limit on its own', async () => {
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'unset' });
+    mocks.setCoordinationGlobalBudget.mockResolvedValue({ maxDispatches: 25 });
+    const { container } = mount();
+    await waitFor(() => expect(container.querySelector('.coordination-global-budget-input')).not.toBeNull());
+    const input = container.querySelector('.coordination-global-budget-input') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '25' } });
+    fireEvent.click(container.querySelector('.coordination-global-budget-save')!);
+    await waitFor(() => expect(mocks.setCoordinationGlobalBudget).toHaveBeenCalledWith({ maxDispatches: 25 }));
+  });
+
+  // Crítico 8: "no se pudo leer" NO es "sin tope". El camino de despacho
+  // deniega contra esos mismos bytes, así que la pantalla que decía "sin tope
+  // global" estaba diciendo exactamente lo contrario de lo que pasaba.
+  it('un tope ilegible se declara ilegible, nunca se dibuja como "sin tope"', async () => {
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'invalid' });
+    const { container } = mount();
+    await waitFor(() => expect(container.querySelector('.coordination-global-budget-value')?.textContent).toContain('no se pudo leer'));
+    expect(container.querySelector('.coordination-global-budget-value')?.textContent).not.toContain('Sin presupuesto configurado');
+  });
+
+  it('lives only in the advanced section — it does not render for any other settings section', async () => {
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'unset' });
+    const { container } = mount({ section: 'workspace' });
+    await waitFor(() => expect(container.querySelector('.settings-section')).not.toBeNull());
+    expect(container.querySelector('.coordination-global-budget')).toBeNull();
+    expect(mocks.getCoordinationGlobalBudget).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * U7: "Sacar el tope" tenia un guard muerto.
+ *
+ * `disabled={saving || budget == null}` quedo de cuando el getter devolvia
+ * `CoordinationBudget | null`. Desde que devuelve `CoordinationGlobalBudgetView`
+ * -- un objeto con `state`, nunca `null` -- esa condicion es SIEMPRE falsa: el
+ * boton quedaba habilitado incluso sin ningun tope configurado, ofreciendo
+ * sacar algo que no existe. Lo que la condicion queria decir es
+ * `budget.state === 'unset'`.
+ */
+describe('U7: el boton de sacar el tope, habilitado solo cuando hay algo que sacar', () => {
+  beforeEach(() => { mocks.getCoordinationGlobalBudget.mockReset(); mocks.setCoordinationGlobalBudget.mockReset(); });
+
+  const clearButton = (container: HTMLElement) => container.querySelector('.coordination-global-budget-clear') as HTMLButtonElement;
+
+  it('sin tope configurado esta DESHABILITADO: no hay nada que sacar', async () => {
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'unset' });
+    const { container } = mount();
+    await waitFor(() => expect(clearButton(container)).not.toBeNull());
+    expect(clearButton(container).disabled).toBe(true);
+  });
+
+  it('con un tope puesto esta habilitado', async () => {
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'set', budget: { maxDispatches: 40, unlimitedConfirmedAt: null } });
+    await waitFor(() => expect(mocks.getCoordinationGlobalBudget).toBeDefined());
+    const { container } = mount();
+    await waitFor(() => expect(clearButton(container).disabled).toBe(false));
+  });
+
+  it('con un tope ILEGIBLE tambien: es justo el estado del que hay que poder salir', async () => {
+    mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'invalid' });
+    const { container } = mount();
+    await waitFor(() => expect(clearButton(container).disabled).toBe(false));
+  });
+});

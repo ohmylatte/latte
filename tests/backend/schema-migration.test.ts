@@ -114,7 +114,7 @@ describe.each(ENGINES)('schema 7 → 8 migration on %s', (engine) => {
     const repo = new LatteRepository(driver);
     repo.migrate();
     expect(repo.getMeta('schema_version')).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe('11');
+    expect(SCHEMA_VERSION).toBe('12');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='generations'")?.name).toBe('generations');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_kit_versions'")?.name).toBe('brand_kit_versions');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='learned_skills'")?.name).toBe('learned_skills');
@@ -154,8 +154,8 @@ describe.each(ENGINES)('schema 8 → 9 migration on %s', (engine) => {
 
     const repo = new LatteRepository(driver);
     repo.migrate();
-    expect(repo.getMeta('schema_version')).toBe('11');
-    expect(SCHEMA_VERSION).toBe('11');
+    expect(repo.getMeta('schema_version')).toBe('12');
+    expect(SCHEMA_VERSION).toBe('12');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_archives'")?.name).toBe('brand_archives');
     expect(repo.getBrand('brd_1')).toMatchObject({ name: 'Casa', context: 'tono', archivedAt: null });
     expect(repo.listBrands().map((b) => b.id)).toEqual(['brd_1']);
@@ -193,8 +193,8 @@ describe.each(ENGINES)('schema 9 → 10 migration on %s', (engine) => {
 
     const repo = new LatteRepository(driver);
     repo.migrate();
-    expect(repo.getMeta('schema_version')).toBe('11');
-    expect(SCHEMA_VERSION).toBe('11');
+    expect(repo.getMeta('schema_version')).toBe('12');
+    expect(SCHEMA_VERSION).toBe('12');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_context_proposals'")?.name).toBe('brand_context_proposals');
     expect(driver.all<{ name: string }>('PRAGMA table_info(brand_context_proposals)').map((c) => c.name)).toEqual(expect.arrayContaining(['source_member_id', 'source_role_id', 'source_runtime', 'base_fingerprint']));
     expect(repo.getBrand('brd_1')).toMatchObject({ name: 'Casa', context: 'tono' });
@@ -238,8 +238,8 @@ describe.each(ENGINES)('schema 10 → 11 migration on %s', (engine) => {
 
     const repo = new LatteRepository(driver);
     repo.migrate();
-    expect(repo.getMeta('schema_version')).toBe('11');
-    expect(SCHEMA_VERSION).toBe('11');
+    expect(repo.getMeta('schema_version')).toBe('12');
+    expect(SCHEMA_VERSION).toBe('12');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_context_revisions'")?.name).toBe('brand_context_revisions');
     expect(driver.all<{ name: string }>('PRAGMA table_info(brand_context_revisions)').map((c) => c.name)).toEqual(
       expect.arrayContaining(['id', 'brand_id', 'source', 'origin', 'content', 'fingerprint', 'created_at']),
@@ -299,7 +299,7 @@ describe.each(ENGINES)('schema 10 → 11 migration on %s', (engine) => {
     // The ALTER is pragma-gated: running it again would throw, so a v10 file
     // that already has the columns has to migrate cleanly.
     expect(() => repo.migrate()).not.toThrow();
-    expect(repo.getMeta('schema_version')).toBe('11');
+    expect(repo.getMeta('schema_version')).toBe('12');
     expect(repo.listBrandContextProposals('brd_1')).toEqual([
       expect.objectContaining({ id: 'bcp_superseded', decidedReason: 'superseded', supersededBy: 'bcp_newer' }),
     ]);

@@ -1,10 +1,10 @@
-import { currentLocale, translate as t } from './i18n';
+import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, Home, MessageSquare, Minus, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, X } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, AppInfo, OnboardingDraft } from '../shared/contracts';
+import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, AppInfo, OnboardingDraft, CoordinationActiveRunSummary } from '../shared/contracts';
 import { api, chatStore, isDesktop } from './browser-api';
 import { DocumentsView, NewDocumentDialog } from './DocumentsView';
 import { hasMetadataDrafts } from './DocumentMetadata';
@@ -29,6 +29,10 @@ import { OnboardingGate, type OnboardingResult } from './OnboardingGate';
 import { contextSaveNotice } from './context-view';
 import { applyFetchedBrand } from './brand-context-sync';
 import { confirmFolderLink } from './folder-link';
+import { useCoordination } from './useCoordination';
+import { ActiveTeamsStrip } from './ActiveTeamsStrip';
+import { MemoryNotice } from './MemoryNotice';
+import { sinceLastVisitFromActiveRuns } from './home-summary';
 
 /**
  * Every workspace view, in one place.
@@ -50,7 +54,147 @@ const AGENT_MIN = 320, SIDEBAR = 232, WORKSPACE_MIN = 360;
 const maxAgentWidth = () => Math.max(AGENT_MIN, window.innerWidth - SIDEBAR - WORKSPACE_MIN);
 const clampAgentWidth = (value: number) => Math.min(maxAgentWidth(), Math.max(AGENT_MIN, Math.round(value)));
 const readAgentWidth = () => { try { const raw = localStorage.getItem(AGENT_WIDTH_KEY); const n = raw ? Number(raw) : NaN; return Number.isFinite(n) ? clampAgentWidth(n) : 355; } catch { return 355; } };
-const displayError = (e: unknown) => e instanceof Error ? e.message : String(e);
+/**
+ * Q8: LOS ERRORES DE COORDINACIÓN HABLAN EL IDIOMA DE LA PERSONA.
+ *
+ * `displayError` era `e.message`, y los mensajes del motor están escritos para
+ * quien lee el código: `ASK_CLOSED` llega en castellano desde `repository.ts` y
+ * `RUN_NOT_RUNNING` en inglés desde `engine.ts`, en la misma pantalla y a veces
+ * en la misma sesión. El código SÍ cruza la frontera IPC (`preload.cjs` lo
+ * copia sobre el `Error`), así que traducir es mirar el código, que es lo que
+ * la app ya hace con `permission.error` y `continue.sendFailed`.
+ *
+ * Sólo los que la persona puede ver de verdad. Un código sin entrada acá cae al
+ * `message` del motor: inventarle una frase genérica a un error desconocido
+ * sería tapar información que alguien va a necesitar.
+ */
+export const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
+  ASK_CLOSED: 'error.coordination.askClosed',
+  RUN_NOT_RUNNING: 'error.coordination.runNotRunning',
+  RUN_NOT_ACTIVE: 'error.coordination.runNotActive',
+  MEMBER_BUSY: 'error.coordination.memberBusy',
+  ROLE_NOT_APPROVED: 'error.coordination.roleNotApproved',
+  COORDINATION_BUDGET_INVALID: 'error.coordination.budgetInvalid',
+  PLAN_HAS_UNAPPROVED_ROLES: 'error.coordination.planHasUnapprovedRoles',
+  // Q6: `INVALID_ARGUMENT` NO ESTÁ. Sólo existe en el sobre MCP —el error que
+  // `tools.ts` le devuelve a un agente— y nunca cruza la frontera IPC: era una
+  // frase escrita para una pantalla que no la iba a mostrar jamás.
+  //
+  // Y los que la persona alcanza con un clic, que es el único criterio que
+  // decide si un código necesita frase propia.
+  BUDGET_EXCEEDED: 'error.coordination.budgetExceeded',
+  MAX_CONCURRENT: 'error.coordination.maxConcurrent',
+  INVALID_GATE: 'error.coordination.invalidGate',
+  COORDINATION_NOT_APPROVED: 'error.coordination.coordinationNotApproved',
+  RUN_ALREADY_ACTIVE: 'error.coordination.runAlreadyActive',
+  TASK_NOT_READY: 'error.coordination.taskNotReady',
+  // L1 (ronda 9): el despacho que volvió de un spawn largo y encontró su tarea
+  // ya reclamada por otro. La persona lo alcanza aprobando un gate.
+  CLAIM_LOST: 'error.coordination.claimLost',
+  NO_ACTIVE_RUN: 'error.coordination.noActiveRun',
+  GLOBAL_BUDGET_INVALID: 'error.coordination.globalBudgetInvalid',
+  TOO_MANY_ACTIVE_RUNS: 'error.coordination.tooManyActiveRuns',
+  // `commitProposal` crea las tareas del plan aprobado, así que los topes del
+  // DAG llegan a la persona por el botón "Aprobar" — no sólo al agente.
+  TASK_CAP: 'error.coordination.taskCap',
+  DEPTH_CAP: 'error.coordination.depthCap',
+  // M2 (ronda 8): `PROPOSAL_STALE` y `PROPOSAL_DECIDED` SALIERON DE ACÁ. El
+  // motor de coordinación no los tiraba: los tiraban los métodos de contexto
+  // de MARCA de `latteService`, y su copy hablaba de marca dentro del
+  // namespace de coordinación. Ahora tienen código y frase propios en
+  // `BRAND_ERROR_KEYS`.
+  // O2: los códigos de las SUBCLASES de `LatteError`, invisibles hasta acá.
+  // `BUDGET_UNSET` lo tira `startRun` —y SÓLO él— cuando nadie configuró un
+  // tope todavía.
+  BUDGET_UNSET: 'error.coordination.budgetUnset',
+};
+
+/**
+ * N2 (ronda 7): ESTE MAPA ES DE TODA LA APP, Y POR ESO SU COPY ES NEUTRA.
+ *
+ * La ronda 6 metió `FEATURE_DISABLED`, `NOT_FOUND`, `UNAVAILABLE` y `CONFLICT`
+ * en el mapa de arriba, con frases escritas para la coordinación. Pero
+ * `displayError` es el formateador de errores de TODA la app: el mismo
+ * `FEATURE_DISABLED` lo tiran cuatro features (`requireFeature` en
+ * `branding/service.ts`, `latteService` para generación, `learning/service.ts`
+ * y coordinación), `UNAVAILABLE` lo tira el arranque de un runtime, y
+ * `NOT_FOUND`/`CONFLICT` los tira medio backend. Quien abría un kit de marca
+ * con su flag apagado leía "La coordinación de equipo está apagada": una
+ * explicación falsa de un hecho verdadero.
+ *
+ * Dos mapas, entonces: arriba lo que SÓLO tira el motor de coordinación, acá
+ * lo genérico, y ninguna de estas frases nombra equipos ni tareas.
+ *
+ * N3: `FEATURE_DISABLED` ya no promete Ajustes. No hay interruptor en ninguna
+ * pantalla —los flags se escriben en `meta`— así que la frase dice el hecho y
+ * se calla la acción que no existe.
+ */
+/**
+ * M2 (ronda 8): EL CONTEXTO DE MARCA TIENE SUS PROPIOS CÓDIGOS.
+ *
+ * Tres errores de los caminos de contexto de marca viajaban con códigos del
+ * mapa de COORDINACIÓN (`PROPOSAL_DECIDED`, `PROPOSAL_STALE`, `MEMBER_BUSY`),
+ * así que la persona que aprobaba una propuesta de marca leía una frase
+ * escrita para equipos y despachos. Y uno de ellos —"El contexto de marca
+ * cambió"— era copy de MARCA viviendo en `error.coordination.*`: el namespace
+ * decía una cosa y el texto otra.
+ *
+ * No van en `APP_ERROR_KEYS` porque no son genéricos de toda la app: son de un
+ * alcance concreto, con su pantalla y su vocabulario.
+ */
+/**
+ * L5 (ronda 9): Y LOS OTROS TRES SALEN DEL MISMO BOTÓN.
+ *
+ * `CONTEXT_TOO_LONG`, `BRAND_ARCHIVED` y `CONTEXT_EMPTY` los alcanza la misma
+ * persona con el mismo clic —"Aprobar" sobre una propuesta de contexto de
+ * marca, o guardar el contexto a mano— y llegaban sin frase: la pantalla
+ * mostraba el `message` del motor, escrito en inglés para quien lee el código
+ * ("Brand context is 1240 characters over the 60000-character limit"). Estaban
+ * en la allowlist del test con el motivo "contexto de marca, no coordinación",
+ * que explicaba por qué no van en el mapa de COORDINACIÓN y se leyó como si
+ * explicara por qué no necesitan frase. Son dos cosas distintas.
+ */
+export const BRAND_ERROR_KEYS: Record<string, MessageKey> = {
+  BRAND_PROPOSAL_STALE: 'error.brand.proposalStale',
+  BRAND_PROPOSAL_DECIDED: 'error.brand.proposalDecided',
+  STRATEGIST_BUSY: 'error.brand.strategistBusy',
+  CONTEXT_TOO_LONG: 'error.brand.contextTooLong',
+  CONTEXT_EMPTY: 'error.brand.contextEmpty',
+  BRAND_ARCHIVED: 'error.brand.archived',
+};
+
+export const APP_ERROR_KEYS: Record<string, MessageKey> = {
+  FEATURE_DISABLED: 'error.app.featureDisabled',
+  NOT_FOUND: 'error.app.notFound',
+  UNAVAILABLE: 'error.app.unavailable',
+  CONFLICT: 'error.app.conflict',
+  // El código de todo `ValidationError`, que sí cruza IPC por cualquier
+  // camino: un nombre de marca vacío no es un problema de coordinación.
+  VALIDATION: 'error.app.validation',
+};
+
+/**
+ * Primero el mapa de coordinación, después el genérico, y al final el
+ * `message` del motor: un código sin frase no se tapa con una genérica
+ * inventada, porque ahí hay información que alguien va a necesitar.
+ *
+ * El orden importa y es el único posible: un código que estuviera en los dos
+ * mapas tendría que leerse con la frase específica. Hoy no hay ninguno, y el
+ * test estructural de `coordination-error-map.dom.test.tsx` lo sostiene.
+ */
+export const displayError = (e: unknown) => {
+  const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
+  // L13 (ronda 9): `Object.hasOwn`, no la indexación pelada. Un objeto literal
+  // hereda del prototipo, así que `code: 'constructor'` —o `'toString'`, o
+  // `'valueOf'`— devolvía un MIEMBRO DEL PROTOTIPO donde se esperaba una clave
+  // de mensaje, y `t()` recibía una función. Un código llega de la frontera
+  // IPC, o sea de afuera; un mapa que se consulta con lo que viene de afuera
+  // se consulta preguntando si la clave es SUYA.
+  const lookup = (map: Record<string, MessageKey>): MessageKey | undefined => (Object.hasOwn(map, code) ? map[code] : undefined);
+  const key = lookup(COORDINATION_ERROR_KEYS) ?? lookup(BRAND_ERROR_KEYS) ?? lookup(APP_ERROR_KEYS);
+  if (key) return t(key);
+  return e instanceof Error ? e.message : String(e);
+};
 
 /**
  * The window is frameless, so Latte draws its own controls. The title bar area
@@ -116,6 +260,44 @@ export function App() {
   // would read `brand?.context` from a stale closure and the new work is not
   // guaranteed to be `works[0]` once the list is re-read.
   const pendingWorkRef = useRef<string | null>(null);
+  /**
+   * The view a pending brand-switch should land on once its work resolves
+   * (autonomous-coordination Phase 7 task 7.11): the active-teams strip can
+   * select a Brand the person is not currently viewing, and it must land on
+   * Decisiones, not the default Brief — same mechanism as `pendingWorkRef`,
+   * consumed once by the same effect.
+   */
+  const pendingViewRef = useRef<View | null>(null);
+  /**
+   * R5: el Trabajo que LA PERSONA abrió, por su id.
+   *
+   * Marcar la visita al abrir un Trabajo (F13) chocaba con que la app abre uno
+   * SOLA: `works[0]` al arrancar y en cada cambio de Marca. Con eso, "desde tu
+   * última visita" se consumía sin que nadie mirara nada — el arranque se
+   * comía la novedad que existía para avisarle a la persona.
+   *
+   * Sólo los caminos de navegación EXPLÍCITA escriben acá: `selectWork` (la
+   * lista de Trabajos, las filas de Inicio, `openWorkDecisions`, la cola de
+   * revisión) y el `pendingWorkRef` que resuelve una acción de la persona
+   * (abrir un run de otra Marca desde la tira, o terminar el onboarding). La
+   * autoselección de `list[0]` NO lo escribe, y por eso no cuenta como visita.
+   *
+   * Es un id y no un booleano a propósito: un `true` del Trabajo anterior
+   * sobreviviría a un cambio de Marca y volvería a marcar visto lo que la app
+   * eligió sola del otro lado.
+   */
+  /**
+   * Q3: ESTADO, no ref, y por dos razones que son la misma.
+   *
+   * Como ref, el efecto de abajo sólo la miraba cuando `work.id` o la carga del
+   * recorte cambiaban: abrir desde Inicio un Trabajo que ya estaba seleccionado
+   * —el caso normal después de volver a la Marca— no volvía a correr el efecto,
+   * así que ese acto explícito no anotaba nada. Y como valor que nadie limpiaba
+   * sobrevivía a los cambios de Marca, así que la autoselección de `list[0]`
+   * anotaba visitas que nadie hizo. Un dato que decide un efecto tiene que
+   * poder dispararlo.
+   */
+  const [humanOpenedWorkId, setHumanOpenedWorkId] = useState<string | null>(null);
   // The brand effect re-reads works when the id changes. Finishing the walk on
   // the already-selected brand (the demo) changes nothing, so it needs its own
   // reason to run; the ref above is only honoured if the effect runs.
@@ -157,6 +339,53 @@ export function App() {
     }
     return list;
   };
+  /**
+   * Autonomous-coordination Phase 7 task 7.11: the one hook that wires real
+   * coordination data into `HomeView`, `ResumenView`, `DecisionsView` and
+   * `TeamPanel` — every one of which slice 7-A built against additive,
+   * optional props only. `activeRuns` is global (every Brand); everything
+   * else is scoped to whichever Work is currently open.
+   */
+  // El canal de error de la app, no una promesa sin manejar: un
+  // `BUDGET_EXCEEDED` o un `ValidationError` al resolver un gate se ve.
+  const coordination = useCoordination(work?.id ?? null, (e) => setError(displayError(e)));
+  // La visita a la coordinación se marca cuando la persona ABRE el panel de
+  // coordinación de un Trabajo (Decisiones: gates, autoridad, presupuesto,
+  // coordinador) o vuelve a él. Es lo único que hace honesto el "Desde tu
+  // última visita" de Inicio: antes no se medía ninguna visita.
+  const markSeen = coordination.markSeen;
+  // DESPUÉS de que el recorte de coordinación cargue, nunca en el mismo tick
+  // del clic. Antes esto corría al montar la pestaña, antes de pedir un solo
+  // gate: la visita quedaba anotada sobre una pantalla vacía y todo lo que
+  // llegaba después —justamente lo que la persona tenía que ver— nacía ya
+  // visto. `workLoaded` es del Trabajo ABIERTO y se apaga al navegar, así que
+  // esto tampoco puede marcar visto el Trabajo nuevo por la carga del viejo.
+  const coordinationLoaded = coordination.workLoaded;
+  // F13: una visita es ABRIR EL TRABAJO, en la vista que sea. Atada a
+  // `view === 'decisions'`, la fila "tu equipo terminó" de Inicio —que abre el
+  // TRABAJO, no Decisiones— no marcaba nada: la novedad seguía en la tira y el
+  // run terminado seguía en la tira global hasta que alguien se acordara de
+  // entrar a Decisiones de ese Trabajo. Abrirlo ES mirarlo.
+  // R5: y SÓLO si el Trabajo lo abrió la persona. `App` autoselecciona
+  // `works[0]` al arrancar y en cada cambio de Marca; con F13 eso anotaba la
+  // visita sin un solo acto humano y se comía la fila "tu equipo terminó" —
+  // la novedad que existe justamente para avisarle. `humanOpenedWorkId` lo
+  // escriben los caminos de navegación explícita, nunca la autoselección.
+  // Q3: y la ref se CONSUME al marcar. Un acto explícito vale por UNA visita:
+  // dejarla puesta hacía que cualquier re-carga posterior del recorte de
+  // coordinación —otra Marca y vuelta, un evento que refresca— volviera a
+  // anotar visto un Trabajo que la persona no abrió de nuevo.
+  useEffect(() => {
+    if (work?.id && coordinationLoaded && humanOpenedWorkId === work.id) {
+      markSeen();
+      setHumanOpenedWorkId(null);
+    }
+  }, [work?.id, coordinationLoaded, humanOpenedWorkId]);
+  // The memory notice (task 7.10) is dismissed per Brand, for this session
+  // only: this state is plain React state, never persisted, so it "returns
+  // next launch while the condition holds" simply because a fresh launch
+  // starts with an empty Set — no localStorage, no backend write.
+  const [memoryNoticeDismissed, setMemoryNoticeDismissed] = useState<Set<string>>(new Set());
   const [prompt, setPrompt] = useState(''), [decision, setDecision] = useState('');
   const [memory, setMemory] = useState(''), [memoryAvailable, setMemoryAvailable] = useState(false), [memoryNote, setMemoryNote] = useState('');
   const [endedSessions, setEndedSessions] = useState<Set<string>>(new Set());
@@ -370,7 +599,7 @@ export function App() {
     void api.getDecisionAuthority(work.id).then(value => { if (active) setDecisionAuthority(value); }).catch(() => { if (active) setDecisionAuthority('suggest'); });
     return () => { active = false; };
   }, [work?.id]);
-  useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setKnowledgeScope(ALL_BRAND_SCOPE); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); const preferred = list.find(w => w.id === pendingWorkRef.current) ?? list[0] ?? null; pendingWorkRef.current = null; setWork(preferred); }).catch(e => setError(displayError(e))); }, [brand?.id, brandEpoch]);
+  useEffect(() => { if (!brand) return; const n = ++generation.current; setWork(null); setWorks([]); setKnowledgeScope(ALL_BRAND_SCOPE); void api.listWorks(brand.id).then(list => { if (n !== generation.current) return; setWorks(list); const requested = list.find(w => w.id === pendingWorkRef.current) ?? null; const preferred = requested ?? list[0] ?? null; pendingWorkRef.current = null; /* R5: sólo el Trabajo PEDIDO por una acción de la persona cuenta como abierto por ella; `list[0]` lo elige la app sola y no es ninguna visita. Q3: y se PISA, no se deja. Sin el `else` la ref sobrevivía al cambio de Marca, así que volver a esta Marca por el selector autoseleccionaba `list[0]` —que puede ser el mismo Trabajo— y la visita se anotaba sola, con la persona mirando Inicio. */ setHumanOpenedWorkId(requested?.id ?? null); setWork(preferred); if (preferred && pendingViewRef.current) setView(pendingViewRef.current); pendingViewRef.current = null; }).catch(e => setError(displayError(e))); }, [brand?.id, brandEpoch]);
   useEffect(() => {
     if (!brand) { setDocuments([]); setDecisions([]); return; }
     let active = true;
@@ -457,6 +686,10 @@ export function App() {
    */
   const selectWork = (w: Work, target: 'brief' | 'decisions' = 'brief', as: 'conversation' | 'review' = 'conversation') => {
     if (!guard()) return;
+    // R5: TODO camino que pasa por acá es un acto de la persona — un clic en la
+    // lista de Trabajos, una fila de Inicio, la cola de revisión. La visita se
+    // anota sólo por estos, nunca por la autoselección del arranque.
+    setHumanOpenedWorkId(w.id);
     setWork(w);
     setContext(brand?.context ?? '');
     setView(target);
@@ -470,6 +703,26 @@ export function App() {
   // the resolution: a row whose work is gone does nothing instead of crashing.
   const openWork = (workId: string) => { const target = works.find((w) => w.id === workId); if (target) selectWork(target); };
   const openWorkDecisions = (workId: string) => { const target = works.find((w) => w.id === workId); if (target) selectWork(target, 'decisions'); };
+  /**
+   * The active-teams strip (task 7.8) only observes and navigates: clicking
+   * a row selects that Brand + Work and opens Decisiones, where the real
+   * approve/reject controls live. When the run's Brand is already open,
+   * this is `openWorkDecisions` unchanged. When it is a DIFFERENT Brand —
+   * the interesting case, a run the person was not looking at — the same
+   * `pendingWorkRef` mechanism `finishOnboarding` uses lands on the right
+   * work once its list loads, and `pendingViewRef` (added for this task)
+   * makes it land on Decisiones instead of the default Brief.
+   */
+  const openActiveRun = (run: CoordinationActiveRunSummary) => {
+    if (brand?.id === run.brandId) { openWorkDecisions(run.workId); return; }
+    const target = brands.find((b) => b.id === run.brandId);
+    if (!target || !guard()) return;
+    pendingWorkRef.current = run.workId;
+    pendingViewRef.current = 'decisions';
+    setBrand(target);
+    setContext(target.context);
+    setMemory(''); setMemoryAvailable(false); memoryGeneration.current++;
+  };
   const openDocument = (documentId: string) => {
     const document = documents.find((d) => d.id === documentId);
     if (!document) return;
@@ -768,6 +1021,36 @@ export function App() {
   const dropChat = (memberId: string) => { setChats(prev => { const next = { ...prev }; delete next[memberId]; return next; }); chatStore.forget(memberId); };
   const pauseMember = (memberId: string) => run(async () => { await api.pauseTeamMember(memberId); dropChat(memberId); if (work) await loadTeam(work.id); });
   const finishMember = (memberId: string) => run(async () => { await api.finishTeamMember(memberId); dropChat(memberId); if (work) await loadTeam(work.id); setNotice('Miembro marcado como finalizado'); });
+  /**
+   * Acepta un handoff como TAREA de la coordinación cuando el Trabajo tiene un
+   * run vivo: `acceptHandoffAsTask` estaba cableada de punta a punta (motor,
+   * IPC, contrato, preload, browser-api, tests) y no tenía un solo llamador en
+   * el renderer. Fuera de un run vivo devuelve `{bridged:false}` y cae al
+   * camino de siempre, el borrador de chat.
+   */
+  const acceptHandoffAsTask = (handoff: HandoffRequest) => run(async () => {
+    if (!work) return;
+    const result = await api.acceptHandoffAsTask(work.id, handoff.fileName);
+    if (!result.bridged) { await acceptHandoff(handoff); return; }
+    setHandoffs(await api.listHandoffs(work.id).catch(() => []));
+    // NO se abrio ninguna conversacion: se creo una `coordination_task` y
+    // `startDispatch` ya la mando (gastando un despacho, con `hub.send`
+    // incluido). Reusar la frase de la otra rama --"revisalo antes de
+    // enviarlo"-- le pedia a la persona revisar algo que no existe DESPUES de
+    // haber gastado. Clave semantica propia, en los dos idiomas.
+    // R3: el puente ya no tira cuando el despacho se deniega, lo devuelve. Y
+    // entonces la frase no puede ser la misma: la tarea existe pero nadie la
+    // está haciendo, y decir "despachada" sería anunciar algo que no pasó.
+    // Q1: y son TRES, no dos. Con la autoridad por defecto (`manual`, y también
+    // `plan`, porque la tarea del puente nace fuera del plan) el motor devuelve
+    // `pending_approval`: la tarea existe, nadie la está haciendo, y lo que
+    // falta es un gesto de la persona en Decisiones. Decirle "despachada al
+    // equipo" la dejaba esperando un resultado que nunca iba a llegar, sin
+    // saber que la decisión era suya.
+    if (result.outcome === 'not_dispatched') { setNotice(t('handoff.bridged.queued', { role: handoff.roleName, reason: result.reason ?? '' })); return; }
+    if (result.outcome === 'pending_approval') { setNotice(t('handoff.bridged.pendingApproval', { role: handoff.roleName })); return; }
+    setNotice(t('handoff.bridged.dispatched', { role: handoff.roleName }));
+  });
   const acceptHandoff = (handoff: HandoffRequest) => run(async () => {
     if (!work || startingChat) return;
     const existing = team.find(m => m.roleId === handoff.roleId);
@@ -875,6 +1158,7 @@ export function App() {
     <aside className="sidebar">
       <div className="wordmark"><span className="logo-mark" aria-hidden="true" />Latte<button className="rail-toggle" aria-expanded={!railed} aria-label={railed ? t('ui.auto.029') : t('ui.auto.030')} title={railed ? t('ui.auto.029') : t('ui.auto.030')} onClick={() => setRailed(v => !v)}>{railed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button></div>
       <div className="brand-picker"><select aria-label={t('ui.auto.031')} value={brand?.id ?? ''} onChange={e => { const b = brands.find(b => b.id === e.target.value); if (b) selectBrand(b); }}>{!brands.length && <option value="">{t('ui.auto.032')}</option>}{brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select><ChevronDown size={15} /></div>
+      <ActiveTeamsStrip runs={coordination.activeRuns} onOpen={openActiveRun} />
       <button className="subtle sidebar-add" disabled={transitioning} onClick={() => { setName(''); setModal('brand'); }}><Plus size={14} />  {t('ui.auto.033')}</button>
       <button type="button" className="subtle sidebar-add" onClick={() => setShowArchived(v => !v)} aria-expanded={showArchived}>{t('brand.archivedToggle')}{archivedBrands.length ? ` (${archivedBrands.length})` : ''}</button>
       {showArchived && <div className="archived-brands">{archivedBrands.length === 0 ? <p className="sidebar-hint">{t('brand.noneArchived')}</p> : archivedBrands.map(b => <div key={b.id} className="archived-brand-row"><span title={b.name}>{b.name}</span><button type="button" className="subtle" disabled={busy} onClick={() => run(() => restoreArchivedBrand(b.id))}>{t('brand.restore')}</button></div>)}</div>}
@@ -887,13 +1171,14 @@ export function App() {
     </aside>
     <header className="topbar"><div className="breadcrumb">{brand?.name ?? 'Bienvenido a Latte'}<span>/</span><strong>{work?.title ?? 'Tu espacio de marketing'}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
     <main className="workspace" aria-hidden={focusChat} inert={focusChat}>
-      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} />}
+      <MemoryNotice support={coordination.support} dismissed={Boolean(brand && memoryNoticeDismissed.has(brand.id))} onDismiss={() => { if (brand) setMemoryNoticeDismissed(prev => new Set(prev).add(brand.id)); }} />
+      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} coordinationSinceLastVisit={brand ? sinceLastVisitFromActiveRuns(coordination.activeRuns, brand.id) : []} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} />}
       {/* The tabs and the knowledge-scope filter are in-work chrome: on Inicio
           they would read as "a work with no tab selected". */}
       {view !== 'home' && <><div className="tabs"><button className={view === 'resumen' ? 'selected' : ''} onClick={() => setView('resumen')}>{t('resumen.tab')}</button><button className={view === 'trabajo' ? 'selected' : ''} onClick={() => setView('trabajo')}>{t('trabajo.tab')}</button><button className={view === 'evidencia' ? 'selected' : ''} onClick={() => setView('evidencia')}>{t('evidencia.tab')}</button><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><button className={view === 'resultados' ? 'selected' : ''} onClick={() => setView('resultados')}>{t('resultados.tab')}</button><div className="tab-spacer" /></div>
       {(view === 'brief' || view === 'funnel' || view === 'decisions') && brand && <KnowledgeScopeFilter works={works} currentWorkId={work?.id ?? null} value={knowledgeScope} onChange={setKnowledgeScope} />}</>}
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}
-      {view === 'resumen' && <ResumenView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} formatDate={date} onOpenBrief={() => { setLayout('review'); setView('brief'); }} />}
+      {view === 'resumen' && <ResumenView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} coordinationLog={work ? coordination.log : undefined} coordinationHires={work ? coordination.hires : undefined} onSettleDispatch={coordination.settleDispatch} formatDate={date} onOpenBrief={() => { setLayout('review'); setView('brief'); }} />}
       {view === 'trabajo' && <TrabajoView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} handoffs={handoffs} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} mode={mode} formatDate={date} onOpenChat={() => { setLayout('conversation'); setView('brief'); }} />}
       {view === 'evidencia' && <EvidenciaView work={work} workId={work?.id ?? ''} documents={documents} decisions={decisions} untracked={untracked} states={homeStates} checking={homeChecking} formatDate={date} onTrack={trackFile} onImported={() => loadKnowledge(work?.brandId ?? '', work?.id)} busy={busy} />}
       {view === 'resultados' && <ResultadosView work={work} decisions={decisions} formatDate={date} />}
@@ -921,12 +1206,12 @@ export function App() {
         onReload={() => void reloadContext()}
         onOverride={() => void overrideContext()}
       />}
-      {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} />}
+      {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} coordinationAuthority={work ? coordination.authority : undefined} coordinationBudget={work ? coordination.budget : undefined} onSetCoordinationBudget={coordination.setBudget} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} coordinationRun={work ? coordination.run : undefined} gates={work ? coordination.gates : undefined} onResolveGate={coordination.resolveGate} openAsks={work ? coordination.openAsks : undefined} onAnswerAsk={coordination.answerAsk} onAcceptHandoff={acceptHandoffAsTask} coordinationSupport={work ? coordination.support : undefined} pending={coordination.pending} />}
       {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice('Aprendizaje guardado en Engram'); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
       <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
     </main>
     <aside className="agent-panel">{focusChat && (error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}<button type="button" className={'panel-resizer' + (dragging ? ' dragging' : '')} aria-label={t('ui.auto.066')} title={t('ui.auto.067')} onPointerDown={startResize} />
-      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} />
+      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} />
       <details className="active-context">
         <summary><Bookmark size={12} />{t('ui.auto.035')}<span>{[brand?.context ? 'marca' : null, work ? 'trabajo' : null, decisions.length ? `${decisions.length} decisiones` : null].filter(Boolean).join(' · ') || t('ui.auto.068')}</span></summary>
         <div className="active-context-body">
