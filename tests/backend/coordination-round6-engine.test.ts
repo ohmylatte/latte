@@ -159,20 +159,41 @@ describe('Ronda 6: el motor', () => {
   // --- O6b --------------------------------------------------------------------
 
   describe('O6b: un despacho zombi no congela la auto-suspensión', () => {
-    it('la fila en vuelo más vieja que el umbral deja de contar como trabajo vivo', async () => {
+    /**
+     * CORREGIDO EN LA RONDA 7 (N1). Este test fijaba el comportamiento
+     * equivocado: que la MERA ANTIGÜEDAD bastara para dar por muerto un
+     * despacho. Un reloj no sabe si hay alguien trabajando — una tarea
+     * legítima de 31 minutos suspendía el equipo con un miembro adentro.
+     *
+     * Lo que sigue siendo cierto es el hecho que O6b quería cubrir: una fila
+     * que nunca liquida no puede congelar la auto-suspensión para siempre. La
+     * diferencia es CÓMO deja de congelarla: no ignorándola, sino
+     * LIQUIDÁNDOLA en el tick cuando el hub ya no conoce a su miembro (ver
+     * `coordination-round7-dispatch-liveness.test.ts`). Acá queda la mitad
+     * que este archivo puede probar sin repetir aquel: el zombi cuyo proceso
+     * el hub perdió deja de retener nada.
+     */
+    it('la fila cuyo miembro el hub ya no conoce deja de retener: el tick la liquida y el equipo puede suspenderse con su motivo real', async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-09-19T10:00:00.000Z'));
       const zombie = await createTask('la que se murió sin avisar');
       const blocked = await createTask('la que espera una respuesta');
       expect(envelope(await call('latte_dispatch', { taskId: zombie })).ok).toBe(true);
 
-      // El reloj avanza más allá del umbral: la fila sigue `dispatched`, sin
-      // reporte, sin `closed`, sin barrido — exactamente el zombi.
+      // El proceso se murió sin `closed`: el hub ya no lo tiene. Y el reloj
+      // pasa el umbral, que es lo único para lo que el umbral sirve.
+      members.splice(members.findIndex((m) => m.id === 'mem_worker'), 1);
       vi.setSystemTime(new Date(new Date('2026-09-19T10:00:00.000Z').getTime() + (IN_FLIGHT_DISPATCH_STALE_MINUTES + 5) * 60_000));
       expect(b.repo.listCoordinationDispatches(runId).filter((d) => d.status === 'dispatched')).toHaveLength(1);
 
-      // Y ahora la única tarea despachable se traba por una pregunta.
+      b.service.sweepCoordination();
+      // Liquidada: la reserva cerrada y la tarea despachable otra vez.
+      expect(b.repo.listCoordinationDispatches(runId).filter((d) => d.status === 'dispatched')).toHaveLength(0);
+      expect(b.repo.getCoordinationTask(zombie).status).toBe('ready');
+
+      // Y ahora sí: con las dos tareas trabadas por preguntas, el motivo es verdadero.
       expect(envelope(await call('latte_ask', { question: '¿seguimos?', taskId: blocked, ttlMinutes: 60 })).ok).toBe(true);
+      expect(envelope(await call('latte_ask', { question: '¿y esta?', taskId: zombie, ttlMinutes: 60 })).ok).toBe(true);
 
       const run = b.repo.getCoordinationRun(runId);
       expect(run.status).toBe('suspended');

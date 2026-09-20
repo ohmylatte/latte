@@ -2043,26 +2043,81 @@ export class CoordinationEngine {
     // conjunto que `finishRunIfComplete` mira para no cerrar un run con trabajo
     // en vuelo.
     //
-    // O6: pero un despacho ZOMBI no habla por nadie. Una fila `dispatched` que
-    // nunca liquida —el proceso murió sin que llegara el `closed`, el reporte
-    // se perdió— congelaba esta respuesta en `false` PARA SIEMPRE: el run no
-    // podía auto-suspenderse ni aunque todo lo demás estuviera trabado por
-    // preguntas, y nadie lo miraba porque justamente no estaba `suspended`.
-    // Pasado el umbral, esa fila deja de contar como "hay alguien trabajando";
-    // sigue existiendo y sigue reteniendo el CIERRE (`finishRunIfComplete` la
-    // mira aparte), que es otra cosa: suspender es pausable, cerrar es final.
-    const staleBefore = new Date(new Date(now).getTime() - IN_FLIGHT_DISPATCH_STALE_MINUTES * 60_000).toISOString();
+    // N1 (ronda 7): LA ANTIGÜEDAD NO ES EVIDENCIA DE MUERTE, Y ACÁ NO SE MIRA
+    // EL RELOJ.
+    //
+    // O6 excluía de `inFlight` toda fila más vieja que
+    // `IN_FLIGHT_DISPATCH_STALE_MINUTES`. Un reloj no sabe si hay alguien
+    // trabajando: una tarea legítima de 31 minutos dejaba de contar, el run se
+    // suspendía `all_blocked_on_ask` CON un miembro adentro, el coordinador
+    // recibía `RUN_NOT_ACTIVE` en el `latte_task_create` siguiente, y
+    // "Reanudar" se deshacía en el tick siguiente. Y el zombi de verdad
+    // tampoco se arreglaba: seguía reteniendo el cierre, ahora con el equipo
+    // suspendido por un motivo falso.
+    //
+    // Quien sabe si un despacho está vivo es el HUB: es el que tiene los
+    // procesos. Una fila abierta cuyo miembro el hub conoce es trabajo vivo,
+    // tenga la edad que tenga. Una fila cuyo miembro el hub NO conoce no habla
+    // por nadie — y no se la excluye y listo: el barrido periódico la LIQUIDA
+    // (ver `settleOrphanDispatches`), que es lo que le faltaba. Por eso acá ya
+    // no hace falta ningún conjunto `stalled`: lo que sigue abierto sin dueño
+    // dura hasta el próximo tick, no para siempre.
+    const run = this.deps.repo.getCoordinationRun(runId);
     const open = this.deps.repo.listCoordinationDispatches(runId).filter((d) => d.status === 'dispatched' || d.status === 'running');
-    const inFlight = new Set(open.filter((d) => (d.startedAt ?? d.createdAt) > staleBefore).map((d) => d.taskId));
+    const inFlight = new Set(open.filter((d) => this.hubKnowsMember(run.workId, d.memberId)).map((d) => d.taskId));
     if (inFlight.size > 0) return false;
-    // Y la TAREA del zombi tampoco cuenta como despachable: sigue `dispatched`,
-    // así que sin sacarla del conjunto se contaba a sí misma como "algo que no
-    // está esperando una respuesta" y volvía a congelar la cuenta desde el otro
-    // lado. Ni trabaja ni se puede despachar: lo que le falta es el barrido.
-    const stalled = new Set(open.map((d) => d.taskId));
     const readyEligible = tasks.filter((t) =>
-      (t.status === 'ready' || t.status === 'blocked' || t.status === 'dispatched' || t.status === 'running') && !stalled.has(t.id));
+      t.status === 'ready' || t.status === 'blocked' || t.status === 'dispatched' || t.status === 'running');
     return readyEligible.length > 0 && readyEligible.every((t) => blockedTaskIds.has(t.id));
+  }
+
+  /**
+   * N1: ¿EL HUB CONOCE A ESTE MIEMBRO? La única pregunta honesta sobre si un
+   * despacho abierto tiene a alguien adentro.
+   *
+   * Dos señales, las dos del hub, que es quien tiene los procesos:
+   * `isMemberBusy` (el adaptador dice que hay un turno en vuelo) y `listTeam`
+   * (el miembro sigue existiendo y no terminó). Basta con una: un miembro
+   * ocioso entre dos mensajes sigue vivo, y un runtime que no publique
+   * `isBusy` no convierte a su miembro en un fantasma.
+   *
+   * Un hub que tira se lee como "no lo conozco": es lo conservador acá, porque
+   * lo único que desencadena es el barrido de `settleOrphanDispatches`, que
+   * devuelve la tarea a `ready` sin cobrarle un intento.
+   */
+  private hubKnowsMember(workId: string, memberId: string): boolean {
+    if (!memberId) return false;
+    try { if (this.deps.hub.isMemberBusy(memberId)) return true; } catch { /* un miembro que ya no existe no está en ningún turno */ }
+    try { return this.deps.hub.listTeam(workId).some((m) => m.id === memberId && m.status !== 'ended'); } catch { return false; }
+  }
+
+  /**
+   * N1: LA FILA SIN DUEÑO SE LIQUIDA, NO SE IGNORA.
+   *
+   * El respaldo —y el ÚNICO uso— de `IN_FLIGHT_DISPATCH_STALE_MINUTES`: una
+   * fila abierta cuyo miembro el hub no conoce y que ya pasó el umbral. Antes
+   * esa fila simplemente dejaba de contar como trabajo vivo y seguía ahí,
+   * reteniendo el cierre (`finishRunIfComplete` mira los despachos abiertos)
+   * con el equipo suspendido por un motivo falso, hasta el próximo arranque de
+   * la app.
+   *
+   * `incrementAttempts:false` por lo mismo que el barrido de arranque: que se
+   * pierda el proceso no es culpa del agente. La reserva se cierra y la tarea
+   * vuelve a `ready`, o sea que se puede volver a despachar — que es
+   * exactamente lo que le pasa a un trabajo cuyo ejecutor desapareció.
+   *
+   * El umbral existe sólo para no matar a un miembro que el hub todavía no
+   * publicó (un alta recién hecha, un proceso levantando): pasados treinta
+   * minutos sin que el hub lo reconozca, ya no hay a quién esperar.
+   */
+  private settleOrphanDispatches(run: CoordinationRunRecord, now: string): void {
+    const staleBefore = new Date(new Date(now).getTime() - IN_FLIGHT_DISPATCH_STALE_MINUTES * 60_000).toISOString();
+    const open = this.deps.repo.listCoordinationDispatches(run.id).filter((d) => d.status === 'dispatched' || d.status === 'running');
+    for (const dispatch of open) {
+      if (this.hubKnowsMember(run.workId, dispatch.memberId)) continue;
+      if ((dispatch.startedAt ?? dispatch.createdAt) > staleBefore) continue;
+      this.settleUncertain(dispatch.id, { incrementAttempts: false });
+    }
   }
 
   /**
@@ -2095,6 +2150,11 @@ export class CoordinationEngine {
     const now = this.deps.clock();
     for (const run of this.deps.repo.listActiveCoordinationRuns()) {
       try {
+        // N1: PRIMERO lo que no tiene dueño. Liquidar una fila huérfana libera
+        // su reserva y devuelve su tarea a `ready`, así que los tres pasos
+        // siguientes miran el estado de verdad y no el que dejó un proceso
+        // muerto.
+        this.settleOrphanDispatches(run, now);
         this.refreshAsks(run.id, now);
         this.finishRunIfComplete(run.id, now);
         this.maybeSelfSuspendOnAsks(run.id, now);
