@@ -276,16 +276,22 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   }),
   approveBrandContextProposal: async (proposalId, edited, acceptStale = false) => change(s => {
     s.brandContextProposals ??= [];
-    const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
-    const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw new Error('Brand not found: ' + p.brandId);
-    if (brand.archivedAt) throw new Error('Brand is archived: ' + brand.id);
+    // L12 (ronda 9): CON CÓDIGO, igual que el backend. Estos `throw` salían
+    // pelados, así que en modo navegador la pantalla mostraba el texto crudo
+    // en vez de la frase traducida: `error.brand.proposalStale` y sus vecinas
+    // no se aplicaban nunca. El mock del navegador es una implementación de la
+    // misma interfaz — si no manda el código, miente sobre lo que el backend
+    // manda.
+    const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw contextError('NOT_FOUND', 'Propuesta no encontrada');
+    const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw contextError('NOT_FOUND', 'Brand not found: ' + p.brandId);
+    if (brand.archivedAt) throw contextError('BRAND_ARCHIVED', 'Brand is archived: ' + brand.id);
     const report = { updated: [], unchanged: [], live: [], userOwned: [] };
     if (p.status === 'approved') return { proposal: p, brand, refresh: report };
-    if (p.status !== 'pending') throw new Error('La propuesta ya no está pendiente');
+    if (p.status !== 'pending') throw contextError('BRAND_PROPOSAL_DECIDED', 'La propuesta ya no está pendiente');
     if (edited != null) p.text = edited;
     const composed = composeBrandContext(brand.context, p.text, p.mode);
-    if (composed.length > 60_000) throw new Error(`Brand context is ${composed.length - 60_000} characters over the 60000-character limit`);
-    if (!acceptStale && p.baseFingerprint && p.baseFingerprint !== brand.context) throw new Error('Brand context changed since this proposal');
+    if (composed.length > 60_000) throw contextError('CONTEXT_TOO_LONG', `Brand context is ${composed.length - 60_000} characters over the 60000-character limit`);
+    if (!acceptStale && p.baseFingerprint && p.baseFingerprint !== brand.context) throw contextError('BRAND_PROPOSAL_STALE', 'Brand context changed since this proposal');
     p.status = 'approved'; p.decidedAt = now(); p.decidedReason = 'approved';
     recordRevision(s, brand, composed, 'proposal', p.id);
     brand.context = composed;
@@ -293,12 +299,12 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   }),
   rejectBrandContextProposal: async proposalId => change(s => {
     s.brandContextProposals ??= [];
-    const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw new Error('Propuesta no encontrada');
-    const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw new Error('Brand not found: ' + p.brandId);
-    if (brand.archivedAt) throw new Error('Brand is archived: ' + p.brandId);
+    const p = s.brandContextProposals.find(x => x.id === proposalId); if (!p) throw contextError('NOT_FOUND', 'Propuesta no encontrada');
+    const brand = s.brands.find(b => b.id === p.brandId); if (!brand) throw contextError('NOT_FOUND', 'Brand not found: ' + p.brandId);
+    if (brand.archivedAt) throw contextError('BRAND_ARCHIVED', 'Brand is archived: ' + p.brandId);
     const report = { updated: [], unchanged: [], live: [], userOwned: [] };
     if (p.status === 'rejected') return { proposal: p, brand, refresh: report };
-    if (p.status !== 'pending') throw new Error('La propuesta ya no está pendiente');
+    if (p.status !== 'pending') throw contextError('BRAND_PROPOSAL_DECIDED', 'La propuesta ya no está pendiente');
     p.status = 'rejected'; p.decidedAt = now(); p.decidedReason = 'rejected';
     return { proposal: p, brand, refresh: report };
   }),

@@ -142,10 +142,25 @@ export const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
  * No van en `APP_ERROR_KEYS` porque no son genéricos de toda la app: son de un
  * alcance concreto, con su pantalla y su vocabulario.
  */
+/**
+ * L5 (ronda 9): Y LOS OTROS TRES SALEN DEL MISMO BOTÓN.
+ *
+ * `CONTEXT_TOO_LONG`, `BRAND_ARCHIVED` y `CONTEXT_EMPTY` los alcanza la misma
+ * persona con el mismo clic —"Aprobar" sobre una propuesta de contexto de
+ * marca, o guardar el contexto a mano— y llegaban sin frase: la pantalla
+ * mostraba el `message` del motor, escrito en inglés para quien lee el código
+ * ("Brand context is 1240 characters over the 60000-character limit"). Estaban
+ * en la allowlist del test con el motivo "contexto de marca, no coordinación",
+ * que explicaba por qué no van en el mapa de COORDINACIÓN y se leyó como si
+ * explicara por qué no necesitan frase. Son dos cosas distintas.
+ */
 export const BRAND_ERROR_KEYS: Record<string, MessageKey> = {
   BRAND_PROPOSAL_STALE: 'error.brand.proposalStale',
   BRAND_PROPOSAL_DECIDED: 'error.brand.proposalDecided',
   STRATEGIST_BUSY: 'error.brand.strategistBusy',
+  CONTEXT_TOO_LONG: 'error.brand.contextTooLong',
+  CONTEXT_EMPTY: 'error.brand.contextEmpty',
+  BRAND_ARCHIVED: 'error.brand.archived',
 };
 
 export const APP_ERROR_KEYS: Record<string, MessageKey> = {
@@ -169,7 +184,14 @@ export const APP_ERROR_KEYS: Record<string, MessageKey> = {
  */
 export const displayError = (e: unknown) => {
   const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
-  const key = COORDINATION_ERROR_KEYS[code] ?? BRAND_ERROR_KEYS[code] ?? APP_ERROR_KEYS[code];
+  // L13 (ronda 9): `Object.hasOwn`, no la indexación pelada. Un objeto literal
+  // hereda del prototipo, así que `code: 'constructor'` —o `'toString'`, o
+  // `'valueOf'`— devolvía un MIEMBRO DEL PROTOTIPO donde se esperaba una clave
+  // de mensaje, y `t()` recibía una función. Un código llega de la frontera
+  // IPC, o sea de afuera; un mapa que se consulta con lo que viene de afuera
+  // se consulta preguntando si la clave es SUYA.
+  const lookup = (map: Record<string, MessageKey>): MessageKey | undefined => (Object.hasOwn(map, code) ? map[code] : undefined);
+  const key = lookup(COORDINATION_ERROR_KEYS) ?? lookup(BRAND_ERROR_KEYS) ?? lookup(APP_ERROR_KEYS);
   if (key) return t(key);
   return e instanceof Error ? e.message : String(e);
 };

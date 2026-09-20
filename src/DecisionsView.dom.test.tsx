@@ -402,7 +402,13 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
         onResolveGate: vi.fn(), // N10: sin handler no hay botones que abrir
       });
       const card = container.querySelector('.decision-gate-proposal')!;
-      expect(card.textContent).toContain('No hay ningún formulario de configuración');
+      // L6 (ronda 9): "en este flujo", como el inglés lo dice desde siempre.
+      // La frase vieja afirmaba que no existe NINGÚN formulario de
+      // configuración, y sí existe: el tope global de despachos se escribe en
+      // una pantalla de la app. Lo cierto es lo acotado: acá, decidiendo esta
+      // propuesta, no hay nada que configurar — que es exactamente lo que este
+      // test mide.
+      expect(card.textContent).toContain('En este flujo no hay ningún formulario de configuración');
       expect(card.querySelector('select')).toBeNull();
       expect(container.querySelector('[role="dialog"]')).toBeNull();
       // Even after opening the edit affordance, still no dialog and no dropdown.

@@ -519,6 +519,10 @@ const es = {
   'error.brand.proposalStale': 'El contexto de marca cambió desde que se escribió esta propuesta: volvé a abrirla.',
   'error.brand.proposalDecided': 'Esa propuesta de contexto ya se resolvió.',
   'error.brand.strategistBusy': 'El estratega está en medio de una respuesta. Probá de nuevo cuando termine.',
+  // L5 (ronda 9): los tres que salían del mismo "Aprobar" sin una sola frase.
+  'error.brand.contextTooLong': 'El contexto de marca no entra: sumando esto se pasa del largo máximo. Recortá el texto de la propuesta, o acortá el contexto antes de aprobarla.',
+  'error.brand.contextEmpty': 'El contexto de marca no se puede vaciar guardando: si querés borrarlo, borralo a mano y guardá eso.',
+  'error.brand.archived': 'Esa marca está archivada: restaurala antes de cambiarle nada.',
   // O2: los de las SUBCLASES, que el escáner del mapa no veía.
   'error.coordination.budgetUnset': 'Este trabajo todavía no tiene presupuesto de despachos: escribí un tope antes de arrancar el equipo.',
   // N2 (ronda 7): LOS GENÉRICOS DE TODA LA APP, CON COPY NEUTRA.
@@ -578,7 +582,11 @@ const es = {
   'coordination.proposal.aggregateUnlimited': 'Este trabajo: {mine}. Otros equipos ahora: {otherRuns}. Uno de esos equipos no tiene límite de despachos: no podemos calcular el total.',
   'coordination.proposal.rationale': 'Por qué',
   'coordination.proposal.hireReason': 'Motivo: {reason}',
-  'coordination.proposal.noSettingsNote': 'No hay ningún formulario de configuración: leé el plan y decidí.',
+  // L6 (ronda 9): "en este flujo", como en inglés. La frase afirmaba que no
+  // existe NINGÚN formulario de configuración, y sí existe: el tope global de
+  // despachos se escribe en una pantalla de la app. Lo que es cierto es que
+  // acá, decidiendo esta propuesta, no hay nada que configurar.
+  'coordination.proposal.noSettingsNote': 'En este flujo no hay ningún formulario de configuración: leé el plan y decidí.',
   'coordination.proposal.editDispatches': 'Tope de despachos',
   'coordination.proposal.editHires': 'Incluir en la contratación',
   // Q4: destildar una contratación se lleva puestas tareas, y las que dependían
@@ -1220,6 +1228,9 @@ const en: Record<MessageKey, string> = {
   'error.brand.proposalStale': 'The brand context changed since this proposal was written: open it again.',
   'error.brand.proposalDecided': 'That context proposal was already resolved.',
   'error.brand.strategistBusy': 'The strategist is in the middle of an answer. Try again once it finishes.',
+  'error.brand.contextTooLong': 'The brand context does not fit: adding this goes over the maximum length. Trim the proposal’s text, or shorten the context before approving it.',
+  'error.brand.contextEmpty': 'The brand context cannot be emptied by saving: if you want it gone, clear it by hand and save that.',
+  'error.brand.archived': 'That brand is archived: restore it before changing anything on it.',
   'error.coordination.budgetUnset': 'This project has no dispatch budget yet: set a cap before starting the team.',
   'error.app.featureDisabled': 'This feature is switched off in this installation.',
   'error.app.notFound': 'That is gone: it was closed or deleted while you were looking at it. Open the screen again.',

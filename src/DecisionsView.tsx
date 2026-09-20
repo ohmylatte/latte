@@ -449,7 +449,7 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
    *
    * `setEditing(false)` corría incondicionalmente, en el mismo tick del clic.
    * Si el backend rechazaba —`DEPTH_CAP` (que el validador no medía),
-   * `PROPOSAL_STALE`, `COORDINATION_BUDGET_INVALID`, un `addMember` caído— el
+   * `INVALID_GATE`, `COORDINATION_BUDGET_INVALID`, un `addMember` caído— el
    * gate seguía en pantalla con el editor cerrado, las casillas destildadas
    * perdidas y el "Aprobar" simple de vuelta: un clic más mandaba
    * `onResolveGate(id,'approve')` SIN payload, o sea el `planJson` guardado
