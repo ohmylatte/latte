@@ -2285,7 +2285,7 @@ export class CoordinationEngine {
   private memberIsInside(memberId: string, live: Set<string> | null): boolean {
     if (!memberId) return false;
     if (live?.has(memberId)) return true;
-    try { return this.deps.hub.isMemberBusy(memberId); } catch { return false; }
+    try { return this.deps.hub.isMemberBusy(memberId); } catch { return true; }
   }
 
   /**
@@ -2326,7 +2326,20 @@ export class CoordinationEngine {
     const staleBefore = new Date(new Date(now).getTime() - IN_FLIGHT_DISPATCH_STALE_MINUTES * 60_000).toISOString();
     const open = this.deps.repo.listCoordinationDispatches(run.id).filter((d) => d.status === 'dispatched' || d.status === 'running');
     const asks = this.deps.repo.listCoordinationAsksForRun(run.id);
-    for (const dispatch of open) {
+    // L7 (ronda 9): UN `try` POR FILA, Y OTRO PARA EL BLOQUE DEL CASO 3.
+    //
+    // `sweepActiveRuns` le dio a cada uno de sus cuatro pasos su propio
+    // `guard` por esta misma razón, y adentro de este paso el problema se
+    // repetía a otra escala: una sola fila que tirara —una reserva con bytes
+    // corruptos, un despacho cuya tarea ya no existe— se llevaba puestas a
+    // TODAS las demás de ese run y al bloque del caso 3, en silencio, hasta el
+    // próximo tick. Y como el defecto que la hace tirar no se arregla solo, el
+    // tick siguiente se traba en la misma fila: las otras quedaban rehenes
+    // para siempre.
+    const guard = (what: string, fn: () => void): void => {
+      try { fn(); } catch (error) { this.deps.log?.(`[latte] coordination sweep (${what}) failed: ${error instanceof Error ? error.message : String(error)}`); }
+    };
+    for (const dispatch of open) guard(`settleOrphanDispatch ${dispatch.id}`, () => {
       // L2 (ronda 9): EL QUE ESPERA UNA RESPUESTA NO ES UN HUÉRFANO.
       //
       // El caso 2 describe a un agente que terminó su turno y no reportó. Un
@@ -2336,25 +2349,27 @@ export class CoordinationEngine {
       // estar así hasta `ASK_TTL_MAX_MINUTES`, o sea un día entero. A los
       // treinta y un minutos el barrido le liquidaba la fila COBRÁNDOLE UN
       // INTENTO por haber preguntado.
-      if (this.asksHolding(asks, dispatch, now).length > 0) continue;
+      if (this.asksHolding(asks, dispatch, now).length > 0) return;
       // Y cuando la pregunta se vence o se contesta, el reloj arranca AHÍ. Un
       // despacho de dos horas que pasó una hora y media esperando una respuesta
       // no lleva dos horas sin dar señales: lleva media.
-      if (this.orphanClock(asks, dispatch) > staleBefore) continue;
-      if (this.memberIsBusySafe(dispatch.memberId)) continue; // hay un turno en vuelo: es trabajo, no un huérfano
+      if (this.orphanClock(asks, dispatch) > staleBefore) return;
+      if (this.memberIsBusySafe(dispatch.memberId)) return; // hay un turno en vuelo: es trabajo, no un huérfano
       // Vivo pero ocioso: terminó sin reportar, y eso se cobra.
       this.settleUncertain(dispatch.id, { incrementAttempts: live.has(dispatch.memberId) });
-    }
+    });
     // Caso 3: la tarea reclamada cuyo despacho nunca llegó a nacer.
-    const stillOpen = new Set(
-      this.deps.repo.listCoordinationDispatches(run.id)
-        .filter((d) => d.status === 'dispatched' || d.status === 'running' || d.status === 'pending_approval')
-        .map((d) => d.taskId));
-    for (const task of this.deps.repo.listCoordinationTasks(run.id)) {
-      if (task.status !== 'dispatched' || stillOpen.has(task.id)) continue;
-      if (task.updatedAt > staleBefore) continue;
-      this.deps.repo.releaseCoordinationTaskFromDispatch(task.id, now);
-    }
+    guard('settleOrphanClaims', () => {
+      const stillOpen = new Set(
+        this.deps.repo.listCoordinationDispatches(run.id)
+          .filter((d) => d.status === 'dispatched' || d.status === 'running' || d.status === 'pending_approval')
+          .map((d) => d.taskId));
+      for (const task of this.deps.repo.listCoordinationTasks(run.id)) {
+        if (task.status !== 'dispatched' || stillOpen.has(task.id)) continue;
+        if (task.updatedAt > staleBefore) continue;
+        this.deps.repo.releaseCoordinationTaskFromDispatch(task.id, now);
+      }
+    });
   }
 
   /**
@@ -2396,9 +2411,23 @@ export class CoordinationEngine {
     return clock;
   }
 
+  /**
+   * "¿Hay un turno en vuelo?", sin que el hub pueda tumbar el barrido.
+   *
+   * L10 (ronda 9): Y UN HUB QUE TIRA SE LEE COMO "OCUPADO", que es lo
+   * conservador acá y lo que el docstring de `settleOrphanDispatches` promete
+   * desde la ronda 8 ("no liquidar en este tick"). El `catch { return false }`
+   * hacía exactamente lo contrario de lo escrito: convertía un fallo del hub
+   * en "no hay nadie adentro" y liquidaba la fila de alguien que podía estar
+   * trabajando. Su hermano `liveMemberIds` ya devuelve `null` —no sé— y el
+   * llamador sale sin tocar nada; ésta es la otra mitad de la misma regla.
+   *
+   * `memberId` vacío es un hecho, no un fallo: una fila `pending_approval`
+   * todavía no tiene miembro, así que ahí no hay ningún turno en vuelo.
+   */
   private memberIsBusySafe(memberId: string): boolean {
     if (!memberId) return false;
-    try { return this.deps.hub.isMemberBusy(memberId); } catch { return false; }
+    try { return this.deps.hub.isMemberBusy(memberId); } catch { return true; }
   }
 
   /**

@@ -228,14 +228,28 @@ export function fakeCoordinationHub(b: TestBackend, members: FakeTeamMember[], o
     return fakeSessionFor(member);
   });
   vi.spyOn(b.hub, 'addMember').mockImplementation(async (input) => {
-    // Realistic: opening a member starts it idle. A turn only makes it
-    // 'working' once something is actually sent to it (`hub.send`, mocked
-    // above) — a test simulating a busy member sets `status` itself.
-    const member: FakeTeamMember = { id: `mem_fake_${members.length + 1}`, workId: input.workId, roleId: input.roleId, status: 'idle' };
-    // El alta entra en la lista ANTES de la espera, igual que el hub real:
-    // `insertMember` es sincrónico y el proceso se levanta después.
+    // El alta entra en la LISTA antes de la espera, igual que el hub real:
+    // `insertMember` es sincrónico y el proceso se levanta después. Por eso
+    // `reserveTargetMember` ya lo ve en `listTeam` (y por eso existe la
+    // reserva por rol que impide que un segundo despacho se lo lleve).
+    //
+    // L11 (ronda 9): PERO TODAVÍA NO ESTÁ VIVO. El fake lo declaraba `idle`
+    // desde el `push`, o sea ANTES del `hold`, y `fakeMemberIsLive` lee `idle`
+    // como "hay un adaptador adentro". El hub real no dice eso a mitad de
+    // spawn: no hay adaptador hasta que `start()` termina, y `describe()`
+    // publica `paused` —la fila existe, el proceso no—. Con la versión vieja,
+    // un miembro en pleno spawn contaba como trabajo vivo en `allBlockedOnAsks`
+    // y como vivo en el caso 2 del barrido: dos decisiones tomadas sobre una
+    // vida que el hub real no había publicado.
+    //
+    // Al resolverse el `hold` pasa a `idle`: abrir un miembro lo deja ocioso,
+    // y sólo se pone `working` cuando algo le manda un turno (`hub.send`, que
+    // está mockeado arriba) — un test que simula a alguien ocupado fija el
+    // `status` él mismo.
+    const member: FakeTeamMember = { id: `mem_fake_${members.length + 1}`, workId: input.workId, roleId: input.roleId, status: 'paused' };
     members.push(member);
     await options.hold?.();
+    member.status = 'idle';
     return fakeSessionFor(member);
   });
   return { send, members };
