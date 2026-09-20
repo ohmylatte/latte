@@ -16,6 +16,11 @@
  */
 import type { AgentHub, MemberContext } from '../agents/hub';
 import type { CoordinationAuthorityMode, CoordinationBudget } from '../../shared/contracts';
+import { isAskSuspendReason } from '../../shared/contracts';
+import type { CoordinationSuspendReason } from '../../shared/contracts';
+
+/** Lo que un despacho denegado puede alegar: todo motivo de suspensión, más el "ahora no" de la concurrencia, que NO suspende. */
+type DispatchDenyReason = CoordinationSuspendReason | 'max_concurrent';
 import { LatteError, NotFoundError, ValidationError } from '../core/errors';
 import { FeatureDisabledError } from '../core/features';
 import { newId } from '../core/ids';
@@ -507,7 +512,13 @@ export class CoordinationEngine {
         gates.push({ id: dispatch.id, kind: 'dispatch', runId: run.id, taskId: dispatch.taskId, dispatchId: dispatch.id, prompt: dispatch.prompt, createdAt: dispatch.createdAt });
       }
     }
-    if (run.status === 'suspended' && run.suspendReason && run.suspendReason !== 'paused_by_human' && run.suspendReason !== 'all_blocked_on_ask') {
+    // M9: `coordination_disabled` entra en la lista de motivos que NO son de
+    // presupuesto. Sin esto, renombrar la suspensión hacía aparecer una
+    // decisión de presupuesto inventada en Decisiones.
+    if (run.status === 'suspended' && run.suspendReason
+      && run.suspendReason !== 'paused_by_human'
+      && run.suspendReason !== 'all_blocked_on_ask'
+      && run.suspendReason !== 'coordination_disabled') {
       gates.push({ id: `budget:${run.id}`, kind: 'budget', runId: run.id, createdAt: run.updatedAt });
     }
     return gates;
@@ -1020,10 +1031,20 @@ export class CoordinationEngine {
     // coordinación no puede borrar lo que alguien escribió, y cuando la
     // bandera vuelva a subir el tick levantará la suspensión con el mismo
     // cálculo de siempre.
+    //
+    // M9 (ronda 8): PERO EL MOTIVO SE CORRIGE IGUAL. Con la bandera abajo, la
+    // fila se quedaba diciendo `all_blocked_on_ask` cuando eso YA ERA FALSO:
+    // la pregunta está contestada y hay tareas despachables. El equipo sigue
+    // detenido —eso es lo que el interruptor promete— pero lo detiene el
+    // interruptor, no las preguntas, y el motivo es lo único que la persona
+    // tiene para saber por qué. También `listGates` lo lee: cualquier motivo
+    // que no sea de los conocidos le hace inventar una decisión de
+    // presupuesto.
     const enabled = this.deps.isCoordinationEnabled ? this.deps.isCoordinationEnabled() : true;
     const run = this.deps.repo.getCoordinationRun(answered.runId);
-    if (enabled && run.status === 'suspended' && run.suspendReason === 'all_blocked_on_ask' && !this.allBlockedOnAsks(run.id, now)) {
-      this.deps.repo.updateCoordinationRunStatus(run.id, 'running', now, null);
+    if (run.status === 'suspended' && isAskSuspendReason(run.suspendReason) && !this.allBlockedOnAsks(run.id, now)) {
+      if (enabled) this.deps.repo.updateCoordinationRunStatus(run.id, 'running', now, null);
+      else if (run.suspendReason !== 'coordination_disabled') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, 'coordination_disabled');
     }
     // Y con la pregunta cerrada, el cierre se re-evalúa: puede haber sido lo
     // único que quedaba en pie (D2).
@@ -1553,7 +1574,7 @@ export class CoordinationEngine {
   private judgeDispatchBudget(
     run: CoordinationRunRecord,
     excludeDispatchId: string | undefined,
-  ): { ok: true } | { ok: false; reason: string; suspend: boolean; error: LatteError } {
+  ): { ok: true } | { ok: false; reason: DispatchDenyReason; suspend: boolean; error: LatteError } {
     // Ilegible NO es "sin presupuesto", y tampoco es una excepción opaca desde
     // el fondo de la pila: es una denegación con nombre, que se lee en la
     // bitácora y en la suspensión como cualquier otra (crítico 8).
@@ -1587,7 +1608,7 @@ export class CoordinationEngine {
     if (globalBudget.kind === 'set') {
       const globalDecision = reserveDispatch(globalBudget.budget, this.globalUsage());
       if (!globalDecision.ok) {
-        const reason = `global_${globalDecision.reason}`;
+        const reason = `global_${globalDecision.reason}` as const;
         return { ok: false, reason, suspend: true, error: new LatteError('BUDGET_EXCEEDED', `Coordination budget denied: ${reason}`) };
       }
     }
@@ -1608,10 +1629,13 @@ export class CoordinationEngine {
     taskId: string,
     existingPending: CoordinationDispatchRecord | null,
     now: string,
-    verdict: { reason: string; suspend: boolean },
+    verdict: { reason: DispatchDenyReason; suspend: boolean },
   ): void {
     this.writeLedgerDenied(runId, verdict.reason);
-    if (verdict.suspend) this.deps.repo.updateCoordinationRunStatus(runId, 'suspended', now, verdict.reason);
+    // `max_concurrent` nunca suspende (es un "ahora no", no un tope agotado),
+    // y por eso no es un `CoordinationSuspendReason`. El tipo lo dice; esta
+    // guarda lo hace cierto en tiempo de ejecución.
+    if (verdict.suspend && verdict.reason !== 'max_concurrent') this.deps.repo.updateCoordinationRunStatus(runId, 'suspended', now, verdict.reason);
     this.abortDispatchClaim(taskId, existingPending, now, verdict.reason);
   }
 
@@ -2019,7 +2043,11 @@ export class CoordinationEngine {
     // La suspensión se levanta cuando su MOTIVO deja de ser cierto, no sólo
     // cuando no queda ninguna pregunta: con una pregunta vigente sobre una
     // tarea y otra tarea `ready` para despachar, "todo bloqueado" ya es falso.
-    if (enabled && run.status === 'suspended' && run.suspendReason === 'all_blocked_on_ask' && !this.allBlockedOnAsks(runId, now)) {
+    // M9: y `coordination_disabled` sale por la MISMA puerta. Es la suspensión
+    // que `answerAsk` renombró con la bandera abajo: cuando la bandera vuelve
+    // a subir, lo que la retenía ya no existe, y sin incluirla acá el run
+    // quedaría suspendido para siempre por un motivo que nadie vuelve a mirar.
+    if (enabled && run.status === 'suspended' && isAskSuspendReason(run.suspendReason) && !this.allBlockedOnAsks(runId, now)) {
       this.deps.repo.updateCoordinationRunStatus(runId, 'running', now, null);
     }
     // Y el cierre. La recursión termina en un paso: `finishRunIfComplete`

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
+import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type CoordinationSuspendReason, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
 import type { ArtifactCheck, DeliveryEvidence, GenerationReceipt } from '../../shared/generationContracts';
 import { GenerationContractError } from '../generation/errors';
 import { hashGenerationContext } from '../generation/canon';
@@ -1175,7 +1175,14 @@ export class LatteRepository {
     return row?.count ?? 0;
   }
 
-  updateCoordinationRunStatus(id: string, status: CoordinationRunStatus, updatedAt: string, suspendReason: string | null = null): CoordinationRunRecord {
+  /**
+   * M9 (ronda 8): EL MOTIVO ES UNA UNIÓN CERRADA EN LA ESCRITURA. La LECTURA
+   * sigue siendo `string | null` —una base vieja puede tener un motivo que
+   * esta versión ya no emite—, pero nadie puede ESCRIBIR uno que `listGates` y
+   * el tick no sepan interpretar: un motivo desconocido le hacía inventar a
+   * Decisiones una decisión de presupuesto que no existía.
+   */
+  updateCoordinationRunStatus(id: string, status: CoordinationRunStatus, updatedAt: string, suspendReason: CoordinationSuspendReason | null = null): CoordinationRunRecord {
     this.getCoordinationRun(id);
     this.db.run('UPDATE coordination_run SET status = ?, suspend_reason = ?, updated_at = ? WHERE id = ?', [status, suspendReason, updatedAt, id]);
     return this.getCoordinationRun(id);

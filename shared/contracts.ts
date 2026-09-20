@@ -695,6 +695,36 @@ export type CoordinationGlobalBudgetView = CoordinationBudgetView;
  */
 export type CoordinationRunStatus = 'planning' | 'running' | 'suspended' | 'done' | 'cancelled';
 
+/**
+ * POR QUÉ ESTÁ DETENIDO UN EQUIPO. La lista COMPLETA de lo que el motor puede
+ * escribir en `suspend_reason`, cerrada a propósito: el campo lo leen la
+ * pantalla de Decisiones (`listGates` decide con él si hay una decisión de
+ * presupuesto que tomar) y el tick (decide con él si puede reactivar). Un
+ * motivo nuevo que nadie enumeró aparecía como una decisión de presupuesto
+ * inventada.
+ *
+ * M9 (ronda 8): `coordination_disabled` es el que faltaba. Con
+ * `feature:coordination` abajo, contestar una pregunta no reactiva el equipo
+ * (N6) — pero el motivo tampoco puede seguir siendo `all_blocked_on_ask`
+ * cuando ya no queda nada trabado: lo detiene el interruptor.
+ *
+ * Los `max_*` y `global_*` son los veredictos de presupuesto, y son
+ * exactamente los que SÍ abren la decisión de presupuesto.
+ */
+export type CoordinationSuspendReason =
+  | 'paused_by_human'
+  | 'all_blocked_on_ask'
+  | 'coordination_disabled'
+  | 'budget_invalid'
+  | 'global_budget_invalid'
+  | 'max_dispatches' | 'max_tokens' | 'max_cost' | 'max_wall_minutes'
+  | 'global_max_dispatches' | 'global_max_tokens' | 'global_max_cost' | 'global_max_wall_minutes';
+
+/** Los dos motivos que nacen de una pregunta abierta y mueren cuando deja de haberla. */
+export function isAskSuspendReason(reason: string | null): boolean {
+  return reason === 'all_blocked_on_ask' || reason === 'coordination_disabled';
+}
+
 export interface CoordinationRunView {
   id: string;
   workId: string;
@@ -711,6 +741,13 @@ export interface CoordinationRunView {
   /** Q10: los bytes están rotos, que NO es lo mismo que "sin tope". Igual que en la tira global. */
   budgetInvalid: boolean;
   planApproved: boolean;
+  /**
+   * Lo que escribió el motor, tal como salió de la base. Se lee con
+   * `CoordinationSuspendReason` en mente —esa unión es la lista completa de lo
+   * que el motor PUEDE escribir— pero el tipo queda abierto a propósito: una
+   * base vieja puede tener un motivo que esta versión ya no emite, y la
+   * pantalla tiene que poder mostrarlo en vez de tumbarse.
+   */
   suspendReason: string | null;
   createdAt: string;
   updatedAt: string;
