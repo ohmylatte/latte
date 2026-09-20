@@ -423,11 +423,14 @@ export class CoordinationEngine {
 
   /** The gate kinds a human resolves with approve/reject: proposal, plan, dispatch, budget-exhausted. Open `latte_ask`s are a separate surface (`answerAsk`). */
   listGates(runId: string): CoordinationGate[] {
-    const terminal = this.deps.repo.getCoordinationRun(runId);
+    // Q6: UNA sola lectura. Había dos, `terminal` y `run`, con nada en el medio
+    // que pudiera cambiar la fila: dos fotos del mismo instante que sólo podían
+    // divergir por accidente, y una de ellas decidía si la otra se usaba.
+    const run = this.deps.repo.getCoordinationRun(runId);
     // Un run terminado no tiene ninguna decisión pendiente: seguir ofreciendo
     // gates de algo que ya terminó es pedirle a la persona que decida sobre un
     // equipo que no existe, y cada clic rebotaba con un error desde el fondo.
-    if (terminal.status === 'done' || terminal.status === 'cancelled') return [];
+    if (run.status === 'done' || run.status === 'cancelled') return [];
     // Q7: ESTO ES UNA LECTURA Y NO ESCRIBE UNA SOLA FILA.
     //
     // Acá vivía un `refreshAsks(runId, clock())`, puesto por F5 con un motivo
@@ -442,7 +445,6 @@ export class CoordinationEngine {
     // El motivo de F5 sigue siendo cierto, y por eso ahora tiene dueño propio:
     // `LatteService.sweepCoordination()`, un tick periódico que corre sin que
     // nadie mire. Una lectura informa; escribir es de quien decide.
-    const run = this.deps.repo.getCoordinationRun(runId);
     const gates: CoordinationGate[] = [];
     // The proposal gate (task 6.9): a 'planning' run holds an unapproved
     // `latte_request_coordination` proposal. Unlike the 'plan' gate below,
@@ -1584,25 +1586,36 @@ export class CoordinationEngine {
    * misma compensación que `resolveProposalGate` usa desde siempre: para el
    * proceso, suelta el cupo de techo y el token, y borra la fila.
    *
-   * Si la compensación FALLA, el alta se registra igual. El miembro sigue
-   * vivo, así que ocultarlo dejaría un proceso contratado que ninguna bitácora
-   * nombra — y la bitácora existe justamente para que la persona pueda ver lo
-   * que hay. La verdad manda por encima de la prolijidad del registro.
+   * Si el DESPIDO falla, el alta se registra igual. El miembro sigue vivo, así
+   * que ocultarlo dejaría un proceso contratado que ninguna bitácora nombra — y
+   * la bitácora existe justamente para que la persona pueda ver lo que hay. La
+   * verdad manda por encima de la prolijidad del registro.
    */
   private compensateHire(reservedMemberId: string | null, memberId: string, runId: string, roleId: string, now: string): void {
     if (reservedMemberId != null) return; // se reutilizó a alguien del equipo: no se contrató nada que deshacer
     try {
       this.deps.hub.removeMember(memberId);
-      // Q9: y el alta se borra de la bitácora. En las dos salidas viejas la
-      // transacción hacía rollback y el `recordHire` se iba con ella; en la de
-      // `hub.send` la transacción YA COMMITEÓ, así que el alta queda escrita y
-      // hay que sacarla a mano. Una contratación deshecha no es un alta.
-      this.forgetHire(runId, memberId);
     } catch {
-      try {
-        this.recordHire(runId, memberId, roleId, now);
-      } catch { /* si ni siquiera se puede anotar, no hay nada más honesto que hacer acá */ }
+      // El despido falló: el miembro SIGUE VIVO. Se lo vuelve a anotar como
+      // alta, porque eso es lo que hay de verdad, y se sale sin tocar la
+      // bitácora más allá de eso.
+      try { this.recordHire(runId, memberId, roleId, now); }
+      catch { /* si ni siquiera se puede anotar, no hay nada más honesto que hacer acá */ }
+      return;
     }
+    // Q6: y el borrado del alta va en su PROPIO try. Los dos estaban juntos, y
+    // un fallo de `forgetHire` con el despido ya hecho caía en el mismo `catch`
+    // y llamaba a `recordHire`: re-anotaba como contratado a alguien que
+    // acababa de ser despedido de verdad. La bitácora decía lo contrario de lo
+    // que había pasado, que es exactamente lo que este método existe para
+    // evitar. Se anota el alta sólo si el despido falló.
+    try {
+      // En las dos salidas viejas la transacción hacía rollback y el
+      // `recordHire` se iba con ella; en la de `hub.send` la transacción YA
+      // COMMITEÓ, así que el alta queda escrita y hay que sacarla a mano. Una
+      // contratación deshecha no es un alta.
+      this.forgetHire(runId, memberId);
+    } catch { /* el miembro ya no existe: una línea de más en la bitácora es preferible a tirar acá */ }
   }
 
   /** El reclamo se suelta intacto: la tarea vuelve a `ready`, o el gate vuelve a la mesa tal como estaba. */
@@ -1947,10 +1960,19 @@ export class CoordinationEngine {
   private refreshAsks(runId: string, now: string): number {
     const expired = this.expireOverdueAsks(runId, now);
     const run = this.deps.repo.getCoordinationRun(runId);
+    // Q6: CON LA BANDERA BAJA, EL TICK NO ENCIENDE NADA.
+    //
+    // Este `running` es una reactivación: un run suspendido vuelve a estar
+    // disponible para despachar. Con `feature:coordination` apagada eso es
+    // exactamente lo que el interruptor promete que no pasa, y el barrido lo
+    // hacía solo, sin que nadie hubiera tocado nada. Con la bandera baja el
+    // tick sólo cierra (`finish`) y vence preguntas: las dos cosas terminan
+    // trabajo, ninguna lo empieza.
+    const enabled = this.deps.isCoordinationEnabled ? this.deps.isCoordinationEnabled() : true;
     // La suspensión se levanta cuando su MOTIVO deja de ser cierto, no sólo
     // cuando no queda ninguna pregunta: con una pregunta vigente sobre una
     // tarea y otra tarea `ready` para despachar, "todo bloqueado" ya es falso.
-    if (run.status === 'suspended' && run.suspendReason === 'all_blocked_on_ask' && !this.allBlockedOnAsks(runId, now)) {
+    if (enabled && run.status === 'suspended' && run.suspendReason === 'all_blocked_on_ask' && !this.allBlockedOnAsks(runId, now)) {
       this.deps.repo.updateCoordinationRunStatus(runId, 'running', now, null);
     }
     // Y el cierre. La recursión termina en un paso: `finishRunIfComplete`

@@ -174,7 +174,20 @@ export function assertCoordinationProposal(parsed: unknown): void {
     requireText(task.spec, `Plan task ${index} spec`, LIMITS.chatMessage);
     if (task.dependsOn !== undefined) {
       if (!Array.isArray(task.dependsOn)) throw new ValidationError(`Plan task ${index} dependsOn must be an array`);
-      for (const dep of task.dependsOn) requireInt(dep, `Plan task ${index} dependsOn`, 0, proposal.plan.length - 1);
+      // Q6: SÓLO HACIA ATRÁS. Un índice hacia adelante —o hacia sí misma—
+      // pasaba este validador y moría en `commitProposal`, que resuelve los
+      // índices contra las tareas YA creadas: se contrataba a todo el equipo,
+      // se levantaban los procesos y recién ahí la transacción tiraba. La
+      // persona quedaba con miembros contratados y sin plan. Un índice que
+      // apunta a una tarea que todavía no existe no es una dependencia, es un
+      // error de forma, y la forma se valida acá. `commitProposal` sigue
+      // defensivo: es la frontera autoritativa.
+      for (const dep of task.dependsOn) {
+        requireInt(dep, `Plan task ${index} dependsOn`, 0, proposal.plan.length - 1);
+        if ((dep as number) >= index) {
+          throw new ValidationError(`Plan task ${index} dependsOn must point to an earlier task (got ${dep})`);
+        }
+      }
     }
   }
 
