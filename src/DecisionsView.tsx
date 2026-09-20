@@ -737,6 +737,12 @@ export function DecisionsView(props: DecisionsViewProps) {
       <p className="decision-coordination-budget">
         {describeWorkBudget(props.coordinationBudget)}
       </p>
+      {/* Q6: y el presupuesto del RUN EN CURSO, cuando es ilegible. `budgetInvalid`
+          lo calculaba el motor y lo publicaba `CoordinationRunView` desde siempre,
+          y ninguna pantalla del Trabajo lo renderizaba: el equipo tenía cada
+          despacho denegado contra unos bytes rotos y la persona no tenía dónde
+          enterarse. Va acá, al lado del editor que es la salida. */}
+      {props.coordinationRun?.budgetInvalid && <p className="decision-coordination-run-budget-invalid">{t('coordination.budget.invalid')}</p>}
       {props.onSetCoordinationBudget && <WorkBudgetEditor onSave={props.onSetCoordinationBudget} />}
       <p className="decision-coordination-grant">
         {props.coordinatorGrant

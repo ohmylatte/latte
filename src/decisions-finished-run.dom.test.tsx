@@ -210,3 +210,52 @@ describe('el presupuesto de este Trabajo, editable', () => {
     expect(budgetEditor(container)).toBeNull();
   });
 });
+
+/**
+ * P6: EL PRESUPUESTO ILEGIBLE DEL RUN EN CURSO SE VE.
+ *
+ * `CoordinationRunView.budgetInvalid` lo calcula el motor y lo publica desde
+ * siempre, y ninguna pantalla del Trabajo lo renderizaba: el equipo tenía cada
+ * despacho denegado contra unos bytes rotos y la persona no tenía dónde
+ * enterarse. Va en la sección de presupuesto, al lado del editor que es la
+ * salida.
+ */
+describe('P6: el presupuesto ilegible del run en curso', () => {
+  const invalidNote = (container: HTMLElement) => container.querySelector('.decision-coordination-run-budget-invalid');
+
+  it('se dice, en la sección de presupuesto, junto al editor', () => {
+    const { container } = mount({
+      coordinationAuthority: 'manual',
+      coordinationBudget: { state: 'set', budget: { maxDispatches: 5, unlimitedConfirmedAt: null } },
+      coordinationRun: run({ budgetInvalid: true }),
+      onSetCoordinationBudget: () => {},
+    });
+
+    const note = invalidNote(container);
+    expect(note).not.toBeNull();
+    expect(note!.textContent!.length).toBeGreaterThan(0);
+    // Y el editor, que es la salida, está ahí mismo.
+    expect(container.querySelector('.decision-coordination-budget-edit')).not.toBeNull();
+  });
+
+  it('con el presupuesto del run legible no se dice nada', () => {
+    const { container } = mount({
+      coordinationAuthority: 'manual',
+      coordinationBudget: { state: 'set', budget: { maxDispatches: 5, unlimitedConfirmedAt: null } },
+      coordinationRun: run({ budgetInvalid: false }),
+      onSetCoordinationBudget: () => {},
+    });
+
+    expect(invalidNote(container)).toBeNull();
+  });
+
+  it('sin run tampoco: no se inventa un problema que nadie reportó', () => {
+    const { container } = mount({
+      coordinationAuthority: 'manual',
+      coordinationBudget: { state: 'set', budget: { maxDispatches: 5, unlimitedConfirmedAt: null } },
+      onSetCoordinationBudget: () => {},
+    });
+
+    expect(invalidNote(container)).toBeNull();
+  });
+});
