@@ -1114,6 +1114,18 @@ export class CoordinationEngine {
     // ErrorBoundary, dejaba la app en blanco con el run `planning` ocupando el
     // único cupo del Trabajo. Antes de insertar la fila, no después.
     assertCoordinationProposal(proposal);
+    // O8: PRIMERO LO QUE DICE "ACÁ NO ENTRA NINGÚN PLAN".
+    //
+    // `assertPlanIsFulfillable` corría antes que estos dos, así que con un run
+    // ya activo —o con el techo app-wide lleno— el agente recibía
+    // `PLAN_HAS_UNAPPROVED_ROLES`: "arreglá tu plan", sobre un plan que no iba
+    // a entrar ni perfecto. Se le respondía la consecuencia en vez del hecho, y
+    // se ponía a re-planificar contra una puerta cerrada. Los tres son lecturas
+    // y ninguno escribe: el orden no cambia lo que queda en la base, cambia qué
+    // se le dice a quien preguntó.
+    const existing = this.deps.repo.findActiveCoordinationRun(grant.workId);
+    if (existing) throw new LatteError('RUN_ALREADY_ACTIVE', `This Work already has an active coordination run (${existing.id}, ${existing.status})`);
+    this.assertRunCeiling();
     // Q6: Y QUE EL PLAN SE PUEDA CUMPLIR, ACÁ, donde el error le llega a quien
     // puede arreglarlo. Un rol del plan sin alta ni miembro se guardaba igual, y
     // recién `assertPlanIsFulfillable` lo rechazaba al aprobar Y al editar: la
@@ -1121,9 +1133,6 @@ export class CoordinationEngine {
     // agente —el que escribió la propuesta— no se enteraba nunca. Misma cuenta,
     // mil pasos antes: el agente recibe el error y vuelve a proponer.
     this.assertPlanIsFulfillable(grant.workId, proposal);
-    const existing = this.deps.repo.findActiveCoordinationRun(grant.workId);
-    if (existing) throw new LatteError('RUN_ALREADY_ACTIVE', `This Work already has an active coordination run (${existing.id}, ${existing.status})`);
-    this.assertRunCeiling();
     const now = this.deps.clock();
     const run = this.deps.repo.insertCoordinationRun({
       id: newId('crn'),

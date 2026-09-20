@@ -12,9 +12,13 @@
  *   de la tarea. Un error de tipeo del agente hacía fracasar trabajo hecho.
  * - `summary`, `files` y `question` entraban sin tope de largo, hasta la base.
  *
- * Es un validador MÍNIMO a propósito: exactamente las siete palabras clave que
+ * Es un validador MÍNIMO a propósito: exactamente las DIEZ palabras clave que
  * los esquemas publicados usan (`type`, `required`, `enum`, `minimum`,
- * `maxLength`, `items`, `properties`, `additionalProperties`) y ni una más. Un
+ * `maxLength`, `maxItems`, `items`, `properties`, `additionalProperties`,
+ * `description`) y ni una más — la lista es `SUPPORTED_SCHEMA_KEYWORDS`, acá
+ * abajo, y ésta es la prosa que la acompaña. Decía "siete" y enumeraba ocho,
+ * sin `maxItems` ni `description`: el docstring describía una versión del
+ * módulo que ya no existía. Un
  * validador genérico completo sería superficie sin cliente; éste cubre POR
  * CONSTRUCCIÓN todo lo que se publica, y el test estructural de
  * `coordination-mcp-arg-validation.test.ts` lo recorre esquema por esquema

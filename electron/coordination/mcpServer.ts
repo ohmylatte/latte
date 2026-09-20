@@ -100,6 +100,12 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
           type: 'array',
           // Q6: el tope del run, publicado. Se descubría escribiendo.
           maxItems: MAX_TASKS_PER_RUN,
+          // O9: y se dice de QUÉ es el tope. `maxItems` se hace cumplir por
+          // llamada, pero el límite real es del RUN: las tareas que ya existen
+          // cuentan, así que un segundo `latte_plan_submit` de 200 rebota con
+          // `TASK_CAP` aunque cada llamada por separado cumpla el esquema. Un
+          // agente que lee sólo el número se lo llevaba al revés.
+          description: `The tasks to create. The cap is on the RUN, not on this call: tasks already created count against the same ${MAX_TASKS_PER_RUN}.`,
           items: {
             type: 'object',
             properties: {
@@ -226,6 +232,9 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
           // Q6: y el tope de tareas del run, que la aprobación va a tener que
           // poder cumplir. Un plan más largo no entra: mejor saberlo acá.
           maxItems: MAX_TASKS_PER_RUN,
+          // O9: el mismo aviso que en `latte_plan_submit`. El tope es del run:
+          // todo lo que el coordinador cree después sigue contando contra él.
+          description: `The plan's tasks. The cap is on the RUN, not on this call: any task created later counts against the same ${MAX_TASKS_PER_RUN}.`,
           items: {
             type: 'object',
             properties: {

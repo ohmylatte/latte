@@ -223,7 +223,13 @@ describe('Ronda 5: los cuatro chicos', () => {
 
       // Venció (el tick cierra), pero no encendió.
       expect(b.repo.listOpenCoordinationAsks(runId)).toHaveLength(0);
-      expect(b.repo.getCoordinationRun(runId).status).not.toBe('running');
+      // O11: `not.toBe('running')` pasaba igual con el run `done` o
+      // `cancelled` — dos finales que NO son lo que este test dice proteger.
+      // Se nombra el estado exacto, y su motivo: el run sigue exactamente
+      // donde estaba, suspendido por la pregunta que acaba de vencer.
+      const run = b.repo.getCoordinationRun(runId);
+      expect(run.status).toBe('suspended');
+      expect(run.suspendReason).toBe('all_blocked_on_ask');
     });
 
     it('con la bandera arriba, el mismo tick sí lo reactiva', async () => {
