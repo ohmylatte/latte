@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CoordinationEngine, type CoordinationGrant, type CoordinationProposal } from '../../electron/coordination/engine';
-import { MAX_DEPENDENCY_DEPTH } from '../../electron/coordination/limits';
+import { MAX_DEPENDENCY_DEPTH, MAX_TASKS_PER_RUN } from '../../electron/coordination/limits';
 import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
+import { toFailure } from '../../electron/ipc/register';
 import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
@@ -85,7 +86,22 @@ describe('O1: una cadena de dependencias más larga que el tope se rechaza valid
   });
   afterEach(() => { vi.restoreAllMocks(); b.cleanup(); });
 
-  it('JSON-RPC: el plan demasiado profundo se rechaza con VALIDATION, sin un solo run ni un alta', async () => {
+  /**
+   * N5 (ronda 7): EL VALIDADOR RECHAZA CON EL CÓDIGO QUE LA PERSONA ENTIENDE.
+   *
+   * O1 tapó el agujero pero tirando un `ValidationError` genérico, así que la
+   * persona leía "Algo de lo que se mandó no es válido. Revisá los datos"
+   * sobre un plan cuyo problema tiene nombre y salida: "Este plan encadena
+   * demasiadas dependencias seguidas. Acortá la cadena". La frase accionable
+   * existía —`error.coordination.depthCap`— y el validador la mataba.
+   *
+   * Lo mismo, y peor, con el largo: `assertCoordinationProposal` no medía
+   * `plan.length` contra `MAX_TASKS_PER_RUN`, así que 201 tareas pasaban la
+   * validación entera, `resolveGate` contrataba al equipo y `commitProposal`
+   * tiraba `TASK_CAP` con la gente ya contratada — el MISMO agujero que O1
+   * arregló para la profundidad, abierto para el largo.
+   */
+  it('JSON-RPC: el plan demasiado profundo se rechaza con DEPTH_CAP, sin un solo run ni un alta', async () => {
     const tooDeep = proposal(chain(MAX_DEPENDENCY_DEPTH + 2)); // profundidad MAX + 1
 
     const result = envelope(await b.coordinationMcpServer.handleMcpRequest(
@@ -93,7 +109,7 @@ describe('O1: una cadena de dependencias más larga que el tope se rechaza valid
     ));
 
     expect(result.ok).toBe(false);
-    expect(result.error!.code).toBe('VALIDATION');
+    expect(result.error!.code).toBe('DEPTH_CAP');
     expect(result.error!.message).toContain(String(MAX_DEPENDENCY_DEPTH));
     // Cero runs, cero altas, cero despachos: nada se escribió.
     expect(b.repo.findActiveCoordinationRun(workId)).toBeNull();
@@ -101,7 +117,7 @@ describe('O1: una cadena de dependencias más larga que el tope se rechaza valid
     expect(send.mock.calls).toHaveLength(0);
   });
 
-  it('JSON-RPC: la cadena que llega JUSTO al tope sí entra — el rechazo no es del largo del plan', async () => {
+  it('JSON-RPC: la cadena que llega JUSTO al tope sí entra, con sus tareas contadas', async () => {
     const atCap = proposal(chain(MAX_DEPENDENCY_DEPTH + 1)); // profundidad MAX exacta
 
     const result = envelope(await b.coordinationMcpServer.handleMcpRequest(
@@ -109,21 +125,83 @@ describe('O1: una cadena de dependencias más larga que el tope se rechaza valid
     ));
 
     expect(result.ok).toBe(true);
-    expect(b.repo.findActiveCoordinationRun(workId)).not.toBeNull();
+    const run = b.repo.findActiveCoordinationRun(workId);
+    expect(run).not.toBeNull();
+    // N5: y el plan quedó ENTERO, con sus tareas contadas. "Entró" no alcanza:
+    // una propuesta a la que el tope le hubiera comido la última tarea también
+    // entra.
+    const plan = (JSON.parse(run!.planJson!) as { plan: unknown[] }).plan;
+    expect(plan).toHaveLength(MAX_DEPENDENCY_DEPTH + 1);
   });
 
-  it('IPC: la propuesta EDITADA demasiado profunda tampoco contrata a nadie antes de rebotar', async () => {
+  /**
+   * Por JSON-RPC el largo lo corta ANTES el esquema publicado (`maxItems:
+   * MAX_TASKS_PER_RUN` en `mcpServer.ts`), y el agente recibe el código del
+   * sobre MCP. Está bien que así sea —el esquema es la frontera del agente— y
+   * se deja escrito acá para que nadie lo tome por el agujero: el agujero es
+   * el camino IPC de abajo, donde no hay esquema que mire.
+   */
+  it('JSON-RPC: el plan con más tareas que el tope lo corta el esquema, sin run ni altas', async () => {
+    const tooMany = proposal(Array.from({ length: MAX_TASKS_PER_RUN + 1 }, (_, i) => ({ roleId: 'copywriter', spec: `tarea ${i}` })));
+
+    const result = envelope(await b.coordinationMcpServer.handleMcpRequest(
+      rpc('latte_request_coordination', tooMany), `Bearer ${token}`, '127.0.0.1',
+    ));
+
+    expect(result.ok).toBe(false);
+    expect(result.error!.code).toBe('INVALID_ARGUMENT');
+    expect(result.error!.message).toContain(String(MAX_TASKS_PER_RUN));
+    expect(b.repo.findActiveCoordinationRun(workId)).toBeNull();
+    expect(members).toHaveLength(0);
+    expect(send.mock.calls).toHaveLength(0);
+  });
+
+  it('JSON-RPC: el plan que llega JUSTO al tope de tareas sí entra entero', async () => {
+    const atCap = proposal(Array.from({ length: MAX_TASKS_PER_RUN }, (_, i) => ({ roleId: 'copywriter', spec: `tarea ${i}` })));
+
+    const result = envelope(await b.coordinationMcpServer.handleMcpRequest(
+      rpc('latte_request_coordination', atCap), `Bearer ${token}`, '127.0.0.1',
+    ));
+
+    expect(result.ok).toBe(true);
+    const run = b.repo.findActiveCoordinationRun(workId);
+    expect((JSON.parse(run!.planJson!) as { plan: unknown[] }).plan).toHaveLength(MAX_TASKS_PER_RUN);
+  });
+
+  it('IPC: la propuesta EDITADA demasiado profunda tampoco contrata a nadie antes de rebotar, y rebota con DEPTH_CAP', async () => {
     const run = await engine.requestCoordination(proposerGrant(), proposal(chain(2)));
     expect(members).toHaveLength(0); // la premisa: proponer no contrata
 
     const edited = JSON.stringify(proposal(chain(MAX_DEPENDENCY_DEPTH + 2)));
     await expect(b.service.resolveCoordinationGate(`proposal:${run.id}`, 'approve', edited))
-      .rejects.toMatchObject({ code: 'VALIDATION' });
+      .rejects.toMatchObject({ code: 'DEPTH_CAP' });
 
     // Ni una contratación, ni una tarea, y el run sigue esperando una decisión.
     expect(members).toHaveLength(0);
     expect(b.repo.listMembers(workId).map((m) => m.roleId)).not.toContain('copywriter');
     expect(b.repo.listCoordinationTasks(run.id)).toHaveLength(0);
     expect(b.repo.getCoordinationRun(run.id).status).toBe('planning');
+  });
+
+  it('IPC: la propuesta EDITADA con demasiadas tareas rebota con TASK_CAP, también sin contratar', async () => {
+    const run = await engine.requestCoordination(proposerGrant(), proposal(chain(2)));
+
+    const edited = JSON.stringify(proposal(Array.from({ length: MAX_TASKS_PER_RUN + 1 }, (_, i) => ({ roleId: 'copywriter', spec: `tarea ${i}` }))));
+    await expect(b.service.resolveCoordinationGate(`proposal:${run.id}`, 'approve', edited))
+      .rejects.toMatchObject({ code: 'TASK_CAP' });
+
+    expect(members).toHaveLength(0);
+    expect(b.repo.listCoordinationTasks(run.id)).toHaveLength(0);
+    expect(b.repo.getCoordinationRun(run.id).status).toBe('planning');
+  });
+
+  it('IPC: el sobre que cruza la frontera lleva el código, no un VALIDATION genérico', async () => {
+    const run = await engine.requestCoordination(proposerGrant(), proposal(chain(2)));
+
+    const depth = await b.service.resolveCoordinationGate(`proposal:${run.id}`, 'approve', JSON.stringify(proposal(chain(MAX_DEPENDENCY_DEPTH + 2)))).then(() => null, (e: unknown) => e);
+    const tasks = await b.service.resolveCoordinationGate(`proposal:${run.id}`, 'approve', JSON.stringify(proposal(Array.from({ length: MAX_TASKS_PER_RUN + 1 }, (_, i) => ({ roleId: 'copywriter', spec: `t${i}` }))))).then(() => null, (e: unknown) => e);
+
+    expect(toFailure('resolveCoordinationGate', depth)).toMatchObject({ ok: false, code: 'DEPTH_CAP' });
+    expect(toFailure('resolveCoordinationGate', tasks)).toMatchObject({ ok: false, code: 'TASK_CAP' });
   });
 });

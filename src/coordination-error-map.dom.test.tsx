@@ -241,6 +241,31 @@ describe('N2: cada mapa cubre su alcance, verificado contra `electron/**`', () =
    */
   interface Site { code: string; file: string; context: string }
 
+  /**
+   * El nombre de la función o el método que ENCIERRA una posición. Es el
+   * contexto que decide si un `LatteError` de un archivo compartido
+   * (`storage/repository.ts`, `services/validation.ts`) pertenece igual al
+   * motor: `answerCoordinationAsk` y `assertCoordinationProposal` lo dicen en
+   * su nombre. Leer 400 caracteres para atrás no alcanzaba — un docstring
+   * largo tapaba la firma.
+   */
+  function enclosingName(text: string, index: number): string {
+    const declarations = [
+      ...text.matchAll(/(?:export\s+)?(?:async\s+)?function\s+(\w+)/g),
+      ...text.matchAll(/^\s{2}(?:(?:public|private|protected|readonly|static|async|get|set)\s+)*(\w+)\s*(?:<[^>\n]*>)?\s*\(/gm),
+    ].sort((a, b) => a.index! - b.index!)
+      // `if (`, `for (`, `while (`, `return (`… también entran por la segunda
+      // regex, y un `if` a dos espacios adentro de una función pisaba el nombre
+      // de la función. No son declaraciones de nada.
+      .filter((m) => !/^(if|for|while|switch|catch|return|throw|do|else|super|await|typeof|void|new|const|let|var)$/.test(m[1]!));
+    let name = '';
+    for (const declaration of declarations) {
+      if (declaration.index! > index) break;
+      name = declaration[1]!;
+    }
+    return name;
+  }
+
   function throwSites(): Site[] {
     const byClass = new Map<string, { code: string; file: string }>();
     for (const hit of subclassHits()) byClass.set(hit.className, { code: hit.code, file: hit.file });
@@ -254,19 +279,19 @@ describe('N2: cada mapa cubre su alcance, verificado contra `electron/**`', () =
         // El CONTEXTO es lo de antes: el nombre del método que lo tira. Un
         // `ASK_CLOSED` adentro de `answerCoordinationAsk` sigue siendo del
         // motor aunque la fila viva en el repositorio compartido.
-        const context = text.slice(Math.max(0, match.index - 400), match.index);
+        const context = enclosingName(text, match.index);
         for (const literal of head.matchAll(/'([A-Z][A-Z_]{2,})'/g)) found.push({ code: literal[1]!, file, context });
       }
       for (const [className, { code }] of byClass) {
         for (const match of text.matchAll(new RegExp(`new\\s+${className}\\s*\\(`, 'g'))) {
-          found.push({ code, file, context: text.slice(Math.max(0, match.index - 400), match.index) });
+          found.push({ code, file, context: enclosingName(text, match.index) });
         }
       }
       // `requireFeature(...)` es un `throw new FeatureDisabledError` disfrazado:
       // es el camino por el que CUATRO features tiran el mismo código, y es
       // justamente el hecho que N2 vino a arreglar.
       for (const match of text.matchAll(/requireFeature\s*\(/g)) {
-        found.push({ code: 'FEATURE_DISABLED', file, context: text.slice(Math.max(0, match.index - 400), match.index) });
+        found.push({ code: 'FEATURE_DISABLED', file, context: enclosingName(text, match.index) });
       }
     }
     return found;

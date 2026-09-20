@@ -228,6 +228,57 @@ async function realFeatureDisabled(): Promise<{ fromBrandKits: Error; fromCoordi
   }
 }
 
+/**
+ * N5: EL VALIDADOR RECHAZA CON EL CÓDIGO QUE LA PERSONA ENTIENDE.
+ *
+ * `assertCoordinationProposal` tiraba `ValidationError` para la profundidad,
+ * así que la persona leía "Algo de lo que se mandó no es válido. Revisá los
+ * datos" sobre un plan cuyo problema tiene nombre y salida. La frase accionable
+ * ya existía; el validador la mataba.
+ */
+async function realDepthCap(): Promise<Error> {
+  const { makeBackend, fakeCoordinationHub } = await import('../tests/backend/helpers');
+  const { FEATURE_KEYS, FEATURE_ON } = await import('../electron/core/features');
+  const { MAX_DEPENDENCY_DEPTH } = await import('../electron/coordination/limits');
+  const b = await makeBackend();
+  try {
+    fakeCoordinationHub(b, []);
+    const brand = await b.service.createBrand('Marca');
+    const work = await b.service.createWork(brand.id, 'Trabajo');
+    b.repo.insertMember({
+      id: 'mem_proposer', workId: work.id, roleId: 'strategist', roleName: 'Strategist', initial: 'S', runtime: 'codex',
+      model: null, accountId: null, sessionId: '', done: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON);
+    await b.service.setCoordinationBudget(work.id, { maxDispatches: 500 });
+    const plan = (n: number) => Array.from({ length: n }, (_, i) => ({ roleId: 'copywriter', spec: `paso ${i}`, ...(i === 0 ? {} : { dependsOn: [i - 1] }) }));
+    const body = (n: number) => ({ plan: plan(n), estimatedDispatches: 8, membersToHire: [{ roleId: 'copywriter', why: 'Nadie escribe' }], rationale: 'Coordinar al equipo.' });
+    const run = await b.service.coordinationEngine.requestCoordination(
+      { workId: work.id, runId: null, memberId: 'mem_proposer', role: 'worker' }, body(2),
+    );
+    // El camino de la PANTALLA: "Editar y aprobar" manda la propuesta editada.
+    const error = await b.service.resolveCoordinationGate(`proposal:${run.id}`, 'approve', JSON.stringify(body(MAX_DEPENDENCY_DEPTH + 2)))
+      .then(() => null, (e: Error) => e);
+    expect(error).not.toBeNull();
+    expect((error as { code?: string }).code).toBe('DEPTH_CAP');
+    return error as Error;
+  } finally {
+    b.cleanup();
+  }
+}
+
+describe('N5: la copy del tope de profundidad llega a la persona', () => {
+  it('`DEPTH_CAP`, tal como lo tira el validador, con su frase accionable y no con la genérica', async () => {
+    const depthCap = await realDepthCap();
+
+    const text = await errorAfterAccept(depthCap, 'es-AR');
+
+    expect(text).toBe('Este plan encadena demasiadas dependencias seguidas. Acortá la cadena y volvé a proponerlo.');
+    expect(text).not.toBe('Algo de lo que se mandó no es válido. Revisá los datos y probá de nuevo.');
+    expect(text).not.toBe(depthCap.message);
+  });
+});
+
 describe('N2: los códigos genéricos se leen con una frase de toda la app', () => {
   it('`FEATURE_DISABLED` desde los kits de marca no habla de equipos ni promete Ajustes', async () => {
     const { fromBrandKits } = await realFeatureDisabled();

@@ -1,10 +1,10 @@
-import { ValidationError } from '../core/errors';
+import { LatteError, ValidationError } from '../core/errors';
 import { assertId } from '../core/paths';
 import { isValidId } from '../core/ids';
 // Constantes puras, sin I/O: el MISMO número que `canAddTask`/`createTaskRow`
 // aplican cuando la propuesta ya se aprobó. Una segunda copia del tope acá
 // sería exactamente la forma de que los dos se separen.
-import { MAX_DEPENDENCY_DEPTH } from '../coordination/limits';
+import { MAX_DEPENDENCY_DEPTH, MAX_TASKS_PER_RUN } from '../coordination/limits';
 
 export const LIMITS = {
   name: 120,
@@ -171,6 +171,18 @@ export function assertCoordinationProposal(parsed: unknown): void {
   if (!Array.isArray(proposal.plan) || proposal.plan.length === 0) {
     throw new ValidationError('The edited proposal must keep at least one task in `plan`');
   }
+  // N5: EL LARGO SE MIDE ACÁ, por el mismo motivo que la profundidad.
+  //
+  // `assertCoordinationProposal` no miraba `plan.length` contra
+  // `MAX_TASKS_PER_RUN`. Por MCP el esquema publicado lo corta antes
+  // (`maxItems`), pero por IPC —la propuesta EDITADA que manda la pantalla— no
+  // hay esquema: 201 tareas pasaban la validación entera, `resolveGate`
+  // contrataba al equipo y levantaba los procesos, y recién `commitProposal`
+  // tiraba `TASK_CAP` con la gente ya contratada. Exactamente el agujero que
+  // O1 tapó para la profundidad, abierto para el largo.
+  if (proposal.plan.length > MAX_TASKS_PER_RUN) {
+    throw new LatteError('TASK_CAP', `The plan has ${proposal.plan.length} tasks; a team may carry at most ${MAX_TASKS_PER_RUN}`);
+  }
   // O1: LA PROFUNDIDAD SE MIDE ACÁ, donde todavía no se contrató a nadie.
   //
   // `createTaskRow` aplica `MAX_DEPENDENCY_DEPTH` (`canAddTask` → `DEPTH_CAP`)
@@ -209,7 +221,14 @@ export function assertCoordinationProposal(parsed: unknown): void {
     const deps = (task.dependsOn as number[] | undefined) ?? [];
     const depth = deps.length === 0 ? 0 : Math.max(...deps.map((dep) => depths[dep]!)) + 1;
     if (depth > MAX_DEPENDENCY_DEPTH) {
-      throw new ValidationError(`Plan task ${index} chains more than ${MAX_DEPENDENCY_DEPTH} dependencies in a row`);
+      // N5: `DEPTH_CAP`, no `VALIDATION`. El tope tiene una frase escrita para
+      // la persona —"Este plan encadena demasiadas dependencias seguidas.
+      // Acortá la cadena y volvé a proponerlo"— y un `ValidationError`
+      // genérico la reemplazaba por "Algo de lo que se mandó no es válido.
+      // Revisá los datos", que no dice qué revisar. Es el MISMO código que
+      // `canAddTask` tira cuando el plan ya se aprobó: el hecho es el mismo,
+      // la frase tiene que ser la misma.
+      throw new LatteError('DEPTH_CAP', `Plan task ${index} chains more than ${MAX_DEPENDENCY_DEPTH} dependencies in a row`);
     }
     depths.push(depth);
   }
