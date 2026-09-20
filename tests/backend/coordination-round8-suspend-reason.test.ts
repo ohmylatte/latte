@@ -115,7 +115,17 @@ describe('Ronda 8 / M9: con el flag apagado, el motivo de suspensión es el flag
     expect(run.suspendReason).toBeNull();
   });
 
-  it('una suspensión que SIGUE siendo cierta no se renombra: con otra pregunta trabando todo, el motivo queda', async () => {
+  /**
+   * L3 (ronda 9): CON LA BANDERA ABAJO, EL MOTIVO ES LA BANDERA, aunque las
+   * preguntas también traben.
+   *
+   * La ronda 8 leía este caso al revés: dejaba `all_blocked_on_ask` porque
+   * "sigue trabado de verdad". Las dos cosas son ciertas, y por eso el orden
+   * importa — el motivo tiene UNA sola línea y la persona lee ahí qué hacer.
+   * Contestar todas las preguntas con la bandera abajo no reactiva nada: lo
+   * que detiene al equipo, y lo único que puede soltarlo, es el interruptor.
+   */
+  it('con la bandera abajo el motivo es el interruptor, aunque otra pregunta siga trabando todo', async () => {
     // La pregunta general (sin tarea) no traba nada, así que contestarla no
     // cambia el cálculo: la única tarea sigue esperando SU respuesta.
     const task = await createTask('la única');
@@ -130,6 +140,11 @@ describe('Ronda 8 / M9: con el flag apagado, el motivo de suspensión es el flag
 
     const run = b.repo.getCoordinationRun(runId);
     expect(run.status).toBe('suspended');
-    expect(run.suspendReason).toBe('all_blocked_on_ask'); // sigue trabado de verdad
+    expect(run.suspendReason).toBe('coordination_disabled');
+    // Y cuando la bandera vuelve, el motivo vuelve a ser el que sigue siendo
+    // cierto: la pregunta que todavía traba la única tarea.
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON);
+    b.service.sweepCoordination();
+    expect(b.repo.getCoordinationRun(runId).suspendReason).toBe('all_blocked_on_ask');
   });
 });

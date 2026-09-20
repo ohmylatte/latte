@@ -1040,12 +1040,10 @@ export class CoordinationEngine {
     // tiene para saber por qué. También `listGates` lo lee: cualquier motivo
     // que no sea de los conocidos le hace inventar una decisión de
     // presupuesto.
-    const enabled = this.deps.isCoordinationEnabled ? this.deps.isCoordinationEnabled() : true;
+    //
+    // L3 (ronda 9): Y LA FÓRMULA ES UNA SOLA, ACÁ Y EN TODOS LADOS.
     const run = this.deps.repo.getCoordinationRun(answered.runId);
-    if (run.status === 'suspended' && isAskSuspendReason(run.suspendReason) && !this.allBlockedOnAsks(run.id, now)) {
-      if (enabled) this.deps.repo.updateCoordinationRunStatus(run.id, 'running', now, null);
-      else if (run.suspendReason !== 'coordination_disabled') this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, 'coordination_disabled');
-    }
+    this.reconcileSuspendReason(run.id, now);
     // Y con la pregunta cerrada, el cierre se re-evalúa: puede haber sido lo
     // único que quedaba en pie (D2).
     this.finishRunIfComplete(run.id, now);
@@ -2128,7 +2126,6 @@ export class CoordinationEngine {
    */
   private refreshAsks(runId: string, now: string): number {
     const expired = this.expireOverdueAsks(runId, now);
-    const run = this.deps.repo.getCoordinationRun(runId);
     // Q6: CON LA BANDERA BAJA, EL TICK NO ENCIENDE NADA.
     //
     // Este `running` es una reactivación: un run suspendido vuelve a estar
@@ -2137,22 +2134,62 @@ export class CoordinationEngine {
     // hacía solo, sin que nadie hubiera tocado nada. Con la bandera baja el
     // tick sólo cierra (`finish`) y vence preguntas: las dos cosas terminan
     // trabajo, ninguna lo empieza.
-    const enabled = this.deps.isCoordinationEnabled ? this.deps.isCoordinationEnabled() : true;
     // La suspensión se levanta cuando su MOTIVO deja de ser cierto, no sólo
     // cuando no queda ninguna pregunta: con una pregunta vigente sobre una
     // tarea y otra tarea `ready` para despachar, "todo bloqueado" ya es falso.
-    // M9: y `coordination_disabled` sale por la MISMA puerta. Es la suspensión
-    // que `answerAsk` renombró con la bandera abajo: cuando la bandera vuelve
-    // a subir, lo que la retenía ya no existe, y sin incluirla acá el run
-    // quedaría suspendido para siempre por un motivo que nadie vuelve a mirar.
-    if (enabled && run.status === 'suspended' && isAskSuspendReason(run.suspendReason) && !this.allBlockedOnAsks(runId, now)) {
-      this.deps.repo.updateCoordinationRunStatus(runId, 'running', now, null);
-    }
+    //
+    // L3 (ronda 9): Y ESA CUENTA SE HACE EN UN SOLO LUGAR. Acá vivía media
+    // fórmula —sólo la reactivación, y sólo con la bandera arriba— y en
+    // `answerAsk` vivía la otra media. Un vencimiento con la bandera abajo
+    // dejaba la fila diciendo `all_blocked_on_ask` sin una sola pregunta
+    // esperando; una bandera que volvía con preguntas nuevas dejaba la fila
+    // diciendo `coordination_disabled` cuando lo que detenía al equipo ya eran
+    // las preguntas. Dos fórmulas parciales para el mismo campo es cómo ese
+    // campo termina mintiendo.
+    this.reconcileSuspendReason(runId, now);
     // Y el cierre. La recursión termina en un paso: `finishRunIfComplete`
     // vuelve a entrar acá, pero ya no queda nada vencido que cerrar, así que
     // `expired` es cero y no reentra.
     if (expired > 0) this.finishRunIfComplete(runId, now);
     return expired;
+  }
+
+  /**
+   * L3 (ronda 9): EL MOTIVO DE UNA SUSPENSIÓN, CALCULADO ENTERO Y EN UN SOLO
+   * LUGAR.
+   *
+   * Tres preguntas en orden, porque el orden ES la regla: quien detiene al
+   * equipo manda sobre quien lo detenía antes.
+   *
+   *  1. la bandera abajo ⇒ `coordination_disabled`. Es lo más fuerte: el
+   *     interruptor promete un equipo detenido, y nada de acá adentro lo
+   *     reactiva;
+   *  2. si no, y todo lo despachable espera una respuesta ⇒
+   *     `all_blocked_on_ask`;
+   *  3. si no, y el motivo actual era uno de esos dos ⇒ `running`. Lo que lo
+   *     retenía dejó de ser cierto.
+   *
+   * `paused_by_human` NO ENTRA, ni como entrada ni como salida: lo puso una
+   * persona y sólo una persona lo saca. Tampoco entran los motivos de
+   * presupuesto, que se levantan subiendo el tope, no dejando de mirarlos.
+   *
+   * Lo llaman los cuatro caminos que pueden cambiar la respuesta: `answerAsk`,
+   * `refreshAsks`, el tick (`sweepActiveRuns`) y `resumeRun` —éste a través de
+   * `refreshAsks`, que es su primera línea—.
+   */
+  private reconcileSuspendReason(runId: string, now: string): void {
+    const run = this.deps.repo.getCoordinationRun(runId);
+    if (run.status !== 'suspended' || !isAskSuspendReason(run.suspendReason)) return;
+    const enabled = this.deps.isCoordinationEnabled ? this.deps.isCoordinationEnabled() : true;
+    if (!enabled) {
+      if (run.suspendReason !== 'coordination_disabled') this.deps.repo.updateCoordinationRunStatus(runId, 'suspended', now, 'coordination_disabled');
+      return;
+    }
+    if (this.allBlockedOnAsks(runId, now)) {
+      if (run.suspendReason !== 'all_blocked_on_ask') this.deps.repo.updateCoordinationRunStatus(runId, 'suspended', now, 'all_blocked_on_ask');
+      return;
+    }
+    this.deps.repo.updateCoordinationRunStatus(runId, 'running', now, null);
   }
 
   /**
@@ -2419,6 +2456,12 @@ export class CoordinationEngine {
       guard('refreshAsks', () => this.refreshAsks(run.id, now));
       guard('finishRunIfComplete', () => this.finishRunIfComplete(run.id, now));
       guard('maybeSelfSuspendOnAsks', () => this.maybeSelfSuspendOnAsks(run.id, now));
+      // L3 (ronda 9): y el motivo, al final y en su propio paso. Es el único
+      // camino que un run `suspended` recorre de verdad —no recibe reportes ni
+      // despachos—, así que si la fórmula no corre acá no corre en ningún
+      // lado: el equipo se queda con el motivo que le dejó el último evento,
+      // que puede haber dejado de ser cierto hace horas.
+      guard('reconcileSuspendReason', () => this.reconcileSuspendReason(run.id, now));
     }
   }
 
