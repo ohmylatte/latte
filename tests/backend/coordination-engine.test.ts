@@ -613,7 +613,9 @@ describe('CoordinationEngine — the dispatch choke point', () => {
         // `plan: []` ya no llega al techo — lo frena el validador, que es otra
         // cosa. Lo que este test mide es el techo app-wide, así que la
         // propuesta tiene que ser una propuesta de verdad.
-        await engine.requestCoordination(proposerGrant, { plan: [{ roleId: 'strategist', spec: 'Armar el plan' }], estimatedDispatches: 1, rationale: 'Propongo coordinar' });
+        // Q6: y con quién la haga — un rol huérfano lo frena el validador de
+        // cumplibilidad, que también es otra cosa que el techo.
+        await engine.requestCoordination(proposerGrant, { plan: [{ roleId: 'strategist', spec: 'Armar el plan' }], membersToHire: [{ roleId: 'strategist', why: 'no hay estratega' }], estimatedDispatches: 1, rationale: 'Propongo coordinar' });
       } catch (error) {
         caught = error;
       }
@@ -685,7 +687,8 @@ describe('CoordinationEngine — emits a coordination event on state changes (ta
   it('fires on requestCoordination (a run created with no run yet)', async () => {
     const run = await engine.requestCoordination(
       { workId, runId: null, memberId: 'mem_worker', role: 'worker' },
-      { plan: [{ roleId: 'strategist', spec: 'x' }], estimatedDispatches: 3, rationale: 'y' },
+      // Q6: el plan tiene que ser cumplible — con quién haga cada rol.
+      { plan: [{ roleId: 'strategist', spec: 'x' }], membersToHire: [{ roleId: 'strategist', why: 'no hay estratega' }], estimatedDispatches: 3, rationale: 'y' },
     );
     expect(emitted).toContainEqual({ brandId, workId, runId: run.id });
   });

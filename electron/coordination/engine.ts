@@ -81,7 +81,20 @@ export interface CoordinationGate {
   proposalJson?: string | null;
   /** Only present on a `proposal` gate: the aggregate across every OTHER active run, shown never hidden. */
   aggregate?: CoordinationGateAggregate;
+  /** Only present on a legible `proposal` gate: who can do each role the plan names. */
+  roleCoverage?: CoordinationGateRoleCoverage[];
   createdAt: string;
+}
+
+/**
+ * Q6: la cobertura de UN rol del plan, decidida por el motor.
+ *  - `hire`: la cubre un alta de esta misma propuesta; destildarla recorta sus tareas.
+ *  - `member`: ya hay alguien en el Trabajo que la hace; no hay nada que contratar.
+ *  - `orphan`: no la cubre nadie. El plan no se puede cumplir tal cual.
+ */
+export interface CoordinationGateRoleCoverage {
+  roleId: string;
+  coverage: 'hire' | 'member' | 'orphan';
 }
 
 /**
@@ -453,6 +466,10 @@ export class CoordinationEngine {
         runId: run.id,
         proposalJson: run.planJson,
         aggregate: proposal ? this.computeAggregate(run, proposal) : undefined,
+        // Q6: la cobertura de cada rol del plan, calculada por el motor — que es
+        // el único que sabe quién está en el equipo. La interfaz recorta con
+        // ESTO y no con su propia foto.
+        roleCoverage: proposal && Array.isArray(proposal.plan) ? this.computeRoleCoverage(run.workId, proposal) : undefined,
         createdAt: run.createdAt,
       });
     }
@@ -649,24 +666,48 @@ export class CoordinationEngine {
    * `assertCoordinationProposal`: qué roles existen lo sabe el motor.
    */
   private assertPlanIsFulfillable(workId: string, proposal: CoordinationProposal): void {
-    const approved = new Set((proposal.membersToHire ?? []).map((hire) => hire.roleId));
-    // El equipo de HOY cuenta por sus dos fuentes: la tabla de miembros (la que
-    // `assertRoleCreatable` mira) y el equipo vivo del hub (la que
-    // `reserveTargetMember` mira de verdad cuando llega el despacho). Divergen
-    // —el hub puede tener a alguien que la tabla todavía no, y al revés— y esta
-    // función decide si ALGUIEN va a poder hacer la tarea: negar por una de las
-    // dos vistas sería rechazar una aprobación que el despacho sí podría
-    // cumplir, que es el error caro en esta dirección.
-    let live: Set<string>;
-    try { live = new Set(this.deps.hub.listTeam(workId).filter((m) => m.status !== 'ended').map((m) => m.roleId)); }
-    catch { live = new Set(); }
-    const orphans = [...new Set(proposal.plan.map((item) => item.roleId))]
-      .filter((roleId) => !approved.has(roleId) && !live.has(roleId) && !this.workHasMemberForRole(workId, roleId));
+    const orphans = this.computeRoleCoverage(workId, proposal)
+      .filter((entry) => entry.coverage === 'orphan')
+      .map((entry) => entry.roleId);
     if (orphans.length === 0) return;
     throw new LatteError(
       'PLAN_HAS_UNAPPROVED_ROLES',
       `The plan still has tasks for roles nobody approved and this Work has no member for: ${orphans.join(', ')}. Remove those tasks or approve their hire.`,
     );
+  }
+
+  /**
+   * Q6: QUIÉN VA A PODER HACER CADA ROL DEL PLAN, calculado UNA vez y publicado.
+   *
+   * Es la misma cuenta que `assertPlanIsFulfillable` hace para decir que no, y
+   * por eso las dos salen de acá: la interfaz recortaba el plan recalculando el
+   * equipo por su cuenta (`team`, la foto del renderer) y podía llegar a una
+   * conclusión distinta de la que el motor iba a aplicar un milisegundo después
+   * — que es exactamente cómo un "Aprobar" rebota con un error que la pantalla
+   * no supo anticipar.
+   *
+   * El equipo de HOY cuenta por sus dos fuentes: la tabla de miembros (la que
+   * `assertRoleCreatable` mira) y el equipo vivo del hub (la que
+   * `reserveTargetMember` mira de verdad cuando llega el despacho). Divergen
+   * —el hub puede tener a alguien que la tabla todavía no, y al revés— y esto
+   * decide si ALGUIEN va a poder hacer la tarea: negar por una de las dos
+   * vistas sería rechazar una aprobación que el despacho sí podría cumplir, que
+   * es el error caro en esta dirección.
+   *
+   * `member` gana sobre `hire`: si el rol ya está en el equipo, destildar su
+   * alta no le quita el trabajo a nadie.
+   */
+  private computeRoleCoverage(workId: string, proposal: CoordinationProposal): CoordinationGateRoleCoverage[] {
+    const hires = new Set((proposal.membersToHire ?? []).map((hire) => hire.roleId));
+    let live: Set<string>;
+    try { live = new Set(this.deps.hub.listTeam(workId).filter((m) => m.status !== 'ended').map((m) => m.roleId)); }
+    catch { live = new Set(); }
+    return [...new Set(proposal.plan.map((item) => item.roleId))].map((roleId) => ({
+      roleId,
+      coverage: live.has(roleId) || this.workHasMemberForRole(workId, roleId)
+        ? 'member'
+        : hires.has(roleId) ? 'hire' : 'orphan',
+    }));
   }
 
   /** Los cinco efectos restantes de una propuesta aprobada, en una sola transacción real. */
@@ -1045,6 +1086,13 @@ export class CoordinationEngine {
     // ErrorBoundary, dejaba la app en blanco con el run `planning` ocupando el
     // único cupo del Trabajo. Antes de insertar la fila, no después.
     assertCoordinationProposal(proposal);
+    // Q6: Y QUE EL PLAN SE PUEDA CUMPLIR, ACÁ, donde el error le llega a quien
+    // puede arreglarlo. Un rol del plan sin alta ni miembro se guardaba igual, y
+    // recién `assertPlanIsFulfillable` lo rechazaba al aprobar Y al editar: la
+    // persona quedaba con una tarjeta cuyo único botón útil era "Rechazar", y el
+    // agente —el que escribió la propuesta— no se enteraba nunca. Misma cuenta,
+    // mil pasos antes: el agente recibe el error y vuelve a proponer.
+    this.assertPlanIsFulfillable(grant.workId, proposal);
     const existing = this.deps.repo.findActiveCoordinationRun(grant.workId);
     if (existing) throw new LatteError('RUN_ALREADY_ACTIVE', `This Work already has an active coordination run (${existing.id}, ${existing.status})`);
     this.assertRunCeiling();

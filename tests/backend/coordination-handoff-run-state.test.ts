@@ -48,7 +48,8 @@ describe('R3: el puente de handoff respeta el estado del run', () => {
     // Una propuesta sin aprobar: el run existe y está `planning`.
     const run = await b.service.coordinationEngine.requestCoordination(
       { workId, runId: null, memberId: 'mem_proponente', role: 'worker' },
-      { plan: [{ roleId: 'strategist', spec: 'algo' }], estimatedDispatches: 3, rationale: 'porque sí' },
+      // Q6: con quién haga el rol, o `requestCoordination` la rechaza en el origen.
+      { plan: [{ roleId: 'strategist', spec: 'algo' }], membersToHire: [{ roleId: 'strategist', why: 'no hay estratega' }], estimatedDispatches: 3, rationale: 'porque sí' },
     );
     expect(run.status).toBe('planning');
     approveCoordinationRoles(b, run.id, 'strategist'); // aun así aprobado el rol: lo que frena es el ESTADO

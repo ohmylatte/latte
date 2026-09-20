@@ -30,9 +30,16 @@ const PROPOSAL: CoordinationProposal = {
   rationale: 'Porque sí',
 };
 
+/**
+ * Q6: la cobertura la calcula el MOTOR y llega en el gate. Esta pantalla ya no
+ * recalcula el equipo desde `team`: dos respuestas distintas a "¿quién puede
+ * hacer este rol?" es exactamente cómo una aprobación rebota con un error que
+ * la pantalla no supo anticipar.
+ */
 const GATE: CoordinationGateView = {
   id: 'g1', kind: 'proposal', runId: 'run1', createdAt: '2026-09-01T00:00:00.000Z',
   proposalJson: JSON.stringify(PROPOSAL),
+  roleCoverage: [{ roleId: 'strategist', coverage: 'hire' }, { roleId: 'copywriter', coverage: 'hire' }],
 };
 
 const member = (roleId: string, status: TeamMember['status'] = 'idle'): TeamMember => ({
@@ -94,7 +101,9 @@ describe('Q4: el recorte del plan al destildar una contratación', () => {
 
   it('un rol que YA está en el equipo no se recorta al destildar: no hay que contratarlo', () => {
     const onResolveGate = vi.fn();
-    const { container } = mount({ gates: [GATE], onResolveGate, team: [member('copywriter')] });
+    // Lo dice el gate (`member`), no la foto del renderer.
+    const gate: CoordinationGateView = { ...GATE, roleCoverage: [{ roleId: 'strategist', coverage: 'hire' }, { roleId: 'copywriter', coverage: 'member' }] };
+    const { container } = mount({ gates: [gate], onResolveGate, team: [member('copywriter')] });
     const [, copywriter] = openEdit(container);
     fireEvent.click(copywriter!);
 
@@ -128,6 +137,103 @@ describe('Q4: el recorte del plan al destildar una contratación', () => {
   });
 });
 
+describe('Q6: los roles huérfanos, las altas sin tareas y lo que la pantalla muestra', () => {
+  /** Una propuesta guardada por una base vieja: `copywriter` no lo cubre nadie. */
+  const ORPHAN_GATE: CoordinationGateView = {
+    id: 'g1', kind: 'proposal', runId: 'run1', createdAt: '2026-09-01T00:00:00.000Z',
+    proposalJson: JSON.stringify({ ...PROPOSAL, membersToHire: [{ roleId: 'strategist', why: 'no hay estratega' }] }),
+    roleCoverage: [{ roleId: 'strategist', coverage: 'hire' }, { roleId: 'copywriter', coverage: 'orphan' }],
+  };
+
+  it('el contador dice cuántas tareas se van por roles que nadie contrata', () => {
+    const { container } = mount({ gates: [ORPHAN_GATE], onResolveGate: vi.fn() });
+
+    const note = container.querySelector('.decision-gate-orphan-note');
+    expect(note).not.toBeNull();
+    // La del redactor y la del estratega que dependía de ella.
+    expect(note!.textContent).toContain('2 tareas');
+  });
+
+  it('el "Aprobar" simple manda el plan RECORTADO: aprobar lo guardado rebotaría', () => {
+    const onResolveGate = vi.fn();
+    const { container } = mount({ gates: [ORPHAN_GATE], onResolveGate });
+
+    fireEvent.click(container.querySelector('.decision-gate-actions button.primary')!);
+
+    expect(onResolveGate).toHaveBeenCalledTimes(1);
+    const [, decision, json] = onResolveGate.mock.calls[0]!;
+    expect(decision).toBe('approve');
+    const edited = JSON.parse(json as string) as CoordinationProposal;
+    expect(edited.plan).toEqual([{ roleId: 'strategist', spec: 'Definir el naming' }]);
+  });
+
+  it('las tareas que se van se muestran aparte, y la lista principal es la que se aprueba', () => {
+    const { container } = mount({ gates: [ORPHAN_GATE], onResolveGate: vi.fn() });
+
+    const kept = [...container.querySelectorAll('.decision-gate-plan-list li')];
+    expect(kept).toHaveLength(1);
+    expect(kept[0]!.textContent).toContain('Definir el naming');
+    const dropped = [...container.querySelectorAll('.decision-gate-plan-dropped-list li')];
+    expect(dropped).toHaveLength(2);
+    expect(dropped.map((li) => li.textContent).join(' ')).toContain('Escribir el copy');
+  });
+
+  it('un alta que se quedó sin tareas por arrastre se quita, y se dice', () => {
+    const onResolveGate = vi.fn();
+    // `analyst` sólo tiene la tarea que depende de la del redactor: al destildar
+    // al redactor, esa tarea se cae y el analista se queda sin nada que hacer.
+    const proposal: CoordinationProposal = {
+      plan: [
+        { roleId: 'copywriter', spec: 'Escribir el copy' },
+        { roleId: 'analyst', spec: 'Medir el copy', dependsOn: [0] },
+      ],
+      membersToHire: [{ roleId: 'copywriter', why: 'no hay redactor' }, { roleId: 'analyst', why: 'nadie mide' }],
+      estimatedDispatches: 10,
+      rationale: 'Porque sí',
+    };
+    const gate: CoordinationGateView = {
+      id: 'g1', kind: 'proposal', runId: 'run1', createdAt: '2026-09-01T00:00:00.000Z',
+      proposalJson: JSON.stringify(proposal),
+      roleCoverage: [{ roleId: 'copywriter', coverage: 'hire' }, { roleId: 'analyst', coverage: 'hire' }],
+    };
+    const { container } = mount({ gates: [gate], onResolveGate });
+    fireEvent.click(container.querySelector('.decision-gate-actions button:not(.primary)')!);
+    const boxes = [...container.querySelectorAll<HTMLInputElement>('.decision-gate-edit-hire input[type="checkbox"]')];
+    expect(boxes).toHaveLength(2);
+
+    fireEvent.click(boxes[0]!); // se destilda al redactor, y el analista queda sin tareas
+
+    const note = container.querySelector('.decision-gate-edit-hire-dropped');
+    expect(note).not.toBeNull();
+    expect(note!.textContent).toContain('1 contratación');
+    // Y el payload no lo contrata: un proceso levantado para alguien sin nada que hacer.
+    expect(container.querySelector('.decision-gate-edit-empty')).not.toBeNull();
+  });
+
+  it('un alta que NUNCA tuvo tareas en el plan se respeta: puede ser deliberada', () => {
+    const onResolveGate = vi.fn();
+    const proposal: CoordinationProposal = {
+      plan: [{ roleId: 'strategist', spec: 'Definir el naming' }],
+      membersToHire: [{ roleId: 'strategist', why: 'no hay estratega' }, { roleId: 'analyst', why: 'para después' }],
+      estimatedDispatches: 10,
+      rationale: 'Porque sí',
+    };
+    const gate: CoordinationGateView = {
+      id: 'g1', kind: 'proposal', runId: 'run1', createdAt: '2026-09-01T00:00:00.000Z',
+      proposalJson: JSON.stringify(proposal),
+      roleCoverage: [{ roleId: 'strategist', coverage: 'hire' }],
+    };
+    const { container } = mount({ gates: [gate], onResolveGate });
+    fireEvent.click(container.querySelector('.decision-gate-actions button:not(.primary)')!);
+
+    fireEvent.click(container.querySelector('.decision-gate-edit-actions button.primary')!);
+
+    const edited = JSON.parse(onResolveGate.mock.calls[0]![2] as string) as CoordinationProposal;
+    expect(edited.membersToHire).toEqual(proposal.membersToHire);
+    expect(container.querySelector('.decision-gate-edit-hire-dropped')).toBeNull();
+  });
+});
+
 describe('Q4: el recorte, como cálculo', () => {
   it('arrastra transitivamente y remapea los índices', () => {
     const plan = [
@@ -150,5 +256,26 @@ describe('Q4: el recorte, como cálculo', () => {
     const result = trimPlanWithoutRoles(plan, new Set<string>());
     expect(result.removed).toBe(0);
     expect(result.plan).toEqual(plan);
+    expect(result.dropped).toEqual([false, false]);
+  });
+
+  /**
+   * P13: la regla "un índice fuera de rango se cae" estaba escrita como un
+   * accidente del lenguaje (`dropped[idx] !== false`, que da verdadero para el
+   * `undefined` de un índice inexistente). Ahora es explícita, y este test lo
+   * fija: el validador del motor ya no deja entrar un `dependsOn` así, pero una
+   * fila vieja sí puede tenerlo y la pantalla no puede aprobar lo que el motor
+   * no va a poder crear.
+   */
+  it('un `dependsOn` fuera de rango o negativo tira la tarea abajo', () => {
+    const plan = [
+      { roleId: 'a', spec: '0' },
+      { roleId: 'a', spec: '1', dependsOn: [7] },
+      { roleId: 'a', spec: '2', dependsOn: [-1] },
+      { roleId: 'a', spec: '3', dependsOn: [1] },
+    ];
+    const result = trimPlanWithoutRoles(plan, new Set<string>());
+    expect(result.dropped).toEqual([false, true, true, true]);
+    expect(result.plan).toEqual([{ roleId: 'a', spec: '0' }]);
   });
 });

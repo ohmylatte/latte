@@ -102,9 +102,12 @@ describe('Q8: un código de coordinación se lee en el idioma de la persona', ()
   it('`PLAN_HAS_UNAPPROVED_ROLES` también, en los dos idiomas', async () => {
     const message = 'The plan still has tasks for roles nobody approved';
     expect(await errorAfterAccept(coded('PLAN_HAS_UNAPPROVED_ROLES', message), 'es-AR'))
-      .toBe('El plan todavía tiene tareas para roles que nadie va a poder hacer. Sacá esas tareas, o aprobá su contratación.');
+      // Q6: la frase dice lo que la pantalla OFRECE de verdad. "Sacá esas
+      // tareas" describía una acción que no existe en ningún lado: la persona
+      // no puede editar el plan tarea por tarea. "Editar y aprobar" las saca.
+      .toBe('El plan tiene tareas para roles que nadie va a poder hacer. Abrí "Editar y aprobar": esas tareas se quitan solas, y podés aprobar el resto.');
     expect(await errorAfterAccept(coded('PLAN_HAS_UNAPPROVED_ROLES', message), 'en-US'))
-      .toBe('The plan still has tasks for roles nobody can do. Remove those tasks, or approve their hire.');
+      .toBe('The plan has tasks for roles nobody can do. Open “Edit and approve”: those tasks are dropped for you, and you can approve the rest.');
   });
 
   it('un código sin traducción cae al mensaje del motor: no se tapa lo que nadie previó', async () => {

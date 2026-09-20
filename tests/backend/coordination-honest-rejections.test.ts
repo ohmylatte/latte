@@ -83,7 +83,8 @@ describe('R9/R10: contestar y pausar dicen la verdad', () => {
   it('pausar un run en `planning` se rechaza con `RUN_NOT_RUNNING`, y el run no se toca', async () => {
     const run = await b.service.coordinationEngine.requestCoordination(
       { workId, runId: null, memberId: 'mem_proponente', role: 'worker' },
-      { plan: [{ roleId: 'strategist', spec: 'algo' }], estimatedDispatches: 3, rationale: 'porque sí' },
+      // Q6: con quién haga el rol, o `requestCoordination` la rechaza en el origen.
+      { plan: [{ roleId: 'strategist', spec: 'algo' }], membersToHire: [{ roleId: 'strategist', why: 'no hay estratega' }], estimatedDispatches: 3, rationale: 'porque sí' },
     );
     expect(run.status).toBe('planning');
 

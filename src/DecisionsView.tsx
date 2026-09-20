@@ -176,7 +176,7 @@ function resolveRoleName(roleId: string, roles: readonly AgentRole[], team: read
 export function trimPlanWithoutRoles(
   plan: readonly { roleId: string; spec: string; dependsOn?: number[] }[],
   removedRoleIds: ReadonlySet<string>,
-): { plan: { roleId: string; spec: string; dependsOn?: number[] }[]; removed: number } {
+): { plan: { roleId: string; spec: string; dependsOn?: number[] }[]; removed: number; dropped: boolean[] } {
   // Sólo lo que la persona SACÓ, nunca lo que la propuesta ya traía. Recortar
   // por "qué roles quedan disponibles" haría que una propuesta que nadie editó
   // —cuyos roles el motor igual va a juzgar— apareciera recortada sola: la
@@ -188,7 +188,12 @@ export function trimPlanWithoutRoles(
     let changed = false;
     plan.forEach((item, i) => {
       if (dropped[i]) return;
-      if ((item.dependsOn ?? []).some((idx) => dropped[idx] !== false)) { dropped[i] = true; changed = true; }
+      // Q6: un índice FUERA DE RANGO se cae, y se dice con todas las letras.
+      // Antes esto se apoyaba en que `dropped[idx]` diera `undefined` y
+      // `undefined !== false` fuera verdadero: la regla correcta escrita como un
+      // accidente del lenguaje, que el primer `?? false` de alguien rompía sin
+      // que ningún test se enterara.
+      if ((item.dependsOn ?? []).some((idx) => idx < 0 || idx >= plan.length || dropped[idx]!)) { dropped[i] = true; changed = true; }
     });
     if (!changed) break;
   }
@@ -199,7 +204,7 @@ export function trimPlanWithoutRoles(
     const deps = (item.dependsOn ?? []).map((idx) => remap.get(idx)).filter((idx): idx is number => idx !== undefined);
     return [item.dependsOn === undefined ? { ...item } : { ...item, dependsOn: deps }];
   });
-  return { plan: kept, removed: plan.length - kept.length };
+  return { plan: kept, removed: plan.length - kept.length, dropped };
 }
 
 /** The aggregate sentence (task 7.6): honest "can't sum this" the moment any input is null, never a fabricated total. */
@@ -363,17 +368,47 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
   // decide si ese botón puede tener éxito.
   const needsUnlimitedConfirmation = proposal.estimatedDispatches == null && proposal.unlimitedConfirmedAt == null;
 
-  // Q4: los roles que la persona SACÓ y que nadie más puede cubrir. Un rol que
-  // YA está en el equipo no se contrata, se reutiliza —es la misma regla que
-  // aplica el motor—, así que destildar su alta no le quita a nadie el trabajo.
-  // Un miembro terminado no cuenta: re-abrirlo SÍ es una contratación.
+  // Q6: QUIÉN CUBRE CADA ROL LO DICE EL MOTOR, no esta pantalla.
+  //
+  // Acá se recalculaba el equipo desde `team` —la foto del renderer— para
+  // decidir qué se recortaba. El motor decide lo mismo con su propia cuenta un
+  // milisegundo después, y cuando las dos no coinciden el "Aprobar" rebota con
+  // un error que la pantalla no supo anticipar. Ahora llega calculado en el
+  // gate. Sin el campo (un gate de antes de este cambio) se deriva de la
+  // propuesta misma, que es lo único que hay: con alta, `hire`; sin alta, se
+  // asume que el rol ya está cubierto, que es lo que esta pantalla suponía.
+  const coverage = new Map<string, 'hire' | 'member' | 'orphan'>(
+    gate.roleCoverage
+      ? gate.roleCoverage.map((entry) => [entry.roleId, entry.coverage])
+      : proposal.plan.map((task) => [task.roleId, hires.some((h) => h.roleId === task.roleId) ? 'hire' : 'member']),
+  );
   const keptHires = hires.filter((_, i) => included[i]);
   const keptRoleIds = new Set(keptHires.map((hire) => hire.roleId));
-  const inTeam = new Set(team.filter((m) => m.status !== 'ended').map((m) => m.roleId));
-  const removedRoleIds = new Set(
-    hires.filter((hire, i) => !included[i] && !keptRoleIds.has(hire.roleId) && !inTeam.has(hire.roleId)).map((hire) => hire.roleId),
-  );
+  // Un rol que YA está en el equipo no se contrata, se reutiliza, así que
+  // destildar su alta no le quita a nadie el trabajo.
+  const untickedRoleIds = hires
+    .filter((hire, i) => !included[i] && !keptRoleIds.has(hire.roleId) && coverage.get(hire.roleId) !== 'member')
+    .map((hire) => hire.roleId);
+  // Y los HUÉRFANOS: roles que el plan nombra y que nadie cubre. `requestCoordination`
+  // ya no deja entrar ninguno, pero una base vieja puede tener uno guardado, y el
+  // equipo pudo cambiar entre la propuesta y la aprobación. Se van solos: dejarlos
+  // no ofrecía ninguna acción que funcionara, sólo "Rechazar".
+  const orphanRoleIds = new Set([...coverage].filter(([, c]) => c === 'orphan').map(([roleId]) => roleId));
+  const removedRoleIds = new Set([...orphanRoleIds, ...untickedRoleIds]);
   const trimmed = trimPlanWithoutRoles(proposal.plan, removedRoleIds);
+  // Cuánto de lo que se cae es culpa de los huérfanos: su propia frase, porque
+  // no es lo mismo "esto se va porque lo sacaste" que "esto no lo puede hacer nadie".
+  const orphanDropped = orphanRoleIds.size > 0 ? trimPlanWithoutRoles(proposal.plan, orphanRoleIds).removed : 0;
+
+  // Q6/P8: un alta que la persona mantiene tildada pero cuyas tareas se cayeron
+  // TODAS por arrastre se contrataba igual: un proceso levantado, un cupo de
+  // techo ocupado y un miembro sin una sola tarea que hacer. Un alta que NUNCA
+  // tuvo tareas en el plan se respeta —por API puede ser deliberada—; la que se
+  // quedó sin ellas acá, no.
+  const rolesInTrimmedPlan = new Set(trimmed.plan.map((task) => task.roleId));
+  const rolesInOriginalPlan = new Set(proposal.plan.map((task) => task.roleId));
+  const hiresToSend = keptHires.filter((hire) => !rolesInOriginalPlan.has(hire.roleId) || rolesInTrimmedPlan.has(hire.roleId));
+  const hiresWithoutTasks = keptHires.length - hiresToSend.length;
 
   const confirmEdit = () => {
     const edited: CoordinationProposal = {
@@ -383,13 +418,19 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
       // despacharlas, arrastrando a sus dependientes.
       plan: trimmed.plan,
       estimatedDispatches: dispatches.trim() === '' ? null : Number(dispatches),
-      membersToHire: keptHires,
+      membersToHire: hiresToSend,
       // La ÚNICA fuente de un presupuesto ilimitado: esta casilla, acá, ahora.
       unlimitedConfirmedAt: dispatches.trim() === '' && unlimitedConfirmed ? new Date().toISOString() : null,
     };
     onResolveGate?.(gate.id, 'approve', JSON.stringify(edited));
     setEditing(false);
   };
+
+  // Con huérfanos en el plan, el "Aprobar" simple NO puede mandar la propuesta
+  // guardada: el motor la rechazaría con `PLAN_HAS_UNAPPROVED_ROLES` y la
+  // persona se quedaría otra vez sin salida. Manda lo mismo que la edición:
+  // el plan que sí se puede cumplir.
+  const approvePlain = () => { if (orphanRoleIds.size > 0) confirmEdit(); else onResolveGate?.(gate.id, 'approve'); };
 
   const editCancel = () => {
     // Sin esto, cancelar no reseteaba nada: el formulario quedaba con
@@ -403,9 +444,23 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
   return <div className="decision-gate decision-gate-proposal" data-gate-kind="proposal">
     <div className="document-kicker">{t('coordination.proposal.kicker')}</div>
     <h3>{t('coordination.proposal.plan')}</h3>
+    {/* Q6/P7: LO QUE SE APRUEBA, no lo que se propuso. La lista mostraba el plan
+        entero justo debajo del contador que decía "se quitan N tareas", así que
+        la persona confirmaba leyendo tareas que ya no iban a existir. El plan
+        que viaja y el plan que se lee son el mismo. */}
     <ul className="decision-gate-plan-list">
-      {proposal.plan.map((task, i) => <li key={i}><strong>{resolveRoleName(task.roleId, roles, team)}</strong><span>{task.spec}</span></li>)}
+      {proposal.plan.map((task, i) => trimmed.dropped[i] ? null
+        : <li key={i}><strong>{resolveRoleName(task.roleId, roles, team)}</strong><span>{task.spec}</span></li>)}
     </ul>
+    {trimmed.removed > 0 && <>
+      <h3 className="decision-gate-plan-dropped-title">{t('coordination.proposal.droppedTitle')}</h3>
+      <ul className="decision-gate-plan-dropped-list">
+        {proposal.plan.map((task, i) => trimmed.dropped[i]
+          ? <li key={i}><s><strong>{resolveRoleName(task.roleId, roles, team)}</strong><span>{task.spec}</span></s></li>
+          : null)}
+      </ul>
+    </>}
+    {orphanDropped > 0 && <p className="decision-gate-orphan-note">{t('coordination.proposal.orphanRolesDropped', { count: orphanDropped })}</p>}
     {hires.length > 0 && <>
       <h3>{t('coordination.proposal.hires')}</h3>
       <ul className="decision-gate-hire-list">
@@ -443,6 +498,9 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
           línea la persona sacaba una contratación y no tenía forma de saber que
           con ella se iban tareas — ni cuáles, ni cuántas. */}
       {trimmed.removed > 0 && <p className="decision-gate-edit-dropped">{t('coordination.proposal.editDropsTasks', { count: trimmed.removed })}</p>}
+      {/* Q6/P8: y el alta que quedó sin una sola tarea. Contratarla igual levanta
+          un proceso y ocupa un cupo por alguien que no tiene nada que hacer. */}
+      {hiresWithoutTasks > 0 && <p className="decision-gate-edit-dropped decision-gate-edit-hire-dropped">{t('coordination.proposal.editDropsHires', { count: hiresWithoutTasks })}</p>}
       {trimmed.plan.length === 0 && <p className="decision-gate-edit-dropped decision-gate-edit-empty">{t('coordination.proposal.editDropsAll')}</p>}
       <div className="decision-gate-edit-actions">
         <button className="primary" disabled={busy || trimmed.plan.length === 0} onClick={confirmEdit}>{t('coordination.proposal.editConfirm')}</button>
@@ -453,7 +511,7 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
     <div className="decision-gate-actions">
       {/* El "Aprobar" simple no puede convivir con la edición abierta: tocarlo
           mientras hay ediciones sin guardar las descartaba en silencio. */}
-      {!needsUnlimitedConfirmation && !editing && <button className="primary" disabled={busy} onClick={() => onResolveGate?.(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>}
+      {!needsUnlimitedConfirmation && !editing && <button className="primary" disabled={busy || trimmed.plan.length === 0} onClick={approvePlain}>{t('coordination.gate.approve')}</button>}
       <button disabled={busy} onClick={() => setEditing(true)}>{t('coordination.gate.editApprove')}</button>
       <button disabled={busy} onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
     </div>

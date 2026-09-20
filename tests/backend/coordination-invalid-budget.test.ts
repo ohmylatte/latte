@@ -47,7 +47,9 @@ describe('un presupuesto ilegible no tumba la tira de las demás marcas (crític
     return {
       plan: [{ roleId: 'strategist', spec: 'Armar el plan del mes' }],
       estimatedDispatches,
-      membersToHire: [],
+      // Q6: con quién haga el rol. Sin el alta, `requestCoordination` la rechaza
+      // por cumplibilidad y este test dejaría de medir el presupuesto ilegible.
+      membersToHire: [{ roleId: 'strategist', why: 'no hay estratega' }],
       rationale: 'El pedido fue coordinar al equipo.',
     };
   }

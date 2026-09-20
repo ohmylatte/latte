@@ -806,7 +806,26 @@ export interface CoordinationGateView {
   proposalJson?: string | null;
   /** Only present on a `proposal` gate. */
   aggregate?: CoordinationGateAggregate;
+  /**
+   * Q6: only present on a legible `proposal` gate — who can do each role the
+   * plan names, decided by the engine. The renderer trims the plan with THIS
+   * and never recomputes the team on its own: two different answers to
+   * "who can do this role" is exactly how an approval bounces with an error
+   * the screen did not see coming.
+   */
+  roleCoverage?: CoordinationGateRoleCoverage[];
   createdAt: string;
+}
+
+/**
+ * `hire`: covered by a hire in this very proposal — unticking it trims its tasks.
+ * `member`: the Work already has someone for it; nothing to hire.
+ * `orphan`: nobody covers it. Possible on rows written by an older version, or
+ * when the team changed between the proposal and the approval.
+ */
+export interface CoordinationGateRoleCoverage {
+  roleId: string;
+  coverage: 'hire' | 'member' | 'orphan';
 }
 
 export type CoordinationDispatchStatus = 'pending_approval' | 'dispatched' | 'running' | 'reported' | 'failed' | 'rejected' | 'cancelled';

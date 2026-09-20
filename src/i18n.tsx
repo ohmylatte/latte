@@ -493,7 +493,7 @@ const es = {
   'error.coordination.memberBusy': 'Ese rol está ocupado ahora mismo. Probá de nuevo cuando termine lo que está haciendo.',
   'error.coordination.roleNotApproved': 'Ese rol no está en el equipo que aprobaste: necesita su propia aprobación.',
   'error.coordination.budgetInvalid': 'El presupuesto de este trabajo no se pudo leer: escribilo de nuevo antes de seguir.',
-  'error.coordination.planHasUnapprovedRoles': 'El plan todavía tiene tareas para roles que nadie va a poder hacer. Sacá esas tareas, o aprobá su contratación.',
+  'error.coordination.planHasUnapprovedRoles': 'El plan tiene tareas para roles que nadie va a poder hacer. Abrí "Editar y aprobar": esas tareas se quitan solas, y podés aprobar el resto.',
   'error.coordination.invalidArgument': 'Lo que se mandó no es válido. Revisalo y probá de nuevo.',
   'coordination.settings.kicker': 'COORDINACIÓN AUTÓNOMA',
   'coordination.authority.manual': 'Manual: cada despacho pide tu aprobación',
@@ -534,6 +534,9 @@ const es = {
   // haya matado una por una.
   'coordination.proposal.editDropsTasks': '{count, plural, one {Sin esas contrataciones se quita # tarea del plan, contando las que dependían de ella.} other {Sin esas contrataciones se quitan # tareas del plan, contando las que dependían de ellas.}}',
   'coordination.proposal.editDropsAll': 'Sin esas contrataciones no queda ninguna tarea en el plan. Volvé a incluir alguna, o rechazá la propuesta.',
+  'coordination.proposal.editDropsHires': '{count, plural, one {# contratación sin tareas se quita.} other {# contrataciones sin tareas se quitan.}}',
+  'coordination.proposal.orphanRolesDropped': '{count, plural, one {# tarea de roles sin contratación se quita del plan.} other {# tareas de roles sin contratación se quitan del plan.}}',
+  'coordination.proposal.droppedTitle': 'Se quitan del plan',
   'coordination.proposal.editConfirm': 'Confirmar edición y aprobar',
   'coordination.proposal.editCancel': 'Cancelar edición',
   // --- Coordinación: equipos activos, global (Phase 7, slice 7-B) --------
@@ -1141,7 +1144,7 @@ const en: Record<MessageKey, string> = {
   'error.coordination.memberBusy': 'That role is busy right now. Try again once it finishes what it is doing.',
   'error.coordination.roleNotApproved': 'That role is not part of the team you approved: it needs its own approval.',
   'error.coordination.budgetInvalid': "This project's budget could not be read: write it again before going on.",
-  'error.coordination.planHasUnapprovedRoles': 'The plan still has tasks for roles nobody can do. Remove those tasks, or approve their hire.',
+  'error.coordination.planHasUnapprovedRoles': 'The plan has tasks for roles nobody can do. Open “Edit and approve”: those tasks are dropped for you, and you can approve the rest.',
   'error.coordination.invalidArgument': 'What was sent is not valid. Check it and try again.',
   'coordination.settings.kicker': 'AUTONOMOUS COORDINATION',
   'coordination.authority.manual': 'Manual: every dispatch asks for your approval',
@@ -1179,6 +1182,9 @@ const en: Record<MessageKey, string> = {
   'coordination.proposal.editHires': 'Include in the hire',
   'coordination.proposal.editDropsTasks': '{count, plural, one {Without those hires, # task is dropped from the plan, counting the ones that depended on it.} other {Without those hires, # tasks are dropped from the plan, counting the ones that depended on them.}}',
   'coordination.proposal.editDropsAll': 'Without those hires the plan has no tasks left. Put one back, or reject the proposal.',
+  'coordination.proposal.editDropsHires': '{count, plural, one {# hire with no tasks is dropped.} other {# hires with no tasks are dropped.}}',
+  'coordination.proposal.orphanRolesDropped': '{count, plural, one {# task for roles nobody is hiring is dropped from the plan.} other {# tasks for roles nobody is hiring are dropped from the plan.}}',
+  'coordination.proposal.droppedTitle': 'Dropped from the plan',
   'coordination.proposal.editConfirm': 'Confirm edit and approve',
   'coordination.proposal.editCancel': 'Cancel edit',
   // --- Coordination: active teams, global (Phase 7, slice 7-B) -----------

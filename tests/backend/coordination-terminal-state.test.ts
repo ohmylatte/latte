@@ -207,7 +207,8 @@ describe('el estado terminal de un run y sus tareas', () => {
     await b.service.setCoordinationBudget(second.id, { maxDispatches: 5 });
     const planning = await engine.requestCoordination(
       { workId: second.id, runId: null, memberId: 'mem_proposer', role: 'worker' },
-      { plan: [{ roleId: 'role_a', spec: 'a' }], estimatedDispatches: 3, rationale: 'porque sí' },
+      // Q6: con quién haga el rol, o `requestCoordination` la rechaza en el origen.
+      { plan: [{ roleId: 'role_a', spec: 'a' }], membersToHire: [{ roleId: 'role_a', why: 'no hay nadie' }], estimatedDispatches: 3, rationale: 'porque sí' },
     );
 
     expect(() => engine.planSubmit(planning.id, [{ roleId: 'role_a', spec: 'colado' }]))

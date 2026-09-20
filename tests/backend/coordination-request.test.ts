@@ -39,6 +39,15 @@ describe('latte_request_coordination: the sentence becomes a gate', () => {
     workId = work.id;
     members = [];
     fakeCoordinationHub(b, members);
+    // Q6: el proponente ES el estratega, y el plan le da una tarea a su propio
+    // rol. Sin esto la propuesta tendría un rol que nadie cubre, y desde Q6
+    // `requestCoordination` la rechaza en el origen: no es lo que estos tests
+    // miden, y una propuesta así ya no puede existir.
+    const at = '2026-01-01T00:00:00.000Z';
+    b.repo.insertMember({
+      id: 'mem_proposer', workId, roleId: 'strategist', roleName: 'Estratega', initial: 'E',
+      runtime: 'codex', model: null, accountId: null, sessionId: '', done: false, createdAt: at, updatedAt: at,
+    });
     engine = new CoordinationEngine({
       repo: b.repo,
       hub: b.hub,
