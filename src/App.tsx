@@ -68,7 +68,7 @@ const readAgentWidth = () => { try { const raw = localStorage.getItem(AGENT_WIDT
  * `message` del motor: inventarle una frase genérica a un error desconocido
  * sería tapar información que alguien va a necesitar.
  */
-const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
+export const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
   ASK_CLOSED: 'error.coordination.askClosed',
   RUN_NOT_RUNNING: 'error.coordination.runNotRunning',
   RUN_NOT_ACTIVE: 'error.coordination.runNotActive',
@@ -76,7 +76,25 @@ const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
   ROLE_NOT_APPROVED: 'error.coordination.roleNotApproved',
   COORDINATION_BUDGET_INVALID: 'error.coordination.budgetInvalid',
   PLAN_HAS_UNAPPROVED_ROLES: 'error.coordination.planHasUnapprovedRoles',
-  INVALID_ARGUMENT: 'error.coordination.invalidArgument',
+  // Q6: `INVALID_ARGUMENT` NO ESTÁ. Sólo existe en el sobre MCP —el error que
+  // `tools.ts` le devuelve a un agente— y nunca cruza la frontera IPC: era una
+  // frase escrita para una pantalla que no la iba a mostrar jamás. Lo que SÍ
+  // cruza por ese camino es `VALIDATION`, el código de todo `ValidationError`,
+  // y no tenía entrada.
+  VALIDATION: 'error.coordination.validation',
+  // Y los que la persona alcanza con un clic, que es el único criterio que
+  // decide si un código necesita frase propia.
+  BUDGET_EXCEEDED: 'error.coordination.budgetExceeded',
+  MAX_CONCURRENT: 'error.coordination.maxConcurrent',
+  INVALID_GATE: 'error.coordination.invalidGate',
+  COORDINATION_NOT_APPROVED: 'error.coordination.coordinationNotApproved',
+  RUN_ALREADY_ACTIVE: 'error.coordination.runAlreadyActive',
+  TASK_NOT_READY: 'error.coordination.taskNotReady',
+  NO_ACTIVE_RUN: 'error.coordination.noActiveRun',
+  GLOBAL_BUDGET_INVALID: 'error.coordination.globalBudgetInvalid',
+  TOO_MANY_ACTIVE_RUNS: 'error.coordination.tooManyActiveRuns',
+  PROPOSAL_STALE: 'error.coordination.proposalStale',
+  PROPOSAL_DECIDED: 'error.coordination.proposalDecided',
 };
 const displayError = (e: unknown) => {
   const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';

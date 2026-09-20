@@ -15,6 +15,13 @@ configure({ asyncUtilTimeout: 5_000 });
  *
  * Se entra por donde entra una persona: aceptar un pedido de la carpeta, que
  * pasa por el mismo `run()` que atrapa y muestra cualquier error del backend.
+ *
+ * Q6: Y LOS ERRORES SON DE VERDAD. Este test fabricaba sus códigos a mano
+ * (`Object.assign(new Error(...), { code })`), así que seguía en verde aunque
+ * el motor no tirara ese código por ningún lado — que es exactamente lo que
+ * pasaba con `INVALID_ARGUMENT`. Ahora los dos primeros salen del backend real:
+ * se provoca el error llamando al método de servicio que la interfaz llama, y
+ * el objeto que se muestra es el mismo que tiró el motor.
  */
 
 const HANDOFF: HandoffRequest = {
@@ -57,6 +64,50 @@ const { I18nProvider } = await import('./i18n');
 
 const coded = (code: string, message: string): Error => Object.assign(new Error(message), { code });
 
+/**
+ * Los errores REALES, provocados por el backend de verdad a través de los
+ * mismos métodos de `LatteService` que la interfaz llama por IPC. Lo que se le
+ * muestra a la persona más abajo es este objeto, con el `code` que el motor le
+ * puso — no uno inventado por el test.
+ */
+async function realBackendErrors(): Promise<{ askClosed: Error; runNotRunning: Error }> {
+  const { makeBackend, fakeCoordinationHub } = await import('../tests/backend/helpers');
+  const { FEATURE_KEYS, FEATURE_ON } = await import('../electron/core/features');
+  const b = await makeBackend();
+  try {
+    fakeCoordinationHub(b, []);
+    const brand = await b.service.createBrand('Marca');
+    const work = await b.service.createWork(brand.id, 'Trabajo');
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON);
+    await b.service.setCoordinationBudget(work.id, { maxDispatches: 10 });
+
+    // ASK_CLOSED: contestar dos veces la misma pregunta, por el método que la
+    // pantalla de Decisiones usa cuando la persona aprieta "Responder".
+    const run = await b.service.startCoordinationRun(work.id);
+    const ask = b.service.coordinationEngine.ask({ workId: work.id, runId: run.id, memberId: 'mem_a', role: 'worker' }, '¿Con qué tono?', 60);
+    await b.service.answerCoordinationAsk(ask.id, 'Cercano');
+    const askClosed = await b.service.answerCoordinationAsk(ask.id, 'Formal').then(() => null, (e: Error) => e);
+    expect(askClosed).not.toBeNull();
+    expect((askClosed as { code?: string }).code).toBe('ASK_CLOSED');
+
+    // RUN_NOT_RUNNING: pausar un run `planning`, que es lo que pasa si la
+    // persona aprieta "Pausar" con una propuesta todavía sin resolver.
+    const second = await b.service.createWork(brand.id, 'Otro');
+    await b.service.setCoordinationBudget(second.id, { maxDispatches: 5 });
+    const planning = await b.service.coordinationEngine.requestCoordination(
+      { workId: second.id, runId: null, memberId: 'mem_p', role: 'worker' },
+      { plan: [{ roleId: 'role_a', spec: 'a' }], membersToHire: [{ roleId: 'role_a', why: 'no hay nadie' }], estimatedDispatches: 3, rationale: 'porque sí' },
+    );
+    const runNotRunning = await b.service.pauseCoordinationRun(planning.id).then(() => null, (e: Error) => e);
+    expect(runNotRunning).not.toBeNull();
+    expect((runNotRunning as { code?: string }).code).toBe('RUN_NOT_RUNNING');
+
+    return { askClosed: askClosed as Error, runNotRunning: runNotRunning as Error };
+  } finally {
+    b.cleanup();
+  }
+}
+
 /** Abre el Trabajo y su pestaña de Decisiones, acepta el handoff y devuelve el texto del error. */
 async function errorAfterAccept(failure: Error, locale: UiLocale): Promise<string> {
   cleanup(); // un test puede renderizar dos veces; sin esto `screen` busca en los dos árboles a la vez
@@ -89,14 +140,23 @@ async function errorAfterAccept(failure: Error, locale: UiLocale): Promise<strin
 beforeEach(() => { state.failure = null; state.locale = 'es-AR'; });
 
 describe('Q8: un código de coordinación se lee en el idioma de la persona', () => {
-  it('`ASK_CLOSED` en castellano, sin el texto crudo del motor', async () => {
-    const text = await errorAfterAccept(coded('ASK_CLOSED', 'Esa pregunta ya se cerró (raw)'), 'es-AR');
+  it('`ASK_CLOSED`, tal como lo tira el motor, en castellano y sin su texto crudo', async () => {
+    const { askClosed } = await realBackendErrors();
+    const raw = askClosed.message;
+
+    const text = await errorAfterAccept(askClosed, 'es-AR');
+
     expect(text).toBe('Esa pregunta ya está cerrada: o alguien la contestó, o se le pasó el plazo.');
+    expect(text).not.toBe(raw); // y el mensaje del motor no se filtra a la pantalla
   });
 
-  it('`RUN_NOT_RUNNING` en inglés cuando la persona eligió inglés', async () => {
-    const text = await errorAfterAccept(coded('RUN_NOT_RUNNING', 'Only a running team can be paused (this one is done)'), 'en-US');
+  it('`RUN_NOT_RUNNING`, tal como lo tira el motor, en inglés cuando la persona eligió inglés', async () => {
+    const { runNotRunning } = await realBackendErrors();
+
+    const text = await errorAfterAccept(runNotRunning, 'en-US');
+
     expect(text).toBe('That team is not running, so there is nothing to pause.');
+    expect(text).not.toBe(runNotRunning.message);
   });
 
   it('`PLAN_HAS_UNAPPROVED_ROLES` también, en los dos idiomas', async () => {
