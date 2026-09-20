@@ -511,8 +511,13 @@ const es = {
   'error.coordination.tooManyActiveRuns': 'Ya hay demasiados equipos coordinando a la vez. Cerrá alguno antes de arrancar éste.',
   'error.coordination.taskCap': 'Este plan tiene más tareas de las que un equipo puede llevar. Recortalo y volvé a proponerlo.',
   'error.coordination.depthCap': 'Este plan encadena demasiadas dependencias seguidas. Acortá la cadena y volvé a proponerlo.',
-  'error.coordination.proposalStale': 'El contexto de marca cambió desde que se escribió esta propuesta: volvé a abrirla.',
-  'error.coordination.proposalDecided': 'Esa propuesta ya se resolvió.',
+  // M2 (ronda 8): la copy del contexto de MARCA, en el namespace de marca.
+  // Estas tres frases vivían en `error.coordination.*` —una de ellas hablando
+  // de marca dentro del vocabulario de los equipos— porque el backend tiraba
+  // códigos prestados del motor.
+  'error.brand.proposalStale': 'El contexto de marca cambió desde que se escribió esta propuesta: volvé a abrirla.',
+  'error.brand.proposalDecided': 'Esa propuesta de contexto ya se resolvió.',
+  'error.brand.strategistBusy': 'El estratega está en medio de una respuesta. Probá de nuevo cuando termine.',
   // O2: los de las SUBCLASES, que el escáner del mapa no veía.
   'error.coordination.budgetUnset': 'Este trabajo todavía no tiene presupuesto de despachos: escribí un tope antes de arrancar el equipo.',
   // N2 (ronda 7): LOS GENÉRICOS DE TODA LA APP, CON COPY NEUTRA.
@@ -1206,8 +1211,9 @@ const en: Record<MessageKey, string> = {
   'error.coordination.tooManyActiveRuns': 'Too many teams are coordinating at once. Close one before starting this one.',
   'error.coordination.taskCap': 'This plan has more tasks than one team can carry. Trim it and propose it again.',
   'error.coordination.depthCap': 'This plan chains too many dependencies in a row. Shorten the chain and propose it again.',
-  'error.coordination.proposalStale': 'The brand context changed since this proposal was written: open it again.',
-  'error.coordination.proposalDecided': 'That proposal was already resolved.',
+  'error.brand.proposalStale': 'The brand context changed since this proposal was written: open it again.',
+  'error.brand.proposalDecided': 'That context proposal was already resolved.',
+  'error.brand.strategistBusy': 'The strategist is in the middle of an answer. Try again once it finishes.',
   'error.coordination.budgetUnset': 'This project has no dispatch budget yet: set a cap before starting the team.',
   'error.app.featureDisabled': 'This feature is switched off in this installation.',
   'error.app.notFound': 'That is gone: it was closed or deleted while you were looking at it. Open the screen again.',

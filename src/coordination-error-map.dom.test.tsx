@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { APP_ERROR_KEYS, COORDINATION_ERROR_KEYS } from './App';
+import { APP_ERROR_KEYS, BRAND_ERROR_KEYS, COORDINATION_ERROR_KEYS } from './App';
 import { catalogs } from './i18n';
 
 /**
@@ -159,8 +159,54 @@ const NOT_FOR_THE_PERSON: Record<string, string> = {
   INCOMPATIBLE_SCHEMA: 'arranque: se decide antes de que haya interfaz',
 };
 
-/** Las dos mitades juntas: lo que `displayError` puede traducir, venga de donde venga. */
-const TRANSLATED = { ...COORDINATION_ERROR_KEYS, ...APP_ERROR_KEYS };
+/** Las tres mitades juntas: lo que `displayError` puede traducir, venga de donde venga. */
+const TRANSLATED = { ...COORDINATION_ERROR_KEYS, ...BRAND_ERROR_KEYS, ...APP_ERROR_KEYS };
+
+/**
+ * El nombre de la función o el método que ENCIERRA una posición. Es el
+ * contexto que decide si un `LatteError` de un archivo compartido
+ * (`storage/repository.ts`, `services/validation.ts`, `services/latteService.ts`)
+ * pertenece igual al motor: `answerCoordinationAsk` y
+ * `assertCoordinationProposal` lo dicen en su nombre.
+ *
+ * M8 (ronda 8): ACOTADO AL RANGO DE LA DECLARACIÓN. Antes atribuía por "la
+ * última declaración que empieza antes del índice", así que un `throw` a nivel
+ * de módulo —o dentro de un objeto literal, o después de la última función del
+ * archivo— HEREDABA el nombre de la función anterior. Un código a nivel de
+ * módulo podía colarse por la excepción `/Coordination/` sin estar en ninguna
+ * función de coordinación. Ahora la declaración sólo cuenta si el índice cae
+ * DENTRO de su cuerpo, que se cierra en la primera línea con una llave a su
+ * misma indentación.
+ */
+export function enclosingNameOf(text: string, index: number): string {
+  const declarations = [
+    ...text.matchAll(/(?:export\s+)?(?:async\s+)?function\s+(\w+)/g),
+    ...text.matchAll(/^\s{2}(?:(?:public|private|protected|readonly|static|async|get|set)\s+)*(\w+)\s*(?:<[^>\n]*>)?\s*\(/gm),
+  ].sort((a, b) => a.index! - b.index!)
+    // `if (`, `for (`, `while (`, `return (`… también entran por la segunda
+    // regex, y un `if` a dos espacios adentro de una función pisaba el nombre
+    // de la función. No son declaraciones de nada.
+    .filter((m) => !/^(if|for|while|switch|catch|return|throw|do|else|super|await|typeof|void|new|const|let|var)$/.test(m[1]!));
+  let name = '';
+  for (const declaration of declarations) {
+    if (declaration.index! > index) break;
+    if (index <= declarationEnd(text, declaration.index!)) name = declaration[1]!;
+  }
+  return name;
+}
+
+/**
+ * Dónde termina la declaración que empieza en `start`: la primera línea
+ * posterior que cierra con una llave a su MISMA indentación. Una función de
+ * nivel superior cierra con `}` en columna cero; un método de clase, con `  }`.
+ */
+function declarationEnd(text: string, start: number): number {
+  const lineStart = text.lastIndexOf('\n', start) + 1;
+  const indent = /^[ \t]*/.exec(text.slice(lineStart, start))![0];
+  const closer = new RegExp(`^${indent}[}]`, 'm');
+  const match = closer.exec(text.slice(lineStart));
+  return match ? lineStart + match.index + match[0].length : text.length;
+}
 
 describe('Q6: el mapa de errores de coordinación', () => {
   const codes = codesFromSource();
@@ -249,22 +295,7 @@ describe('N2: cada mapa cubre su alcance, verificado contra `electron/**`', () =
    * su nombre. Leer 400 caracteres para atrás no alcanzaba — un docstring
    * largo tapaba la firma.
    */
-  function enclosingName(text: string, index: number): string {
-    const declarations = [
-      ...text.matchAll(/(?:export\s+)?(?:async\s+)?function\s+(\w+)/g),
-      ...text.matchAll(/^\s{2}(?:(?:public|private|protected|readonly|static|async|get|set)\s+)*(\w+)\s*(?:<[^>\n]*>)?\s*\(/gm),
-    ].sort((a, b) => a.index! - b.index!)
-      // `if (`, `for (`, `while (`, `return (`… también entran por la segunda
-      // regex, y un `if` a dos espacios adentro de una función pisaba el nombre
-      // de la función. No son declaraciones de nada.
-      .filter((m) => !/^(if|for|while|switch|catch|return|throw|do|else|super|await|typeof|void|new|const|let|var)$/.test(m[1]!));
-    let name = '';
-    for (const declaration of declarations) {
-      if (declaration.index! > index) break;
-      name = declaration[1]!;
-    }
-    return name;
-  }
+  const enclosingName = enclosingNameOf;
 
   function throwSites(): Site[] {
     const byClass = new Map<string, { code: string; file: string }>();
@@ -309,13 +340,19 @@ describe('N2: cada mapa cubre su alcance, verificado contra `electron/**`', () =
   });
 
   it('ningún código del mapa de COORDINACIÓN se tira fuera de la coordinación', () => {
-    // El alcance: el motor entero, los métodos de coordinación de
-    // `latteService`, y —por contexto, no por archivo— los métodos
-    // `…Coordination…` del repositorio compartido, que es donde viven las
-    // tablas del motor.
+    // El alcance: el motor entero y —por contexto, no por archivo— toda
+    // función cuyo nombre diga `Coordination`, esté donde esté (el repositorio
+    // compartido, `services/validation.ts`, `latteService.ts`).
+    //
+    // M2 (ronda 8): `latteService.ts` YA NO ESTÁ EXENTO COMO ARCHIVO. Esa
+    // línea eximía un archivo de 3.000 líneas en el que vive medio backend, y
+    // tapaba tres fugas reales: `approveBrandContextProposal` y
+    // `requestBrandContextDraft` —contexto de MARCA, no coordinación— tiraban
+    // códigos del mapa de coordinación y la persona leía copy de equipos al
+    // aprobar una propuesta de marca. Un archivo no es un alcance; una función
+    // sí.
     const allowed = (site: Site) =>
       site.file.startsWith('electron/coordination/')
-      || site.file === 'electron/services/latteService.ts'
       || /Coordination/.test(site.context);
     const codes = Object.keys(COORDINATION_ERROR_KEYS);
     expect(codes.length).toBeGreaterThan(10);
@@ -346,9 +383,76 @@ describe('N2: cada mapa cubre su alcance, verificado contra `electron/**`', () =
     }
   });
 
-  it('ningún código está en los dos mapas a la vez', () => {
-    const both = Object.keys(COORDINATION_ERROR_KEYS).filter((code) => code in APP_ERROR_KEYS);
+  it('ningún código está en dos mapas a la vez', () => {
+    const both = Object.keys(COORDINATION_ERROR_KEYS).filter((code) => code in APP_ERROR_KEYS || code in BRAND_ERROR_KEYS);
     expect(both).toEqual([]);
+    expect(Object.keys(BRAND_ERROR_KEYS).filter((code) => code in APP_ERROR_KEYS)).toEqual([]);
+  });
+
+  /**
+   * M2(b): los tres códigos que el contexto de MARCA tiraba prestados del
+   * mapa de coordinación tienen los suyos, y su copy habla de marca.
+   */
+  it('los errores del contexto de marca tienen código propio y se tiran desde los métodos de marca', () => {
+    const brandCodes = Object.keys(BRAND_ERROR_KEYS);
+    expect(brandCodes).toEqual(expect.arrayContaining(['BRAND_PROPOSAL_STALE', 'BRAND_PROPOSAL_DECIDED', 'STRATEGIST_BUSY']));
+    for (const code of brandCodes) {
+      const where = allSites.filter((s) => s.code === code);
+      expect(where.length, `${code} no se tira en ningún lado`).toBeGreaterThan(0);
+      for (const site of where) {
+        expect(/BrandContext/.test(site.context), `${code} @ ${site.file}#${site.context}`).toBe(true);
+      }
+    }
+  });
+
+  /**
+   * M2(c): el motor de coordinación NO tira `PROPOSAL_STALE` ni
+   * `PROPOSAL_DECIDED` — eran códigos del contexto de marca desde el principio
+   * —, así que salieron del mapa de coordinación en vez de quedarse como una
+   * frase que nadie alcanza.
+   */
+  it('`PROPOSAL_STALE` y `PROPOSAL_DECIDED` ya no existen en ningún lado', () => {
+    expect(COORDINATION_ERROR_KEYS.PROPOSAL_STALE).toBeUndefined();
+    expect(COORDINATION_ERROR_KEYS.PROPOSAL_DECIDED).toBeUndefined();
+    expect(allSites.filter((s) => s.code === 'PROPOSAL_STALE' || s.code === 'PROPOSAL_DECIDED')).toEqual([]);
+  });
+
+  /** `MEMBER_BUSY` se queda: lo tira el motor de verdad, en `reserveTargetMember`. */
+  it('`MEMBER_BUSY` sigue siendo de coordinación, y sólo del motor', () => {
+    expect(COORDINATION_ERROR_KEYS.MEMBER_BUSY).toBeDefined();
+    const files = [...new Set(allSites.filter((s) => s.code === 'MEMBER_BUSY').map((s) => s.file))];
+    expect(files).toEqual(['electron/coordination/engine.ts']);
+  });
+});
+
+/**
+ * M8: EL CONTEXTO SE ATRIBUYE POR RANGO, NO POR "LA ÚLTIMA DECLARACIÓN ANTES".
+ */
+describe('M8: `enclosingName` no le presta su nombre a lo que está afuera', () => {
+  const source = [
+    'function unaFuncion() {',
+    "  throw new LatteError('ADENTRO', 'x');",
+    '}',
+    '',
+    "export const suelto = new LatteError('AFUERA', 'y');",
+    '',
+    'class Algo {',
+    '  unCoordinationMetodo() {',
+    "    throw new LatteError('EN_EL_METODO', 'z');",
+    '  }',
+    '}',
+    '',
+    "const despues = new LatteError('DESPUES_DEL_METODO', 'w');",
+  ].join('\n');
+
+  it('un throw DENTRO de una función lleva su nombre', () => {
+    expect(enclosingNameOf(source, source.indexOf("'ADENTRO'"))).toBe('unaFuncion');
+    expect(enclosingNameOf(source, source.indexOf("'EN_EL_METODO'"))).toBe('unCoordinationMetodo');
+  });
+
+  it('un throw a nivel de MÓDULO no hereda el nombre de la función anterior', () => {
+    expect(enclosingNameOf(source, source.indexOf("'AFUERA'"))).toBe('');
+    expect(enclosingNameOf(source, source.indexOf("'DESPUES_DEL_METODO'"))).toBe('');
   });
 });
 
@@ -361,14 +465,18 @@ describe('N2: cada mapa cubre su alcance, verificado contra `electron/**`', () =
 describe('N3: la copy no manda a Ajustes', () => {
   it('ninguna clave de error ni de coordinación nombra Ajustes o Settings', () => {
     for (const locale of ['es-AR', 'en-US'] as const) {
-      const keys = Object.keys(catalogs[locale]).filter((k) => k.startsWith('error.coordination.') || k.startsWith('error.app.') || k.startsWith('coordination.'));
+      const keys = Object.keys(catalogs[locale]).filter((k) => k.startsWith('error.coordination.') || k.startsWith('error.brand.') || k.startsWith('error.app.') || k.startsWith('coordination.'));
       expect(keys.length, locale).toBeGreaterThan(20);
       for (const key of keys) {
         const text = catalogs[locale][key as keyof typeof catalogs['es-AR']];
         // `noSettingsNote` es la excepción declarada: dice justamente que NO
         // hay ningún formulario de configuración, así que nombrarlo es negarlo.
         if (key.endsWith('noSettingsNote')) continue;
-        expect(text, `${locale} ${key}`).not.toMatch(/\bAjustes\b|\bSettings\b/);
+        // M6 (ronda 8): SIN MIRAR LAS MAYÚSCULAS. "en ajustes" a mitad de
+        // frase es exactamente la misma promesa falsa que "en Ajustes", y el
+        // guardián case-sensitive la dejaba pasar — que es la forma más
+        // probable de escribirla.
+        expect(text, `${locale} ${key}`).not.toMatch(/\bajustes\b|\bsettings\b/i);
       }
     }
   });

@@ -95,8 +95,11 @@ export const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
   // DAG llegan a la persona por el botón "Aprobar" — no sólo al agente.
   TASK_CAP: 'error.coordination.taskCap',
   DEPTH_CAP: 'error.coordination.depthCap',
-  PROPOSAL_STALE: 'error.coordination.proposalStale',
-  PROPOSAL_DECIDED: 'error.coordination.proposalDecided',
+  // M2 (ronda 8): `PROPOSAL_STALE` y `PROPOSAL_DECIDED` SALIERON DE ACÁ. El
+  // motor de coordinación no los tiraba: los tiraban los métodos de contexto
+  // de MARCA de `latteService`, y su copy hablaba de marca dentro del
+  // namespace de coordinación. Ahora tienen código y frase propios en
+  // `BRAND_ERROR_KEYS`.
   // O2: los códigos de las SUBCLASES de `LatteError`, invisibles hasta acá.
   // `BUDGET_UNSET` lo tira `startRun` —y SÓLO él— cuando nadie configuró un
   // tope todavía.
@@ -123,6 +126,25 @@ export const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
  * pantalla —los flags se escriben en `meta`— así que la frase dice el hecho y
  * se calla la acción que no existe.
  */
+/**
+ * M2 (ronda 8): EL CONTEXTO DE MARCA TIENE SUS PROPIOS CÓDIGOS.
+ *
+ * Tres errores de los caminos de contexto de marca viajaban con códigos del
+ * mapa de COORDINACIÓN (`PROPOSAL_DECIDED`, `PROPOSAL_STALE`, `MEMBER_BUSY`),
+ * así que la persona que aprobaba una propuesta de marca leía una frase
+ * escrita para equipos y despachos. Y uno de ellos —"El contexto de marca
+ * cambió"— era copy de MARCA viviendo en `error.coordination.*`: el namespace
+ * decía una cosa y el texto otra.
+ *
+ * No van en `APP_ERROR_KEYS` porque no son genéricos de toda la app: son de un
+ * alcance concreto, con su pantalla y su vocabulario.
+ */
+export const BRAND_ERROR_KEYS: Record<string, MessageKey> = {
+  BRAND_PROPOSAL_STALE: 'error.brand.proposalStale',
+  BRAND_PROPOSAL_DECIDED: 'error.brand.proposalDecided',
+  STRATEGIST_BUSY: 'error.brand.strategistBusy',
+};
+
 export const APP_ERROR_KEYS: Record<string, MessageKey> = {
   FEATURE_DISABLED: 'error.app.featureDisabled',
   NOT_FOUND: 'error.app.notFound',
@@ -142,9 +164,9 @@ export const APP_ERROR_KEYS: Record<string, MessageKey> = {
  * mapas tendría que leerse con la frase específica. Hoy no hay ninguno, y el
  * test estructural de `coordination-error-map.dom.test.tsx` lo sostiene.
  */
-const displayError = (e: unknown) => {
+export const displayError = (e: unknown) => {
   const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
-  const key = COORDINATION_ERROR_KEYS[code] ?? APP_ERROR_KEYS[code];
+  const key = COORDINATION_ERROR_KEYS[code] ?? BRAND_ERROR_KEYS[code] ?? APP_ERROR_KEYS[code];
   if (key) return t(key);
   return e instanceof Error ? e.message : String(e);
 };

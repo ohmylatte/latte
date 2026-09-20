@@ -1485,12 +1485,17 @@ export class LatteService implements BackendApi {
     const before = this.deps.repo.getBrandContextProposal(proposalId);
     const brand = this.requireActiveBrand(before.brandId);
     if (before.status === 'approved') return { proposal: before, brand, refresh: emptyRefreshReport() };
-    if (before.status !== 'pending') throw new LatteError('PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
+    // M2 (ronda 8): CÓDIGOS DE MARCA PARA ERRORES DE MARCA. Esto tiraba
+    // `PROPOSAL_DECIDED`/`PROPOSAL_STALE`, códigos del mapa de COORDINACIÓN,
+    // así que aprobar una propuesta de contexto de marca le mostraba a la
+    // persona copy escrita para equipos y tareas. El motor de coordinación no
+    // tiraba ninguno de los dos: eran de marca desde el principio.
+    if (before.status !== 'pending') throw new LatteError('BRAND_PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
     const clean = edited == null ? null : requireCleanContext(edited, 'Brand context');
     const text = clean ?? before.text;
     this.assertComposedFits(brand.context, text, before.mode);
     if (!acceptStale && before.baseFingerprint !== brandContextFingerprint(brand.context)) {
-      throw new LatteError('PROPOSAL_STALE', 'Brand context changed since this proposal');
+      throw new LatteError('BRAND_PROPOSAL_STALE', 'Brand context changed since this proposal');
     }
     const proposal = this.deps.repo.transaction(() => {
       const current = this.deps.repo.getBrand(brand.id);
@@ -1508,7 +1513,7 @@ export class LatteService implements BackendApi {
     const before = this.deps.repo.getBrandContextProposal(proposalId);
     const brand = this.requireActiveBrand(before.brandId);
     if (before.status === 'rejected') return { proposal: before, brand, refresh: emptyRefreshReport() };
-    if (before.status !== 'pending') throw new LatteError('PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
+    if (before.status !== 'pending') throw new LatteError('BRAND_PROPOSAL_DECIDED', `Brand context proposal already ${before.status}: ${proposalId}`);
     const proposal = this.deps.repo.transitionBrandContextProposal(proposalId, 'rejected', null, this.clock());
     // Rejecting flips the nudge back to the owner, so the files must follow.
     return { proposal, brand, refresh: this.refreshBrandWorksInstructions(brand) };
@@ -1521,7 +1526,10 @@ export class LatteService implements BackendApi {
     const strategists = team.filter((m) => m.roleId === 'strategist' && m.status !== 'ended');
     const available = strategists.find((m) => m.status !== 'working');
     if (strategists.length > 0 && !available) {
-      throw new LatteError('MEMBER_BUSY', 'The strategist is already working on this work');
+      // M2: y éste tampoco es de coordinación. `MEMBER_BUSY` es del motor
+      // (`reserveTargetMember`), y su frase habla de despachos; acá lo único
+      // que pasa es que el estratega de esta marca está en medio de un turno.
+      throw new LatteError('STRATEGIST_BUSY', 'The strategist is already working on this work');
     }
     const session = available
       ? await this.deps.hub.openMember(available.id, this.memberContext(work.id))
