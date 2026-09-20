@@ -32,6 +32,26 @@ export const MAX_ATTEMPTS_PER_TASK = 3;
  */
 export const DEFAULT_MAX_CONCURRENT = 3;
 
+/**
+ * O6: A PARTIR DE ACÁ, UN DESPACHO EN VUELO YA NO CUENTA COMO TRABAJO VIVO.
+ *
+ * `allBlockedOnAsks` corta con `if (inFlight.size > 0) return false`: con algo
+ * en el aire el equipo no está bloqueado, porque el reporte que entre va a
+ * volver a evaluarlo. Pero una fila `dispatched` que NUNCA liquida —el proceso
+ * murió sin que llegara el `closed`, o el reporte se perdió— congela esa
+ * respuesta para siempre: el run no puede auto-suspenderse aunque todas sus
+ * tareas restantes estén trabadas por preguntas.
+ *
+ * NO hay una constante previa que reusar, y se dice: `sweepUncertainDispatches`
+ * barre TODA fila abierta sin mirar la antigüedad, porque corre al arrancar la
+ * app, cuando cualquier despacho en vuelo es por definición huérfano. Este
+ * número es nuevo y sólo decide una cosa: cuándo dejar de tomar un despacho
+ * como señal de que hay alguien trabajando. Es estructural, no económico — no
+ * acota gasto, acota cuánto puede un dato viejo seguir hablando por un proceso
+ * que quizá ya no existe.
+ */
+export const IN_FLIGHT_DISPATCH_STALE_MINUTES = 30;
+
 /** `latte_ask` TTL when the caller omits one. */
 export const ASK_TTL_DEFAULT_MINUTES = 30;
 

@@ -30,7 +30,7 @@ import type {
 } from '../storage/repository';
 import { canAddTask, computeDoomedTasks, computeReadyTasks, computeTaskDepth, wouldCreateCycle, type DagEdge, type DagTask } from './dag';
 import { assertBudgetConfigured, BudgetUnsetError, readStoredCoordinationBudget, requireCoordinationBudget, reserveDispatch, type BudgetUsage, type StoredCoordinationBudgetRead } from './budget';
-import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK } from './limits';
+import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, IN_FLIGHT_DISPATCH_STALE_MINUTES, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK } from './limits';
 
 /**
  * Los roles que la persona aprobo, por run. Una clave propia y no `plan_json`:
@@ -377,6 +377,15 @@ export class CoordinationEngine {
    * the next attempt instead of lying about being unblocked.
    */
   resumeRun(runId: string): CoordinationRunRecord {
+    // O4: REANUDAR ES ENCENDER, y el interruptor apaga.
+    //
+    // `startRun`, `requestCoordination`, `startDispatch` y el tick
+    // (`refreshAsks`) ya consultan la bandera; esto no, y es exactamente la
+    // misma clase de acción: un run suspendido vuelve a estar disponible para
+    // despachar. Con `feature:coordination` apagada, "Reanudar equipo" volvía
+    // a poner a todo el mundo a gastar. Cancelar sigue siendo la salida, y esa
+    // no pasa por acá: cancelar TERMINA trabajo, no lo empieza.
+    this.requireCoordinationEnabled();
     this.assertRunMutable(this.deps.repo.getCoordinationRun(runId));
     // F5: reanudar es el momento más obvio en que alguien vuelve a mirar el
     // run, y una pregunta cuyo plazo venció no puede seguir reteniendo sus
@@ -1785,6 +1794,15 @@ export class CoordinationEngine {
     }
     // EL punto único: toda tarea que pasa a un estado terminal sale por acá.
     this.finishRunIfComplete(task.runId, now);
+    // O6: Y LA SUSPENSIÓN SE RE-EVALÚA ACÁ, no en el próximo tick.
+    //
+    // `maybeSelfSuspendOnAsks` sólo se llamaba desde `ask()`: el camino del
+    // reporte pasaba por `finishRunIfComplete` → `refreshAsks`, que únicamente
+    // LEVANTA la suspensión, nunca la pone. Con la última tarea en vuelo
+    // reportando y otra trabada por una pregunta, el run se quedaba `running`
+    // sin nada que despachar hasta que el tick de 30 s pasara a mirarlo: la
+    // pantalla decía "en curso" sobre un equipo que no tenía qué hacer.
+    this.maybeSelfSuspendOnAsks(task.runId, now);
     this.touch(grant.workId, task.runId);
     return this.deps.repo.getCoordinationTask(taskId);
   }
@@ -2015,14 +2033,26 @@ export class CoordinationEngine {
     // bloqueado, punto: el reporte que entre volverá a evaluar esto. Es el mismo
     // conjunto que `finishRunIfComplete` mira para no cerrar un run con trabajo
     // en vuelo.
-    const inFlight = new Set(
-      this.deps.repo.listCoordinationDispatches(runId)
-        .filter((d) => d.status === 'dispatched' || d.status === 'running')
-        .map((d) => d.taskId),
-    );
+    //
+    // O6: pero un despacho ZOMBI no habla por nadie. Una fila `dispatched` que
+    // nunca liquida —el proceso murió sin que llegara el `closed`, el reporte
+    // se perdió— congelaba esta respuesta en `false` PARA SIEMPRE: el run no
+    // podía auto-suspenderse ni aunque todo lo demás estuviera trabado por
+    // preguntas, y nadie lo miraba porque justamente no estaba `suspended`.
+    // Pasado el umbral, esa fila deja de contar como "hay alguien trabajando";
+    // sigue existiendo y sigue reteniendo el CIERRE (`finishRunIfComplete` la
+    // mira aparte), que es otra cosa: suspender es pausable, cerrar es final.
+    const staleBefore = new Date(new Date(now).getTime() - IN_FLIGHT_DISPATCH_STALE_MINUTES * 60_000).toISOString();
+    const open = this.deps.repo.listCoordinationDispatches(runId).filter((d) => d.status === 'dispatched' || d.status === 'running');
+    const inFlight = new Set(open.filter((d) => (d.startedAt ?? d.createdAt) > staleBefore).map((d) => d.taskId));
     if (inFlight.size > 0) return false;
+    // Y la TAREA del zombi tampoco cuenta como despachable: sigue `dispatched`,
+    // así que sin sacarla del conjunto se contaba a sí misma como "algo que no
+    // está esperando una respuesta" y volvía a congelar la cuenta desde el otro
+    // lado. Ni trabaja ni se puede despachar: lo que le falta es el barrido.
+    const stalled = new Set(open.map((d) => d.taskId));
     const readyEligible = tasks.filter((t) =>
-      t.status === 'ready' || t.status === 'blocked' || t.status === 'dispatched' || t.status === 'running');
+      (t.status === 'ready' || t.status === 'blocked' || t.status === 'dispatched' || t.status === 'running') && !stalled.has(t.id));
     return readyEligible.length > 0 && readyEligible.every((t) => blockedTaskIds.has(t.id));
   }
 
@@ -2219,6 +2249,11 @@ export class CoordinationEngine {
     });
     // Fuera de la transacción, igual que en `report`: el mismo punto único.
     this.finishRunIfComplete(dispatch.runId, now);
+    // O6: y la misma re-evaluación que el reporte. Liquidar el último despacho
+    // en vuelo es exactamente el momento en que "hay alguien trabajando" deja
+    // de ser cierto, así que es cuando hay que volver a preguntarse si todo lo
+    // que queda está esperando una respuesta.
+    this.maybeSelfSuspendOnAsks(dispatch.runId, now);
     return outcome;
   }
 
