@@ -199,9 +199,27 @@ export interface FakeCoordinationHubOptions {
   hold?: () => Promise<void> | void;
 }
 
+/**
+ * Ronda 8 (M1): el fake modela la vida COMO EL HUB REAL.
+ *
+ * En el hub, `status` sale de si un adaptador posee al miembro:
+ * `working`/`idle` ⇒ hay proceso, `paused` ⇒ la fila sigue en la tabla pero no
+ * hay nadie adentro (un proceso muerto sin `closed`, o pausado por la persona),
+ * `ended` ⇒ terminó. Por eso un test que quiere modelar una muerte de proceso
+ * pone `status: 'paused'` y NO borra la fila: borrarla es un estado que el hub
+ * real no produce nunca.
+ */
+export const fakeMemberIsLive = (m: FakeTeamMember): boolean => m.status === 'working' || m.status === 'idle';
+
 export function fakeCoordinationHub(b: TestBackend, members: FakeTeamMember[], options: FakeCoordinationHubOptions = {}) {
   const send = vi.spyOn(b.hub, 'send').mockResolvedValue(undefined);
   vi.spyOn(b.hub, 'listTeam').mockImplementation((workId: string) => members.filter((m) => m.workId === workId).map(fakeTeamMemberShape));
+  vi.spyOn(b.hub, 'liveMemberIds').mockImplementation((workId: string) =>
+    new Set(members.filter((m) => m.workId === workId && fakeMemberIsLive(m)).map((m) => m.id)));
+  // `isBusy` lo publica el adaptador, y sólo para un miembro que posee: un
+  // `paused` o un `ended` nunca están en un turno.
+  vi.spyOn(b.hub, 'isMemberBusy').mockImplementation((memberId: string) =>
+    members.some((m) => m.id === memberId && m.status === 'working'));
   vi.spyOn(b.hub, 'openMember').mockImplementation(async (memberId: string) => {
     const member = members.find((m) => m.id === memberId);
     if (!member) throw new Error(`fakeCoordinationHub: unknown member ${memberId}`);

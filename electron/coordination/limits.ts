@@ -44,12 +44,28 @@ export const DEFAULT_MAX_CONCURRENT = 3;
  * minutos dejaba de contar, el run se suspendía con un miembro adentro y el
  * coordinador se comía un `RUN_NOT_ACTIVE`.
  *
+ * M1 (ronda 8): y la señal de vida es la del ADAPTADOR
+ * (`hub.liveMemberIds`), no la de la tabla de miembros. La tabla sobrevive a
+ * la muerte del proceso: esa fila sigue ahí con `status:'paused'`.
+ *
  * Lo único que este número decide es cuánto espera `settleOrphanDispatches`
- * (el tick de `sweepActiveRuns`) antes de LIQUIDAR una fila abierta cuyo
- * miembro el hub NO conoce: sin sesión viva no hay a quién esperar, y el
- * margen existe sólo para no matar un alta que el hub todavía no publicó.
- * Liquidar cierra la reserva y devuelve la tarea a `ready` — no la deja
- * reteniendo el cierre del run.
+ * (el tick de `sweepActiveRuns`) antes de recoger los TRES huérfanos que
+ * existen de verdad:
+ *
+ *  1. Fila de despacho abierta y NADIE ADENTRO (proceso muerto sin `closed`, o
+ *     miembro pausado por la persona) → se liquida sin cobrar el intento.
+ *  2. Fila abierta con el miembro VIVO pero NO OCUPADO: terminó su turno sin
+ *     llamar a `latte_report` → se liquida COBRANDO el intento, porque eso sí
+ *     es un fracaso de este intento.
+ *  3. Tarea `dispatched` SIN fila de despacho abierta: el spawn se colgó entre
+ *     el CAS que reclamó la tarea y el `insert` de la fila → la tarea vuelve a
+ *     `ready` con el CAS inverso. Su reloj es el `updatedAt` de la tarea.
+ *
+ * El margen NO existe para "esperar a un alta que el hub todavía no publicó":
+ * ese estado no existe. La fila de despacho se inserta DESPUÉS del spawn, así
+ * que cuando hay fila el miembro ya fue publicado. Existe por lo de siempre —
+ * no actuar sobre una foto de hace un instante— y por el caso 3, donde el
+ * único dato disponible es la edad.
  *
  * `sweepUncertainDispatches` es otra cosa y sigue sin mirar la antigüedad:
  * corre al arrancar la app, cuando cualquier despacho en vuelo es por

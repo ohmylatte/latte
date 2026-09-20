@@ -2067,16 +2067,26 @@ export class CoordinationEngine {
     // tampoco se arreglaba: seguía reteniendo el cierre, ahora con el equipo
     // suspendido por un motivo falso.
     //
-    // Quien sabe si un despacho está vivo es el HUB: es el que tiene los
-    // procesos. Una fila abierta cuyo miembro el hub conoce es trabajo vivo,
-    // tenga la edad que tenga. Una fila cuyo miembro el hub NO conoce no habla
-    // por nadie — y no se la excluye y listo: el barrido periódico la LIQUIDA
-    // (ver `settleOrphanDispatches`), que es lo que le faltaba. Por eso acá ya
-    // no hace falta ningún conjunto `stalled`: lo que sigue abierto sin dueño
-    // dura hasta el próximo tick, no para siempre.
+    // M1 (ronda 8): Y LA SEÑAL ES LA DEL ADAPTADOR, NO LA DE LA TABLA.
+    //
+    // La ronda 7 preguntó por `hub.listTeam` —o sea `repo.listMembers` +
+    // `describe()`— con la condición `status !== 'ended'`. La tabla de miembros
+    // SOBREVIVE a la muerte del proceso: sin adaptador, `describe()` devuelve
+    // `paused`, que pasa ese filtro. Así que un miembro muerto sin `closed`, o
+    // pausado por la persona, contaba como trabajo vivo PARA SIEMPRE: el run
+    // no podía suspenderse ni cerrar, y `settleOrphanDispatches` nunca
+    // liquidaba nada. Quien sabe si hay alguien adentro es el ADAPTADOR
+    // (`hub.liveMemberIds`), que es quien tiene los procesos.
     const run = this.deps.repo.getCoordinationRun(runId);
     const open = this.deps.repo.listCoordinationDispatches(runId).filter((d) => d.status === 'dispatched' || d.status === 'running');
-    const inFlight = new Set(open.filter((d) => this.hubKnowsMember(run.workId, d.memberId)).map((d) => d.taskId));
+    // M1(b), PRIMERA LECTURA DE UN HUB QUE TIRA: "hay alguien adentro". Nunca
+    // se suspende un equipo sobre información que no se pudo obtener —
+    // suspender es una decisión, y no saber no es una razón para tomarla.
+    // (`settleOrphanDispatches` lee el mismo silencio al revés, y ahí también
+    // lo conservador es no actuar: ver su docstring.)
+    const live = this.liveMemberIds(run.workId);
+    if (live === null && open.length > 0) return false;
+    const inFlight = new Set(open.filter((d) => this.memberIsInside(d.memberId, live)).map((d) => d.taskId));
     if (inFlight.size > 0) return false;
     const readyEligible = tasks.filter((t) =>
       t.status === 'ready' || t.status === 'blocked' || t.status === 'dispatched' || t.status === 'running');
@@ -2084,52 +2094,87 @@ export class CoordinationEngine {
   }
 
   /**
-   * N1: ¿EL HUB CONOCE A ESTE MIEMBRO? La única pregunta honesta sobre si un
-   * despacho abierto tiene a alguien adentro.
+   * M1: QUIÉN ESTÁ ADENTRO, EN UNA SOLA PREGUNTA POR EVALUACIÓN.
    *
-   * Dos señales, las dos del hub, que es quien tiene los procesos:
-   * `isMemberBusy` (el adaptador dice que hay un turno en vuelo) y `listTeam`
-   * (el miembro sigue existiendo y no terminó). Basta con una: un miembro
-   * ocioso entre dos mensajes sigue vivo, y un runtime que no publique
-   * `isBusy` no convierte a su miembro en un fantasma.
+   * `hub.liveMemberIds` recorre los adaptadores una vez y devuelve los
+   * miembros que alguno POSEE. Se cachea en el llamador —un `Set` por run por
+   * tick— en vez de preguntar de a un despacho: la versión anterior llamaba a
+   * `listTeam` por cada fila abierta, y `listTeam` pasa por `describe()`, que
+   * además TIENE EFECTO COLATERAL (borra la sesión publicada del miembro sin
+   * adaptador). Preguntar "¿está vivo?" no puede escribir.
    *
-   * Un hub que tira se lee como "no lo conozco": es lo conservador acá, porque
-   * lo único que desencadena es el barrido de `settleOrphanDispatches`, que
-   * devuelve la tarea a `ready` sin cobrarle un intento.
+   * `null` significa NO SE PUDO SABER, y no se confunde con "no hay nadie":
+   * los dos llamadores leen ese silencio de forma distinta y a propósito.
    */
-  private hubKnowsMember(workId: string, memberId: string): boolean {
+  private liveMemberIds(workId: string): Set<string> | null {
+    try { return this.deps.hub.liveMemberIds(workId); } catch { return null; }
+  }
+
+  /** Vivo (algún adaptador lo posee) o en medio de un turno. Con `live` en `null` nadie se declara adentro: el que decide qué hacer con eso es el llamador. */
+  private memberIsInside(memberId: string, live: Set<string> | null): boolean {
     if (!memberId) return false;
-    try { if (this.deps.hub.isMemberBusy(memberId)) return true; } catch { /* un miembro que ya no existe no está en ningún turno */ }
-    try { return this.deps.hub.listTeam(workId).some((m) => m.id === memberId && m.status !== 'ended'); } catch { return false; }
+    if (live?.has(memberId)) return true;
+    try { return this.deps.hub.isMemberBusy(memberId); } catch { return false; }
   }
 
   /**
-   * N1: LA FILA SIN DUEÑO SE LIQUIDA, NO SE IGNORA.
+   * M1: LOS TRES HUÉRFANOS REALES, TODOS CONTRA
+   * `IN_FLIGHT_DISPATCH_STALE_MINUTES`.
    *
-   * El respaldo —y el ÚNICO uso— de `IN_FLIGHT_DISPATCH_STALE_MINUTES`: una
-   * fila abierta cuyo miembro el hub no conoce y que ya pasó el umbral. Antes
-   * esa fila simplemente dejaba de contar como trabajo vivo y seguía ahí,
-   * reteniendo el cierre (`finishRunIfComplete` mira los despachos abiertos)
-   * con el equipo suspendido por un motivo falso, hasta el próximo arranque de
-   * la app.
+   * La ronda 7 dejó esto como código muerto: preguntaba por la TABLA de
+   * miembros, que sobrevive a la muerte del proceso, así que la condición "el
+   * hub no lo conoce" no se cumplía nunca. Con la señal del adaptador, los
+   * casos que hay que recoger son tres, y NO se liquidan igual:
    *
-   * `incrementAttempts:false` por lo mismo que el barrido de arranque: que se
-   * pierda el proceso no es culpa del agente. La reserva se cierra y la tarea
-   * vuelve a `ready`, o sea que se puede volver a despachar — que es
-   * exactamente lo que le pasa a un trabajo cuyo ejecutor desapareció.
+   *  1. Fila abierta SIN NADIE ADENTRO (proceso muerto sin `closed`, o miembro
+   *     pausado por la persona). `incrementAttempts:false`: perder el proceso
+   *     —o pausarlo— no es culpa del agente, igual que en el barrido de
+   *     arranque. La reserva se cierra y la tarea vuelve a `ready`.
+   *  2. Fila abierta con el miembro VIVO pero NO OCUPADO: terminó su turno y
+   *     nunca llamó a `latte_report`. `incrementAttempts:true`, porque eso SÍ
+   *     es un intento fallido del agente; al tope, la tarea queda `failed` en
+   *     vez de reintentarse para siempre.
+   *  3. Tarea `dispatched` SIN NINGUNA fila de despacho abierta: el spawn se
+   *     colgó entre el CAS que reclamó la tarea y el `insert` de la fila, que
+   *     viene DESPUÉS del `await` que levanta el proceso. No hay reserva ni
+   *     asiento que cerrar —nunca se escribieron—, así que no se liquida nada:
+   *     se suelta el reclamo con el CAS inverso
+   *     (`releaseCoordinationTaskFromDispatch`), que no puede pisar a quien
+   *     haya escrito después. Su reloj es el `updatedAt` de la TAREA, que es
+   *     lo único que ese estado dejó.
    *
-   * El umbral existe sólo para no matar a un miembro que el hub todavía no
-   * publicó (un alta recién hecha, un proceso levantando): pasados treinta
-   * minutos sin que el hub lo reconozca, ya no hay a quién esperar.
+   * M1(b), SEGUNDA LECTURA DE UN HUB QUE TIRA: "no liquidar en este tick". Es
+   * la opuesta a la de `allBlockedOnAsks` y por la misma razón de fondo: lo
+   * conservador es no actuar. Allá actuar es suspender, acá actuar es liquidar
+   * el trabajo de alguien que a lo mejor está adentro. El tick siguiente
+   * vuelve a preguntar.
    */
   private settleOrphanDispatches(run: CoordinationRunRecord, now: string): void {
+    const live = this.liveMemberIds(run.workId);
+    if (live === null) return;
     const staleBefore = new Date(new Date(now).getTime() - IN_FLIGHT_DISPATCH_STALE_MINUTES * 60_000).toISOString();
     const open = this.deps.repo.listCoordinationDispatches(run.id).filter((d) => d.status === 'dispatched' || d.status === 'running');
     for (const dispatch of open) {
-      if (this.hubKnowsMember(run.workId, dispatch.memberId)) continue;
       if ((dispatch.startedAt ?? dispatch.createdAt) > staleBefore) continue;
-      this.settleUncertain(dispatch.id, { incrementAttempts: false });
+      if (this.memberIsBusySafe(dispatch.memberId)) continue; // hay un turno en vuelo: es trabajo, no un huérfano
+      // Vivo pero ocioso: terminó sin reportar, y eso se cobra.
+      this.settleUncertain(dispatch.id, { incrementAttempts: live.has(dispatch.memberId) });
     }
+    // Caso 3: la tarea reclamada cuyo despacho nunca llegó a nacer.
+    const stillOpen = new Set(
+      this.deps.repo.listCoordinationDispatches(run.id)
+        .filter((d) => d.status === 'dispatched' || d.status === 'running' || d.status === 'pending_approval')
+        .map((d) => d.taskId));
+    for (const task of this.deps.repo.listCoordinationTasks(run.id)) {
+      if (task.status !== 'dispatched' || stillOpen.has(task.id)) continue;
+      if (task.updatedAt > staleBefore) continue;
+      this.deps.repo.releaseCoordinationTaskFromDispatch(task.id, now);
+    }
+  }
+
+  private memberIsBusySafe(memberId: string): boolean {
+    if (!memberId) return false;
+    try { return this.deps.hub.isMemberBusy(memberId); } catch { return false; }
   }
 
   /**

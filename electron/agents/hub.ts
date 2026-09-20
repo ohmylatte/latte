@@ -311,9 +311,32 @@ export class AgentHub {
     return this.deps.roles.list();
   }
 
+  /**
+   * QUIÉN ESTÁ ADENTRO AHORA MISMO. La única señal de vida honesta: un miembro
+   * está vivo si algún adaptador lo POSEE, o sea si hay un proceso corriendo
+   * para él.
+   *
+   * Ronda 8 (M1): no se responde con `listTeam`/`describe()`. La tabla de
+   * miembros sobrevive a la muerte del proceso —esa fila sigue ahí con
+   * `status:'paused'`, que es exactamente lo que `describe()` devuelve cuando
+   * no hay adaptador— así que "está en la tabla y no terminó" es verdad para
+   * un miembro muerto, para uno pausado por la persona y para uno que nunca
+   * arrancó. Quien coordina necesita saber si HAY ALGUIEN, no si la fila
+   * existe. Y `describe()` además tiene efecto colateral (borra la sesión
+   * publicada), así que preguntarle "¿está vivo?" escribe.
+   *
+   * `working` e `idle` ⇒ vivo. `paused` y `ended` ⇒ no. Una sola pasada por
+   * los adaptadores: el llamador cachea el conjunto por evaluación en vez de
+   * preguntar de a uno.
+   */
+  liveMemberIds(workId: string): Set<string> {
+    const adapters = this.adapters();
+    return new Set(this.deps.repo.listMembers(workId).filter((m) => adapters.some((a) => a.owns(m.id))).map((m) => m.id));
+  }
+
   /** Members of this work whose runtime process is alive right now. */
   liveMemberCount(workId: string): number {
-    return this.deps.repo.listMembers(workId).filter((m) => this.adapters().some((a) => a.owns(m.id))).length;
+    return this.liveMemberIds(workId).size;
   }
 
   /**

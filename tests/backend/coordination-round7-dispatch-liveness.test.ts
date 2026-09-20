@@ -1,27 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ChatEvent } from '../../shared/contracts';
 import { IN_FLIGHT_DISPATCH_STALE_MINUTES } from '../../electron/coordination/limits';
 import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
-import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
+import { approveCoordinationRoles, deferred, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
- * Ronda 7, N1: LA ANTIGÜEDAD NO ES EVIDENCIA DE MUERTE.
+ * Ronda 7 (N1) + ronda 8 (M1): LA VIDA DE UN DESPACHO LA DICE EL ADAPTADOR.
  *
- * La ronda 6 decidió que un despacho más viejo que `IN_FLIGHT_DISPATCH_STALE_MINUTES`
- * dejaba de contar como trabajo vivo. Un reloj no sabe si alguien está
- * trabajando: una tarea legítima de 31 minutos hacía que el run se suspendiera
- * `all_blocked_on_ask` CON un miembro adentro, el coordinador recibía
- * `RUN_NOT_ACTIVE` al crear la tarea siguiente, y "Reanudar" se deshacía en el
- * tick siguiente. Y el zombi de verdad quedaba igual de trabado: seguía
- * reteniendo el CIERRE, con el equipo suspendido por un motivo falso.
+ * La ronda 7 acertó el diagnóstico —un reloj no sabe si alguien está
+ * trabajando— y erró la señal: preguntó por la TABLA de miembros
+ * (`hub.listTeam`, o sea `repo.listMembers` + `describe()`). La tabla sobrevive
+ * a la muerte del proceso. Para un miembro muerto sin `closed`, o pausado por
+ * la persona, `describe()` devuelve `status:'paused'` —la fila sigue ahí— y el
+ * viejo `status !== 'ended'` daba `true`. O sea: TODO despacho abierto contaba
+ * como trabajo vivo para siempre. El run no podía suspenderse ni cerrar, y
+ * `settleOrphanDispatches` no liquidaba nunca nada.
  *
- * La vida de un despacho la dice el HUB, que es quien tiene los procesos:
- *
- *  - `inFlight` = fila abierta cuyo miembro el hub CONOCE. Sin mirar el reloj.
- *  - el umbral queda sólo de respaldo para la fila SIN DUEÑO en el hub, y en
- *    ese caso el tick la LIQUIDA (reserva cerrada, tarea de vuelta a `ready`)
- *    en vez de dejarla reteniendo el cierre.
+ * La señal honesta es la del ADAPTADOR: `hub.liveMemberIds(workId)` = los
+ * miembros que algún adaptador posee. `working`/`idle` ⇒ hay alguien adentro;
+ * `paused`/`ended` ⇒ no hay nadie, aunque la fila siga en la tabla. Por eso
+ * acá NINGÚN test borra una fila de `members`: se le pone `status:'paused'`,
+ * que es lo que el hub real publica cuando el proceso se fue.
  */
-describe('Ronda 7 / N1: la vida de un despacho la dice el hub', () => {
+describe('Rondas 7 y 8: la vida de un despacho la dice el adaptador, no la tabla', () => {
   let b: TestBackend;
   let members: FakeTeamMember[];
   let workId: string;
@@ -52,6 +53,7 @@ describe('Ronda 7 / N1: la vida de un despacho la dice el hub', () => {
   }
 
   const openDispatches = () => b.repo.listCoordinationDispatches(runId).filter((d) => d.status === 'dispatched' || d.status === 'running');
+  const worker = () => members.find((m) => m.id === 'mem_worker')!;
 
   beforeEach(async () => {
     b = await makeBackend();
@@ -73,37 +75,38 @@ describe('Ronda 7 / N1: la vida de un despacho la dice el hub', () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); b.cleanup(); });
 
-  it('una tarea legítima de 31 minutos sigue siendo trabajo vivo: el run no se suspende y el coordinador puede seguir', async () => {
+  // --- Lo que la ronda 7 acertó: la antigüedad no mata a quien está adentro ---
+
+  it('un miembro OCUPADO diez horas sigue siendo trabajo vivo: el run no se suspende y el coordinador puede seguir', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(T0));
     const working = await createTask('la que tarda de verdad');
     const blocked = await createTask('la que espera una respuesta');
     expect(envelope(await call('latte_dispatch', { taskId: working })).ok).toBe(true);
-    // El hub lo conoce y además dice que está ocupado: hay alguien adentro.
-    const busy = vi.spyOn(b.hub, 'isMemberBusy').mockImplementation((id: string) => id === 'mem_worker');
+    // El adaptador lo posee Y dice que hay un turno en vuelo.
+    worker().status = 'working';
 
-    vi.setSystemTime(at(IN_FLIGHT_DISPATCH_STALE_MINUTES + 1));
+    vi.setSystemTime(at(10 * 60));
     expect(openDispatches()).toHaveLength(1); // la premisa: sigue en vuelo
-    expect(envelope(await call('latte_ask', { question: '¿seguimos?', taskId: blocked, ttlMinutes: 120 })).ok).toBe(true);
+    expect(envelope(await call('latte_ask', { question: '¿seguimos?', taskId: blocked, ttlMinutes: 12 * 60 })).ok).toBe(true);
 
-    // Ni la pregunta ni el tick lo suspenden: el hub dice que hay alguien.
+    // Ni la pregunta ni el tick lo suspenden: hay alguien adentro.
     expect(b.repo.getCoordinationRun(runId).status).toBe('running');
     b.service.sweepCoordination();
     expect(b.repo.getCoordinationRun(runId).status).toBe('running');
+    expect(openDispatches()).toHaveLength(1); // y el barrido NO lo liquidó
 
     // Y el coordinador puede seguir armando el plan: nada de `RUN_NOT_ACTIVE`.
-    const created = envelope(await call('latte_task_create', { roleId: 'role_a', spec: 'la siguiente' }));
-    expect(created.ok).toBe(true);
-    expect(busy).toHaveBeenCalled();
+    expect(envelope(await call('latte_task_create', { roleId: 'role_a', spec: 'la siguiente' })).ok).toBe(true);
   });
 
-  it('reanudar no se deshace en el tick siguiente mientras el hub tenga a alguien trabajando', async () => {
+  it('reanudar no se deshace en el tick siguiente mientras haya alguien adentro', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(T0));
     const working = await createTask('la que tarda de verdad');
     const blocked = await createTask('la que espera una respuesta');
     expect(envelope(await call('latte_dispatch', { taskId: working })).ok).toBe(true);
-    vi.spyOn(b.hub, 'isMemberBusy').mockImplementation((id: string) => id === 'mem_worker');
+    worker().status = 'working';
     vi.setSystemTime(at(IN_FLIGHT_DISPATCH_STALE_MINUTES + 1));
     expect(envelope(await call('latte_ask', { question: '¿seguimos?', taskId: blocked, ttlMinutes: 120 })).ok).toBe(true);
 
@@ -116,14 +119,20 @@ describe('Ronda 7 / N1: la vida de un despacho la dice el hub', () => {
     expect(b.repo.getCoordinationRun(runId).status).toBe('running');
   });
 
-  it('la fila SIN DUEÑO en el hub y más vieja que el umbral la LIQUIDA el tick: reserva cerrada, tarea de vuelta a `ready`', async () => {
+  // --- M1, caso 1: nadie adentro (muerto sin `closed`, o pausado) -------------
+
+  it('un miembro PAUSADO por la persona no es vida: el tick liquida su fila vieja SIN cobrar el intento', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(T0));
-    const orphan = await createTask('la del proceso que se murió sin avisar');
+    const orphan = await createTask('la del proceso que ya no está');
     expect(envelope(await call('latte_dispatch', { taskId: orphan })).ok).toBe(true);
     expect(b.repo.countOpenCoordinationCostReservations(runId)).toBe(1); // la premisa
-    // El proceso murió y el hub ya no lo conoce: ni en `listTeam` ni ocupado.
-    members.splice(members.findIndex((m) => m.id === 'mem_worker'), 1);
+
+    // La persona lo pausó: la FILA SIGUE EN LA TABLA, sin adaptador adentro.
+    // Es exactamente lo que el hub real publica, y es lo que la ronda 7 leía
+    // como "vivo".
+    worker().status = 'paused';
+    expect(b.hub.listTeam(workId).find((m) => m.id === 'mem_worker')?.status).toBe('paused');
 
     vi.setSystemTime(at(IN_FLIGHT_DISPATCH_STALE_MINUTES + 1));
     b.service.sweepCoordination();
@@ -131,7 +140,7 @@ describe('Ronda 7 / N1: la vida de un despacho la dice el hub', () => {
     expect(openDispatches()).toEqual([]);
     expect(b.repo.getCoordinationTask(orphan).status).toBe('ready');
     expect(b.repo.countOpenCoordinationCostReservations(runId)).toBe(0);
-    // Y el intento NO se le cobra a la tarea: el proceso se murió, no falló.
+    // Pausar es una decisión de la PERSONA: no le cuesta un intento a la tarea.
     expect(b.repo.getCoordinationTask(orphan).attempts).toBe(0);
   });
 
@@ -140,7 +149,7 @@ describe('Ronda 7 / N1: la vida de un despacho la dice el hub', () => {
     vi.setSystemTime(new Date(T0));
     const orphan = await createTask('la del proceso que se murió sin avisar');
     expect(envelope(await call('latte_dispatch', { taskId: orphan })).ok).toBe(true);
-    members.splice(members.findIndex((m) => m.id === 'mem_worker'), 1);
+    worker().status = 'paused'; // murió sin `closed`: la fila queda, el proceso no
 
     vi.setSystemTime(at(IN_FLIGHT_DISPATCH_STALE_MINUTES + 1));
     b.service.sweepCoordination();
@@ -152,12 +161,12 @@ describe('Ronda 7 / N1: la vida de un despacho la dice el hub', () => {
     expect(run.suspendReason).toBe('all_blocked_on_ask');
   });
 
-  it('la fila reciente sin dueño en el hub no se toca todavía', async () => {
+  it('la fila reciente sin nadie adentro no se toca todavía', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(T0));
     const recent = await createTask('la que recién salió');
     expect(envelope(await call('latte_dispatch', { taskId: recent })).ok).toBe(true);
-    members.splice(members.findIndex((m) => m.id === 'mem_worker'), 1);
+    worker().status = 'paused';
 
     vi.setSystemTime(at(IN_FLIGHT_DISPATCH_STALE_MINUTES - 5));
     b.service.sweepCoordination();
@@ -165,5 +174,136 @@ describe('Ronda 7 / N1: la vida de un despacho la dice el hub', () => {
     expect(openDispatches()).toHaveLength(1);
     expect(b.repo.getCoordinationTask(recent).status).toBe('dispatched');
     expect(b.repo.countOpenCoordinationCostReservations(runId)).toBe(1);
+  });
+
+  // --- M1, caso 2: vivo pero OCIOSO. Terminó su turno y no reportó -----------
+
+  it('un miembro VIVO y OCIOSO que nunca reportó paga el intento: la fila vieja se liquida CON cargo', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(T0));
+    const abandoned = await createTask('la que nadie reportó');
+    expect(envelope(await call('latte_dispatch', { taskId: abandoned })).ok).toBe(true);
+    // El proceso sigue vivo (`idle`): terminó su turno sin llamar `latte_report`.
+    worker().status = 'idle';
+
+    vi.setSystemTime(at(IN_FLIGHT_DISPATCH_STALE_MINUTES + 1));
+    b.service.sweepCoordination();
+
+    expect(openDispatches()).toEqual([]);
+    const task = b.repo.getCoordinationTask(abandoned);
+    expect(task.status).toBe('ready');
+    expect(task.attempts).toBe(1); // terminar sin reportar SÍ es un intento fallido
+    expect(b.repo.countOpenCoordinationCostReservations(runId)).toBe(0);
+  });
+
+  it('un miembro VIVO y OCUPADO no paga nada, aunque su fila sea vieja', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(T0));
+    const working = await createTask('la que sigue en curso');
+    expect(envelope(await call('latte_dispatch', { taskId: working })).ok).toBe(true);
+    worker().status = 'working';
+
+    vi.setSystemTime(at(10 * 60));
+    b.service.sweepCoordination();
+
+    expect(openDispatches()).toHaveLength(1);
+    expect(b.repo.getCoordinationTask(working).attempts).toBe(0);
+  });
+
+  // --- M1, caso 3: la tarea reclamada cuyo despacho nunca llegó a existir ----
+
+  it('una tarea `dispatched` SIN fila de despacho (el spawn colgado) vuelve a `ready` pasado el umbral', async () => {
+    const hold = deferred();
+    vi.restoreAllMocks();
+    fakeCoordinationHub(b, members, { hold: () => hold.promise });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(T0));
+    const hung = await createTask('la del spawn que se colgó');
+
+    // La fila de despacho se inserta DESPUÉS del spawn: mientras el proceso
+    // levanta, la tarea ya está reclamada y no hay ninguna fila.
+    const inFlight = call('latte_dispatch', { taskId: hung });
+    // El equivalente de `settle()` con los relojes falsos puestos: cede el
+    // control hasta que todo lo encolado corrió, y deja al despacho parado en
+    // su `await`.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(b.repo.getCoordinationTask(hung).status).toBe('dispatched');
+    expect(b.repo.listCoordinationDispatches(runId)).toEqual([]);
+
+    vi.setSystemTime(at(IN_FLIGHT_DISPATCH_STALE_MINUTES + 1));
+    b.service.sweepCoordination();
+
+    expect(b.repo.getCoordinationTask(hung).status).toBe('ready');
+
+    // Y el spawn que al final vuelve no deja el test colgado.
+    hold.resolve();
+    await inFlight.catch(() => undefined);
+  });
+
+  // --- M1(b): dos lecturas distintas de un hub que TIRA ----------------------
+
+  it('si el hub TIRA, `allBlockedOnAsks` lee "hay alguien adentro": nunca se suspende sobre información que no se pudo obtener', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(T0));
+    const working = await createTask('la que tarda');
+    const blocked = await createTask('la que espera una respuesta');
+    expect(envelope(await call('latte_dispatch', { taskId: working })).ok).toBe(true);
+
+    vi.spyOn(b.hub, 'liveMemberIds').mockImplementation(() => { throw new Error('hub caído'); });
+    vi.spyOn(b.hub, 'isMemberBusy').mockImplementation(() => { throw new Error('hub caído'); });
+
+    vi.setSystemTime(at(IN_FLIGHT_DISPATCH_STALE_MINUTES + 1));
+    expect(envelope(await call('latte_ask', { question: '¿seguimos?', taskId: blocked, ttlMinutes: 120 })).ok).toBe(true);
+    expect(b.repo.getCoordinationRun(runId).status).toBe('running');
+
+    b.service.sweepCoordination();
+    expect(b.repo.getCoordinationRun(runId).status).toBe('running');
+  });
+
+  it('si el hub TIRA, `settleOrphanDispatches` lee "no liquidar en este tick": la fila queda intacta', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(T0));
+    const orphan = await createTask('la que no se sabe');
+    expect(envelope(await call('latte_dispatch', { taskId: orphan })).ok).toBe(true);
+    worker().status = 'paused';
+
+    vi.spyOn(b.hub, 'liveMemberIds').mockImplementation(() => { throw new Error('hub caído'); });
+    vi.spyOn(b.hub, 'isMemberBusy').mockImplementation(() => { throw new Error('hub caído'); });
+
+    vi.setSystemTime(at(IN_FLIGHT_DISPATCH_STALE_MINUTES + 1));
+    b.service.sweepCoordination();
+
+    expect(openDispatches()).toHaveLength(1);
+    expect(b.repo.getCoordinationTask(orphan).status).toBe('dispatched');
+    expect(b.repo.countOpenCoordinationCostReservations(runId)).toBe(1);
+  });
+
+  // --- El PRODUCTOR REAL de huérfanas ----------------------------------------
+
+  it('el productor real: liquidar por `closed` tira, el `guard` se lo traga, y el tick termina el trabajo', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(T0));
+    const orphan = await createTask('la del proceso que se cayó');
+    expect(envelope(await call('latte_dispatch', { taskId: orphan })).ok).toBe(true);
+
+    // El `closed` llega y la liquidación tira: el `guard` de `bootstrap.ts` lo
+    // loguea y sigue, así que la fila QUEDA ABIERTA. Éste es el huérfano real
+    // que nadie recogía.
+    const settleForMember = vi.spyOn(b.service, 'settleCoordinationDispatchesForMember')
+      .mockImplementationOnce(() => { throw new Error('database is locked'); });
+    const closed: ChatEvent = { chatId: 'mem_worker', type: 'closed', reason: 'Codex app-server exited (code 1)' };
+    b.emitChat(closed);
+    worker().status = 'paused'; // el proceso se fue: el adaptador ya no lo posee
+
+    expect(settleForMember).toHaveBeenCalledTimes(1);
+    expect(openDispatches()).toHaveLength(1); // la premisa: quedó abierta
+
+    settleForMember.mockRestore();
+    vi.setSystemTime(at(IN_FLIGHT_DISPATCH_STALE_MINUTES + 1));
+    b.service.sweepCoordination();
+
+    expect(openDispatches()).toEqual([]);
+    expect(b.repo.getCoordinationTask(orphan).status).toBe('ready');
+    expect(b.repo.countOpenCoordinationCostReservations(runId)).toBe(0);
   });
 });

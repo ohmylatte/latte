@@ -168,21 +168,28 @@ describe('Ronda 6: el motor', () => {
      * Lo que sigue siendo cierto es el hecho que O6b quería cubrir: una fila
      * que nunca liquida no puede congelar la auto-suspensión para siempre. La
      * diferencia es CÓMO deja de congelarla: no ignorándola, sino
-     * LIQUIDÁNDOLA en el tick cuando el hub ya no conoce a su miembro (ver
+     * LIQUIDÁNDOLA en el tick cuando ya no hay nadie adentro (ver
      * `coordination-round7-dispatch-liveness.test.ts`). Acá queda la mitad
      * que este archivo puede probar sin repetir aquel: el zombi cuyo proceso
-     * el hub perdió deja de retener nada.
+     * se fue deja de retener nada.
+     *
+     * RONDA 8 (M1): y la muerte se modela COMO EL HUB REAL. Este test borraba
+     * la fila de `members`, un estado que el hub no produce nunca: cuando un
+     * proceso muere, el miembro SIGUE en la tabla con `status:'paused'`. Con
+     * la fila borrada, el test pasaba tanto con la señal correcta (el
+     * adaptador) como con la equivocada (la tabla), así que no protegía nada.
      */
-    it('la fila cuyo miembro el hub ya no conoce deja de retener: el tick la liquida y el equipo puede suspenderse con su motivo real', async () => {
+    it('la fila cuyo miembro ya no tiene proceso deja de retener: el tick la liquida y el equipo puede suspenderse con su motivo real', async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-09-19T10:00:00.000Z'));
       const zombie = await createTask('la que se murió sin avisar');
       const blocked = await createTask('la que espera una respuesta');
       expect(envelope(await call('latte_dispatch', { taskId: zombie })).ok).toBe(true);
 
-      // El proceso se murió sin `closed`: el hub ya no lo tiene. Y el reloj
-      // pasa el umbral, que es lo único para lo que el umbral sirve.
-      members.splice(members.findIndex((m) => m.id === 'mem_worker'), 1);
+      // El proceso se murió sin `closed`: la fila sigue en la tabla, sin
+      // adaptador adentro. Y el reloj pasa el umbral, que es lo único para lo
+      // que el umbral sirve.
+      members.find((m) => m.id === 'mem_worker')!.status = 'paused';
       vi.setSystemTime(new Date(new Date('2026-09-19T10:00:00.000Z').getTime() + (IN_FLIGHT_DISPATCH_STALE_MINUTES + 5) * 60_000));
       expect(b.repo.listCoordinationDispatches(runId).filter((d) => d.status === 'dispatched')).toHaveLength(1);
 
