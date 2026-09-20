@@ -1150,17 +1150,32 @@ export class CoordinationEngine {
     // dejaría medio plan escrito y el otro medio rechazado: el coordinador
     // cree que mandó un plan entero y la bitácora muestra la mitad.
     for (const spec of tasks) this.assertRoleCreatable(run, spec.roleId);
-    const created: CoordinationTaskRecord[] = [];
-    for (const spec of tasks) {
-      const dependsOnIds = (spec.dependsOn ?? []).map((idx) => {
-        const dep = created[idx];
-        if (!dep) throw new ValidationError(`Plan task dependsOn index ${idx} is out of range`);
-        return dep.id;
-      });
-      created.push(this.createTaskRow(run.id, spec.roleId, spec.spec, dependsOnIds));
-    }
-    const now = this.deps.clock();
-    this.deps.repo.setCoordinationPlan(run.id, JSON.stringify(created.map((t) => t.id)), now);
+    // Q6: UN PLAN ENTRA ENTERO O NO ENTRA.
+    //
+    // Esto escribía de a una fila en un `for` suelto. `createTaskRow` consulta
+    // el DAG, y el tope de tareas del run (`MAX_TASKS_PER_RUN`) saltaba recién
+    // en la fila que lo cruzaba: con 201 tareas quedaban 200 escritas y `ready`
+    // mientras el coordinador recibía un error que le decía que su plan no
+    // había entrado. Doscientas tareas despachables que nadie aprobó como
+    // conjunto, y un error que mentía sobre el estado de la base.
+    //
+    // El esquema publicado ahora lleva `maxItems`, así que el caso normal se
+    // rechaza antes de llegar acá; esto es lo que garantiza que CUALQUIER
+    // fallo a mitad de camino —tope, profundidad, dependencia inválida— no deje
+    // nada escrito.
+    const created = this.deps.repo.transaction(() => {
+      const rows: CoordinationTaskRecord[] = [];
+      for (const spec of tasks) {
+        const dependsOnIds = (spec.dependsOn ?? []).map((idx) => {
+          const dep = rows[idx];
+          if (!dep) throw new ValidationError(`Plan task dependsOn index ${idx} is out of range`);
+          return dep.id;
+        });
+        rows.push(this.createTaskRow(run.id, spec.roleId, spec.spec, dependsOnIds));
+      }
+      this.deps.repo.setCoordinationPlan(run.id, JSON.stringify(rows.map((t) => t.id)), this.deps.clock());
+      return rows;
+    });
     this.touch(run.workId, run.id);
     return created;
   }

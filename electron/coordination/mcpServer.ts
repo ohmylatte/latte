@@ -58,6 +58,7 @@ import type { CoordinationAuthorityMode } from '../../shared/contracts';
 import { LatteError, UnavailableError } from '../core/errors';
 import { LIMITS } from '../services/validation';
 import type { CoordinationBudgetBlock, CoordinationEngine } from './engine';
+import { MAX_TASKS_PER_RUN } from './limits';
 import { validateAgainstSchema } from './schemaGuard';
 import { createCoordinationTools, type ToolEnvelope } from './tools';
 import type { CoordinationTokenRegistry } from './tokens';
@@ -97,6 +98,8 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         tasks: {
           type: 'array',
+          // Q6: el tope del run, publicado. Se descubría escribiendo.
+          maxItems: MAX_TASKS_PER_RUN,
           items: {
             type: 'object',
             properties: {
@@ -220,6 +223,9 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         plan: {
           type: 'array',
+          // Q6: y el tope de tareas del run, que la aprobación va a tener que
+          // poder cumplir. Un plan más largo no entra: mejor saberlo acá.
+          maxItems: MAX_TASKS_PER_RUN,
           items: {
             type: 'object',
             properties: {

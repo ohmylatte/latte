@@ -93,6 +93,10 @@ export const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
   NO_ACTIVE_RUN: 'error.coordination.noActiveRun',
   GLOBAL_BUDGET_INVALID: 'error.coordination.globalBudgetInvalid',
   TOO_MANY_ACTIVE_RUNS: 'error.coordination.tooManyActiveRuns',
+  // `commitProposal` crea las tareas del plan aprobado, así que los topes del
+  // DAG llegan a la persona por el botón "Aprobar" — no sólo al agente.
+  TASK_CAP: 'error.coordination.taskCap',
+  DEPTH_CAP: 'error.coordination.depthCap',
   PROPOSAL_STALE: 'error.coordination.proposalStale',
   PROPOSAL_DECIDED: 'error.coordination.proposalDecided',
 };

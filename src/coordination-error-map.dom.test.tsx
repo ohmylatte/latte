@@ -38,9 +38,19 @@ function codesFromSource(): Map<string, string[]> {
   for (const file of files) {
     // CRLF: el repo guarda así, y una regex que asuma `\n` no encuentra nada.
     const text = readFileSync(resolve(process.cwd(), file), 'utf8').replace(/\r?\n/g, '\n');
-    for (const match of text.matchAll(/LatteError\(\s*'([A-Z_]+)'/g)) {
-      const code = match[1]!;
-      found.set(code, [...(found.get(code) ?? []), file]);
+    // El primer argumento de `LatteError` no siempre es un literal: hay al
+    // menos un ternario (`decision.reason === 'task_cap' ? 'TASK_CAP' :
+    // 'DEPTH_CAP'`). Una regex que sólo mirara el literal pegado al paréntesis
+    // habría dejado esos dos códigos afuera sin que nada lo dijera, que es
+    // justo el agujero que este test existe para tapar. Se leen los primeros
+    // 160 caracteres después del paréntesis y se toman TODOS los literales en
+    // mayúsculas: los mensajes son prosa en minúsculas, así que no hay ruido.
+    for (const match of text.matchAll(/LatteError\(/g)) {
+      const head = text.slice(match.index + match[0].length, match.index + match[0].length + 160);
+      for (const literal of head.matchAll(/'([A-Z][A-Z_]{2,})'/g)) {
+        const code = literal[1]!;
+        found.set(code, [...(found.get(code) ?? []), file]);
+      }
     }
   }
   return found;

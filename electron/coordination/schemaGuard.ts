@@ -30,7 +30,7 @@
 
 /** Las palabras clave que este validador entiende. Nada fuera de esta lista puede aparecer en un esquema publicado sin que el test estructural lo note. */
 export const SUPPORTED_SCHEMA_KEYWORDS = [
-  'type', 'required', 'enum', 'minimum', 'maxLength', 'items', 'properties', 'additionalProperties', 'description',
+  'type', 'required', 'enum', 'minimum', 'maxLength', 'maxItems', 'items', 'properties', 'additionalProperties', 'description',
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -82,6 +82,14 @@ export function validateAgainstSchema(schema: unknown, value: unknown, path = ''
 
   if (typeof schema.maxLength === 'number' && typeof value === 'string' && value.length > schema.maxLength) {
     return `${field} must be at most ${schema.maxLength} characters`;
+  }
+
+  // Q6: el tope de una lista, publicado. `latte_plan_submit` lo descubría
+  // escribiendo: el tope de tareas saltaba en la fila 201 con 200 ya guardadas.
+  // Un límite que el agente puede leer en `tools/list` es un límite que puede
+  // respetar antes de mandar.
+  if (typeof schema.maxItems === 'number' && Array.isArray(value) && value.length > schema.maxItems) {
+    return `${field} must have at most ${schema.maxItems} items`;
   }
 
   if (Array.isArray(value) && schema.items !== undefined) {
