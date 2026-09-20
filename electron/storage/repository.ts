@@ -1252,12 +1252,45 @@ export class LatteRepository {
 
   /**
    * Compare-and-set: se queda con una tarea `ready` para despacharla, en UNA
-   * sola sentencia. `false` significa que otro la reclamó primero — es lo que
+   * sola sentencia. `null` significa que otro la reclamó primero — es lo que
    * hace que dos `latte_dispatch` simultáneos sobre la misma tarea no puedan
    * despachar los dos. Se llama SIEMPRE antes de cualquier `await`.
+   *
+   * L1 (ronda 9): DEVUELVE EL TOKEN DEL RECLAMO, que es el `updated_at` que
+   * acaba de escribir. Reclamar no alcanza: entre el reclamo y el commit hay
+   * un spawn entero, y desde la ronda 8 existe un escritor de la tarea en esa
+   * ventana (el caso 3 de `settleOrphanDispatches`). Con este token, la
+   * transacción que commitea puede CONFIRMAR que el reclamo sigue siendo suyo
+   * — ver `confirmCoordinationTaskClaim`.
+   *
+   * `assigned_member_id` se pone en NULL explícitamente: una tarea `ready` ya
+   * lo tiene así por todos los caminos que la sueltan, y dejarlo escrito acá
+   * es lo que vuelve cierta la condición `assigned_member_id IS NULL` de la
+   * confirmación en vez de dejarla descansando sobre una costumbre.
    */
-  claimCoordinationTaskForDispatch(id: string, updatedAt: string): boolean {
-    return this.db.run("UPDATE coordination_task SET status = 'dispatched', updated_at = ? WHERE id = ? AND status = 'ready'", [updatedAt, id]) > 0;
+  claimCoordinationTaskForDispatch(id: string, updatedAt: string): string | null {
+    const claimed = this.db.run(
+      "UPDATE coordination_task SET status = 'dispatched', assigned_member_id = NULL, updated_at = ? WHERE id = ? AND status = 'ready'",
+      [updatedAt, id],
+    ) > 0;
+    return claimed ? updatedAt : null;
+  }
+
+  /**
+   * L1 (ronda 9): LA CONFIRMACIÓN DEL RECLAMO, en la misma transacción que
+   * escribe la reserva y la fila.
+   *
+   * Cuatro condiciones en una sola sentencia: la tarea sigue `dispatched`
+   * (nadie la soltó), sigue sin miembro asignado (nadie la confirmó antes),
+   * y su `updated_at` sigue siendo el del reclamo (nadie la tocó en el medio).
+   * Cero filas afectadas significa que el reclamo se perdió, y entonces este
+   * despacho no escribe NADA: ni reserva, ni fila, ni `hub.send`.
+   */
+  confirmCoordinationTaskClaim(id: string, memberId: string, claimToken: string, updatedAt: string): boolean {
+    return this.db.run(
+      "UPDATE coordination_task SET assigned_member_id = ?, updated_at = ? WHERE id = ? AND status = 'dispatched' AND assigned_member_id IS NULL AND updated_at = ?",
+      [memberId, updatedAt, id, claimToken],
+    ) > 0;
   }
 
   /**

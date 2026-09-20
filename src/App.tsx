@@ -88,6 +88,9 @@ export const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
   COORDINATION_NOT_APPROVED: 'error.coordination.coordinationNotApproved',
   RUN_ALREADY_ACTIVE: 'error.coordination.runAlreadyActive',
   TASK_NOT_READY: 'error.coordination.taskNotReady',
+  // L1 (ronda 9): el despacho que volvió de un spawn largo y encontró su tarea
+  // ya reclamada por otro. La persona lo alcanza aprobando un gate.
+  CLAIM_LOST: 'error.coordination.claimLost',
   NO_ACTIVE_RUN: 'error.coordination.noActiveRun',
   GLOBAL_BUDGET_INVALID: 'error.coordination.globalBudgetInvalid',
   TOO_MANY_ACTIVE_RUNS: 'error.coordination.tooManyActiveRuns',

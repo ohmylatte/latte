@@ -1317,7 +1317,17 @@ export class CoordinationEngine {
     // `ready`/`pending_approval`, reservaban los dos y llegaban los dos a
     // `hub.send`. Un compare-and-set de una sola sentencia hace que compitan
     // por UNA fila: el que pierde aborta sin haber reservado ni despachado.
+    //
+    // L1 (ronda 9): Y EL RECLAMO DEJA UN TOKEN, porque reclamar no alcanza.
+    // Entre este compare-and-set y el commit hay un spawn entero, y desde la
+    // ronda 8 hay un ESCRITOR de la tarea adentro de esa ventana: el caso 3 de
+    // `settleOrphanDispatches` devuelve a `ready` la tarea reclamada cuyo
+    // despacho nunca llegó a nacer. El token —el `updated_at` del reclamo, o
+    // el `started_at` que el gate escribió— es lo que le permite a la
+    // transacción de abajo CONFIRMAR que lo que reclamó sigue siendo suyo.
     let existingPending: CoordinationDispatchRecord | null = null;
+    let claimToken: string | null = null;
+    let gateClaimedAt: string | null = null;
     if (ctx.approvedGateId) {
       existingPending = this.deps.repo.getCoordinationDispatch(ctx.approvedGateId);
       if (existingPending.taskId !== task.id || existingPending.status !== 'pending_approval') {
@@ -1326,9 +1336,11 @@ export class CoordinationEngine {
       if (!this.deps.repo.claimCoordinationDispatchFromGate(existingPending.id, now)) {
         throw new LatteError('INVALID_GATE', 'Gate does not match a pending dispatch for this task');
       }
+      gateClaimedAt = now;
     } else {
       if (task.status !== 'ready') throw new LatteError('TASK_NOT_READY', `Task is ${task.status}, not ready`);
-      if (!this.deps.repo.claimCoordinationTaskForDispatch(task.id, now)) {
+      claimToken = this.deps.repo.claimCoordinationTaskForDispatch(task.id, now);
+      if (claimToken == null) {
         throw new LatteError('TASK_NOT_READY', 'Task was already claimed by another dispatch');
       }
     }
@@ -1435,10 +1447,38 @@ export class CoordinationEngine {
       // `{"runStatusAfterCancel":"cancelled","hubSendCalls":1,"openReservations":1}`.
       // Acá adentro, en la misma transacción que escribe la reserva, gana quien
       // escribió último en la base, no quien leyó primero.
+      // L4 (ronda 9): EL RELOJ DE LA FILA ES EL DEL COMMIT.
+      //
+      // `now` se tomó ANTES del `await` que levanta el proceso, y levantar un
+      // proceso son segundos —o, con un runtime trabado, cuarenta minutos—.
+      // Con `createdAt`/`startedAt` sellados en `now`, la fila NACÍA VENCIDA:
+      // el tick siguiente la medía contra `IN_FLIGHT_DISPATCH_STALE_MINUTES`,
+      // la encontraba más vieja que el umbral y la liquidaba cobrándole el
+      // intento a un agente que acababa de recibir su prompt. Una fila se
+      // fecha cuando se escribe, no cuando se pensó en escribirla.
+      const committedAt = this.deps.clock();
       const live = this.deps.repo.getCoordinationRun(run.id);
       if (live.status !== 'running') {
-        this.abortDispatchOnRunNotRunning(run, task, existingPending, prompt, now, live.status);
+        this.abortDispatchOnRunNotRunning(run, task, existingPending, prompt, committedAt, live.status);
         return { ok: false, error: new LatteError('RUN_NOT_ACTIVE', `Run is ${live.status}`) };
+      }
+      // L1 (ronda 9): LA CONFIRMACIÓN DEL RECLAMO, Y ES LA MISMA REGLA QUE LA
+      // DE ARRIBA APLICADA A LA TAREA.
+      //
+      // `runTransaction` releía el RUN y el presupuesto, nunca la TAREA — y
+      // desde la ronda 8 la tarea TIENE un escritor durante el `await`: el
+      // caso 3 de `settleOrphanDispatches` la devuelve a `ready` a los treinta
+      // minutos. El coordinador la re-despachaba (fila, reserva y `send`
+      // legítimos), y este spawn tardío volvía y escribía una SEGUNDA fila
+      // abierta para la misma tarea. `report()` asume a lo sumo una, así que
+      // el miembro que sí estaba trabajando recibía `FORBIDDEN`.
+      //
+      // Va ANTES del veredicto de presupuesto a propósito: una denegación
+      // llama a `abortDispatchClaim`, que devuelve la tarea a `ready` SIN
+      // compare-and-set — o sea que pisaría el reclamo de otro.
+      if (!this.confirmDispatchClaim(existingPending, task.id, claimToken, gateClaimedAt, session.id, committedAt)) {
+        this.abortDispatchOnClaimLost(run, task, prompt, committedAt);
+        return { ok: false, error: new LatteError('CLAIM_LOST', 'This dispatch lost its claim on the task while the member was starting up') };
       }
       // A PARTIR DE ACÁ `live.status` ES `'running'`, SIEMPRE. De acá al final
       // de esta función no hay un solo `await` —es el cuerpo de una
@@ -1456,14 +1496,14 @@ export class CoordinationEngine {
       // despacho pudo consumir el último cupo durante el spawn.
       const verdict = this.judgeDispatchBudget(live, existingPending?.id);
       if (!verdict.ok) {
-        this.applyDispatchDenial(run.id, task.id, existingPending, now, verdict);
+        this.applyDispatchDenial(run.id, task.id, existingPending, committedAt, verdict);
         return { ok: false, error: verdict.error };
       }
 
       const reservationId = newId('crs');
       this.deps.repo.insertCoordinationCostReservation({
         id: reservationId, runId: run.id, dispatchId: existingPending?.id ?? null, memberId: session.id, runtime: session.provider, model: session.model ?? 'default',
-        maxInputTokens: 0, maxOutputTokens: 0, maxCostMicros: 0, state: 'reserved', usageJson: null, createdAt: now, settledAt: null,
+        maxInputTokens: 0, maxOutputTokens: 0, maxCostMicros: 0, state: 'reserved', usageJson: null, createdAt: committedAt, settledAt: null,
       });
 
       let dispatch: CoordinationDispatchRecord;
@@ -1471,17 +1511,17 @@ export class CoordinationEngine {
         // `memberId` se escribe ACÁ: la fila pendiente nació sin miembro (el
         // gate va antes de contratar), así que recién al aprobar se sabe
         // contra quién queda anotado el despacho.
-        dispatch = this.deps.repo.updateCoordinationDispatch(existingPending.id, { status: 'dispatched', memberId: session.id, prompt, reservationId, startedAt: now });
+        dispatch = this.deps.repo.updateCoordinationDispatch(existingPending.id, { status: 'dispatched', memberId: session.id, prompt, reservationId, startedAt: committedAt });
       } else {
         const dispatchId = newId('cdp');
         const attempt = this.deps.repo.listCoordinationDispatches(run.id).filter((d) => d.taskId === task.id).length + 1;
         dispatch = this.deps.repo.insertCoordinationDispatch({
           id: dispatchId, runId: run.id, taskId: task.id, memberId: session.id, attempt, status: 'dispatched',
           gateId: null, prompt, outcome: null, summary: null, filesJson: null, reservationId,
-          createdAt: now, startedAt: now, settledAt: null,
+          createdAt: committedAt, startedAt: committedAt, settledAt: null,
         });
       }
-      this.deps.repo.updateCoordinationTask(task.id, { status: 'dispatched', assignedMemberId: session.id }, now);
+      this.deps.repo.updateCoordinationTask(task.id, { status: 'dispatched', assignedMemberId: session.id }, committedAt);
       // LA CONTRATACIÓN, anotada donde pasa. `coordinationHires` estaba
       // testeado en tres archivos del renderer y no lo alimentaba NADIE, así
       // que la bitácora no mostró jamás una sola alta. Se escribe acá adentro,
@@ -1489,7 +1529,7 @@ export class CoordinationEngine {
       // despacho se va al rollback, la contratación que nunca se usó se va con
       // él. `reservedMemberId` null significa que el camino fue `addMember`,
       // o sea que este miembro no existía hasta hace un segundo.
-      if (reservedMemberId == null) this.recordHire(run.id, session.id, task.roleId, now);
+      if (reservedMemberId == null) this.recordHire(run.id, session.id, task.roleId, committedAt);
       return { ok: true, dispatch };
     };
     // El reclamo se tomo en autocommit ANTES de esta transaccion, asi que un
@@ -1769,6 +1809,64 @@ export class CoordinationEngine {
         createdAt: now, startedAt: null, settledAt: now,
       });
     }
+  }
+
+  /**
+   * L1 (ronda 9): ¿EL RECLAMO SIGUE SIENDO DE ESTE DESPACHO?
+   *
+   * Se pregunta DENTRO de la transacción que commitea, que es el único lugar
+   * donde la respuesta todavía vale. Dos caminos, dos reclamos distintos:
+   *
+   *  - sin gate, el reclamo es el CAS sobre la tarea, y se confirma con otro
+   *    CAS que exige el mismo `updated_at` que dejó el reclamo, la tarea
+   *    todavía `dispatched` y todavía sin miembro asignado. Ese mismo UPDATE
+   *    escribe el miembro, así que confirmar y asignar son un solo acto;
+   *  - por gate, el reclamo es el CAS sobre la fila `pending_approval`, y se
+   *    confirma releyéndola: sigue `dispatched` y sigue con el `started_at`
+   *    que escribió ESTE reclamo. Un barrido que la liquidó mientras el
+   *    proceso levantaba la dejó `cancelled`, y una fila liquidada no revive.
+   */
+  private confirmDispatchClaim(
+    existingPending: CoordinationDispatchRecord | null,
+    taskId: string,
+    claimToken: string | null,
+    gateClaimedAt: string | null,
+    memberId: string,
+    committedAt: string,
+  ): boolean {
+    if (existingPending) {
+      const live = this.deps.repo.getCoordinationDispatch(existingPending.id);
+      return live.status === 'dispatched' && live.startedAt === gateClaimedAt;
+    }
+    if (claimToken == null) return false;
+    return this.deps.repo.confirmCoordinationTaskClaim(taskId, memberId, claimToken, committedAt);
+  }
+
+  /**
+   * L1 (ronda 9): EL RECLAMO SE PERDIÓ, ASÍ QUE ACÁ NO SE TOCA NADA DE NADIE.
+   *
+   * Es la diferencia con `abortDispatchOnRunNotRunning`: allá el reclamo
+   * seguía siendo nuestro y había que soltarlo; acá ya es de otro —o de
+   * nadie— y cualquier escritura sobre la tarea o sobre la fila pisaría a
+   * quien llegó primero. Lo único que se escribe es la bitácora, que se deriva
+   * de `coordination_dispatch`: sin una fila, la persona vería un despacho que
+   * se desvanece y ninguna explicación. `memberId` vacío, sin reserva,
+   * `settled_at` en el acto; la contratación fresca la deshace el llamador
+   * (`compensateHire`), igual que en las otras salidas en contra.
+   */
+  private abortDispatchOnClaimLost(
+    run: CoordinationRunRecord,
+    task: CoordinationTaskRecord,
+    prompt: string,
+    now: string,
+  ): void {
+    const attempt = this.deps.repo.listCoordinationDispatches(run.id).filter((d) => d.taskId === task.id).length + 1;
+    this.deps.repo.insertCoordinationDispatch({
+      id: newId('cdp'), runId: run.id, taskId: task.id, memberId: '', attempt, status: 'cancelled',
+      gateId: null, prompt, outcome: 'claim_lost',
+      summary: 'Despacho abortado: esta tarea dejó de ser suya mientras se levantaba el miembro',
+      filesJson: null, reservationId: null, createdAt: now, startedAt: null, settledAt: now,
+    });
   }
 
   private abortDispatchClaim(taskId: string, existingPending: CoordinationDispatchRecord | null, now: string, reason: string): void {

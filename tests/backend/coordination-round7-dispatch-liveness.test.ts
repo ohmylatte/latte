@@ -212,10 +212,10 @@ describe('Rondas 7 y 8: la vida de un despacho la dice el adaptador, no la tabla
 
   // --- M1, caso 3: la tarea reclamada cuyo despacho nunca llegó a existir ----
 
-  it('una tarea `dispatched` SIN fila de despacho (el spawn colgado) vuelve a `ready` pasado el umbral', async () => {
+  it('una tarea `dispatched` SIN fila de despacho (el spawn colgado) vuelve a `ready` pasado el umbral, y el spawn tardío no la vuelve a tomar', async () => {
     const hold = deferred();
     vi.restoreAllMocks();
-    fakeCoordinationHub(b, members, { hold: () => hold.promise });
+    const hub = fakeCoordinationHub(b, members, { hold: () => hold.promise });
     vi.useFakeTimers();
     vi.setSystemTime(new Date(T0));
     const hung = await createTask('la del spawn que se colgó');
@@ -235,9 +235,25 @@ describe('Rondas 7 y 8: la vida de un despacho la dice el adaptador, no la tabla
 
     expect(b.repo.getCoordinationTask(hung).status).toBe('ready');
 
-    // Y el spawn que al final vuelve no deja el test colgado.
+    // L1 (ronda 9): Y EL SPAWN QUE AL FINAL VUELVE NO DESPACHA NADA.
+    //
+    // Acá el test terminaba en `hold.resolve()` sin assertar una sola cosa, y
+    // lo que pasaba después era el crítico de la ronda 9: la transacción
+    // releía el run y el presupuesto, nunca la tarea, así que escribía reserva,
+    // fila y `hub.send` sobre un reclamo que este mismo barrido ya había
+    // soltado. Se asserta DESPUÉS del punto donde eso ocurría.
     hold.resolve();
-    await inFlight.catch(() => undefined);
+    const late = envelope(await inFlight);
+    expect(late.ok).toBe(false);
+    expect(late.error?.code).toBe('CLAIM_LOST');
+    expect(b.repo.getCoordinationTask(hung).status).toBe('ready');
+    expect(openDispatches()).toEqual([]);
+    expect(b.repo.countOpenCoordinationCostReservations(runId)).toBe(0);
+    expect(hub.send).not.toHaveBeenCalled();
+    // La bitácora lo dice, que es lo único que este camino escribe.
+    const trail = b.repo.listCoordinationDispatches(runId);
+    expect(trail).toHaveLength(1);
+    expect(trail[0]!.outcome).toBe('claim_lost');
   });
 
   // --- M1(b): dos lecturas distintas de un hub que TIRA ----------------------
