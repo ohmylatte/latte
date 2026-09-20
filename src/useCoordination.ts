@@ -241,12 +241,23 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     // puede cambiar lo que se le responde a quien la emitió.
     return action
       .then(() => true, (e: unknown) => { try { report(e); } catch { /* el canal de error no puede tapar el resultado */ } return false; })
+      // M10 (ronda 8): TRES PASOS, TRES `try`. N9 los puso a los tres bajo UNO
+      // solo, así que un throw síncrono en cualquiera se llevaba puestos a los
+      // siguientes. Hoy el orden salva a `setPending` por accidente —está
+      // primera—, y eso es la clase de garantía que se pierde la próxima vez
+      // que alguien reordena: sin limpiar el pendiente, el botón queda
+      // deshabilitado PARA SIEMPRE y la persona se queda sin poder resolver la
+      // decisión. Y la tira global cayéndose dejaba la pantalla del Trabajo con
+      // el gate que la persona acaba de resolver todavía dibujado.
+      //
+      // Son independientes: ninguno necesita que el anterior haya salido bien.
       .finally(() => {
-        try {
-          setPending((prev) => { const next = { ...prev }; delete next[key]; return next; });
-          refreshActiveRuns();
-          if (issuedWorkId && issuedWorkId === liveWorkId.current) refreshWork(issuedWorkId);
-        } catch { /* un refresco caído deja datos viejos, no una mutación sin respuesta */ }
+        const step = (fn: () => void): void => {
+          try { fn(); } catch { /* un refresco caído deja datos viejos, no una mutación sin respuesta */ }
+        };
+        step(() => setPending((prev) => { const next = { ...prev }; delete next[key]; return next; }));
+        step(() => refreshActiveRuns());
+        step(() => { if (issuedWorkId && issuedWorkId === liveWorkId.current) refreshWork(issuedWorkId); });
       });
   };
 

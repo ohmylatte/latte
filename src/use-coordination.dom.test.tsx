@@ -466,3 +466,54 @@ describe('N9: un refresco caído no puede desmentir una mutación que entró', (
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'el motor rechazó' }));
   });
 });
+
+/**
+ * M10 (ronda 8): LOS TRES PASOS DEL `.finally`, CADA UNO EN SU PROPIO `try`.
+ *
+ * N9 puso las tres llamadas del `.finally` bajo UN solo `try`: limpiar
+ * `pending[key]`, refrescar la tira global y refrescar el Trabajo. Un throw
+ * síncrono en cualquiera se llevaba puestas a las siguientes. Hoy el orden
+ * salva a `setPending` por accidente —está primera—, y eso es exactamente el
+ * tipo de garantía que se pierde la próxima vez que alguien reordena: si
+ * limpiar el pendiente fallara, el botón quedaba deshabilitado PARA SIEMPRE y
+ * la persona se quedaba sin poder resolver la decisión.
+ *
+ * Los tres son independientes: ninguno necesita que el anterior haya salido
+ * bien.
+ */
+describe('M10: un paso caído del `.finally` no se lleva puestos a los otros', () => {
+  it('si la tira global explota, el refresco del Trabajo corre igual', async () => {
+    const { result } = renderHook(() => useCoordination('w1', () => {}));
+    await waitFor(() => expect(result.current.workLoaded).toBe(true));
+    mocks.listActiveCoordinationRuns.mockImplementation(() => { throw new Error('el refresco explotó'); });
+    mocks.getCoordinationRun.mockClear();
+
+    await expect(result.current.resolveGate('g1', 'approve')).resolves.toBe(true);
+
+    // El tercer paso del `.finally`: sin él, la pantalla se queda con el gate
+    // que la persona acaba de resolver dibujado hasta el próximo evento.
+    expect(mocks.getCoordinationRun).toHaveBeenCalledWith('w1');
+  });
+
+  it('y el pendiente queda limpio igual: el botón no se traba por un refresco caído', async () => {
+    const { result } = renderHook(() => useCoordination('w1', () => {}));
+    await waitFor(() => expect(result.current.workLoaded).toBe(true));
+    mocks.listActiveCoordinationRuns.mockImplementation(() => { throw new Error('el refresco explotó'); });
+
+    await expect(result.current.resolveGate('g2', 'approve')).resolves.toBe(true);
+
+    await waitFor(() => expect(result.current.pending['gate:g2']).toBeUndefined());
+  });
+
+  it('y si el refresco del Trabajo explota, la tira global ya se había refrescado', async () => {
+    const { result } = renderHook(() => useCoordination('w1', () => {}));
+    await waitFor(() => expect(result.current.workLoaded).toBe(true));
+    mocks.listActiveCoordinationRuns.mockClear();
+    mocks.getCoordinationRun.mockImplementation(() => { throw new Error('el Trabajo explotó'); });
+
+    await expect(result.current.resolveGate('g3', 'approve')).resolves.toBe(true);
+
+    expect(mocks.listActiveCoordinationRuns).toHaveBeenCalled();
+    await waitFor(() => expect(result.current.pending['gate:g3']).toBeUndefined());
+  });
+});
