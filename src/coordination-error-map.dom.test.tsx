@@ -19,6 +19,39 @@ import { catalogs } from './i18n';
  * ninguna clave del mapa puede nombrar un código que el backend no tira.
  */
 
+/**
+ * O2: LOS CÓDIGOS DE LAS SUBCLASES TAMBIÉN EXISTEN.
+ *
+ * El escáner sólo miraba `LatteError(`, así que toda subclase era INVISIBLE:
+ * `FeatureDisabledError` (`FEATURE_DISABLED`), `BudgetUnsetError`
+ * (`BUDGET_UNSET`), `NotFoundError`, `UnavailableError`, `ConflictError`. El
+ * primero se alcanza con UN clic —aprobar una propuesta con el flag apagado—
+ * y no tenía frase: la persona leía el mensaje de log en castellano fijo que
+ * `features.ts` escribe para quien lee el código.
+ *
+ * Una clase que extiende un Error y fija su código con `super('CODE'` o con
+ * `readonly code = 'CODE'` es exactamente la misma promesa que un
+ * `new LatteError('CODE')`: un código que puede llegar a una pantalla.
+ */
+const SUBCLASS_FILES = [
+  'electron/core/errors.ts',
+  'electron/core/features.ts',
+  'electron/coordination/budget.ts',
+];
+
+function subclassCodes(found: Map<string, string[]>): void {
+  for (const file of SUBCLASS_FILES) {
+    const text = readFileSync(resolve(process.cwd(), file), 'utf8').replace(/\r?\n/g, '\n');
+    for (const match of text.matchAll(/class\s+\w+\s+extends\s+\w*Error\b([\s\S]{0,400}?)(?=\n})/g)) {
+      const body = match[1]!;
+      for (const literal of body.matchAll(/(?:super\(|readonly code\s*(?::[^=]*)?=\s*)'([A-Z][A-Z_]{2,})'/g)) {
+        const code = literal[1]!;
+        found.set(code, [...(found.get(code) ?? []), file]);
+      }
+    }
+  }
+}
+
 /** Los códigos que el backend PUEDE tirar por los caminos de coordinación, leídos del fuente. */
 function codesFromSource(): Map<string, string[]> {
   const files = [
@@ -53,6 +86,7 @@ function codesFromSource(): Map<string, string[]> {
       }
     }
   }
+  subclassCodes(found);
   return found;
 }
 
@@ -84,17 +118,25 @@ describe('Q6: el mapa de errores de coordinación', () => {
     expect([...codes.keys()]).toContain('PLAN_HAS_UNAPPROVED_ROLES');
   });
 
+  it('O2: y encuentra también los de las SUBCLASES, que no se escriben con `new LatteError`', () => {
+    // Los cinco que el escáner viejo no veía. Si alguno deja de aparecer acá,
+    // es que su clase cambió de forma y el mapa se quedó sin vigilancia.
+    for (const code of ['FEATURE_DISABLED', 'BUDGET_UNSET', 'VALIDATION', 'NOT_FOUND', 'UNAVAILABLE', 'CONFLICT']) {
+      expect([...codes.keys()], code).toContain(code);
+    }
+  });
+
   it('todo código que el backend tira tiene frase propia, o una razón escrita para no tenerla', () => {
     const uncovered = [...codes.keys()].filter((code) => !(code in COORDINATION_ERROR_KEYS) && !(code in NOT_FOR_THE_PERSON));
     expect(uncovered).toEqual([]);
   });
 
   it('ninguna clave del mapa nombra un código que el backend no tira', () => {
-    // `VALIDATION` es la excepción declarada: no se escribe con `new LatteError`
-    // sino que lo lleva `ValidationError` (`code:'VALIDATION'`), así que no
-    // aparece en la lectura del fuente aunque sea el código más frecuente que
-    // cruza IPC.
-    const invented = Object.keys(COORDINATION_ERROR_KEYS).filter((code) => code !== 'VALIDATION' && !codes.has(code));
+    // Sin excepciones declaradas: `VALIDATION` era una, porque no se escribe
+    // con `new LatteError` sino que lo lleva `ValidationError`. Desde O2 el
+    // escáner lee también las subclases, así que ya no hay ningún código del
+    // mapa que la lectura del fuente no pueda encontrar por sí sola.
+    const invented = Object.keys(COORDINATION_ERROR_KEYS).filter((code) => !codes.has(code));
     expect(invented).toEqual([]);
   });
 

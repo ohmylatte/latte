@@ -510,6 +510,15 @@ const es = {
   'error.coordination.depthCap': 'Este plan encadena demasiadas dependencias seguidas. Acortá la cadena y volvé a proponerlo.',
   'error.coordination.proposalStale': 'El contexto de marca cambió desde que se escribió esta propuesta: volvé a abrirla.',
   'error.coordination.proposalDecided': 'Esa propuesta ya se resolvió.',
+  // O2: los de las SUBCLASES, que el escáner del mapa no veía. `FEATURE_DISABLED`
+  // se alcanza con un clic —aprobar una propuesta con el interruptor apagado— y
+  // hasta acá mostraba el mensaje de log de `features.ts`, escrito para quien
+  // lee el código.
+  'error.coordination.featureDisabled': 'La coordinación de equipo está apagada en esta instalación. Prendela en Ajustes y volvé a intentar.',
+  'error.coordination.budgetUnset': 'Este trabajo todavía no tiene presupuesto de despachos: escribí un tope antes de arrancar el equipo.',
+  'error.coordination.notFound': 'Eso ya no está: el equipo, la tarea o la pregunta que estabas mirando se cerró o se borró. Volvé a abrir la pantalla.',
+  'error.coordination.unavailable': 'Algo que la coordinación necesita no está disponible ahora mismo. Probá de nuevo en un rato.',
+  'error.coordination.conflict': 'Alguien más cambió esto mientras lo mirabas. Volvé a abrir la pantalla y decidí sobre lo que hay ahora.',
   'coordination.settings.kicker': 'COORDINACIÓN AUTÓNOMA',
   'coordination.authority.manual': 'Manual: cada despacho pide tu aprobación',
   'coordination.authority.plan': 'Por plan: aprobás el plan una vez y después despacha solo',
@@ -1174,6 +1183,11 @@ const en: Record<MessageKey, string> = {
   'error.coordination.depthCap': 'This plan chains too many dependencies in a row. Shorten the chain and propose it again.',
   'error.coordination.proposalStale': 'The brand context changed since this proposal was written: open it again.',
   'error.coordination.proposalDecided': 'That proposal was already resolved.',
+  'error.coordination.featureDisabled': 'Team coordination is switched off in this installation. Turn it on in Settings and try again.',
+  'error.coordination.budgetUnset': 'This project has no dispatch budget yet: set a cap before starting the team.',
+  'error.coordination.notFound': 'That is gone: the team, task or question you were looking at was closed or deleted. Open the screen again.',
+  'error.coordination.unavailable': 'Something coordination needs is not available right now. Try again in a while.',
+  'error.coordination.conflict': 'Someone else changed this while you were looking at it. Open the screen again and decide on what is there now.',
   'coordination.settings.kicker': 'AUTONOMOUS COORDINATION',
   'coordination.authority.manual': 'Manual: every dispatch asks for your approval',
   'coordination.authority.plan': 'By plan: approve the plan once, then it dispatches on its own',

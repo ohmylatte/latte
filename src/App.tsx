@@ -99,6 +99,19 @@ export const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
   DEPTH_CAP: 'error.coordination.depthCap',
   PROPOSAL_STALE: 'error.coordination.proposalStale',
   PROPOSAL_DECIDED: 'error.coordination.proposalDecided',
+  // O2: los códigos de las SUBCLASES de `LatteError`, invisibles hasta acá.
+  // `FEATURE_DISABLED` está a UN clic: aprobar una propuesta con
+  // `feature:coordination` apagada. Sin entrada, la persona leía el mensaje que
+  // `features.ts` escribe para el log. `BUDGET_UNSET` lo tira `startRun` cuando
+  // nadie configuró un tope todavía. Los otros tres son genéricos de toda la
+  // app y también cruzan IPC por los caminos de coordinación (una tarea o una
+  // pregunta que ya no está, un miembro que no se pudo levantar, una decisión
+  // que otro resolvió antes).
+  FEATURE_DISABLED: 'error.coordination.featureDisabled',
+  BUDGET_UNSET: 'error.coordination.budgetUnset',
+  NOT_FOUND: 'error.coordination.notFound',
+  UNAVAILABLE: 'error.coordination.unavailable',
+  CONFLICT: 'error.coordination.conflict',
 };
 const displayError = (e: unknown) => {
   const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
