@@ -101,23 +101,25 @@ function subclassCodes(found: Map<string, string[]>): void {
   }
 }
 
+/**
+ * EL ALCANCE DE LA COORDINACIÓN, en una sola definición.
+ *
+ * L9 (ronda 9): el motor entero, más —POR CONTEXTO, no por archivo— toda
+ * función cuyo nombre diga `Coordination`, esté donde esté. Es exactamente el
+ * criterio que el test de N2 ya usaba para decidir si un código se le escapó
+ * al mapa; `codesFromSource` usaba en cambio una LISTA FIJA de once archivos,
+ * y esa lista dejaba afuera `services/validation.ts` y `storage/repository.ts`,
+ * donde viven `assertCoordinationProposal` y `answerCoordinationAsk`. Dos
+ * criterios distintos para la misma pregunta es cómo uno de los dos se
+ * desactualiza en silencio.
+ */
+export const inCoordinationScope = (file: string, context: string): boolean =>
+  file.startsWith('electron/coordination/') || /Coordination/.test(context);
+
 /** Los códigos que el backend PUEDE tirar por los caminos de coordinación, leídos del fuente. */
 function codesFromSource(): Map<string, string[]> {
-  const files = [
-    'electron/coordination/budget.ts',
-    'electron/coordination/dag.ts',
-    'electron/coordination/engine.ts',
-    'electron/coordination/injection.ts',
-    'electron/coordination/limits.ts',
-    'electron/coordination/mcpServer.ts',
-    'electron/coordination/mcpTransport.ts',
-    'electron/coordination/schemaGuard.ts',
-    'electron/coordination/tokens.ts',
-    'electron/coordination/tools.ts',
-    'electron/services/latteService.ts',
-  ];
   const found = new Map<string, string[]>();
-  for (const file of files) {
+  for (const file of electronSources()) {
     const text = readSource(file);
     // El primer argumento de `LatteError` no siempre es un literal: hay al
     // menos un ternario (`decision.reason === 'task_cap' ? 'TASK_CAP' :
@@ -127,6 +129,7 @@ function codesFromSource(): Map<string, string[]> {
     // 160 caracteres después del paréntesis y se toman TODOS los literales en
     // mayúsculas: los mensajes son prosa en minúsculas, así que no hay ruido.
     for (const match of text.matchAll(/LatteError\(/g)) {
+      if (!inCoordinationScope(file, enclosingNameOf(text, match.index))) continue;
       const head = text.slice(match.index + match[0].length, match.index + match[0].length + 160);
       for (const literal of head.matchAll(/'([A-Z][A-Z_]{2,})'/g)) {
         const code = literal[1]!;
@@ -148,12 +151,13 @@ const NOT_FOR_THE_PERSON: Record<string, string> = {
   // Sólo-MCP: la respuesta va al AGENTE, dentro del sobre `{ok:false, error}`
   // de `tools.ts`. Ninguno de estos cruza IPC.
   FORBIDDEN: 'autorización del token de coordinación: se le responde al agente, nunca a una pantalla',
-  // No son de coordinación: viven en los caminos de contexto de marca y tienen
-  // su propia pantalla, con su propia copy.
-  BRAND_ARCHIVED: 'contexto de marca, no coordinación',
-  CONTEXT_EMPTY: 'contexto de marca, no coordinación',
-  CONTEXT_STALE: 'contexto de marca, no coordinación',
-  CONTEXT_TOO_LONG: 'contexto de marca, no coordinación',
+  // L5 (ronda 9): `BRAND_ARCHIVED`, `CONTEXT_EMPTY` y `CONTEXT_TOO_LONG`
+  // SALIERON DE ACÁ. Su razón decía "contexto de marca, no coordinación", que
+  // explica por qué no van en el mapa de COORDINACIÓN y se leía como si
+  // explicara por qué no necesitan frase. Son dos cosas distintas: los tres
+  // salen del mismo "Aprobar" que la persona aprieta, y ahora tienen copy
+  // propia en `BRAND_ERROR_KEYS`.
+  CONTEXT_STALE: 'contexto de marca: lo tira el editor de contexto, que muestra su propio conflicto',
   // N4: lo tira `backup.ts` ANTES de que exista una ventana: la app no abre
   // con una base de un esquema más nuevo, así que no hay pantalla que mostrar.
   INCOMPATIBLE_SCHEMA: 'arranque: se decide antes de que haya interfaz',
@@ -178,19 +182,47 @@ const TRANSLATED = { ...COORDINATION_ERROR_KEYS, ...BRAND_ERROR_KEYS, ...APP_ERR
  * DENTRO de su cuerpo, que se cierra en la primera línea con una llave a su
  * misma indentación.
  */
-export function enclosingNameOf(text: string, index: number): string {
-  const declarations = [
-    ...text.matchAll(/(?:export\s+)?(?:async\s+)?function\s+(\w+)/g),
-    ...text.matchAll(/^\s{2}(?:(?:public|private|protected|readonly|static|async|get|set)\s+)*(\w+)\s*(?:<[^>\n]*>)?\s*\(/gm),
-  ].sort((a, b) => a.index! - b.index!)
+/**
+ * L8 (ronda 9): LA INDENTACIÓN SE CAPTURA, NO SE DEDUCE DEL ÍNDICE.
+ *
+ * La regex de métodos empieza en `^`, o sea que su `index` ES el principio de
+ * la línea. `declarationEnd` calculaba la indentación como "lo que hay entre
+ * el principio de la línea y `start`" — que para un método era la cadena
+ * VACÍA—, así que buscaba un `}` en columna cero y el rango de todo método
+ * llegaba hasta el cierre de la CLASE. Un `throw` que no está dentro de ningún
+ * método —un inicializador de propiedad, por ejemplo— heredaba el nombre del
+ * último método declarado antes. Ahora la indentación viaja con la
+ * declaración.
+ */
+interface Declaration { index: number; name: string; indent: string }
+
+/** La indentación de la línea donde empieza `index`. */
+function indentAt(text: string, index: number): string {
+  const lineStart = text.lastIndexOf('\n', index) + 1;
+  return /^[ \t]*/.exec(text.slice(lineStart, index))![0];
+}
+
+function declarationsIn(text: string): Declaration[] {
+  const out: Declaration[] = [];
+  for (const m of text.matchAll(/(?:export\s+)?(?:async\s+)?function\s+(\w+)/g)) {
+    out.push({ index: m.index!, name: m[1]!, indent: indentAt(text, m.index!) });
+  }
+  for (const m of text.matchAll(/^([ \t]{2})(?:(?:public|private|protected|readonly|static|async|get|set)\s+)*(\w+)\s*(?:<[^>\n]*>)?\s*\(/gm)) {
+    out.push({ index: m.index!, name: m[2]!, indent: m[1]! });
+  }
+  return out
     // `if (`, `for (`, `while (`, `return (`… también entran por la segunda
     // regex, y un `if` a dos espacios adentro de una función pisaba el nombre
     // de la función. No son declaraciones de nada.
-    .filter((m) => !/^(if|for|while|switch|catch|return|throw|do|else|super|await|typeof|void|new|const|let|var)$/.test(m[1]!));
+    .filter((d) => !/^(if|for|while|switch|catch|return|throw|do|else|super|await|typeof|void|new|const|let|var)$/.test(d.name))
+    .sort((a, b) => a.index - b.index);
+}
+
+export function enclosingNameOf(text: string, index: number): string {
   let name = '';
-  for (const declaration of declarations) {
-    if (declaration.index! > index) break;
-    if (index <= declarationEnd(text, declaration.index!)) name = declaration[1]!;
+  for (const declaration of declarationsIn(text)) {
+    if (declaration.index > index) break;
+    if (index <= declarationEnd(text, declaration.index, declaration.indent)) name = declaration.name;
   }
   return name;
 }
@@ -200,9 +232,8 @@ export function enclosingNameOf(text: string, index: number): string {
  * posterior que cierra con una llave a su MISMA indentación. Una función de
  * nivel superior cierra con `}` en columna cero; un método de clase, con `  }`.
  */
-function declarationEnd(text: string, start: number): number {
+function declarationEnd(text: string, start: number, indent: string): number {
   const lineStart = text.lastIndexOf('\n', start) + 1;
-  const indent = /^[ \t]*/.exec(text.slice(lineStart, start))![0];
   const closer = new RegExp(`^${indent}[}]`, 'm');
   const match = closer.exec(text.slice(lineStart));
   return match ? lineStart + match.index + match[0].length : text.length;
@@ -216,6 +247,25 @@ describe('Q6: el mapa de errores de coordinación', () => {
     expect(codes.size).toBeGreaterThan(10);
     expect([...codes.keys()]).toContain('ASK_CLOSED');
     expect([...codes.keys()]).toContain('PLAN_HAS_UNAPPROVED_ROLES');
+  });
+
+  /**
+   * L9 (ronda 9): Y MUERDE EN LOS ARCHIVOS QUE LA LISTA FIJA DEJABA AFUERA.
+   *
+   * `services/validation.ts` y `storage/repository.ts` no estaban en los once
+   * archivos escritos a mano, y ahí viven `assertCoordinationProposal`
+   * (`TASK_CAP`, `DEPTH_CAP`) y `answerCoordinationAsk` (`ASK_CLOSED`) — que el
+   * test de alcance de N2 reconoce como portadores legítimos por CONTEXTO. Dos
+   * criterios para la misma pregunta; ahora es uno.
+   */
+  it('L9: el alcance se deriva, así que alcanza a los archivos compartidos', () => {
+    for (const [code, file] of [
+      ['TASK_CAP', 'electron/services/validation.ts'],
+      ['DEPTH_CAP', 'electron/services/validation.ts'],
+      ['ASK_CLOSED', 'electron/storage/repository.ts'],
+    ] as const) {
+      expect(codes.get(code) ?? [], `${code} @ ${file}`).toContain(file);
+    }
   });
 
   it('O2: y encuentra también los de las SUBCLASES, que no se escriben con `new LatteError`', () => {
@@ -351,9 +401,11 @@ describe('N2: cada mapa cubre su alcance, verificado contra `electron/**`', () =
     // códigos del mapa de coordinación y la persona leía copy de equipos al
     // aprobar una propuesta de marca. Un archivo no es un alcance; una función
     // sí.
-    const allowed = (site: Site) =>
-      site.file.startsWith('electron/coordination/')
-      || /Coordination/.test(site.context);
+    //
+    // L9 (ronda 9): y el criterio es UNO SOLO, compartido con
+    // `codesFromSource` (`inCoordinationScope`), que hasta ahora usaba una
+    // lista fija de archivos para responder esta misma pregunta.
+    const allowed = (site: Site) => inCoordinationScope(site.file, site.context);
     const codes = Object.keys(COORDINATION_ERROR_KEYS);
     expect(codes.length).toBeGreaterThan(10);
     const leaked = allSites
@@ -393,14 +445,24 @@ describe('N2: cada mapa cubre su alcance, verificado contra `electron/**`', () =
    * M2(b): los tres códigos que el contexto de MARCA tiraba prestados del
    * mapa de coordinación tienen los suyos, y su copy habla de marca.
    */
-  it('los errores del contexto de marca tienen código propio y se tiran desde los métodos de marca', () => {
+  it('los errores de marca tienen código propio, se tiran de verdad, y NINGUNO sale de la coordinación', () => {
     const brandCodes = Object.keys(BRAND_ERROR_KEYS);
-    expect(brandCodes).toEqual(expect.arrayContaining(['BRAND_PROPOSAL_STALE', 'BRAND_PROPOSAL_DECIDED', 'STRATEGIST_BUSY']));
+    expect(brandCodes).toEqual(expect.arrayContaining([
+      'BRAND_PROPOSAL_STALE', 'BRAND_PROPOSAL_DECIDED', 'STRATEGIST_BUSY',
+      // L5 (ronda 9): los tres que llegaban sin frase desde el mismo "Aprobar".
+      'CONTEXT_TOO_LONG', 'CONTEXT_EMPTY', 'BRAND_ARCHIVED',
+    ]));
     for (const code of brandCodes) {
       const where = allSites.filter((s) => s.code === code);
       expect(where.length, `${code} no se tira en ningún lado`).toBeGreaterThan(0);
       for (const site of where) {
-        expect(/BrandContext/.test(site.context), `${code} @ ${site.file}#${site.context}`).toBe(true);
+        // El alcance se mide por lo que NO es: la copy de estos códigos habla
+        // de marcas y de contexto, así que ninguno puede salir de un camino de
+        // coordinación. `BRAND_ARCHIVED` lo tiran `requireActiveBrand` y
+        // `prepareGeneration` —dos caminos de marca que no son el de contexto—,
+        // así que exigir `BrandContext` en el nombre era un criterio prestado
+        // de los tres primeros, no el de este mapa.
+        expect(inCoordinationScope(site.file, site.context), `${code} @ ${site.file}#${site.context}`).toBe(false);
       }
     }
   });
@@ -440,6 +502,12 @@ describe('M8: `enclosingName` no le presta su nombre a lo que está afuera', () 
     '  unCoordinationMetodo() {',
     "    throw new LatteError('EN_EL_METODO', 'z');",
     '  }',
+    '',
+    '  otroMetodo() {',
+    "    throw new LatteError('EN_EL_OTRO_METODO', 'v');",
+    '  }',
+    '',
+    "  readonly campo = new LatteError('ENTRE_LLAVES_PERO_EN_NINGUN_METODO', 'u');",
     '}',
     '',
     "const despues = new LatteError('DESPUES_DEL_METODO', 'w');",
@@ -453,6 +521,22 @@ describe('M8: `enclosingName` no le presta su nombre a lo que está afuera', () 
   it('un throw a nivel de MÓDULO no hereda el nombre de la función anterior', () => {
     expect(enclosingNameOf(source, source.indexOf("'AFUERA'"))).toBe('');
     expect(enclosingNameOf(source, source.indexOf("'DESPUES_DEL_METODO'"))).toBe('');
+  });
+
+  /**
+   * L8: cada MÉTODO termina en su propio `  }`, no en el de la clase.
+   *
+   * Con la indentación deducida del índice —vacía, porque la regex de métodos
+   * ancla en `^`— el rango de `unCoordinationMetodo` llegaba hasta el cierre
+   * de la CLASE, así que todo lo que hubiera entre métodos, o después del
+   * último, quedaba adentro de él.
+   */
+  it('cada método termina donde termina el método, no donde termina la clase', () => {
+    expect(enclosingNameOf(source, source.indexOf("'EN_EL_OTRO_METODO'"))).toBe('otroMetodo');
+    // Un throw adentro de la clase pero fuera de todo método no es de nadie —
+    // y sobre todo no es del método anterior, cuyo nombre lleva `Coordination`
+    // y por lo tanto abre la puerta del alcance.
+    expect(enclosingNameOf(source, source.indexOf("'ENTRE_LLAVES_PERO_EN_NINGUN_METODO'"))).toBe('');
   });
 });
 
