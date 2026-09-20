@@ -1001,8 +1001,20 @@ export class CoordinationEngine {
     // tareas todavía `blocked`: un equipo que dice estar trabajando y no tiene
     // una sola tarea que pueda despachar. Dos fórmulas distintas para entrar y
     // salir del mismo estado es exactamente cómo un run queda atrapado en él.
+    //
+    // N6: Y CON LA BANDERA ABAJO, ESTE `running` NO SE ESCRIBE.
+    //
+    // Es la misma regla que O4 le puso a `resumeRun` y al tick (`refreshAsks`):
+    // con `feature:coordination` apagada nada REACTIVA un equipo. `answerAsk`
+    // se había quedado afuera, así que contestar una pregunta encendía un run
+    // que el interruptor promete detenido — y por un camino que la persona no
+    // asocia con "encender". La respuesta se guarda igual, arriba: apagar la
+    // coordinación no puede borrar lo que alguien escribió, y cuando la
+    // bandera vuelva a subir el tick levantará la suspensión con el mismo
+    // cálculo de siempre.
+    const enabled = this.deps.isCoordinationEnabled ? this.deps.isCoordinationEnabled() : true;
     const run = this.deps.repo.getCoordinationRun(answered.runId);
-    if (run.status === 'suspended' && run.suspendReason === 'all_blocked_on_ask' && !this.allBlockedOnAsks(run.id, now)) {
+    if (enabled && run.status === 'suspended' && run.suspendReason === 'all_blocked_on_ask' && !this.allBlockedOnAsks(run.id, now)) {
       this.deps.repo.updateCoordinationRunStatus(run.id, 'running', now, null);
     }
     // Y con la pregunta cerrada, el cierre se re-evalúa: puede haber sido lo
