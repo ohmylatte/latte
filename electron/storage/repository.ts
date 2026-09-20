@@ -1434,6 +1434,16 @@ export class LatteRepository {
    * fue contestada se despachaba EXACTAMENTE igual que la primera vez, y la
    * respuesta que la persona escribió no salía nunca de la base.
    */
+  /**
+   * L2 (ronda 9): TODAS las preguntas de un run, contestadas y vencidas
+   * incluidas. `listOpenCoordinationAsks` no alcanza para el barrido: además
+   * de saber si alguien espera AHORA, hay que saber desde CUÁNDO dejó de
+   * esperar, y eso vive en las que ya se cerraron.
+   */
+  listCoordinationAsksForRun(runId: string): CoordinationAskRecord[] {
+    return this.db.all<CoordinationAskRow>('SELECT * FROM coordination_ask WHERE run_id = ? ORDER BY created_at ASC, id ASC', [runId]).map(toCoordinationAsk);
+  }
+
   listCoordinationAsksForTask(taskId: string): CoordinationAskRecord[] {
     return this.db.all<CoordinationAskRow>('SELECT * FROM coordination_ask WHERE task_id = ? ORDER BY created_at ASC, id ASC', [taskId]).map(toCoordinationAsk);
   }

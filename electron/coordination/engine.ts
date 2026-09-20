@@ -2288,8 +2288,22 @@ export class CoordinationEngine {
     if (live === null) return;
     const staleBefore = new Date(new Date(now).getTime() - IN_FLIGHT_DISPATCH_STALE_MINUTES * 60_000).toISOString();
     const open = this.deps.repo.listCoordinationDispatches(run.id).filter((d) => d.status === 'dispatched' || d.status === 'running');
+    const asks = this.deps.repo.listCoordinationAsksForRun(run.id);
     for (const dispatch of open) {
-      if ((dispatch.startedAt ?? dispatch.createdAt) > staleBefore) continue;
+      // L2 (ronda 9): EL QUE ESPERA UNA RESPUESTA NO ES UN HUÉRFANO.
+      //
+      // El caso 2 describe a un agente que terminó su turno y no reportó. Un
+      // worker que llamó a `latte_ask` MIENTRAS trabajaba se ve idéntico desde
+      // afuera —vivo, `!isBusy`, su tarea `dispatched` a propósito para que su
+      // reporte pueda entrar, haciendo poll con `latte_ask_status`—, y podía
+      // estar así hasta `ASK_TTL_MAX_MINUTES`, o sea un día entero. A los
+      // treinta y un minutos el barrido le liquidaba la fila COBRÁNDOLE UN
+      // INTENTO por haber preguntado.
+      if (this.asksHolding(asks, dispatch, now).length > 0) continue;
+      // Y cuando la pregunta se vence o se contesta, el reloj arranca AHÍ. Un
+      // despacho de dos horas que pasó una hora y media esperando una respuesta
+      // no lleva dos horas sin dar señales: lleva media.
+      if (this.orphanClock(asks, dispatch) > staleBefore) continue;
       if (this.memberIsBusySafe(dispatch.memberId)) continue; // hay un turno en vuelo: es trabajo, no un huérfano
       // Vivo pero ocioso: terminó sin reportar, y eso se cobra.
       this.settleUncertain(dispatch.id, { incrementAttempts: live.has(dispatch.memberId) });
@@ -2304,6 +2318,45 @@ export class CoordinationEngine {
       if (task.updatedAt > staleBefore) continue;
       this.deps.repo.releaseCoordinationTaskFromDispatch(task.id, now);
     }
+  }
+
+  /**
+   * L2: las preguntas de ESTE despacho. Dos vínculos, porque las preguntas
+   * tienen los dos: la que nombra su `taskId`, y la que el MISMO MIEMBRO hizo
+   * sin nombrar ninguna tarea (`latte_ask` acepta el `taskId` opcional, y un
+   * worker que pregunta a mitad de su turno no siempre lo pasa).
+   */
+  private asksOfDispatch(asks: CoordinationAskRecord[], dispatch: CoordinationDispatchRecord): CoordinationAskRecord[] {
+    return asks.filter((ask) =>
+      (ask.taskId != null && ask.taskId === dispatch.taskId)
+      || (dispatch.memberId !== '' && ask.memberId === dispatch.memberId));
+  }
+
+  /** Las de este despacho que TODAVÍA esperan: sin responder y sin vencer. Es el mismo filtro de `openAsksHolding`, acotado a una fila. */
+  private asksHolding(asks: CoordinationAskRecord[], dispatch: CoordinationDispatchRecord, now: string): CoordinationAskRecord[] {
+    return this.asksOfDispatch(asks, dispatch).filter((ask) => ask.answeredAt == null && ask.deadlineAt > now);
+  }
+
+  /**
+   * L2: DESDE CUÁNDO este despacho no da señales. El máximo entre su propio
+   * arranque y el instante en que su última pregunta dejó de esperar.
+   *
+   * Y ese instante NO es siempre `answeredAt`: `expireCoordinationAsk` escribe
+   * ahí la marca del TICK que pasó a cerrarla, que puede ser horas posterior
+   * al plazo. Una pregunta que se venció dejó de esperar en su `deadlineAt`,
+   * no cuando alguien vino a anotarlo. La respuesta de verdad —la única que
+   * lleva texto (`answerCoordinationAsk` siempre lo escribe)— sí cuenta por su
+   * `answeredAt`. Y la vencida que este mismo tick todavía no cerró también
+   * cae en `deadlineAt`, porque `settleOrphanDispatches` corre ANTES que
+   * `refreshAsks`.
+   */
+  private orphanClock(asks: CoordinationAskRecord[], dispatch: CoordinationDispatchRecord): string {
+    let clock = dispatch.startedAt ?? dispatch.createdAt;
+    for (const ask of this.asksOfDispatch(asks, dispatch)) {
+      const stoppedWaiting = ask.answer != null && ask.answeredAt != null ? ask.answeredAt : ask.deadlineAt;
+      if (stoppedWaiting > clock) clock = stoppedWaiting;
+    }
+    return clock;
   }
 
   private memberIsBusySafe(memberId: string): boolean {
