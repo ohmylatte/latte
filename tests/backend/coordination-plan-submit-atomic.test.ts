@@ -91,6 +91,43 @@ describe('Q6: `latte_plan_submit` es transaccional', () => {
     expect(b.repo.listCoordinationTasks(runId)).toHaveLength(0);
   });
 
+  /**
+   * O7: EL TEST QUE ENTRA A LA TRANSACCIÓN.
+   *
+   * Los dos casos de arriba se cortan ANTES: el de 201 tareas lo frena el
+   * `maxItems` del esquema y el del rol sin aprobar, el bucle de
+   * `assertRoleCreatable` — ninguno llega a abrir la transacción, que es
+   * justamente lo que este archivo existe para proteger. Un `dependsOn` fuera
+   * de rango a mitad de lista sí entra: falla adentro, con filas ya escritas
+   * en esa transacción, y lo que se comprueba es que no quede ninguna.
+   */
+  it('un `dependsOn` fuera de rango a mitad de lista revierte lo ya escrito y deja el plan guardado intacto', async () => {
+    // Un plan que SÍ entra, para tener algo que se pueda pisar.
+    expect(envelope(await call('latte_plan_submit', { tasks: tasks(2) })).ok).toBe(true);
+    const before = b.repo.listCoordinationTasks(runId).map((t) => t.id);
+    const planBefore = b.repo.getCoordinationRun(runId).planJson;
+    expect(before).toHaveLength(2);
+    expect(planBefore).toBe(JSON.stringify(before));
+
+    // Tres tareas: la primera y la segunda son legales, la tercera depende de
+    // un índice que no existe en su propia lista.
+    const result = envelope(await call('latte_plan_submit', {
+      tasks: [
+        { roleId: 'role_a', spec: 'la primera' },
+        { roleId: 'role_a', spec: 'la segunda', dependsOn: [0] },
+        { roleId: 'role_a', spec: 'la tercera', dependsOn: [9] },
+      ],
+    }));
+
+    expect(result.ok).toBe(false);
+    expect(result.error!.code).toBe('VALIDATION');
+    // Cero filas nuevas: las dos que la transacción alcanzó a escribir se
+    // revirtieron con ella.
+    expect(b.repo.listCoordinationTasks(runId).map((t) => t.id)).toEqual(before);
+    // Y `plan_json` sigue nombrando al plan anterior, no a uno a medio escribir.
+    expect(b.repo.getCoordinationRun(runId).planJson).toBe(planBefore);
+  });
+
   it('el tope se publica en el esquema, así el agente lo sabe antes de mandar', () => {
     const submit = MCP_TOOL_DEFINITIONS.find((d) => d.name === 'latte_plan_submit');
     expect(submit).toBeDefined();

@@ -86,6 +86,49 @@ describe('Ronda 6: el motor', () => {
     });
   });
 
+  // --- O8 ---------------------------------------------------------------------
+
+  /**
+   * O8: los chequeos que dicen "acá no entra NINGÚN plan" van ANTES del que
+   * juzga ESTE plan. Con un run ya activo, `assertPlanIsFulfillable` corría
+   * primero y el agente recibía `PLAN_HAS_UNAPPROVED_ROLES` —"arreglá tu
+   * plan"— cuando el hecho real es que este Trabajo ya tiene un equipo y
+   * ningún plan iba a entrar. Se le respondía la consecuencia, no el hecho.
+   */
+  describe('O8: el orden de los rechazos en `requestCoordination`', () => {
+    const unfulfillable = {
+      plan: [{ roleId: 'role_que_nadie_cubre', spec: 'la que nadie puede hacer' }],
+      estimatedDispatches: 3,
+      membersToHire: [],
+      rationale: 'Porque sí, y con un plan que no se puede cumplir.',
+    };
+
+    it('con un run ya activo responde RUN_ALREADY_ACTIVE, no el defecto del plan', async () => {
+      const proposerToken = b.coordinationTokens.mint(workId, 'mem_worker');
+
+      const result = envelope(await b.coordinationMcpServer.handleMcpRequest(
+        rpc('latte_request_coordination', unfulfillable), `Bearer ${proposerToken}`, '127.0.0.1',
+      ));
+
+      expect(result.ok).toBe(false);
+      expect(result.error!.code).toBe('RUN_ALREADY_ACTIVE');
+      // Y sigue habiendo exactamente un run: nada se escribió.
+      expect(b.repo.listActiveCoordinationRuns().filter((r) => r.workId === workId)).toHaveLength(1);
+    });
+
+    it('sin run activo, el mismo plan sí recibe el defecto que tiene', async () => {
+      await b.service.cancelCoordinationRun(runId);
+      const proposerToken = b.coordinationTokens.mint(workId, 'mem_worker');
+
+      const result = envelope(await b.coordinationMcpServer.handleMcpRequest(
+        rpc('latte_request_coordination', unfulfillable), `Bearer ${proposerToken}`, '127.0.0.1',
+      ));
+
+      expect(result.ok).toBe(false);
+      expect(result.error!.code).toBe('PLAN_HAS_UNAPPROVED_ROLES');
+    });
+  });
+
   // --- O6a --------------------------------------------------------------------
 
   describe('O6a: el reporte re-evalúa la suspensión, sin esperar al tick', () => {
