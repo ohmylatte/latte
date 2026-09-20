@@ -96,6 +96,63 @@ describe('Q6: una pregunta vencida se informa como vencida, la haya cerrado algu
     expect(status.expiredAt).not.toBeNull();
   });
 
+  /**
+   * Q6b: UNA PREGUNTA VENCIDA NO SE PUBLICA NI SE CONTESTA, aunque el tick
+   * todavía no haya pasado a anotarlo.
+   *
+   * Con las lecturas puras (Q7), `listOpenAsks` publicaba preguntas con el
+   * plazo pasado hasta el próximo tick y `answerAsk` las aceptaba: la persona
+   * escribía una respuesta que ya no esperaba nadie mientras `latte_ask_status`
+   * —consultado por el agente al mismo tiempo— le decía que estaba vencida. Las
+   * tres puertas tienen que dar la misma respuesta en el mismo instante.
+   * Filtrar es leer: el cierre lo sigue anotando el tick.
+   */
+  describe('Q6b: entre dos ticks, una vencida ya no existe para la persona', () => {
+    it('no se publica en la lista de preguntas abiertas del Trabajo', async () => {
+      const askId = await askSomething(30);
+      expect(await b.service.listOpenCoordinationAsks(runId)).toHaveLength(1);
+
+      vi.setSystemTime(new Date('2026-09-18T12:00:00.000Z'));
+
+      // Nadie barrió: la fila sigue abierta en la base...
+      expect(b.repo.listOpenCoordinationAsks(runId)).toHaveLength(1);
+      expect(b.repo.getCoordinationAsk(askId).answeredAt).toBeNull();
+      // ...pero ya no es una pregunta que espere a nadie.
+      expect(await b.service.listOpenCoordinationAsks(runId)).toHaveLength(0);
+    });
+
+    it('contestarla se rechaza con `ASK_CLOSED`, y no pisa la fila', async () => {
+      const askId = await askSomething(30);
+      vi.setSystemTime(new Date('2026-09-18T12:00:00.000Z'));
+
+      await expect(b.service.answerCoordinationAsk(askId, 'tarde')).rejects.toMatchObject({ code: 'ASK_CLOSED' });
+
+      const stored = b.repo.getCoordinationAsk(askId);
+      expect(stored.answer).toBeNull();
+      expect(stored.answeredAt).toBeNull(); // el cierre lo anota el tick, no este rechazo
+    });
+
+    it('las tres puertas coinciden: publicar, contestar y consultar el estado', async () => {
+      const askId = await askSomething(30);
+      vi.setSystemTime(new Date('2026-09-18T12:00:00.000Z'));
+
+      const status = envelope(await call('latte_ask_status', { askId })).data as { expiredAt: string | null };
+
+      expect(status.expiredAt).not.toBeNull();                              // el agente: vencida
+      expect(await b.service.listOpenCoordinationAsks(runId)).toHaveLength(0); // la pantalla: no está
+      await expect(b.service.answerCoordinationAsk(askId, 'x')).rejects.toMatchObject({ code: 'ASK_CLOSED' }); // la persona: no se puede
+    });
+
+    it('una vigente sigue publicándose y contestándose como siempre', async () => {
+      const askId = await askSomething(30);
+      vi.setSystemTime(new Date('2026-09-18T10:10:00.000Z'));
+
+      expect(await b.service.listOpenCoordinationAsks(runId)).toHaveLength(1);
+      const answered = await b.service.answerCoordinationAsk(askId, 'dale');
+      expect(answered.answer).toBe('dale');
+    });
+  });
+
   it('una contestada NO se informa como vencida aunque el plazo haya pasado', async () => {
     const askId = await askSomething(30);
     await b.service.answerCoordinationAsk(askId, 'sí, dale');

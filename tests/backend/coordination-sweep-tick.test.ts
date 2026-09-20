@@ -86,8 +86,12 @@ describe('Q7: las lecturas son puras y el tick es el que vence y cierra', () => 
 
     const asks = await b.service.listOpenCoordinationAsks(run.id);
 
-    // Vencida pero todavía abierta: nadie la cerró, porque nadie escribió.
-    expect(asks).toHaveLength(1);
+    // Q6b: la vencida ya no se publica —filtrar es leer— pero NADIE LA CERRÓ:
+    // la fila sigue abierta en la base, porque esta lectura no escribió nada.
+    // El cierre lo anota el tick, que es el test de acá abajo.
+    expect(asks).toHaveLength(0);
+    expect(b.repo.listOpenCoordinationAsks(run.id)).toHaveLength(1);
+    expect(b.repo.getCoordinationAsk(b.repo.listOpenCoordinationAsks(run.id)[0]!.id).answeredAt).toBeNull();
     expect(b.repo.getCoordinationRun(run.id).updatedAt).toBe(before.updatedAt);
     expect(b.repo.getCoordinationRun(run.id).status).toBe('running');
   });

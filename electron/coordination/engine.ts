@@ -939,7 +939,15 @@ export class CoordinationEngine {
     // `refreshAsks`, con el mismo efecto colateral: publicar la lista de
     // preguntas podía cerrar el run. El barrido lo corre el tick del servicio
     // (`sweepCoordination`), que es quien puede escribir sin que nadie mire.
-    return this.deps.repo.listOpenCoordinationAsks(runId);
+    //
+    // Q6b: PERO FILTRAR ES LEER. Con las lecturas puras, una pregunta con el
+    // plazo pasado se seguía publicando hasta el próximo tick, así que la
+    // persona la veía y la contestaba mientras `latte_ask_status` —la misma
+    // pregunta, mirada por el agente en el mismo instante— ya decía que estaba
+    // vencida. Es exactamente el mismo filtro que `openAsksHolding` usa para
+    // decidir si un run está bloqueado: una vencida no espera a nadie. El
+    // cierre, que SÍ es una escritura, lo sigue anotando el tick.
+    return this.openAsksHolding(runId, this.deps.clock());
   }
 
   /**
@@ -956,6 +964,15 @@ export class CoordinationEngine {
     const pending = this.deps.repo.getCoordinationAsk(askId);
     this.assertRunMutable(this.deps.repo.getCoordinationRun(pending.runId));
     const now = this.deps.clock();
+    // Q6b: EL PLAZO YA PASÓ, y eso no depende de que alguien haya pasado a
+    // anotarlo. El CAS del repo sólo mira `answered_at IS NULL`, así que entre
+    // el vencimiento y el tick que lo cierra la respuesta entraba y la persona
+    // se quedaba creyendo que su respuesta iba a llegar — cuando el vencimiento
+    // ya devolvió (o va a devolver) la tarea a la cola y nadie la va a leer.
+    // Mismo código que el cierre por vencimiento: la pregunta está cerrada.
+    if (pending.answeredAt == null && pending.deadlineAt <= now) {
+      throw new LatteError('ASK_CLOSED', `That question's deadline passed at ${pending.deadlineAt}: nobody is waiting for this answer any more`);
+    }
     const answered = this.deps.repo.answerCoordinationAsk(askId, answer, now);
     // D1: la tarea que esperaba esta respuesta vuelve a la cola. `blocked` es
     // exactamente esto y nada más — "bloqueada por una pregunta" — así que
