@@ -121,10 +121,24 @@ describe('CoordinationEngine — el mundo cambia durante el spawn', () => {
       engine.cancelRun(runId);
       spawn.resolve();
 
-      await expect(approving).rejects.toMatchObject({ code: 'RUN_NOT_ACTIVE' });
+      // K1 (ronda 10): EL CÓDIGO CAMBIÓ, Y EL MOTIVO ES EL ARREGLO. La
+      // confirmación del reclamo pasó a ser lo PRIMERO de la transacción,
+      // antes de releer el run: la rama `RUN_NOT_ACTIVE` suelta la tarea, y
+      // hacerlo sin haber confirmado es lo que le permitía devolver a la cola
+      // la tarea de otro miembro. Acá `cancelRun` ya liquidó ESTA fila y soltó
+      // ESTA tarea mientras el proceso levantaba, así que lo primero que este
+      // despacho descubre —y lo único que puede afirmar sin pisar a nadie— es
+      // que su reclamo se perdió.
+      await expect(approving).rejects.toMatchObject({ code: 'CLAIM_LOST' });
       expect(b.hub.send).toHaveBeenCalledTimes(0);
       expect(b.repo.countOpenCoordinationCostReservations(runId)).toBe(0);
-      expect(b.repo.getCoordinationDispatch(gate.dispatchId)).toMatchObject({ status: 'cancelled', outcome: 'run_not_active' });
+      // Y la BITÁCORA: la fila la cerró la CANCELACIÓN (`settleUncertain`, que
+      // cancela sin decir por qué), y el aborto tardío ya no la re-escribe
+      // entera —eso era pisar el cierre de otro—; le completa el motivo que
+      // faltaba, que es lo único que la persona tiene para entender por qué
+      // ese despacho no salió. Una sola fila, como antes.
+      expect(b.repo.getCoordinationDispatch(gate.dispatchId)).toMatchObject({ status: 'cancelled', outcome: 'claim_lost' });
+      expect(b.repo.listCoordinationDispatches(runId)).toHaveLength(1);
     });
   });
 

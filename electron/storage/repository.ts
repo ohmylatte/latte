@@ -126,6 +126,21 @@ export interface CoordinationTaskRecord {
   updatedAt: string;
 }
 
+/**
+ * K1 (ronda 10): LA FOTO DEL RECLAMO, que es lo que autoriza a escribir sobre
+ * una tarea DESPUÉS del `await` que levanta el proceso del miembro.
+ *
+ * `token` es el `updated_at` que este despacho dejó escrito —al reclamar, o al
+ * confirmar—; `memberId` es el dueño que esa misma escritura dejó: `null`
+ * mientras el reclamo no está confirmado, el miembro una vez que lo está.
+ * Todo compare-and-set posterior compara contra ESTA foto: si no coincide, la
+ * tarea ya es de otro y no se la toca.
+ */
+export interface CoordinationTaskClaim {
+  token: string;
+  memberId: string | null;
+}
+
 /** One dependency edge: `taskId` depends on `dependsOnId`. */
 export interface CoordinationTaskDep {
   taskId: string;
@@ -1285,25 +1300,59 @@ export class LatteRepository {
    * y su `updated_at` sigue siendo el del reclamo (nadie la tocó en el medio).
    * Cero filas afectadas significa que el reclamo se perdió, y entonces este
    * despacho no escribe NADA: ni reserva, ni fila, ni `hub.send`.
+   *
+   * K3 (ronda 10): `claimToken` NULO es el camino por gate. Ahí el reclamo no
+   * lo guarda la tarea sino la fila (`started_at`), así que el token de la
+   * tarea no existe; lo que sí sigue valiendo son las otras dos condiciones
+   * —`dispatched` y sin miembro—, y el gate las necesita porque antes de esto
+   * confirmaba la FILA y escribía la tarea a ciegas.
+   *
+   * K7 (ronda 10): `updated_at` COMO TOKEN ES UNA APROXIMACIÓN, y se sabe.
+   * Lo reescribe cualquier UPDATE de la tabla, incluidos los que no cambian
+   * de dueño, así que un escritor inocente puede provocar un `CLAIM_LOST`
+   * falso: nada se corrompe (abortar es la salida segura) pero se despide a
+   * un miembro recién contratado. Por eso todo escritor que NO cambia de
+   * dueño tiene que dejar `updated_at` en paz — ver
+   * `markCoordinationTaskInPlan`. EL ARREGLO DEFINITIVO es una columna propia
+   * del reclamo (`dispatch_claim_id`, esquema v13): un token que sólo escribe
+   * quien toma o suelta la tarea, inmune a cualquier otra escritura. Queda
+   * fuera de este slice porque sube la versión del esquema.
    */
-  confirmCoordinationTaskClaim(id: string, memberId: string, claimToken: string, updatedAt: string): boolean {
-    return this.db.run(
-      "UPDATE coordination_task SET assigned_member_id = ?, updated_at = ? WHERE id = ? AND status = 'dispatched' AND assigned_member_id IS NULL AND updated_at = ?",
-      [memberId, updatedAt, id, claimToken],
-    ) > 0;
+  confirmCoordinationTaskClaim(id: string, memberId: string, claimToken: string | null, updatedAt: string): boolean {
+    const base = "UPDATE coordination_task SET assigned_member_id = ?, updated_at = ? WHERE id = ? AND status = 'dispatched' AND assigned_member_id IS NULL";
+    return claimToken == null
+      ? this.db.run(base, [memberId, updatedAt, id]) > 0
+      : this.db.run(base + ' AND updated_at = ?', [memberId, updatedAt, id, claimToken]) > 0;
   }
 
   /**
-   * El compare-and-set inverso: devuelve a `ready` SOLO la tarea que este
-   * despacho había reclamado. El `WHERE status = 'dispatched'` es lo que hace
-   * que soltar el reclamo no pueda pisar a quien escribió después — si
-   * `cancelRun` (o un reporte, o un barrido) ya movió la fila mientras se
-   * levantaba el proceso, este UPDATE no toca nada y devuelve `false`.
+   * El compare-and-set inverso: mueve SOLO la tarea que este despacho había
+   * reclamado, y sólo mientras siga siendo la que reclamó.
+   *
+   * K1 (ronda 10): EL `WHERE status = 'dispatched'` NO ALCANZABA. Decía "la
+   * tarea sigue despachada", que es cierto también cuando quien la despachó es
+   * OTRO: entre el reclamo y esta llamada hay un spawn entero, y en esa
+   * ventana el caso 3 del barrido puede soltarla y el coordinador
+   * re-despacharla legítimamente. Con la condición vieja, un spawn que volvía
+   * tarde devolvía a `ready` la tarea que otro miembro estaba trabajando, y el
+   * legítimo se quedaba con una fila abierta sobre una tarea que ya no era
+   * suya. `expect` es la foto EXACTA de lo que este despacho dejó: su
+   * `updated_at` y su dueño (nadie, mientras el reclamo no esté confirmado;
+   * el miembro, después). Si algo de eso cambió, este UPDATE no toca nada y
+   * devuelve `false` — y el llamador anota la bitácora en vez de escribir.
    */
-  releaseCoordinationTaskFromDispatch(id: string, updatedAt: string): boolean {
+  releaseCoordinationTaskFromDispatch(
+    id: string,
+    updatedAt: string,
+    expect: CoordinationTaskClaim,
+    status: 'ready' | 'failed' = 'ready',
+  ): boolean {
+    const owner = expect.memberId == null ? 'assigned_member_id IS NULL' : 'assigned_member_id = ?';
+    const params: Array<string | null> = [status, updatedAt, id, expect.token];
+    if (expect.memberId != null) params.push(expect.memberId);
     return this.db.run(
-      "UPDATE coordination_task SET status = 'ready', assigned_member_id = NULL, updated_at = ? WHERE id = ? AND status = 'dispatched'",
-      [updatedAt, id],
+      `UPDATE coordination_task SET status = ?, assigned_member_id = NULL, updated_at = ? WHERE id = ? AND status = 'dispatched' AND updated_at = ? AND ${owner}`,
+      params,
     ) > 0;
   }
 
@@ -1312,9 +1361,22 @@ export class LatteRepository {
     return this.db.run("UPDATE coordination_dispatch SET status = 'dispatched', started_at = ? WHERE id = ? AND status = 'pending_approval'", [startedAt, id]) > 0;
   }
 
-  /** Devuelve el gate a la mesa cuando el despacho no llegó a concretarse (por ejemplo, todos los miembros del rol están ocupados). */
-  releaseCoordinationDispatchToGate(id: string): void {
-    this.db.run("UPDATE coordination_dispatch SET status = 'pending_approval', started_at = NULL WHERE id = ?", [id]);
+  /**
+   * Devuelve el gate a la mesa cuando el despacho no llegó a concretarse (por
+   * ejemplo, todos los miembros del rol están ocupados).
+   *
+   * K2 (ronda 10): y es un COMPARE-AND-SET, igual que el que lo reclamó. Era
+   * un UPDATE por id pelado: un gate que el barrido ya había liquidado
+   * mientras el proceso levantaba volvía a `pending_approval` desde el `catch`
+   * de un spawn tardío, y la persona veía reaparecer en la mesa una decisión
+   * que ya estaba cerrada. `startedAt` es el token: sólo revive la fila que
+   * ESTE reclamo marcó.
+   */
+  releaseCoordinationDispatchToGate(id: string, startedAt: string): boolean {
+    return this.db.run(
+      "UPDATE coordination_dispatch SET status = 'pending_approval', started_at = NULL WHERE id = ? AND status = 'dispatched' AND started_at = ?",
+      [id, startedAt],
+    ) > 0;
   }
 
   /** Edges live on their own table so cycle detection is a graph query, never a JSON parse. */
