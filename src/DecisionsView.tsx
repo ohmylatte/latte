@@ -92,7 +92,13 @@ export interface DecisionsViewProps {
    * SAME `'approve'` carrying an edited payload alongside it.
    */
   gates?: readonly CoordinationGateView[];
-  onResolveGate?: (gateId: string, decision: 'approve' | 'reject', editedPayload?: string | null) => void;
+  /**
+   * O1: puede devolver si el motor ACEPTÓ. `void` (un llamador sin cablear, o
+   * uno viejo) se lee como "no sé", que es el comportamiento de antes; una
+   * promesa que resuelve `false` —o que rechaza— es un rechazo del backend, y
+   * el editor de la propuesta NO se cierra sobre un rechazo.
+   */
+  onResolveGate?: (gateId: string, decision: 'approve' | 'reject', editedPayload?: string | null) => void | boolean | Promise<boolean | void>;
   /**
    * Acepta un handoff como TAREA de la coordinación (`acceptHandoffAsTask`).
    * `undefined` deja la lista de sólo lectura, como estaba. Sin esto la función
@@ -410,7 +416,21 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
   const hiresToSend = keptHires.filter((hire) => !rolesInOriginalPlan.has(hire.roleId) || rolesInTrimmedPlan.has(hire.roleId));
   const hiresWithoutTasks = keptHires.length - hiresToSend.length;
 
-  const confirmEdit = () => {
+  /**
+   * O1: EL EDITOR CIERRA CUANDO EL MOTOR ACEPTA, NO CUANDO SE APRIETA EL BOTÓN.
+   *
+   * `setEditing(false)` corría incondicionalmente, en el mismo tick del clic.
+   * Si el backend rechazaba —`DEPTH_CAP` (que el validador no medía),
+   * `PROPOSAL_STALE`, `COORDINATION_BUDGET_INVALID`, un `addMember` caído— el
+   * gate seguía en pantalla con el editor cerrado, las casillas destildadas
+   * perdidas y el "Aprobar" simple de vuelta: un clic más mandaba
+   * `onResolveGate(id,'approve')` SIN payload, o sea el `planJson` guardado
+   * ENTERO, con todas las altas que la persona acababa de rechazar.
+   *
+   * Ahora el editor queda abierto con su estado intacto y el error se ve por
+   * el canal de error de la app, que es donde se ven todos.
+   */
+  const confirmEdit = async () => {
     const edited: CoordinationProposal = {
       ...proposal,
       // Q4: el plan RECORTADO. Mandarlo entero dejaba tareas de un rol que la
@@ -422,7 +442,13 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
       // La ÚNICA fuente de un presupuesto ilimitado: esta casilla, acá, ahora.
       unlimitedConfirmedAt: dispatches.trim() === '' && unlimitedConfirmed ? new Date().toISOString() : null,
     };
-    onResolveGate?.(gate.id, 'approve', JSON.stringify(edited));
+    let accepted: boolean | void;
+    try {
+      accepted = await onResolveGate?.(gate.id, 'approve', JSON.stringify(edited));
+    } catch {
+      return; // el motor rechazó y ya lo reportó: el editor se queda como está
+    }
+    if (accepted === false) return;
     setEditing(false);
   };
 
@@ -430,7 +456,20 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
   // guardada: el motor la rechazaría con `PLAN_HAS_UNAPPROVED_ROLES` y la
   // persona se quedaría otra vez sin salida. Manda lo mismo que la edición:
   // el plan que sí se puede cumplir.
-  const approvePlain = () => { if (orphanRoleIds.size > 0) confirmEdit(); else onResolveGate?.(gate.id, 'approve'); };
+  const approvePlain = () => { if (orphanRoleIds.size > 0) void confirmEdit(); else onResolveGate?.(gate.id, 'approve'); };
+
+  /**
+   * O1: EL FORMULARIO ESTÁ COMO NACIÓ.
+   *
+   * El "Aprobar" simple manda la propuesta GUARDADA, sin payload. Eso sólo es
+   * lo mismo que lee la persona mientras no haya tocado nada: todas las altas
+   * tildadas y el tope de despachos sin cambiar (lo único que se recorta solo
+   * son los huérfanos, que `approvePlain` ya manda por el camino del payload
+   * derivado). En cualquier otro estado ese botón mandaría algo distinto de lo
+   * que la pantalla muestra, así que no existe: el único camino es "Confirmar
+   * edición y aprobar".
+   */
+  const formPristine = included.every(Boolean) && dispatches === initialDispatches();
 
   const editCancel = () => {
     // Sin esto, cancelar no reseteaba nada: el formulario quedaba con
@@ -509,9 +548,13 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
     </div>}
     {needsUnlimitedConfirmation && <p className="decision-gate-note decision-gate-unlimited-note">{t('coordination.proposal.unlimitedBlocked')}</p>}
     <div className="decision-gate-actions">
-      {/* El "Aprobar" simple no puede convivir con la edición abierta: tocarlo
-          mientras hay ediciones sin guardar las descartaba en silencio. */}
-      {!needsUnlimitedConfirmation && !editing && <button className="primary" disabled={busy || trimmed.plan.length === 0} onClick={approvePlain}>{t('coordination.gate.approve')}</button>}
+      {/* O1: la condición es el ESTADO DEL FORMULARIO, no si el editor está
+          abierto. Antes era `!editing`, y eso deja pasar el caso que importa:
+          el editor cerrado sobre un formulario modificado (lo que producía
+          `confirmEdit` cerrando sin esperar al motor). Con el formulario
+          intacto no hay ninguna edición que este botón pueda descartar en
+          silencio, así que puede convivir con el editor abierto. */}
+      {!needsUnlimitedConfirmation && formPristine && <button className="primary" disabled={busy || trimmed.plan.length === 0} onClick={approvePlain}>{t('coordination.gate.approve')}</button>}
       <button disabled={busy} onClick={() => setEditing(true)}>{t('coordination.gate.editApprove')}</button>
       <button disabled={busy} onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
     </div>

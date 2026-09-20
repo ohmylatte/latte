@@ -1,6 +1,10 @@
 import { ValidationError } from '../core/errors';
 import { assertId } from '../core/paths';
 import { isValidId } from '../core/ids';
+// Constantes puras, sin I/O: el MISMO número que `canAddTask`/`createTaskRow`
+// aplican cuando la propuesta ya se aprobó. Una segunda copia del tope acá
+// sería exactamente la forma de que los dos se separen.
+import { MAX_DEPENDENCY_DEPTH } from '../coordination/limits';
 
 export const LIMITS = {
   name: 120,
@@ -167,6 +171,16 @@ export function assertCoordinationProposal(parsed: unknown): void {
   if (!Array.isArray(proposal.plan) || proposal.plan.length === 0) {
     throw new ValidationError('The edited proposal must keep at least one task in `plan`');
   }
+  // O1: LA PROFUNDIDAD SE MIDE ACÁ, donde todavía no se contrató a nadie.
+  //
+  // `createTaskRow` aplica `MAX_DEPENDENCY_DEPTH` (`canAddTask` → `DEPTH_CAP`)
+  // y este validador no la miraba: una cadena más larga que el tope pasaba la
+  // validación entera, `resolveGate` contrataba al equipo y levantaba los
+  // procesos —las altas van ANTES de la transacción, por diseño— y recién
+  // adentro de `commitProposal` la fila que cruzaba el tope tiraba `DEPTH_CAP`.
+  // La persona quedaba con miembros contratados y sin run. La misma cuenta que
+  // `computeTaskDepth` hace, sobre los índices que se acaban de validar.
+  const depths: number[] = [];
   for (const [index, item] of proposal.plan.entries()) {
     if (typeof item !== 'object' || item === null) throw new ValidationError(`Plan task ${index} must be an object`);
     const task = item as Record<string, unknown>;
@@ -189,6 +203,15 @@ export function assertCoordinationProposal(parsed: unknown): void {
         }
       }
     }
+    // Los índices ya son hacia atrás y están en rango, así que `depths` está
+    // completo hasta `index - 1`: la profundidad de ésta es una más que la de
+    // su dependencia más profunda, exactamente como `computeTaskDepth`.
+    const deps = (task.dependsOn as number[] | undefined) ?? [];
+    const depth = deps.length === 0 ? 0 : Math.max(...deps.map((dep) => depths[dep]!)) + 1;
+    if (depth > MAX_DEPENDENCY_DEPTH) {
+      throw new ValidationError(`Plan task ${index} chains more than ${MAX_DEPENDENCY_DEPTH} dependencies in a row`);
+    }
+    depths.push(depth);
   }
 
   const hires = proposal.membersToHire;

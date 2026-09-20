@@ -10,7 +10,7 @@ vi.mock('./i18n', async (importOriginal) => {
 });
 
 const { createElement } = await import('react');
-const { fireEvent, render, screen } = await import('@testing-library/react');
+const { fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 const { DecisionsView } = await import('./DecisionsView');
 import type { DecisionsViewProps } from './DecisionsView';
 import { EMPTY_USAGE } from '../shared/contracts';
@@ -439,6 +439,104 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
       fireEvent.click(actions[2]); // Rechazar
       expect(onResolveGate).toHaveBeenCalledWith('g-proposal', 'reject');
       expect(onResolveGate).not.toHaveBeenCalledWith('g-proposal', 'reject', expect.anything());
+    });
+  });
+
+  /**
+   * O1: EL "APROBAR" SIMPLE NO PUEDE MANDAR LO QUE LA PANTALLA NO MUESTRA.
+   *
+   * `confirmEdit` cerraba el editor en el mismo tick del clic, sin esperar al
+   * motor. Cuando el motor rechazaba, el gate seguía en pantalla con el editor
+   * CERRADO, las casillas destildadas perdidas y el "Aprobar" simple de vuelta:
+   * un clic más mandaba `onResolveGate(id,'approve')` sin payload, o sea el
+   * plan GUARDADO entero, con todas las altas que la persona había rechazado.
+   */
+  describe('O1: el editor cierra cuando el motor acepta, y el "Aprobar" simple sólo existe intacto', () => {
+    const twoHires = () => proposal({
+      plan: [
+        { roleId: 'copywriter', spec: 'Escribir los textos' },
+        { roleId: 'designer', spec: 'Diseñar las piezas' },
+      ],
+      membersToHire: [
+        { roleId: 'copywriter', why: 'Nadie escribe todavía' },
+        { roleId: 'designer', why: 'Nadie diseña todavía' },
+      ],
+    });
+    const proposalGate = () => gateView({
+      id: 'g-proposal', kind: 'proposal', proposalJson: JSON.stringify(twoHires()),
+      aggregate: { otherActiveRuns: 0, otherCommittedDispatches: 0, totalIfApproved: 8 },
+    });
+
+    it('la mutación RECHAZA: el editor queda abierto, las casillas intactas y no reaparece el "Aprobar" simple', async () => {
+      const onResolveGate = vi.fn().mockRejectedValue(new Error('DEPTH_CAP'));
+      const { container } = renderView('es-AR', { gates: [proposalGate()], onResolveGate });
+      const card = container.querySelector('.decision-gate-proposal')!;
+      fireEvent.click(screen.getByText('Editar y aprobar'));
+      const boxes = () => [...card.querySelectorAll('.decision-gate-edit-hire input[type="checkbox"]')] as HTMLInputElement[];
+      expect(boxes()).toHaveLength(2); // la premisa: el editor SÍ se abrió
+      fireEvent.click(boxes()[1]!); // destildo al diseñador
+
+      fireEvent.click(screen.getByText('Confirmar edición y aprobar'));
+      await waitFor(() => expect(onResolveGate).toHaveBeenCalledTimes(1));
+
+      // El editor sigue abierto, con la casilla destildada como la dejó.
+      expect(card.querySelector('.decision-gate-edit')).not.toBeNull();
+      expect(boxes().map((b) => b.checked)).toEqual([true, false]);
+      // Y NO hay ningún botón "Aprobar" pelado que pueda mandar el plan guardado.
+      const labels = [...card.querySelectorAll('button')].map((b) => b.textContent);
+      expect(labels).not.toContain('Aprobar');
+    });
+
+    it('la mutación resuelve `false` (el contrato de `useCoordination`): el editor tampoco cierra', async () => {
+      const onResolveGate = vi.fn().mockResolvedValue(false);
+      const { container } = renderView('es-AR', { gates: [proposalGate()], onResolveGate });
+      const card = container.querySelector('.decision-gate-proposal')!;
+      fireEvent.click(screen.getByText('Editar y aprobar'));
+      fireEvent.click(card.querySelectorAll('.decision-gate-edit-hire input[type="checkbox"]')[1]!);
+
+      fireEvent.click(screen.getByText('Confirmar edición y aprobar'));
+      await waitFor(() => expect(onResolveGate).toHaveBeenCalledTimes(1));
+
+      expect(card.querySelector('.decision-gate-edit')).not.toBeNull();
+    });
+
+    it('la mutación resuelve bien: el editor cierra', async () => {
+      const onResolveGate = vi.fn().mockResolvedValue(true);
+      const { container } = renderView('es-AR', { gates: [proposalGate()], onResolveGate });
+      const card = container.querySelector('.decision-gate-proposal')!;
+      fireEvent.click(screen.getByText('Editar y aprobar'));
+      fireEvent.click(card.querySelectorAll('.decision-gate-edit-hire input[type="checkbox"]')[1]!);
+
+      fireEvent.click(screen.getByText('Confirmar edición y aprobar'));
+
+      await waitFor(() => expect(card.querySelector('.decision-gate-edit')).toBeNull());
+    });
+
+    it('el formulario MODIFICADO no ofrece "Aprobar" simple; cancelar la edición lo devuelve', () => {
+      const { container } = renderView('es-AR', { gates: [proposalGate()], onResolveGate: vi.fn() });
+      const card = container.querySelector('.decision-gate-proposal')!;
+      const labels = () => [...card.querySelectorAll('.decision-gate-actions button')].map((b) => b.textContent);
+      // Intacto, el botón existe: la premisa de este test.
+      expect(labels()).toContain('Aprobar');
+
+      // Con el editor ABIERTO y el formulario intacto sigue estando: lo que lo
+      // esconde es la edición, no el editor.
+      fireEvent.click(screen.getByText('Editar y aprobar'));
+      expect(labels()).toContain('Aprobar');
+
+      // Basta destildar un alta para que desaparezca: el único camino pasa a
+      // ser el payload derivado.
+      fireEvent.click(card.querySelectorAll('.decision-gate-edit-hire input[type="checkbox"]')[1]!);
+      expect(labels()).not.toContain('Aprobar');
+
+      // Y con el tope cambiado, lo mismo.
+      fireEvent.click(card.querySelectorAll('.decision-gate-edit-hire input[type="checkbox"]')[1]!); // vuelvo a tildar
+      expect(labels()).toContain('Aprobar');
+      fireEvent.change(card.querySelector('input[type="number"]') as HTMLInputElement, { target: { value: '3' } });
+      expect(labels()).not.toContain('Aprobar');
+
+      fireEvent.click(screen.getByText('Cancelar edición')); // vuelve al estado inicial
+      expect(labels()).toContain('Aprobar');
     });
   });
 

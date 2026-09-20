@@ -45,7 +45,24 @@ export interface CoordinationState {
    * mirar no es una visita.
    */
   workLoaded: boolean;
-  resolveGate: (gateId: string, decision: 'approve' | 'reject', editedPayload?: string | null) => void;
+  /**
+   * O1: DEVUELVE SI EL MOTOR ACEPTÓ.
+   *
+   * Esto devolvía `void`, así que la tarjeta de la propuesta cerraba su editor
+   * en el mismo tick en que emitía la mutación — antes de que el backend
+   * contestara. Cuando contestaba que NO (`DEPTH_CAP`, `PROPOSAL_STALE`,
+   * `COORDINATION_BUDGET_INVALID`, un `addMember` caído), el gate seguía en
+   * pantalla con el editor CERRADO y el formulario a medio editar perdido, y
+   * el "Aprobar" simple volvía a aparecer: un clic más mandaba la propuesta
+   * GUARDADA, con todas las altas que la persona acababa de destildar.
+   *
+   * La promesa resuelve `true` si la mutación resolvió bien y `false` si falló
+   * — nunca rechaza. Rechazar obligaría a cada botón de esta app a encadenar
+   * un `.catch`, y el que se olvidara dejaría una promesa sin manejar; el
+   * error ya se reporta por el canal de error de la app, acá adentro, una sola
+   * vez.
+   */
+  resolveGate: (gateId: string, decision: 'approve' | 'reject', editedPayload?: string | null) => Promise<boolean>;
   answerAsk: (askId: string, answer: string) => void;
   /** Surfaces task 3.19's `settleCoordinationDispatch` — never reinvented. */
   settleDispatch: (taskId: string, outcome: 'succeeded' | 'failed', summary: string) => void;
@@ -204,11 +221,15 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
    * ni se llama, y el `generation` del recorte por-Trabajo actual queda
    * intacto para que sus propias lecturas en vuelo lleguen.
    */
-  const mutate = (key: string, action: Promise<unknown>) => {
+  const mutate = (key: string, action: Promise<unknown>): Promise<boolean> => {
     const issuedWorkId = workId;
     setPending((prev) => ({ ...prev, [key]: true }));
-    void action
-      .catch(report)
+    // O1: el resultado VUELVE a quien la emitió. `true` sólo cuando el backend
+    // resolvió bien; `false` cuando falló, ya reportado acá adentro. Nunca
+    // rechaza: una promesa que rechaza obliga a cada llamador a encadenar su
+    // propio `.catch`, y el que se olvide deja una promesa sin manejar.
+    return action
+      .then(() => true, (e: unknown) => { report(e); return false; })
       .finally(() => {
         setPending((prev) => { const next = { ...prev }; delete next[key]; return next; });
         refreshActiveRuns();

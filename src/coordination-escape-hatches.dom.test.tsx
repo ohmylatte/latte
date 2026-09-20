@@ -297,9 +297,26 @@ describe('DecisionsView: el gate de propuesta no confunde el estado del formular
     expect(onResolveGate).not.toHaveBeenCalled();
   });
 
-  it('mientras se está editando, el "Aprobar" simple no se renderiza: no puede descartar en silencio una edición sin guardar', () => {
+  /**
+   * O1: LA REGLA SE ENDURECIÓ, y este test la sigue.
+   *
+   * Decía "mientras se está editando, el Aprobar simple no se renderiza".
+   * Mirar `editing` dejaba pasar justo el caso que importa: el editor CERRADO
+   * sobre un formulario modificado, que es lo que producía `confirmEdit`
+   * cerrando sin esperar al motor — ahí el "Aprobar" simple reaparecía y
+   * mandaba el plan GUARDADO entero. Hoy la condición es el estado del
+   * FORMULARIO: con una edición sin guardar no hay "Aprobar" simple, esté el
+   * editor abierto o cerrado; con el formulario intacto no hay ninguna edición
+   * que descartar, así que el botón puede convivir con el editor abierto.
+   */
+  it('con una edición sin guardar, el "Aprobar" simple no se renderiza: no puede descartarla en silencio', () => {
     const { container } = renderDecisions({ gates: [cappedGate] });
     fireEvent.click(container.querySelector('.decision-gate-actions button:not(.primary)')!);
+    // Abierto e intacto: nada que descartar, el botón sigue.
+    expect(container.querySelector('.decision-gate-actions button.primary')).not.toBeNull();
+
+    fireEvent.change(container.querySelector('input[type="number"]') as HTMLInputElement, { target: { value: '4' } });
+
     expect(container.querySelector('.decision-gate-actions button.primary')).toBeNull();
   });
 });
