@@ -69,6 +69,22 @@ export function fakeRunner(handler: FakeCommand): CommandRunner & { calls: Array
 
 export const notFoundRunner = fakeRunner(() => ({ code: 1, stdout: '', stderr: 'not found' }));
 
+/**
+ * La ruta de un ejecutable "instalado" que un fake de `where.exe`/`which`
+ * puede devolver, absoluta PARA LA PLATAFORMA QUE EL BACKEND CREE HABITAR.
+ *
+ * `RuntimeDetector.locate` y el `locateExecutable` de `bootstrap.ts` filtran
+ * la salida con `path.win32.isAbsolute` o `path.posix.isAbsolute` según esa
+ * plataforma. Un fake que devolvía `C:\fake\claude.exe` a secas resolvía en
+ * Windows y NO resolvía en Linux: el binario quedaba "no instalado" y la fila
+ * salía con `canPropose:false` / `memoryInjected:false` sin que el test
+ * hubiera pedido eso. La plataforma es un parámetro explícito para que el
+ * fake y el backend hablen del mismo sistema operativo, nunca el del runner.
+ */
+export function fakeExecutablePath(name: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? `C:\\fake\\${name}.exe` : `/fake/bin/${name}`;
+}
+
 // --- Fake pty ---------------------------------------------------------------
 
 export class FakePty implements PtyProcessLike {

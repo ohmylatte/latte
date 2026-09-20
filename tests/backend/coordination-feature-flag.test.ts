@@ -8,7 +8,7 @@ import {
 import { CoordinationTokenRegistry } from '../../electron/coordination/tokens';
 import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
 import { sessionFrom } from '../../electron/agents/types';
-import { fakeCoordinationHub, fakeRunner, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
+import { fakeCoordinationHub, fakeExecutablePath, fakeRunner, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
  * Task 8.1 (rollout gate): coordination lives behind `featureFlags('coordination')`.
@@ -27,11 +27,19 @@ import { fakeCoordinationHub, fakeRunner, makeBackend, type FakeTeamMember, type
  *   survives it.
  */
 
+// Las dos rutas que este fake declara "instaladas". `fakeExecutablePath` las
+// escribe absolutas para la plataforma real del runner, que es la misma que el
+// backend usa para filtrar la salida de `where.exe`/`which`: sin eso, una ruta
+// de Windows fija resolvía acá y NO en Linux, y el binario quedaba ausente por
+// el sistema operativo y no por lo que el test declara.
+const CLAUDE_BIN = fakeExecutablePath('claude');
+const ENGRAM_BIN = fakeExecutablePath('engram');
+
 function claudeAndEngramResolvable(claudeVersion = '2.1.263') {
   return fakeRunner((file, args) => {
-    if (args[0] === 'claude') return { code: 0, stdout: 'C:\\fake\\claude.exe\r\n' };
-    if (file.endsWith('claude.exe') && args[0] === '--version') return { code: 0, stdout: claudeVersion };
-    if (args[0] === 'engram') return { code: 0, stdout: 'C:\\fake\\engram.exe\r\n' };
+    if (args[0] === 'claude') return { code: 0, stdout: `${CLAUDE_BIN}\r\n` };
+    if (file === CLAUDE_BIN && args[0] === '--version') return { code: 0, stdout: claudeVersion };
+    if (args[0] === 'engram') return { code: 0, stdout: `${ENGRAM_BIN}\r\n` };
     return { code: 1, stdout: '', stderr: 'not found' };
   });
 }

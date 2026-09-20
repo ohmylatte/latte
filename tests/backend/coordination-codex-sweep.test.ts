@@ -78,6 +78,13 @@ describe('bootstrap wiring: createBackend sweeps stray codex app-servers on star
       seedDemo: false,
       runner: notFoundRunner,
       loadPty: brokenPtyLoader,
+      // La plataforma es del test, no del runner: en win32 la muerte entera
+      // pasa por el `taskkillImpl` inyectado acá, así que lo que se observa no
+      // depende de si el pid 987654 existe en esta máquina. Sin fijarla, un
+      // runner POSIX entraba por `process.kill(-pid)`, cobraba ESRCH contra un
+      // pid inexistente y no llamaba a taskkill nunca: `killed` quedaba vacío
+      // en Linux y lleno en Windows por el sistema operativo, no por el test.
+      platform: 'win32',
       taskkillImpl: (file, args, options, callback) => {
         killed.push(args[args.indexOf('/PID') + 1]);
         callback(null);

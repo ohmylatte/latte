@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
-import { fakeRunner, makeBackend, type TestBackend } from './helpers';
+import { fakeExecutablePath, fakeRunner, makeBackend, type TestBackend } from './helpers';
 
 // Tasks 6.33-6.36: the IPC surface built on top of `CoordinationInjectionPlanner`
 // (tested directly in coordination-hub-wiring.test.ts) -- `coordinationRuntimeSupport`,
@@ -11,10 +11,17 @@ import { fakeRunner, makeBackend, type TestBackend } from './helpers';
 // checks see an installed version instead of "not found" -- and
 // `claude.start` itself spied so no real process ever spawns.
 
+// La ruta que el fake declara "instalada", absoluta para la plataforma real
+// del runner: el backend filtra la salida de `where.exe`/`which` con
+// `path.win32.isAbsolute` o `path.posix.isAbsolute` según esa misma
+// plataforma, así que una ruta de Windows fija dejaba a `claude` ausente en
+// Linux y la fila salía con `canPropose:false` por el sistema operativo.
+const CLAUDE_BIN = fakeExecutablePath('claude');
+
 function claudeResolvable(version: string) {
   return fakeRunner((file, args) => {
-    if (args[0] === 'claude') return { code: 0, stdout: 'C:\\fake\\claude.exe\r\n' };
-    if (file.endsWith('claude.exe') && args[0] === '--version') return { code: 0, stdout: version };
+    if (args[0] === 'claude') return { code: 0, stdout: `${CLAUDE_BIN}\r\n` };
+    if (file === CLAUDE_BIN && args[0] === '--version') return { code: 0, stdout: version };
     return { code: 1, stdout: '', stderr: 'not found' };
   });
 }
