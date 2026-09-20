@@ -179,3 +179,86 @@ describe('Q8: un código de coordinación se lee en el idioma de la persona', ()
     expect(text).toBe('algo muy raro pasó en el fondo');
   });
 });
+
+/**
+ * N2 (ronda 7): `FEATURE_DISABLED` NO ES DE COORDINACIÓN.
+ *
+ * `displayError` es el formateador de errores de TODA la app, y la ronda 6 le
+ * puso a `FEATURE_DISABLED` una frase que hablaba de coordinación. El mismo
+ * código lo tiran cuatro features: `requireFeature('brandKits')` en
+ * `branding/service.ts`, generación en `latteService`, aprendizaje, y
+ * coordinación. Quien abría un kit de marca con su flag apagado leía "La
+ * coordinación de equipo está apagada": una explicación falsa de un hecho
+ * verdadero.
+ *
+ * Los dos errores de abajo salen del backend REAL, por los dos caminos
+ * distintos, y los dos tienen que leerse con la MISMA frase neutra.
+ *
+ * N3: y esa frase no promete Ajustes, porque no hay ningún interruptor en
+ * ninguna pantalla.
+ */
+async function realFeatureDisabled(): Promise<{ fromBrandKits: Error; fromCoordination: Error }> {
+  const { makeBackend, fakeCoordinationHub } = await import('../tests/backend/helpers');
+  const { FEATURE_KEYS, FEATURE_ON } = await import('../electron/core/features');
+  const b = await makeBackend();
+  try {
+    fakeCoordinationHub(b, []);
+    // Kits de marca: el flag viene apagado de fábrica y la pantalla llama a
+    // este mismo método. Cero coordinación en este camino.
+    const fromBrandKits = await b.service.readAgencyProfile().then(() => null, (e: Error) => e);
+    expect(fromBrandKits).not.toBeNull();
+    expect((fromBrandKits as { code?: string }).code).toBe('FEATURE_DISABLED');
+
+    // Coordinación: reanudar con el interruptor bajo (O4). Mismo código,
+    // distinta feature — y por eso mismo, misma frase.
+    const brand = await b.service.createBrand('Marca');
+    const work = await b.service.createWork(brand.id, 'Trabajo');
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON);
+    await b.service.setCoordinationBudget(work.id, { maxDispatches: 10 });
+    const run = await b.service.startCoordinationRun(work.id);
+    await b.service.pauseCoordinationRun(run.id);
+    b.repo.setMeta(FEATURE_KEYS.coordination, 'off');
+    const fromCoordination = await b.service.resumeCoordinationRun(run.id).then(() => null, (e: Error) => e);
+    expect(fromCoordination).not.toBeNull();
+    expect((fromCoordination as { code?: string }).code).toBe('FEATURE_DISABLED');
+
+    return { fromBrandKits: fromBrandKits as Error, fromCoordination: fromCoordination as Error };
+  } finally {
+    b.cleanup();
+  }
+}
+
+describe('N2: los códigos genéricos se leen con una frase de toda la app', () => {
+  it('`FEATURE_DISABLED` desde los kits de marca no habla de equipos ni promete Ajustes', async () => {
+    const { fromBrandKits } = await realFeatureDisabled();
+
+    const text = await errorAfterAccept(fromBrandKits, 'es-AR');
+
+    expect(text).toBe('Esta función está apagada en esta instalación.');
+    expect(text).not.toMatch(/coordinaci|equipo|tarea/i);
+    expect(text).not.toMatch(/Ajustes/i);
+    expect(text).not.toBe(fromBrandKits.message);
+  });
+
+  it('el mismo `FEATURE_DISABLED` desde `resumeCoordinationRun` se lee igual: el código es genérico', async () => {
+    const { fromCoordination } = await realFeatureDisabled();
+
+    expect(await errorAfterAccept(fromCoordination, 'es-AR')).toBe('Esta función está apagada en esta instalación.');
+    expect(await errorAfterAccept(fromCoordination, 'en-US')).toBe('This feature is switched off in this installation.');
+  });
+
+  it('en inglés tampoco manda a Settings', async () => {
+    const { fromBrandKits } = await realFeatureDisabled();
+    const text = await errorAfterAccept(fromBrandKits, 'en-US');
+    expect(text).toBe('This feature is switched off in this installation.');
+    expect(text).not.toMatch(/Settings/i);
+  });
+
+  it('`NOT_FOUND`, `CONFLICT`, `UNAVAILABLE` y `VALIDATION` tampoco nombran equipos ni tareas', async () => {
+    for (const code of ['NOT_FOUND', 'CONFLICT', 'UNAVAILABLE', 'VALIDATION']) {
+      const text = await errorAfterAccept(coded(code, 'raw'), 'es-AR');
+      expect(text, code).not.toBe('raw'); // tiene frase propia
+      expect(text, code).not.toMatch(/equipo|tarea|coordinaci/i);
+    }
+  });
+});

@@ -1,8 +1,31 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { COORDINATION_ERROR_KEYS } from './App';
+import { APP_ERROR_KEYS, COORDINATION_ERROR_KEYS } from './App';
 import { catalogs } from './i18n';
+
+/**
+ * TODO `electron/**\/*.ts` que no sea un test, por glob y no por lista escrita
+ * a mano: una lista fija se desactualiza en silencio, que es exactamente el
+ * defecto que estos tests existen para tapar.
+ */
+function electronSources(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(resolve(process.cwd(), dir), { withFileTypes: true })) {
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) { if (entry.name !== 'node_modules') walk(rel); continue; }
+      if (!entry.name.endsWith('.ts') || entry.name.endsWith('.d.ts')) continue;
+      if (/\.test\.ts$/.test(entry.name)) continue;
+      out.push(rel);
+    }
+  };
+  walk('electron');
+  return out;
+}
+
+/** CRLF: el repo guarda así, y una regex que asuma `\n` no encuentra nada. */
+const readSource = (file: string) => readFileSync(resolve(process.cwd(), file.split('/').join(sep)), 'utf8').replace(/\r?\n/g, '\n');
 
 /**
  * Q6: EL MAPA DE ERRORES DICE LO QUE EL MOTOR TIRA, Y SÓLO ESO.
@@ -33,22 +56,48 @@ import { catalogs } from './i18n';
  * `readonly code = 'CODE'` es exactamente la misma promesa que un
  * `new LatteError('CODE')`: un código que puede llegar a una pantalla.
  */
-const SUBCLASS_FILES = [
-  'electron/core/errors.ts',
-  'electron/core/features.ts',
-  'electron/coordination/budget.ts',
-];
+/**
+ * N4 (ronda 7): EL ESCÁNER LEE TODO `electron`, NO TRES ARCHIVOS.
+ *
+ * La lista fija era `errors.ts` + `features.ts` + `budget.ts`, y había
+ * subclases en `storage/learningRepository.ts`, `storage/backup.ts`,
+ * `branding/types.ts` y `generation/errors.ts` que nadie miraba: una subclase
+ * nueva en cualquier otro módulo entraba sin vigilancia y su código podía
+ * llegar a una pantalla sin frase.
+ *
+ * Y el recorte del cuerpo era frágil: `[\s\S]{0,400}?` hasta un `\n}` en
+ * columna 0 no encuentra una clase indentada, ni una con docstring largo. Se
+ * lee de la declaración hasta la declaración siguiente (o el final), sin tope
+ * de caracteres y sin exigir una llave en ninguna columna concreta.
+ */
+export interface SubclassHit { code: string; file: string; className: string }
 
-function subclassCodes(found: Map<string, string[]>): void {
-  for (const file of SUBCLASS_FILES) {
-    const text = readFileSync(resolve(process.cwd(), file), 'utf8').replace(/\r?\n/g, '\n');
-    for (const match of text.matchAll(/class\s+\w+\s+extends\s+\w*Error\b([\s\S]{0,400}?)(?=\n})/g)) {
-      const body = match[1]!;
+function subclassHits(): SubclassHit[] {
+  const hits: SubclassHit[] = [];
+  for (const file of electronSources()) {
+    const text = readSource(file);
+    const declarations = [...text.matchAll(/class\s+(\w+)\s+extends\s+\w*Error\b/g)];
+    for (let i = 0; i < declarations.length; i += 1) {
+      const start = declarations[i]!.index!;
+      const body = text.slice(start, declarations[i + 1]?.index ?? text.length);
       for (const literal of body.matchAll(/(?:super\(|readonly code\s*(?::[^=]*)?=\s*)'([A-Z][A-Z_]{2,})'/g)) {
-        const code = literal[1]!;
-        found.set(code, [...(found.get(code) ?? []), file]);
+        hits.push({ code: literal[1]!, file, className: declarations[i]![1]! });
       }
     }
+  }
+  return hits;
+}
+
+/**
+ * Las subclases que los caminos de COORDINACIÓN pueden tirar: las que viven en
+ * `core/` (genéricas de toda la app, y la coordinación es parte de la app) y
+ * las de `coordination/`. Una subclase de `generation/` o de `storage/` existe
+ * y se vigila —abajo, en el test de N4— pero no llega por acá.
+ */
+function subclassCodes(found: Map<string, string[]>): void {
+  for (const hit of subclassHits()) {
+    if (!hit.file.startsWith('electron/core/') && !hit.file.startsWith('electron/coordination/')) continue;
+    found.set(hit.code, [...(found.get(hit.code) ?? []), hit.file]);
   }
 }
 
@@ -69,8 +118,7 @@ function codesFromSource(): Map<string, string[]> {
   ];
   const found = new Map<string, string[]>();
   for (const file of files) {
-    // CRLF: el repo guarda así, y una regex que asuma `\n` no encuentra nada.
-    const text = readFileSync(resolve(process.cwd(), file), 'utf8').replace(/\r?\n/g, '\n');
+    const text = readSource(file);
     // El primer argumento de `LatteError` no siempre es un literal: hay al
     // menos un ternario (`decision.reason === 'task_cap' ? 'TASK_CAP' :
     // 'DEPTH_CAP'`). Una regex que sólo mirara el literal pegado al paréntesis
@@ -106,7 +154,13 @@ const NOT_FOR_THE_PERSON: Record<string, string> = {
   CONTEXT_EMPTY: 'contexto de marca, no coordinación',
   CONTEXT_STALE: 'contexto de marca, no coordinación',
   CONTEXT_TOO_LONG: 'contexto de marca, no coordinación',
+  // N4: lo tira `backup.ts` ANTES de que exista una ventana: la app no abre
+  // con una base de un esquema más nuevo, así que no hay pantalla que mostrar.
+  INCOMPATIBLE_SCHEMA: 'arranque: se decide antes de que haya interfaz',
 };
+
+/** Las dos mitades juntas: lo que `displayError` puede traducir, venga de donde venga. */
+const TRANSLATED = { ...COORDINATION_ERROR_KEYS, ...APP_ERROR_KEYS };
 
 describe('Q6: el mapa de errores de coordinación', () => {
   const codes = codesFromSource();
@@ -127,7 +181,7 @@ describe('Q6: el mapa de errores de coordinación', () => {
   });
 
   it('todo código que el backend tira tiene frase propia, o una razón escrita para no tenerla', () => {
-    const uncovered = [...codes.keys()].filter((code) => !(code in COORDINATION_ERROR_KEYS) && !(code in NOT_FOR_THE_PERSON));
+    const uncovered = [...codes.keys()].filter((code) => !(code in TRANSLATED) && !(code in NOT_FOR_THE_PERSON));
     expect(uncovered).toEqual([]);
   });
 
@@ -143,7 +197,10 @@ describe('Q6: el mapa de errores de coordinación', () => {
   it('`VALIDATION` es de verdad el código de `ValidationError`', async () => {
     const { ValidationError } = await import('../electron/core/errors');
     expect(new ValidationError('x').code).toBe('VALIDATION');
-    expect(COORDINATION_ERROR_KEYS.VALIDATION).toBeDefined();
+    // N2: y vive en el mapa GENÉRICO, no en el de coordinación: un nombre de
+    // marca vacío es un `ValidationError` y no tiene nada que ver con equipos.
+    expect(APP_ERROR_KEYS.VALIDATION).toBeDefined();
+    expect(COORDINATION_ERROR_KEYS.VALIDATION).toBeUndefined();
   });
 
   it('`INVALID_ARGUMENT` no está: es del sobre MCP y no cruza IPC', () => {
@@ -152,7 +209,7 @@ describe('Q6: el mapa de errores de coordinación', () => {
   });
 
   it('cada frase existe en los dos idiomas, y ninguna quedó vacía', () => {
-    const keys = Object.values(COORDINATION_ERROR_KEYS);
+    const keys = Object.values(TRANSLATED);
     expect(keys.length).toBeGreaterThan(10);
     for (const key of keys) {
       for (const locale of ['es-AR', 'en-US'] as const) {
@@ -161,5 +218,164 @@ describe('Q6: el mapa de errores de coordinación', () => {
         expect(text.trim().length, `${locale} ${key}`).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+/**
+ * N2: LOS DOS MAPAS SON DOS ALCANCES, Y EL FUENTE TIENE QUE DARLES LA RAZÓN.
+ *
+ * `displayError` sirve a toda la app. Un código con frase de coordinación sólo
+ * puede estar en el mapa de coordinación si NADIE fuera de la coordinación lo
+ * tira; y un código en el mapa genérico tiene que ser genérico de verdad, o
+ * sea vivir en `core/` o ser tirado desde más de un módulo. Las dos
+ * condiciones se leen del fuente, no de una lista.
+ */
+describe('N2: cada mapa cubre su alcance, verificado contra `electron/**`', () => {
+  /** Módulo = la carpeta de primer nivel bajo `electron/` (`core`, `coordination`, `branding`, …). */
+  const moduleOf = (file: string) => file.split('/')[1]!;
+
+  /**
+   * Dónde se tira cada código, mirando TODO `electron`: el literal de
+   * `LatteError('X'` y, para las subclases, cada `new XxxError(` más el
+   * archivo donde la clase se declara.
+   */
+  interface Site { code: string; file: string; context: string }
+
+  function throwSites(): Site[] {
+    const byClass = new Map<string, { code: string; file: string }>();
+    for (const hit of subclassHits()) byClass.set(hit.className, { code: hit.code, file: hit.file });
+    const found: Site[] = [];
+    // La declaración de una subclase cuenta: ahí vive el código.
+    for (const { code, file } of byClass.values()) found.push({ code, file, context: '' });
+    for (const file of electronSources()) {
+      const text = readSource(file);
+      for (const match of text.matchAll(/LatteError\(/g)) {
+        const head = text.slice(match.index + match[0].length, match.index + match[0].length + 160);
+        // El CONTEXTO es lo de antes: el nombre del método que lo tira. Un
+        // `ASK_CLOSED` adentro de `answerCoordinationAsk` sigue siendo del
+        // motor aunque la fila viva en el repositorio compartido.
+        const context = text.slice(Math.max(0, match.index - 400), match.index);
+        for (const literal of head.matchAll(/'([A-Z][A-Z_]{2,})'/g)) found.push({ code: literal[1]!, file, context });
+      }
+      for (const [className, { code }] of byClass) {
+        for (const match of text.matchAll(new RegExp(`new\\s+${className}\\s*\\(`, 'g'))) {
+          found.push({ code, file, context: text.slice(Math.max(0, match.index - 400), match.index) });
+        }
+      }
+      // `requireFeature(...)` es un `throw new FeatureDisabledError` disfrazado:
+      // es el camino por el que CUATRO features tiran el mismo código, y es
+      // justamente el hecho que N2 vino a arreglar.
+      for (const match of text.matchAll(/requireFeature\s*\(/g)) {
+        found.push({ code: 'FEATURE_DISABLED', file, context: text.slice(Math.max(0, match.index - 400), match.index) });
+      }
+    }
+    return found;
+  }
+
+  const allSites = throwSites();
+  const filesOf = (code: string) => [...new Set(allSites.filter((s) => s.code === code).map((s) => s.file))];
+  const sites = new Map<string, string[]>(
+    [...new Set(allSites.map((s) => s.code))].map((code) => [code, filesOf(code)]),
+  );
+
+  it('la lectura encuentra sitios de verdad', () => {
+    expect(sites.size).toBeGreaterThan(15);
+    expect([...(sites.get('FEATURE_DISABLED') ?? [])].length).toBeGreaterThan(2);
+  });
+
+  it('ningún código del mapa de COORDINACIÓN se tira fuera de la coordinación', () => {
+    // El alcance: el motor entero, los métodos de coordinación de
+    // `latteService`, y —por contexto, no por archivo— los métodos
+    // `…Coordination…` del repositorio compartido, que es donde viven las
+    // tablas del motor.
+    const allowed = (site: Site) =>
+      site.file.startsWith('electron/coordination/')
+      || site.file === 'electron/services/latteService.ts'
+      || /Coordination/.test(site.context);
+    const codes = Object.keys(COORDINATION_ERROR_KEYS);
+    expect(codes.length).toBeGreaterThan(10);
+    const leaked = allSites
+      .filter((s) => s.code in COORDINATION_ERROR_KEYS && !allowed(s))
+      .map((s) => `${s.code} @ ${s.file}`);
+    // Si esto falla, el código dejó de ser exclusivo del motor y su frase —que
+    // habla de equipos y tareas— ya le está mintiendo a alguien.
+    expect(leaked).toEqual([]);
+  });
+
+  it('cada código del mapa GENÉRICO lo es de verdad: vive en `core/` o lo tira más de un módulo', () => {
+    const codes = Object.keys(APP_ERROR_KEYS);
+    expect(codes.length).toBeGreaterThan(3);
+    for (const code of codes) {
+      const files = [...(sites.get(code) ?? [])];
+      expect(files.length, `${code} no se tira en ningún lado`).toBeGreaterThan(0);
+      const inCore = files.some((f) => f.startsWith('electron/core/'));
+      const modules = new Set(files.map(moduleOf));
+      expect(inCore || modules.size > 1, `${code} sólo lo tira ${[...modules].join(', ')}`).toBe(true);
+    }
+  });
+
+  it('`FEATURE_DISABLED` lo tiran cuatro features, que es el hecho entero de N2', () => {
+    const files = [...(sites.get('FEATURE_DISABLED') ?? [])];
+    for (const file of ['electron/branding/service.ts', 'electron/learning/service.ts', 'electron/services/latteService.ts']) {
+      expect(files, file).toContain(file);
+    }
+  });
+
+  it('ningún código está en los dos mapas a la vez', () => {
+    const both = Object.keys(COORDINATION_ERROR_KEYS).filter((code) => code in APP_ERROR_KEYS);
+    expect(both).toEqual([]);
+  });
+});
+
+/**
+ * N3: NINGUNA FRASE PROMETE UN CONTROL QUE NO EXISTE.
+ *
+ * No hay interruptor de features en ninguna pantalla: los flags se escriben en
+ * `meta`. "Prendela en Ajustes" mandaba a la persona a buscar algo que no está.
+ */
+describe('N3: la copy no manda a Ajustes', () => {
+  it('ninguna clave de error ni de coordinación nombra Ajustes o Settings', () => {
+    for (const locale of ['es-AR', 'en-US'] as const) {
+      const keys = Object.keys(catalogs[locale]).filter((k) => k.startsWith('error.coordination.') || k.startsWith('error.app.') || k.startsWith('coordination.'));
+      expect(keys.length, locale).toBeGreaterThan(20);
+      for (const key of keys) {
+        const text = catalogs[locale][key as keyof typeof catalogs['es-AR']];
+        // `noSettingsNote` es la excepción declarada: dice justamente que NO
+        // hay ningún formulario de configuración, así que nombrarlo es negarlo.
+        if (key.endsWith('noSettingsNote')) continue;
+        expect(text, `${locale} ${key}`).not.toMatch(/\bAjustes\b|\bSettings\b/);
+      }
+    }
+  });
+});
+
+/**
+ * N4: EL ESCÁNER DE SUBCLASES MUERDE EN TODO `electron`.
+ */
+describe('N4: el escáner de subclases lee todo `electron`', () => {
+  const hits = subclassHits();
+  const files = new Set(hits.map((h) => h.file));
+
+  it('encuentra subclases de verdad, y en más módulos que los tres de la lista vieja', () => {
+    expect(hits.length).toBeGreaterThanOrEqual(7);
+    for (const file of ['electron/core/errors.ts', 'electron/core/features.ts', 'electron/coordination/budget.ts', 'electron/storage/backup.ts']) {
+      expect([...files], file).toContain(file);
+    }
+    // Y las clases, por nombre: si alguna cambia de forma, el escáner deja de
+    // verla y este test lo dice en vez de quedarse verde sin mirar nada.
+    const names = new Set(hits.map((h) => h.className));
+    for (const name of ['ValidationError', 'NotFoundError', 'UnavailableError', 'ConflictError', 'FeatureDisabledError', 'BudgetUnsetError', 'IncompatibleSchemaError']) {
+      expect([...names], name).toContain(name);
+    }
+  });
+
+  it('el barrido mira más archivos que la lista fija que reemplazó', () => {
+    expect(electronSources().length).toBeGreaterThan(50);
+    expect(electronSources().some((f) => f === 'electron/coordination/injection.ts')).toBe(true);
+  });
+
+  it('todo código de subclase, de cualquier módulo, tiene frase o una razón escrita', () => {
+    const uncovered = [...new Set(hits.map((h) => h.code))].filter((code) => !(code in TRANSLATED) && !(code in NOT_FOR_THE_PERSON));
+    expect(uncovered).toEqual([]);
   });
 });

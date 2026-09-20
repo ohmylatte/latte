@@ -78,10 +78,8 @@ export const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
   PLAN_HAS_UNAPPROVED_ROLES: 'error.coordination.planHasUnapprovedRoles',
   // Q6: `INVALID_ARGUMENT` NO ESTÁ. Sólo existe en el sobre MCP —el error que
   // `tools.ts` le devuelve a un agente— y nunca cruza la frontera IPC: era una
-  // frase escrita para una pantalla que no la iba a mostrar jamás. Lo que SÍ
-  // cruza por ese camino es `VALIDATION`, el código de todo `ValidationError`,
-  // y no tenía entrada.
-  VALIDATION: 'error.coordination.validation',
+  // frase escrita para una pantalla que no la iba a mostrar jamás.
+  //
   // Y los que la persona alcanza con un clic, que es el único criterio que
   // decide si un código necesita frase propia.
   BUDGET_EXCEEDED: 'error.coordination.budgetExceeded',
@@ -100,22 +98,53 @@ export const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
   PROPOSAL_STALE: 'error.coordination.proposalStale',
   PROPOSAL_DECIDED: 'error.coordination.proposalDecided',
   // O2: los códigos de las SUBCLASES de `LatteError`, invisibles hasta acá.
-  // `FEATURE_DISABLED` está a UN clic: aprobar una propuesta con
-  // `feature:coordination` apagada. Sin entrada, la persona leía el mensaje que
-  // `features.ts` escribe para el log. `BUDGET_UNSET` lo tira `startRun` cuando
-  // nadie configuró un tope todavía. Los otros tres son genéricos de toda la
-  // app y también cruzan IPC por los caminos de coordinación (una tarea o una
-  // pregunta que ya no está, un miembro que no se pudo levantar, una decisión
-  // que otro resolvió antes).
-  FEATURE_DISABLED: 'error.coordination.featureDisabled',
+  // `BUDGET_UNSET` lo tira `startRun` —y SÓLO él— cuando nadie configuró un
+  // tope todavía.
   BUDGET_UNSET: 'error.coordination.budgetUnset',
-  NOT_FOUND: 'error.coordination.notFound',
-  UNAVAILABLE: 'error.coordination.unavailable',
-  CONFLICT: 'error.coordination.conflict',
 };
+
+/**
+ * N2 (ronda 7): ESTE MAPA ES DE TODA LA APP, Y POR ESO SU COPY ES NEUTRA.
+ *
+ * La ronda 6 metió `FEATURE_DISABLED`, `NOT_FOUND`, `UNAVAILABLE` y `CONFLICT`
+ * en el mapa de arriba, con frases escritas para la coordinación. Pero
+ * `displayError` es el formateador de errores de TODA la app: el mismo
+ * `FEATURE_DISABLED` lo tiran cuatro features (`requireFeature` en
+ * `branding/service.ts`, `latteService` para generación, `learning/service.ts`
+ * y coordinación), `UNAVAILABLE` lo tira el arranque de un runtime, y
+ * `NOT_FOUND`/`CONFLICT` los tira medio backend. Quien abría un kit de marca
+ * con su flag apagado leía "La coordinación de equipo está apagada": una
+ * explicación falsa de un hecho verdadero.
+ *
+ * Dos mapas, entonces: arriba lo que SÓLO tira el motor de coordinación, acá
+ * lo genérico, y ninguna de estas frases nombra equipos ni tareas.
+ *
+ * N3: `FEATURE_DISABLED` ya no promete Ajustes. No hay interruptor en ninguna
+ * pantalla —los flags se escriben en `meta`— así que la frase dice el hecho y
+ * se calla la acción que no existe.
+ */
+export const APP_ERROR_KEYS: Record<string, MessageKey> = {
+  FEATURE_DISABLED: 'error.app.featureDisabled',
+  NOT_FOUND: 'error.app.notFound',
+  UNAVAILABLE: 'error.app.unavailable',
+  CONFLICT: 'error.app.conflict',
+  // El código de todo `ValidationError`, que sí cruza IPC por cualquier
+  // camino: un nombre de marca vacío no es un problema de coordinación.
+  VALIDATION: 'error.app.validation',
+};
+
+/**
+ * Primero el mapa de coordinación, después el genérico, y al final el
+ * `message` del motor: un código sin frase no se tapa con una genérica
+ * inventada, porque ahí hay información que alguien va a necesitar.
+ *
+ * El orden importa y es el único posible: un código que estuviera en los dos
+ * mapas tendría que leerse con la frase específica. Hoy no hay ninguno, y el
+ * test estructural de `coordination-error-map.dom.test.tsx` lo sostiene.
+ */
 const displayError = (e: unknown) => {
   const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
-  const key = COORDINATION_ERROR_KEYS[code];
+  const key = COORDINATION_ERROR_KEYS[code] ?? APP_ERROR_KEYS[code];
   if (key) return t(key);
   return e instanceof Error ? e.message : String(e);
 };

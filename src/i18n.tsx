@@ -500,7 +500,6 @@ const es = {
   'error.coordination.planHasUnapprovedRoles': 'El plan tiene tareas para roles que nadie va a poder hacer. Abrí "Editar y aprobar": esas tareas se quitan solas, y podés aprobar el resto. Si no queda ninguna, rechazá y pedí una propuesta nueva.',
   // Q6: los que la persona alcanza con un clic, y que hasta ahora le llegaban
   // en el idioma en que están escritos los mensajes del motor.
-  'error.coordination.validation': 'Algo de lo que se mandó no es válido. Revisá los datos y probá de nuevo.',
   'error.coordination.budgetExceeded': 'Este equipo ya usó todo su presupuesto de despachos. Subilo, o cerralo acá.',
   'error.coordination.maxConcurrent': 'Este equipo ya tiene todos sus despachos simultáneos en curso. Esperá a que alguno termine.',
   'error.coordination.invalidGate': 'Esa decisión ya no existe: alguien la resolvió, o el equipo cambió de estado.',
@@ -514,15 +513,25 @@ const es = {
   'error.coordination.depthCap': 'Este plan encadena demasiadas dependencias seguidas. Acortá la cadena y volvé a proponerlo.',
   'error.coordination.proposalStale': 'El contexto de marca cambió desde que se escribió esta propuesta: volvé a abrirla.',
   'error.coordination.proposalDecided': 'Esa propuesta ya se resolvió.',
-  // O2: los de las SUBCLASES, que el escáner del mapa no veía. `FEATURE_DISABLED`
-  // se alcanza con un clic —aprobar una propuesta con el interruptor apagado— y
-  // hasta acá mostraba el mensaje de log de `features.ts`, escrito para quien
-  // lee el código.
-  'error.coordination.featureDisabled': 'La coordinación de equipo está apagada en esta instalación. Prendela en Ajustes y volvé a intentar.',
+  // O2: los de las SUBCLASES, que el escáner del mapa no veía.
   'error.coordination.budgetUnset': 'Este trabajo todavía no tiene presupuesto de despachos: escribí un tope antes de arrancar el equipo.',
-  'error.coordination.notFound': 'Eso ya no está: el equipo, la tarea o la pregunta que estabas mirando se cerró o se borró. Volvé a abrir la pantalla.',
-  'error.coordination.unavailable': 'Algo que la coordinación necesita no está disponible ahora mismo. Probá de nuevo en un rato.',
-  'error.coordination.conflict': 'Alguien más cambió esto mientras lo mirabas. Volvé a abrir la pantalla y decidí sobre lo que hay ahora.',
+  // N2 (ronda 7): LOS GENÉRICOS DE TODA LA APP, CON COPY NEUTRA.
+  //
+  // Estos cinco códigos no son de coordinación: `FEATURE_DISABLED` lo tiran
+  // CUATRO features (coordinación, kits de marca, generación, aprendizaje),
+  // `NOT_FOUND`/`CONFLICT`/`UNAVAILABLE`/`VALIDATION` los tira medio backend.
+  // Escritos en el idioma de los equipos, aparecían hablando de tareas y
+  // preguntas cuando alguien abría un kit de marca o no arrancaba un runtime.
+  // Ninguna de estas frases nombra equipos ni tareas.
+  //
+  // N3: y `FEATURE_DISABLED` no promete Ajustes. NO EXISTE tal interruptor en
+  // la pantalla: los flags se escriben en `meta`. Mandar a la persona a
+  // buscar un control que no está es peor que no decirle nada.
+  'error.app.featureDisabled': 'Esta función está apagada en esta instalación.',
+  'error.app.notFound': 'Eso ya no está: se cerró o se borró mientras lo mirabas. Volvé a abrir la pantalla.',
+  'error.app.unavailable': 'Algo que hacía falta no está disponible ahora mismo. Probá de nuevo en un rato.',
+  'error.app.conflict': 'Alguien más cambió esto mientras lo mirabas. Volvé a abrir la pantalla y decidí sobre lo que hay ahora.',
+  'error.app.validation': 'Algo de lo que se mandó no es válido. Revisá los datos y probá de nuevo.',
   'coordination.settings.kicker': 'COORDINACIÓN AUTÓNOMA',
   'coordination.authority.manual': 'Manual: cada despacho pide tu aprobación',
   'coordination.authority.plan': 'Por plan: aprobás el plan una vez y después despacha solo',
@@ -1183,7 +1192,6 @@ const en: Record<MessageKey, string> = {
   'error.coordination.roleNotApproved': 'That role is not part of the team you approved: it needs its own approval.',
   'error.coordination.budgetInvalid': "This project's budget could not be read: write it again before going on.",
   'error.coordination.planHasUnapprovedRoles': 'The plan has tasks for roles nobody can do. Open “Edit and approve”: those tasks are dropped for you, and you can approve the rest. If none are left, discard it and ask for a new proposal.',
-  'error.coordination.validation': 'Something that was sent is not valid. Check the values and try again.',
   'error.coordination.budgetExceeded': 'This team has used up its dispatch budget. Raise it, or close the team here.',
   'error.coordination.maxConcurrent': 'This team already has all its concurrent dispatches running. Wait for one to finish.',
   'error.coordination.invalidGate': 'That decision no longer exists: someone resolved it, or the team changed state.',
@@ -1197,11 +1205,12 @@ const en: Record<MessageKey, string> = {
   'error.coordination.depthCap': 'This plan chains too many dependencies in a row. Shorten the chain and propose it again.',
   'error.coordination.proposalStale': 'The brand context changed since this proposal was written: open it again.',
   'error.coordination.proposalDecided': 'That proposal was already resolved.',
-  'error.coordination.featureDisabled': 'Team coordination is switched off in this installation. Turn it on in Settings and try again.',
   'error.coordination.budgetUnset': 'This project has no dispatch budget yet: set a cap before starting the team.',
-  'error.coordination.notFound': 'That is gone: the team, task or question you were looking at was closed or deleted. Open the screen again.',
-  'error.coordination.unavailable': 'Something coordination needs is not available right now. Try again in a while.',
-  'error.coordination.conflict': 'Someone else changed this while you were looking at it. Open the screen again and decide on what is there now.',
+  'error.app.featureDisabled': 'This feature is switched off in this installation.',
+  'error.app.notFound': 'That is gone: it was closed or deleted while you were looking at it. Open the screen again.',
+  'error.app.unavailable': 'Something that was needed is not available right now. Try again in a while.',
+  'error.app.conflict': 'Someone else changed this while you were looking at it. Open the screen again and decide on what is there now.',
+  'error.app.validation': 'Something that was sent is not valid. Check the values and try again.',
   'coordination.settings.kicker': 'AUTONOMOUS COORDINATION',
   'coordination.authority.manual': 'Manual: every dispatch asks for your approval',
   'coordination.authority.plan': 'By plan: approve the plan once, then it dispatches on its own',
