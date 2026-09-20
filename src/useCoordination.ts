@@ -228,12 +228,25 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     // resolvió bien; `false` cuando falló, ya reportado acá adentro. Nunca
     // rechaza: una promesa que rechaza obliga a cada llamador a encadenar su
     // propio `.catch`, y el que se olvide deja una promesa sin manejar.
+    //
+    // N9 (ronda 7): Y EL `.finally` TAMPOCO PUEDE RECHAZAR.
+    //
+    // "Nunca rechaza" era la promesa, pero el cuerpo del `.finally` la rompía:
+    // un throw sincrónico en `refreshActiveRuns`/`refreshWork` —o en el propio
+    // `report`— rechaza la promesa que `.finally` devuelve, aunque el `.then`
+    // de arriba haya resuelto `true`. `confirmEdit` lo ve como "el motor
+    // rechazó" y deja el editor abierto sobre una aprobación QUE SÍ ENTRÓ: la
+    // persona vuelve a apretar y manda la propuesta dos veces. Un refresco que
+    // falla es un dato viejo en pantalla, no una mutación deshecha, así que no
+    // puede cambiar lo que se le responde a quien la emitió.
     return action
-      .then(() => true, (e: unknown) => { report(e); return false; })
+      .then(() => true, (e: unknown) => { try { report(e); } catch { /* el canal de error no puede tapar el resultado */ } return false; })
       .finally(() => {
-        setPending((prev) => { const next = { ...prev }; delete next[key]; return next; });
-        refreshActiveRuns();
-        if (issuedWorkId && issuedWorkId === liveWorkId.current) refreshWork(issuedWorkId);
+        try {
+          setPending((prev) => { const next = { ...prev }; delete next[key]; return next; });
+          refreshActiveRuns();
+          if (issuedWorkId && issuedWorkId === liveWorkId.current) refreshWork(issuedWorkId);
+        } catch { /* un refresco caído deja datos viejos, no una mutación sin respuesta */ }
       });
   };
 

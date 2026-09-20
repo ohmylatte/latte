@@ -433,3 +433,36 @@ describe('useCoordination: una lectura que falla se REPORTA, sin dejar de degrad
     expect(result.current.activeRuns).toEqual([]);
   });
 });
+
+/**
+ * N9 (ronda 7): `mutate` NUNCA RECHAZA — TAMPOCO POR SU PROPIO `.finally`.
+ *
+ * El contrato escrito arriba de `mutate` es "nunca rechaza: `true` si el
+ * backend resolvió, `false` si falló". El cuerpo del `.finally` lo rompía: un
+ * throw SINCRÓNICO en `refreshActiveRuns`/`refreshWork` rechaza la promesa que
+ * `.finally` devuelve aunque el `.then` haya resuelto `true`. `confirmEdit` lo
+ * lee como "el motor rechazó" y deja el editor abierto sobre una aprobación
+ * QUE SÍ ENTRÓ: la persona vuelve a apretar y aprueba dos veces.
+ */
+describe('N9: un refresco caído no puede desmentir una mutación que entró', () => {
+  it('con `listActiveCoordinationRuns` tirando en seco, `resolveGate` igual devuelve `true`', async () => {
+    const { result } = renderHook(() => useCoordination('w1', () => {}));
+    await waitFor(() => expect(result.current.workLoaded).toBe(true));
+    // El refresco del `.finally` explota SINCRÓNICAMENTE, que es el caso que
+    // una promesa rechazada no cubre.
+    mocks.listActiveCoordinationRuns.mockImplementation(() => { throw new Error('el refresco explotó'); });
+
+    await expect(result.current.resolveGate('g1', 'approve')).resolves.toBe(true);
+  });
+
+  it('y cuando el backend SÍ falla sigue devolviendo `false`, no una promesa rechazada', async () => {
+    const onError = vi.fn();
+    const { result } = renderHook(() => useCoordination('w1', onError));
+    await waitFor(() => expect(result.current.workLoaded).toBe(true));
+    mocks.resolveCoordinationGate.mockRejectedValue(new Error('el motor rechazó'));
+    mocks.listActiveCoordinationRuns.mockImplementation(() => { throw new Error('el refresco explotó'); });
+
+    await expect(result.current.resolveGate('g1', 'approve')).resolves.toBe(false);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'el motor rechazó' }));
+  });
+});
