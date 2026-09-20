@@ -224,15 +224,32 @@ function describeAggregate(mine: number | null, aggregate: CoordinationGateAggre
 type ResolveGate = DecisionsViewProps['onResolveGate'];
 type Pending = DecisionsViewProps['pending'];
 
+/**
+ * M4 (ronda 8): LA MISMA REGLA EN LAS CINCO TARJETAS.
+ *
+ * N10 le puso a la tarjeta de la propuesta legible la regla correcta —sin
+ * `onResolveGate` no se ofrece una acción que no existe— y la dejó ahí sola.
+ * Las otras cuatro (plan, presupuesto, despacho, propuesta ilegible) seguían
+ * pintando "Aprobar" y "Rechazar" contra un `onResolveGate?.()` que no hacía
+ * nada: un clic en el vacío, sin un solo aviso. Y la que sí los escondía los
+ * escondía en SILENCIO, que tampoco es honesto: la persona no sabe si la
+ * tarjeta es de sólo lectura o si la pantalla está rota.
+ *
+ * Una nota, una sola, para las cinco.
+ */
+function ReadOnlyGateNote() {
+  return <p className="decision-gate-readonly">{t('coordination.gate.readOnly')}</p>;
+}
+
 /** The plan gate (task 7.4): approve/reject only — the engine ignores `editedPrompt` for this kind, so offering an edit here would be a capability that does not work. */
 function PlanGateCard({ gate, onResolveGate, pending }: { gate: CoordinationGateView; onResolveGate?: ResolveGate; pending?: Pending }) {
   const busy = Boolean(pending?.[`gate:${gate.id}`]);
   return <div className="decision-gate decision-gate-plan" data-gate-kind="plan">
     <h3>{t('coordination.gate.plan.title')}</h3>
-    <div className="decision-gate-actions">
-      <button className="primary" disabled={busy} onClick={() => onResolveGate?.(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
-      <button disabled={busy} onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
-    </div>
+    {onResolveGate ? <div className="decision-gate-actions">
+      <button className="primary" disabled={busy} onClick={() => onResolveGate(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
+      <button disabled={busy} onClick={() => onResolveGate(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
+    </div> : <ReadOnlyGateNote />}
   </div>;
 }
 
@@ -242,10 +259,10 @@ function BudgetGateCard({ gate, onResolveGate, pending }: { gate: CoordinationGa
   return <div className="decision-gate decision-gate-budget" data-gate-kind="budget">
     <h3>{t('coordination.gate.budget.title')}</h3>
     <p>{t('coordination.gate.budget.body')}</p>
-    <div className="decision-gate-actions">
-      <button className="primary" disabled={busy} onClick={() => onResolveGate?.(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
-      <button disabled={busy} onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
-    </div>
+    {onResolveGate ? <div className="decision-gate-actions">
+      <button className="primary" disabled={busy} onClick={() => onResolveGate(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
+      <button disabled={busy} onClick={() => onResolveGate(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
+    </div> : <ReadOnlyGateNote />}
   </div>;
 }
 
@@ -255,11 +272,11 @@ function DispatchGateCard({ gate, onResolveGate, pending }: { gate: Coordination
   return <div className="decision-gate decision-gate-dispatch" data-gate-kind="dispatch">
     <h3>{t('coordination.gate.dispatch.title')}</h3>
     {gate.prompt && <p className="decision-gate-prompt">{gate.prompt}</p>}
-    <div className="decision-gate-actions">
-      <button className="primary" disabled={busy} onClick={() => onResolveGate?.(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
-      <button disabled={busy} onClick={() => { const edited = window.prompt(t('coordination.gate.editApprove'), gate.prompt ?? ''); if (edited?.trim()) onResolveGate?.(gate.id, 'approve', edited.trim()); }}>{t('coordination.gate.editApprove')}</button>
-      <button disabled={busy} onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
-    </div>
+    {onResolveGate ? <div className="decision-gate-actions">
+      <button className="primary" disabled={busy} onClick={() => onResolveGate(gate.id, 'approve')}>{t('coordination.gate.approve')}</button>
+      <button disabled={busy} onClick={() => { const edited = window.prompt(t('coordination.gate.editApprove'), gate.prompt ?? ''); if (edited?.trim()) onResolveGate(gate.id, 'approve', edited.trim()); }}>{t('coordination.gate.editApprove')}</button>
+      <button disabled={busy} onClick={() => onResolveGate(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
+    </div> : <ReadOnlyGateNote />}
   </div>;
 }
 
@@ -336,9 +353,9 @@ function UnreadableProposalCard({ gate, onResolveGate, pending }: { gate: Coordi
   return <div className="decision-gate decision-gate-proposal" data-gate-kind="proposal">
     <div className="document-kicker">{t('coordination.proposal.kicker')}</div>
     <p className="decision-gate-unreadable">{t('coordination.proposal.unreadable')}</p>
-    <div className="decision-gate-actions">
-      <button disabled={busy} onClick={() => onResolveGate?.(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
-    </div>
+    {onResolveGate ? <div className="decision-gate-actions">
+      <button disabled={busy} onClick={() => onResolveGate(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
+    </div> : <ReadOnlyGateNote />}
   </div>;
 }
 
@@ -617,7 +634,10 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
         inerte: `accepted` quedaba `undefined`, no era `false`, y el editor se
         cerraba como si el motor hubiera aceptado una aprobación que nunca
         salió. La tarjeta se lee igual; lo que no se ofrece es una acción que no
-        existe. */}
+        existe.
+        M4 (ronda 8): y ahora se DICE, en vez de esconder los botones en
+        silencio — la misma nota que las otras cuatro tarjetas. */}
+    {!onResolveGate && <ReadOnlyGateNote />}
     {onResolveGate && <div className="decision-gate-actions">
       {/* O1: la condición es el ESTADO DEL FORMULARIO, no si el editor está
           abierto. Antes era `!editing`, y eso deja pasar el caso que importa:

@@ -556,6 +556,10 @@ const es = {
   'coordination.gate.approve': 'Aprobar',
   'coordination.gate.editApprove': 'Editar y aprobar',
   'coordination.gate.reject': 'Rechazar',
+  // M4 (ronda 8): la nota de sólo lectura, una sola para las cinco tarjetas
+  // de decisión. Sin quien resuelva, no se ofrece un botón que no hace nada —
+  // y tampoco se esconde en silencio.
+  'coordination.gate.readOnly': 'Esta decisión se muestra de sólo lectura: desde acá no se puede resolver.',
   'coordination.gate.plan.title': 'Plan de trabajo pendiente de aprobar',
   'coordination.gate.dispatch.title': 'Despacho pendiente de aprobar',
   'coordination.gate.budget.title': 'Presupuesto agotado',
@@ -1235,6 +1239,7 @@ const en: Record<MessageKey, string> = {
   'coordination.gate.approve': 'Approve',
   'coordination.gate.editApprove': 'Edit and approve',
   'coordination.gate.reject': 'Reject',
+  'coordination.gate.readOnly': 'This decision is shown read-only: it cannot be resolved from here.',
   'coordination.gate.plan.title': 'Work plan pending approval',
   'coordination.gate.dispatch.title': 'Dispatch pending approval',
   'coordination.gate.budget.title': 'Budget exhausted',

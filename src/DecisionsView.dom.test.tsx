@@ -318,20 +318,20 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
   });
 
   it('gives the budget-exhausted gate exactly 2 actions — the three-action triple is a pattern, not a contract', () => {
-    const { container } = renderView('es-AR', { gates: [gateView({ id: 'g-budget', kind: 'budget' })] });
+    const { container } = renderView('es-AR', { gates: [gateView({ id: 'g-budget', kind: 'budget' })], onResolveGate: () => {} });
     const actions = container.querySelectorAll('.decision-gate-budget .decision-gate-actions button');
     expect(actions).toHaveLength(2);
     expect([...actions].map((b) => b.textContent)).toEqual(['Aprobar', 'Rechazar']);
   });
 
   it('gives the plan gate exactly 2 actions too — there is nothing to edit at plan-approval, the engine ignores it', () => {
-    const { container } = renderView('es-AR', { gates: [gateView({ id: 'g-plan', kind: 'plan' })] });
+    const { container } = renderView('es-AR', { gates: [gateView({ id: 'g-plan', kind: 'plan' })], onResolveGate: () => {} });
     const actions = container.querySelectorAll('.decision-gate-plan .decision-gate-actions button');
     expect(actions).toHaveLength(2);
   });
 
   it('gives the dispatch gate all 3 actions, since its prompt is genuinely editable', () => {
-    const { container } = renderView('es-AR', { gates: [gateView({ id: 'g-dispatch', kind: 'dispatch', prompt: 'Prompt original' })] });
+    const { container } = renderView('es-AR', { gates: [gateView({ id: 'g-dispatch', kind: 'dispatch', prompt: 'Prompt original' })], onResolveGate: () => {} });
     const actions = container.querySelectorAll('.decision-gate-dispatch .decision-gate-actions button');
     expect(actions).toHaveLength(3);
   });
