@@ -188,6 +188,8 @@ export interface LatteServiceDeps {
    * describe una arquitectura que ya no existe es peor que no tener ninguno.
    */
   emitCoordination?: (event: CoordinationEvent) => void;
+  /** M3: el log del proceso, para que un paso del tick de coordinación que falla deje rastro en vez de perderse en un `catch` mudo. */
+  log?: (line: string) => void;
   /** MCP servers, read and written through each runtime's own CLI. */
   mcp?: McpCatalog;
   /** Opens a native save dialog; returns the chosen path or null on cancel. */
@@ -323,6 +325,7 @@ export class LatteService implements BackendApi {
       emit: deps.emitCoordination,
       // Task 8.1: the real flag, off by default like every other feature.
       isCoordinationEnabled: () => featureEnabled((key) => deps.repo.getMeta(key), 'coordination'),
+      log: deps.log,
     });
     this.branding = new BrandingService({
       repo: deps.repo,

@@ -219,6 +219,14 @@ export interface CoordinationEngineDeps {
    * deliberately NOT read here.
    */
   isCoordinationEnabled?: () => boolean;
+  /**
+   * M3 (ronda 8): dónde va a parar el fallo de un paso del tick. El barrido no
+   * puede tirar hacia afuera —un run roto no puede dejar sin barrer a los
+   * demás— y hasta ahora eso significaba tragarse el error en silencio.
+   * Opcional: los tests que construyen el motor a mano siguen sin cablear
+   * nada.
+   */
+  log?: (line: string) => void;
 }
 
 function isDagStatus(status: CoordinationTaskRecord['status']): DagTask['status'] {
@@ -2196,26 +2204,42 @@ export class CoordinationEngine {
    * recibe ninguna otra llamada. La diferencia es que ahora lo corre algo que
    * escribe a propósito, en vez de algo que la persona creía que sólo miraba.
    *
-   * Tres pasos por run activo, todos idempotentes y baratos: vencer lo vencido
-   * (que ya levanta la suspensión cuyo motivo dejó de ser cierto), volver a
-   * preguntarse si el run terminó, y re-evaluar la auto-suspensión. Un run que
-   * se cierra en el primer paso no se toca en los siguientes: los dos releen su
-   * estado y salen. Nunca tira hacia afuera: un run roto no puede impedir que
-   * los demás se barran.
+   * CUATRO PASOS por run activo, todos idempotentes y baratos, en este orden:
+   *
+   *  1. liquidar lo que no tiene a nadie adentro (`settleOrphanDispatches`):
+   *     libera reservas y devuelve tareas a `ready`, así que los tres
+   *     siguientes miran el estado de verdad y no el que dejó un proceso
+   *     muerto;
+   *  2. vencer lo vencido (`refreshAsks`), que ya levanta la suspensión cuyo
+   *     motivo dejó de ser cierto;
+   *  3. volver a preguntarse si el run terminó (`finishRunIfComplete`);
+   *  4. re-evaluar la auto-suspensión (`maybeSelfSuspendOnAsks`).
+   *
+   * Un run que se cierra en un paso no se toca en los siguientes: todos releen
+   * su estado y salen.
+   *
+   * M3 (ronda 8): CADA PASO EN SU PROPIO `try`, igual que el `guard` de la
+   * rama `closed` de `bootstrap.ts`. Los cuatro escriben en la base y los
+   * cuatro pueden tirar; con un solo `try`, un fallo en el primero —el que más
+   * escribe y el único que consulta al hub— se llevaba puestos a los otros
+   * tres: el equipo quedaba sin vencer preguntas, sin cerrar y sin
+   * re-evaluarse, en silencio, hasta el próximo arranque de la app. El orden
+   * importa (cada paso deja el estado más limpio para el siguiente); la
+   * dependencia no: ninguno necesita que el anterior haya salido bien.
+   *
+   * Nunca tira hacia afuera: un run roto no puede impedir que los demás se
+   * barran.
    */
   sweepActiveRuns(): void {
     const now = this.deps.clock();
+    const guard = (what: string, fn: () => void): void => {
+      try { fn(); } catch (error) { this.deps.log?.(`[latte] coordination sweep (${what}) failed: ${error instanceof Error ? error.message : String(error)}`); }
+    };
     for (const run of this.deps.repo.listActiveCoordinationRuns()) {
-      try {
-        // N1: PRIMERO lo que no tiene dueño. Liquidar una fila huérfana libera
-        // su reserva y devuelve su tarea a `ready`, así que los tres pasos
-        // siguientes miran el estado de verdad y no el que dejó un proceso
-        // muerto.
-        this.settleOrphanDispatches(run, now);
-        this.refreshAsks(run.id, now);
-        this.finishRunIfComplete(run.id, now);
-        this.maybeSelfSuspendOnAsks(run.id, now);
-      } catch { /* una fila rota no puede dejar sin barrer a las demás */ }
+      guard('settleOrphanDispatches', () => this.settleOrphanDispatches(run, now));
+      guard('refreshAsks', () => this.refreshAsks(run.id, now));
+      guard('finishRunIfComplete', () => this.finishRunIfComplete(run.id, now));
+      guard('maybeSelfSuspendOnAsks', () => this.maybeSelfSuspendOnAsks(run.id, now));
     }
   }
 

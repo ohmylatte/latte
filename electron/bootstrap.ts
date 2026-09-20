@@ -324,6 +324,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     mcp,
     pack,
     engineReason: reason,
+    log: options.log,
     version: options.version,
     chooseExportPath: options.chooseExportPath,
     chooseFolder: options.chooseFolder,
