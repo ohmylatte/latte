@@ -2281,7 +2281,18 @@ export class CoordinationEngine {
     try { return this.deps.hub.liveMemberIds(workId); } catch { return null; }
   }
 
-  /** Vivo (algún adaptador lo posee) o en medio de un turno. Con `live` en `null` nadie se declara adentro: el que decide qué hacer con eso es el llamador. */
+  /**
+   * Vivo (algún adaptador lo posee) o en medio de un turno. Con `live` en
+   * `null` nadie se declara adentro: el que decide qué hacer con eso es el
+   * llamador.
+   *
+   * L10 (ronda 9): y un `isMemberBusy` que TIRA se lee acá como "hay alguien
+   * adentro", igual que en `memberIsBusySafe`. El `catch { return false }`
+   * contradecía el comentario de su único llamador —"un hub que tira se lee en
+   * `allBlockedOnAsks` como 'hay alguien adentro'"—, que es la regla que
+   * `live === null` ya aplica una línea más arriba en el llamador. Suspender
+   * es una decisión, y no saber no es una razón para tomarla.
+   */
   private memberIsInside(memberId: string, live: Set<string> | null): boolean {
     if (!memberId) return false;
     if (live?.has(memberId)) return true;
