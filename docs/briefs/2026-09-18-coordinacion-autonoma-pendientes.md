@@ -1,3 +1,5 @@
+> **Superado** por `2026-09-20-coordinacion-autonoma-cierre.md`. Este documento queda como historia del estado en `39fb0f4`.
+
 # Coordinación autónoma: lo que quedó pendiente
 
 **Estado**: la rama `gabogabucho/latte-orchestration` termina en `39fb0f4`, con la suite verde
