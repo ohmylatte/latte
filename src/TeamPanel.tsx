@@ -209,8 +209,14 @@ export function TeamPanel(props: TeamPanelProps) {
         controles del run desaparecían enteros — la persona se quedaba sin
         ninguna salida justo cuando la coordinación recién arranca. */}
     <div className="team-rail-head">
-      <CoordinationRunControls run={props.coordinationRun ?? null} busy={busy} pending={props.pending}
-        onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination} />
+      {/* B5.4: EN MODO EQUIPO ESTA LINEA LA DIBUJA `TeamView`, Y UNA SOLA VEZ.
+          Los dos la renderizaban, asi que el modo Equipo mostraba las cuentas
+          del run, el presupuesto y los botones de pausar/cancelar DOS VECES,
+          una encima de la otra: dos "Cancelar equipo" distintos para el mismo
+          run es una pantalla que no dice cual es cual. En modo conversacion
+          `TeamView` no se dibuja, asi que ahi esta es la unica. */}
+      {rail === 'chat' && <CoordinationRunControls run={props.coordinationRun ?? null} busy={busy} pending={props.pending}
+        onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination} />}
       {work && team.length > 0 && <div className="team-rail-modes" role="group" aria-label={t('team.rail.group')}>
         <button type="button" className={'team-rail-chat' + (rail === 'chat' ? ' selected' : '')} aria-pressed={rail === 'chat'} onClick={() => setRail('chat')}><MessageSquare size={13} />{t('team.rail.chat')}</button>
         {/* El contador es del TRABAJO entero: gates mas preguntas. No promete a
