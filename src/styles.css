@@ -826,3 +826,114 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .decision-evidence{font-size:var(--text-sm);color:var(--ink-soft);margin:0 0 6px}
 .decision-evidence strong{font-weight:550;color:var(--ink);margin-right:6px}
 
+
+/* --- El equipo: las tarjetas en el chat, el buzon del panel y lo avanzado ---
+   B1.5. Sobrio y con los mismos tokens que el resto: papel, linea, tinta.
+   Las tarjetas viven arriba del campo de escribir, asi que su techo esta
+   acotado -- una propuesta larga no puede comerse la conversacion entera. */
+.team-cards{display:flex;flex-direction:column;gap:10px;margin:10px 0 0;padding:12px;border:1px solid var(--line-strong);border-radius:var(--radius-md);background:var(--paper-raised);max-height:46vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--rust-soft) transparent}
+.team-cards-title{margin:0}
+.team-cards-elsewhere{flex-direction:row;align-items:center;justify-content:space-between;gap:10px;max-height:none;overflow:visible}
+.team-cards-waiting{margin:0;font-size:var(--text-sm);color:var(--rust-deep)}
+.team-cards-goto{font-size:var(--text-sm);padding:5px 9px;white-space:nowrap}
+.team-card{border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--foam);padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.team-card h3{margin:0;font-size:var(--text-md);font-weight:600;color:var(--ink)}
+.team-card p{margin:0;font-size:var(--text-sm);line-height:1.6;color:var(--ink-soft)}
+.team-card small{font-size:var(--text-sm);color:var(--muted)}
+.team-card ul,.team-card ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.team-card li{font-size:var(--text-sm);line-height:1.6;display:flex;flex-direction:column;gap:2px}
+.team-card li strong{font-weight:550;color:var(--ink)}
+.team-card-actions,.team-card-edit-actions{display:flex;flex-wrap:wrap;gap:8px}
+.team-card-actions button,.team-card-edit-actions button{font-size:var(--text-sm);padding:6px 10px}
+.team-card-text{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+.team-card-first-line{font-size:var(--text-sm);color:var(--ink-soft);overflow-wrap:anywhere}
+.team-card-more{border:0;padding:2px 0;color:var(--rust);font-size:var(--text-sm)}
+.team-card-text .markdown{font-size:var(--text-sm);max-width:100%;overflow-wrap:anywhere}
+.team-card-text .markdown p,.team-card-text .markdown li{font-size:var(--text-sm)}
+.team-card-prompt{border-left:2px solid var(--line-strong);padding-left:10px}
+.team-card-question{color:var(--ink)}
+.team-card-answer,.team-card-edit-prompt{width:100%;min-height:70px;font-size:var(--text-sm)}
+.team-card-edit{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:10px}
+.team-card-edit input[type=number]{width:120px;padding:8px}
+.team-card-edit-hire,.team-card-edit-unlimited{display:flex;align-items:center;gap:8px;font-size:var(--text-sm)}
+.team-card-edit-hire input,.team-card-edit-unlimited input{width:auto;padding:0}
+.team-card-readonly,.team-card-note{color:var(--muted);font-size:var(--text-sm)}
+.team-card-unreadable{color:var(--rust-deep)}
+.team-card-aggregate{color:var(--muted);font-size:var(--text-sm)}
+.team-card-edit-dropped{color:var(--rust-deep);font-size:var(--text-sm)}
+.team-card-empty-plan{font-weight:600}
+.team-card-orphan-note{color:var(--rust-deep);font-size:var(--text-sm)}
+.team-card-plan-list li strong{color:var(--ink)}
+.team-card-plan-dropped-title{color:var(--muted)}
+.team-card-plan-dropped-list s,.team-card-hire-dropped s{color:var(--muted)}
+/* Las dos razones por las que un alta no viaja, distintas a la vista: la que
+   la persona saco (sin tachar, ya lo dice la casilla) y la que se quedo sin
+   tareas por arrastre (tachada, con su motivo). */
+.team-card-hire-list li{flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:6px}
+.team-card-hire-dropped{opacity:.72}
+.team-card-hire-dropped small{color:var(--rust-deep)}
+.team-card-hire-unticked small{color:var(--muted)}
+.team-card-spec{width:100%}
+
+/* El buzon: una linea por miembro, el hilo plegado debajo. */
+.team-inbox{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.team-inbox-row{border-top:1px solid var(--line);padding:7px 0;min-width:0}
+.team-inbox-head{display:flex;align-items:center;gap:8px;min-width:0}
+.team-inbox-name{border:0;padding:0;font-size:var(--text-sm);font-weight:550;color:var(--ink);text-align:left;flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team-inbox-pending{font-size:var(--text-sm);color:var(--rust-deep);background:var(--rust-wash);border-radius:var(--radius-pill);padding:1px 7px;white-space:nowrap}
+.team-inbox-thread-toggle{margin-left:auto;border:0;padding:2px 4px;font-size:var(--text-sm);color:var(--rust);flex-shrink:0}
+.team-inbox-line{display:flex;gap:8px;align-items:baseline;margin:3px 0 0;font-size:var(--text-sm);color:var(--muted);min-width:0}
+.team-inbox-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team-inbox-line time{flex-shrink:0;color:var(--muted-soft)}
+.team-member-state{font-size:var(--text-sm);border:1px solid var(--line);border-radius:var(--radius-pill);padding:1px 7px;color:var(--muted);white-space:nowrap;flex-shrink:0}
+.team-member-state.is-connected{color:var(--green-ok);border-color:var(--green-ok)}
+.team-member-state.is-starting{color:var(--muted)}
+.team-member-state.is-unconfirmed{color:var(--muted-soft)}
+.team-member-state.is-uncoordinated{color:var(--rust-deep);border-color:var(--rust-soft);background:var(--rust-wash);overflow:hidden;text-overflow:ellipsis;max-width:190px}
+.team-thread{list-style:none;margin:6px 0 0;padding:6px 0 0 10px;border-left:2px solid var(--line);display:flex;flex-direction:column;gap:4px}
+.team-thread-row{display:flex;gap:8px;align-items:baseline;font-size:var(--text-sm);color:var(--ink-soft);min-width:0}
+.team-thread-row[data-kind=dispatchFailed]{color:var(--rust-deep)}
+.team-thread-row[data-kind=ask]{color:var(--rust-deep)}
+.team-thread-text{flex:1;min-width:0;overflow-wrap:anywhere}
+.team-thread-row time{flex-shrink:0;color:var(--muted-soft)}
+.team-thread-empty{font-size:var(--text-sm);color:var(--muted)}
+.team-tab-pending{font-size:var(--text-sm);color:var(--on-accent);background:var(--rust);border-radius:var(--radius-pill);padding:0 5px;line-height:1.5}
+
+/* Los controles del run, en una linea con sus cuentas. */
+.team-coordination-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
+.team-coordination-status{font-size:var(--text-sm);color:var(--ink-soft)}
+.team-coordination-counts,.team-coordination-budget{font-size:var(--text-sm);color:var(--muted)}
+/* Un equipo que cerro se lee cerrado: atenuado, no tachado -- lo que paso paso. */
+.team-finished-coordination{color:var(--muted-soft)}
+.team-pause-coordination,.team-resume-coordination,.team-cancel-coordination{font-size:var(--text-sm);padding:4px 8px}
+
+/* Lo avanzado, al pie y plegado. */
+.team-advanced{margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
+.team-advanced summary{font-size:var(--text-sm);color:var(--muted);cursor:pointer;padding:4px 0}
+.team-advanced p{font-size:var(--text-sm);color:var(--ink-soft);margin:6px 0 0}
+.team-advanced-authority{margin-top:4px}
+.team-advanced-run-budget-invalid{color:var(--rust-deep)}
+.team-advanced-budget-edit{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin-top:10px}
+.team-advanced-budget-input{width:110px;padding:8px}
+.team-advanced-budget-save{font-size:var(--text-sm);padding:6px 10px}
+.team-support{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+.team-support-row{font-size:var(--text-sm);display:flex;flex-direction:column;gap:2px}
+.team-support-row strong{font-weight:550;color:var(--ink)}
+.team-support-coordination,.team-support-memory{margin:0;color:var(--muted);line-height:1.5}
+
+/* La tira de equipos activos: marca, trabajo y estado sin desbordar. */
+.active-teams-strip{margin:10px 0 4px;min-width:0}
+.active-teams-strip .document-kicker{margin:0 0 6px;font-size:var(--text-sm);color:var(--muted-soft)}
+.active-teams-strip ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.active-teams-strip-row{display:grid;grid-template-columns:minmax(0,1fr);gap:1px;width:100%;text-align:left;padding:6px 8px;border-radius:var(--radius-sm);min-width:0}
+.active-teams-strip-row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.active-teams-strip-brand{font-size:var(--text-sm);color:var(--muted-soft)}
+.active-teams-strip-work{font-size:var(--text-sm)}
+.active-teams-strip-status,.active-teams-strip-budget{font-size:var(--text-sm);color:var(--muted-soft)}
+.active-teams-strip-gates{font-size:var(--text-sm);color:var(--rust-soft)}
+/* Un run cerrado sigue a la vista mientras la persona no haya pasado por ahi,
+   pero atenuado: no espera nada de nadie. */
+.active-teams-strip-row-finished{opacity:.6}
+.active-teams-strip-row[data-live="false"]{opacity:.6}
+/* La misma regla en Inicio, para la fila de un equipo que ya termino. */
+.home-row-finished{opacity:.75}
