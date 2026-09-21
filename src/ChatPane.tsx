@@ -22,6 +22,7 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
   const composer = useRef<HTMLTextAreaElement>(null);
   const restoreComposerFocus = useRef(false);
   const composerHadFocus = useRef(false);
+  const caretToEnd = useRef(false);
   const following = useRef(true);
   const [unread, setUnread] = useState(false);
   const busy = state.status === 'busy' || state.status === 'retry';
@@ -61,6 +62,18 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
     };
   }, [state.closed]);
 
+  // After attaching, the note is already in the draft: put the caret at the end
+  // so the person keeps typing their request instead of landing before the text.
+  // It runs on the render that already shows the new value, never on the stale one.
+  useEffect(() => {
+    if (!caretToEnd.current) return;
+    caretToEnd.current = false;
+    const el = composer.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [draft]);
+
   const showLatest = () => {
     following.current = true;
     setUnread(false);
@@ -83,15 +96,22 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
 
   const abort = () => api.abortChat(session.id).catch(e => onError(displayError(e)));
 
-  // Attachments are copied into the work folder first. The follow-up message is
-  // intentional: file-system access alone does not tell an agent which material
-  // the person just added or that it should use it for the current request.
+  // Attachments are copied into the work folder first. The note that names them
+  // is intentional: file-system access alone does not tell an agent which
+  // material the person just added. But attaching does NOT send it — it leaves
+  // the note in the composer so the person can attach and ask in one message,
+  // instead of the agent starting to think about a bare "here are some files".
+  // Anything already typed is kept: the note goes above it, never over it.
   const attach = async () => {
     if (!onAttachFiles || attaching || busy || state.closed) return;
     setAttaching(true);
     try {
       const files = await onAttachFiles();
-      if (files.length > 0) await api.sendChat(session.id, `Adjunté ${files.map(file => `\`${file}\``).join(', ')} al trabajo. Están disponibles en la carpeta de este trabajo: usalos como material de referencia para lo que te pida a continuación.`);
+      if (files.length > 0) {
+        const note = t('chat.attach.note', { files: files.map(file => `\`${file}\``).join(', ') });
+        caretToEnd.current = true;
+        setDraft(draft.trim() ? `${note}\n\n${draft}` : note);
+      }
     } catch (e) {
       onError(displayError(e));
     } finally {
@@ -123,7 +143,7 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
     {beforeComposer}
     <form className="prompt-form" onSubmit={e => { e.preventDefault(); void send(); }}>
       <textarea ref={composer} aria-label={t('ui.auto.019')} placeholder={state.closed ? t('ui.auto.093') : t('ui.auto.020')} value={draft} disabled={state.closed} onFocus={() => { composerHadFocus.current = true; }} onBlur={e => { if (e.relatedTarget) composerHadFocus.current = false; }} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
-      <div><small>{state.closed ? t('ui.auto.093') : busy ? t('ui.auto.094') : t('ui.auto.095')}</small><span><button type="button" className="icon-button" disabled={!onAttachFiles || attaching || busy || state.closed} aria-label="Adjuntar archivos al trabajo" title="Adjuntar archivos al trabajo" onClick={() => void attach()}><Paperclip size={16} /></button><button className="primary icon-button" disabled={!draft.trim() || sending || busy || state.closed} aria-label={t('ui.auto.023')}><ArrowUpRight size={18} /></button></span></div>
+      <div><small>{state.closed ? t('ui.auto.093') : busy ? t('ui.auto.094') : t('ui.auto.095')}</small><span><button type="button" className="icon-button" disabled={!onAttachFiles || attaching || busy || state.closed} aria-label={t('chat.attach.label')} title={t('chat.attach.label')} onClick={() => void attach()}><Paperclip size={16} /></button><button className="primary icon-button" disabled={!draft.trim() || sending || busy || state.closed} aria-label={t('ui.auto.023')}><ArrowUpRight size={18} /></button></span></div>
     </form>
   </div>;
 }

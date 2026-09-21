@@ -30,6 +30,11 @@ const es = {
   'chat.elicitation.openAccept': 'Abrir y aceptar',
   'chat.elicitation.reject': 'Rechazar',
   'chat.elicitation.server': 'Servidor MCP {name}',
+  // Adjuntar copia los archivos al trabajo y deja esta frase ESCRITA en el
+  // composer, no enviada: la persona agrega lo que quiera pedir y manda una
+  // sola vez. `{files}` ya llega con los nombres entre backticks.
+  'chat.attach.label': 'Adjuntar archivos al trabajo',
+  'chat.attach.note': 'Adjunté {files} al trabajo. Están disponibles en la carpeta de este trabajo: usalos como material de referencia para lo que te pida a continuación.',
 
   'settings.back': 'Volver al trabajo',
   'settings.title': 'Ajustes de Latte',
@@ -770,6 +775,8 @@ const en: Record<MessageKey, string> = {
   'chat.elicitation.openAccept': 'Open and accept',
   'chat.elicitation.reject': 'Decline',
   'chat.elicitation.server': 'MCP server {name}',
+  'chat.attach.label': 'Attach files to this work',
+  'chat.attach.note': 'I attached {files} to this work. They are in this work’s folder: use them as reference material for whatever I ask next.',
 
   'settings.back': 'Back to work', 'settings.title': 'Latte settings', 'settings.scope': 'Application settings',
   'settings.nav': 'Settings sections', 'settings.agents': 'Agents and providers', 'settings.profiles': 'Profiles',
