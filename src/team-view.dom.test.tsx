@@ -93,39 +93,90 @@ const mount = (props: Partial<TeamViewProps> = {}, locale: 'es-AR' | 'en-US' = '
   return render(createElement(TeamView, { ...base, formatDate: (v: string) => v, ...props }));
 };
 
-describe('B3.1: la lista de miembros', () => {
-  it('una línea por miembro con su último intercambio y su hora', () => {
+/**
+ * C2: LA MISMA ANATOMÍA EN TODA FILA.
+ *
+ * Estado (avatar con punto) · nombre · qué hace ahora · cuándo. Y la fila ES
+ * la acción: un `<button>` entero, sin un "Abrir chat" repetido al costado de
+ * cada nombre. El chip con la palabra ("conectado", "arrancando") se fue: una
+ * frase adentro de una pastilla es justo lo que el criterio 5 prohíbe.
+ */
+describe('C2: la lista de miembros', () => {
+  const line = (container: HTMLElement, id: string) => container.querySelector(`[data-member-id="${id}"] .coord-row-line`)!;
+
+  it('una línea por miembro, con su punto, su nombre y su hora', () => {
     const { container } = mount(wired);
     const rows = [...container.querySelectorAll('.team-inbox-row')];
     expect(rows.map((r) => r.getAttribute('data-member-id'))).toEqual(['coord', 'cm', 'paid']);
-    const cm = container.querySelector('[data-member-id="cm"] .team-inbox-line')!;
-    expect(cm.textContent).toContain('← Paid Media');
-    expect(cm.textContent).toContain('Necesito el copy');
-    expect(cm.querySelector('time')!.getAttribute('dateTime')).toBe('2026-09-01T12:00:00.000Z');
+    const cm = container.querySelector('[data-member-id="cm"]')!;
+    expect(cm.querySelector('.coord-row-name')!.textContent).toBe('CM');
+    expect(cm.querySelector('.coord-av')).not.toBeNull();
+    // Lo ultimo que le paso a CM es el mensaje de Paid Media, no su reporte.
+    expect(cm.querySelector('.coord-row-line')!.textContent).toBe('Le escribió Paid Media');
+    expect(cm.querySelector('.coord-time')!.getAttribute('dateTime')).toBe('2026-09-01T12:00:00.000Z');
+  });
+
+  /** Criterio 4: cada fila es un botón. Ningún verbo repetido al costado. */
+  it('la fila entera es la acción, y "Abrir chat" no existe', () => {
+    const onSelectMember = vi.fn();
+    const { container } = mount({ ...wired, onSelectMember, onOpenChat: () => {} });
+    const rows = [...container.querySelectorAll('.team-inbox-row')];
+    for (const row of rows) expect(row.querySelector('button.coord-row')).not.toBeNull();
+    expect(container.querySelector('.team-inbox-open-chat')).toBeNull();
+    expect([...container.querySelectorAll('.team-view-list button')].map((b) => b.textContent)).not.toContain('Abrir chat');
+    fireEvent.click(container.querySelector('[data-member-id="paid"] .coord-row')!);
+    expect(onSelectMember).toHaveBeenCalledWith('paid');
+  });
+
+  /** El coordinador lleva su ícono al lado del nombre; nadie más. */
+  it('el coordinador se nombra con un ícono, no con una pastilla', () => {
+    const { container } = mount(wired);
+    expect(container.querySelector('[data-member-id="coord"] .coord-row-coordinator')).not.toBeNull();
+    expect(container.querySelector('[data-member-id="cm"] .coord-row-coordinator')).toBeNull();
+    expect(container.querySelector('.team-member-state')).toBeNull();
+  });
+
+  /** El que reportó y está ocioso se lee verde; el que tiene un despacho en vuelo, en el acento. */
+  it('el punto dice el estado: reportó en verde, en vuelo en el acento', () => {
+    const { container } = mount({
+      ...wired,
+      coordinationMessages: [],
+      coordinationAsks: [],
+      coordinationLog: [dispatchRow(), dispatchRow({ id: 'd2', taskId: 't4', memberId: 'paid', status: 'running', outcome: null, summaryPreview: null, settledAt: null })],
+    });
+    expect(container.querySelector('[data-member-id="cm"] .coord-dot-ok')).not.toBeNull();
+    expect(container.querySelector('[data-member-id="paid"] .coord-dot-live')).not.toBeNull();
+    expect(line(container, 'cm').textContent).toContain('Reportó');
+  });
+
+  /** El coordinador no tiene despacho propio: lo suyo es esperar los ajenos, y se nombra a quién. */
+  it('el coordinador dice a quién espera', () => {
+    const { container } = mount({
+      ...wired,
+      coordinationAsks: [],
+      coordinationLog: [dispatchRow({ status: 'running', outcome: null, summaryPreview: null, settledAt: null })],
+    });
+    expect(line(container, 'coord').textContent).toBe('Espera el reporte de CM');
+  });
+
+  /** Criterio 2: una pregunta abierta es lo único que se lee en el acento. */
+  it('una pregunta abierta pone la línea en el acento y un badge en vez de la hora', () => {
+    const { container } = mount(wired);
+    const paid = container.querySelector('[data-member-id="paid"]')!;
+    expect(paid.querySelector('.coord-row-line.is-urgent')!.textContent).toContain('presupuesto diario');
+    expect(paid.querySelector('.coord-badge')!.textContent).toBe('1');
+    expect(paid.querySelector('.coord-time')).toBeNull();
   });
 
   it('un miembro sin un solo hecho lo dice, en vez de dejar el renglón vacío', () => {
-    const { container } = mount(wired);
-    expect(container.querySelector('[data-member-id="coord"] .team-inbox-line')!.textContent).toBe('Sin novedades');
-  });
-
-  /**
-   * B3.1: y sin NINGUNA fuente cableada la lista sigue estando.
-   *
-   * Es el cambio de casa respecto de B1: el buzón era una sección encima de la
-   * conversación y ahí callarse era lo correcto. Acá la lista ES la navegación
-   * de la vista; esconderla dejaría la pantalla del equipo en blanco. Lo que no
-   * se inventa sigue sin inventarse: cada miembro dice que no tiene novedades.
-   */
-  it('sin ninguna fuente cableada la lista sigue estando, sin inventar un renglón', () => {
     const { container } = mount({ coordinationRun: run() });
     expect(container.querySelectorAll('.team-inbox-row')).toHaveLength(3);
-    expect(container.querySelector('.team-inbox-line')!.textContent).toBe('Sin novedades');
+    expect(line(container, 'cm').textContent).toBe('Sin novedades');
   });
 
   it('el contador de pendientes del miembro sale del MISMO ruteo que las tarjetas', () => {
     const { container } = mount(wired);
-    const badge = (id: string) => container.querySelector(`[data-member-id="${id}"] .team-inbox-pending`);
+    const badge = (id: string) => container.querySelector(`[data-member-id="${id}"] .coord-badge`);
     expect(badge('coord')).not.toBeNull(); // su gate
     expect(badge('paid')).not.toBeNull();  // su pregunta
     expect(badge('cm')).toBeNull();
@@ -146,7 +197,7 @@ describe('B3.1: el hilo del miembro seleccionado', () => {
   it('elegir un miembro avisa hacia afuera: la selección la manda quien la guarda', () => {
     const onSelectMember = vi.fn();
     const { container } = mount({ ...wired, onSelectMember });
-    fireEvent.click(container.querySelector('[data-member-id="paid"] .team-inbox-name')!);
+    fireEvent.click(container.querySelector('[data-member-id="paid"] .coord-row')!);
     expect(onSelectMember).toHaveBeenCalledWith('paid');
   });
 
@@ -162,17 +213,7 @@ describe('B3.1: el hilo del miembro seleccionado', () => {
     expect(container.querySelector('.team-thread-empty')).not.toBeNull();
   });
 
-  it('"Abrir chat" lleva a la conversación de ESE miembro', () => {
-    const onOpenChat = vi.fn();
-    const { container } = mount({ ...wired, onOpenChat });
-    fireEvent.click(container.querySelector('[data-member-id="cm"] .team-inbox-open-chat')!);
-    expect(onOpenChat).toHaveBeenCalledWith('cm');
-  });
 
-  it('sin handler no se ofrece un "Abrir chat" que no abre nada', () => {
-    const { container } = mount(wired);
-    expect(container.querySelector('.team-inbox-open-chat')).toBeNull();
-  });
 });
 
 describe('B3.1: el run, arriba y con sus salidas', () => {
@@ -254,8 +295,7 @@ describe('B3.1: el mismo equipo en inglés', () => {
   it('sin nada en castellano', () => {
     const { container } = mount({ ...wired, onOpenChat: () => {} }, 'en-US');
     const text = container.textContent ?? '';
-    expect(text).toContain('Nothing new');
-    expect(text).not.toContain('Sin novedades');
     expect(text).not.toContain('Abrir chat');
+    expect(text).not.toContain('Espera el reporte');
   });
 });

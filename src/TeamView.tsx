@@ -1,17 +1,18 @@
 import { useState } from 'react';
 import { translate as t } from './i18n';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Users } from 'lucide-react';
 import type {
   AgentRole, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
   CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport,
   CoordinationMessageView, CoordinationRunTaskView, CoordinationRunView, TeamMember, Work,
 } from '../shared/contracts';
-import {
-  describeCoordinationSupport, describeMemorySupport,
-  memberCoordinationState, type LatteMode,
-} from './TeamPanel';
-import { describeInboxEvent, inboxEvents, lastInboxEvent, pendingForMember } from './coordination/inbox';
+import { describeCoordinationSupport, describeMemorySupport, memberCoordinationState, type LatteMode } from './TeamPanel';
+import { describeInboxEvent, inboxEvents, pendingForMember } from './coordination/inbox';
 import { RunHeader } from './coordination/RunHeader';
+import { CoordRow } from './coordination/anatomy';
+import { memberSignal } from './coordination/member-line';
+import { hourOf } from './coordination/time';
+import { titleOf } from './coordination/text';
 import { memberDisplayName } from './coordination/names';
 
 /**
@@ -103,6 +104,14 @@ export function TeamView(props: TeamViewProps) {
   };
   const selected = selectedThreadMember(team, props.selectedMemberId, run);
   const when = (at: string) => (props.formatDate ? props.formatDate(at) : at);
+  const hour = (at: string) => (props.formatTime ? props.formatTime(at) : hourOf(at));
+  /**
+   * C2: el titulo de una tarea sale del PLAN, no del prompt del despacho.
+   * El prompt es lo que el coordinador le escribio al miembro; el titulo es
+   * lo que la persona pidio. Sin tareas cableadas, la fila cae en el prompt,
+   * que es lo que ya habia.
+   */
+  const taskTitle = (taskId: string) => titleOf((props.coordinationTasks ?? []).find((task) => task.id === taskId)?.spec);
   const thread = selected ? inboxEvents(input, selected) : [];
   const openName = selected ? memberDisplayName(selected, team, null, roles) : '';
 
@@ -126,29 +135,32 @@ export function TeamView(props: TeamViewProps) {
       onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination}
       onNewRequest={props.onNewRequest} />}
     <div className="team-view-columns">
-      <ul className="team-inbox team-view-list">
+      {/* C2: LA MISMA ANATOMÍA QUE TODA FILA DEL PRODUCTO.
+          Avatar con punto · nombre · qué hace ahora · cuándo. La fila ES la
+          acción (criterio 4): un `<button>` entero, sin un "Abrir chat"
+          repetido al costado de cada nombre. El chip con la palabra
+          ("conectado", "arrancando") se fue: el estado es el punto
+          (criterio 5), y lo que el runtime confirmó o no sigue dicho —
+          entero, con su frase larga— al pie, en modo avanzado. */}
+      <ul className="team-inbox team-view-list" aria-label={t('coord.list.label')}>
         {team.map((member) => {
-          const last = lastInboxEvent(input, member.id);
+          const signal = memberSignal({ ...input, team, roles, run, taskTitle }, member.id);
           const waiting = pendingForMember(member.id, props.coordinationGates, props.coordinationAsks, run);
-          const support = props.coordinationSupport?.find((s) => s.memberId === member.id) ?? null;
-          // B3.3: el chip de coordinación habla de un PROCESO. Con el run
-          // cerrado, o con el miembro en pausa, no hay proceso del que hablar:
-          // "arrancando" ahí es una promesa de que algo va a pasar cuando ya
-          // no va a pasar nada. Exactamente lo que mostraba la captura.
-          const alive = Boolean(run?.active) && (member.status === 'working' || member.status === 'idle');
-          const state = support && alive ? memberCoordinationState(support) : null;
+          const isCoordinator = run?.coordinatorMemberId === member.id;
           return <li key={member.id} className={'team-inbox-row' + (member.id === selected ? ' is-selected' : '')} data-member-id={member.id}>
-            <div className="team-inbox-head">
-              <button type="button" className="team-inbox-name" aria-pressed={member.id === selected} onClick={() => props.onSelectMember(member.id)}>{member.roleName}</button>
-              {state && <span className={'team-member-state ' + state.className} data-state={state.state} title={state.title}>{state.label}</span>}
-              {waiting > 0 && <span className="team-inbox-pending">{t('team.inbox.pending', { count: waiting })}</span>}
-              {props.onOpenChat && <button type="button" className="team-inbox-open-chat" onClick={() => props.onOpenChat!(member.id)}>{t('team.view.openChat')}</button>}
-            </div>
-            <p className="team-inbox-line">
-              {last
-                ? <><span className="team-inbox-text">{describeInboxEvent(last, team, roles)}</span><time dateTime={last.at}>{when(last.at)}</time></>
-                : <span className="team-inbox-text">{t('team.inbox.nothing')}</span>}
-            </p>
+            <CoordRow
+              name={member.roleName}
+              roleId={member.roleId}
+              dot={signal.dot}
+              nameIcon={isCoordinator ? <Users size={12} className="coord-row-coordinator" aria-label={t('coord.member.coordinator')} /> : undefined}
+              line={signal.line}
+              urgent={signal.urgent}
+              at={signal.at}
+              time={signal.at ? hour(signal.at) : ''}
+              badge={waiting}
+              selected={member.id === selected}
+              onClick={() => props.onSelectMember(member.id)}
+            />
           </li>;
         })}
       </ul>
@@ -209,8 +221,19 @@ function SupportRow({ row, team }: { row: CoordinationMemberSupport; team: reado
   // no está la cadena termina en la frase. El id queda en `data-member-id`,
   // que es para depurar, no para leer.
   const name = memberDisplayName(row.memberId, team);
+  /**
+   * C2: LA VERSIÓN DE UNA PALABRA SE MUDÓ ACÁ.
+   *
+   * Vivía al lado del nombre en la pestaña del chat y en la fila del modo
+   * Equipo, donde es una FRASE adentro de una pastilla —lo que el criterio 5
+   * prohíbe— repitiendo en palabras lo que el punto ya dice. Acá no compite
+   * con nada: éste es el panel técnico, plegado, en modo avanzado, y la
+   * palabra corta es lo que hace escaneable una lista de miembros.
+   */
+  const state = memberCoordinationState(row);
   return <li className="team-support-row" data-member-id={row.memberId}>
     <strong>{name}</strong>
+    <span className={'team-member-state ' + state.className} data-state={state.state} title={state.title}>{state.label}</span>
     <p className="team-support-coordination">{describeCoordinationSupport(row)}</p>
     <p className="team-support-memory">{describeMemorySupport(row)}</p>
   </li>;

@@ -3,10 +3,16 @@ import { render } from '@testing-library/react';
 import { MemberTab } from './TeamPanel';
 
 /**
- * M3 — "un hilo de vapor por rol". The steam replaces the dot ONLY while the
- * role is working; every other state (idle, ended, paused, attention) keeps the
- * quiet dot. This locks the "Verdaderas" rule: the wisp never shows when the
- * role is not doing anything.
+ * C2: EL PUNTO DEL AVATAR ES EL ESTADO, Y NO DICE NI UNA PALABRA.
+ *
+ * M3 ponía un hilo de vapor en lugar del punto mientras el rol trabajaba. La
+ * pestaña pasó a tener la MISMA anatomía que toda fila del producto (criterio
+ * 1), y en esa anatomía el estado vive en UN lugar: el punto del avatar, con
+ * halo en el acento cuando está vivo. Dos marcas distintas para el mismo
+ * hecho, en la misma fila, es exactamente lo que el criterio 5 evita.
+ *
+ * La regla de M3 se conserva entera: la señal viva sólo aparece cuando el rol
+ * está HACIENDO algo, nunca como decoración.
  */
 
 const mocks = vi.hoisted(() => ({ state: null as unknown }));
@@ -41,41 +47,35 @@ beforeEach(() => {
   mocks.state = { ...baseState };
 });
 
-describe('M3 — working role shows steam, not a dot', () => {
-  it('shows the steam wisp while the role is working', () => {
+describe('C2: el punto del avatar dice el estado del rol', () => {
+  it('el rol trabajando lleva el punto vivo, con halo', () => {
     mocks.state = { ...baseState, status: 'working', closed: false };
     const { container } = renderTab();
-    expect(container.querySelector('.team-steam')).not.toBeNull();
+    expect(container.querySelector('.coord-av .coord-dot-live')).not.toBeNull();
+    // Ninguna segunda marca para el mismo hecho.
+    expect(container.querySelector('.team-steam')).toBeNull();
     expect(container.querySelector('.team-tab-dot')).toBeNull();
   });
 
-  it('falls back to the quiet dot when idle', () => {
+  it('el rol ocioso cae en el punto quieto', () => {
     mocks.state = { ...baseState, status: 'idle', closed: false };
     const { container } = renderTab();
-    expect(container.querySelector('.team-steam')).toBeNull();
-    expect(container.querySelector('.team-tab-dot')).not.toBeNull();
+    expect(container.querySelector('.coord-av .coord-dot-idle')).not.toBeNull();
+    expect(container.querySelector('.coord-dot-live')).toBeNull();
   });
 
-  it('never shows steam when the role needs attention', () => {
+  /** Un permiso pendiente TE espera: eso es acento, por el criterio 2. */
+  it('el rol que necesita algo tuyo lleva el punto vivo', () => {
     mocks.state = { ...baseState, status: 'working', closed: false, permissions: [{ id: 'p1' }] };
     const { container } = renderTab();
+    expect(container.querySelector('.coord-av .coord-dot-live')).not.toBeNull();
     expect(container.querySelector('.team-steam')).toBeNull();
-    expect(container.querySelector('.team-tab-dot')).not.toBeNull();
-  });
-});
-
-describe('F3 — the runtime stays out of the simple tooltip', () => {
-  it('keeps the runtime name out of the tooltip in simple mode', () => {
-    mocks.state = { ...baseState, status: 'working', closed: false };
-    const { container } = renderTab('simple');
-    const title = container.querySelector('.team-tab')?.getAttribute('title') ?? '';
-    expect(title).not.toContain('OpenCode');
   });
 
-  it('names the runtime in the tooltip in advanced mode', () => {
+  /** Criterio 5: ninguna palabra de estado en la pestaña. */
+  it('el estado no se escribe: no hay pastilla con una palabra', () => {
     mocks.state = { ...baseState, status: 'working', closed: false };
-    const { container } = renderTab('advanced');
-    const title = container.querySelector('.team-tab')?.getAttribute('title') ?? '';
-    expect(title).toContain('OpenCode');
+    const { container } = renderTab();
+    expect(container.querySelector('.team-member-state')).toBeNull();
   });
 });

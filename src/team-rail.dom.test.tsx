@@ -113,13 +113,19 @@ describe('B3.1: el toggle de la columna', () => {
     expect(container.querySelector('.team-inbox-row.is-selected')!.getAttribute('data-member-id')).toBe('cm');
   });
 
-  it('"Abrir chat" desde el modo Equipo vuelve a la conversación de ESE miembro', () => {
-    const onSelect = vi.fn();
-    const { container } = mount({ coordinationRun: run(), onSelect });
+  /**
+   * C2: EL "ABRIR CHAT" REPETIDO POR FILA SE FUE.
+   *
+   * Criterio 4: la fila ES la acción. Tocarla abre a ESE miembro en el panel
+   * de al lado; el verbo que llevaba cada fila --tres veces la misma palabra
+   * en una lista de tres-- ya no está.
+   */
+  it('la fila del modo Equipo elige al miembro, sin un verbo repetido al costado', () => {
+    const { container } = mount({ coordinationRun: run() });
     toTeam(container);
-    fireEvent.click(container.querySelector('[data-member-id="cm"] .team-inbox-open-chat')!);
-    expect(onSelect).toHaveBeenCalledWith('cm');
-    expect(container.querySelector('.team-view')).toBeNull();
+    expect(container.querySelector('.team-inbox-open-chat')).toBeNull();
+    fireEvent.click(container.querySelector('[data-member-id="cm"] .coord-row')!);
+    expect(container.querySelector('.team-inbox-row.is-selected')!.getAttribute('data-member-id')).toBe('cm');
   });
 
   it('el mismo toggle en inglés, sin nada en castellano', () => {

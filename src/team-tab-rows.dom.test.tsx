@@ -66,37 +66,44 @@ const mount = () => render(createElement(TeamPanel, {
   coordinationRun: run, coordinationSupport: [support], coordinationLog: [dispatched],
 }));
 
-describe('B4.3b: la pestaña de un miembro son dos renglones', () => {
-  it('el nombre y el chip NO comparten renglón', () => {
+/**
+ * C2: LA PESTAÑA ES UNA FILA CON LA MISMA ANATOMÍA, NO DOS RENGLONES APRETADOS.
+ *
+ * B4.3b había repartido el nombre arriba y el chip abajo porque en una sola
+ * fila de 190 px el chip («conectado») se montaba encima del nombre. La
+ * solución real era otra: el chip no tenía que existir. Es una FRASE adentro
+ * de una pastilla —lo que el criterio 5 prohíbe— repitiendo en palabras lo que
+ * el punto del avatar ya dice.
+ *
+ * Lo que queda es la anatomía del criterio 1, la misma que la lista del modo
+ * Equipo: avatar con punto · nombre · qué hace ahora · cuándo.
+ */
+describe('C2: la pestaña de un miembro tiene la anatomía de toda fila', () => {
+  it('el avatar lleva el punto, y el nombre no comparte renglón con ninguna pastilla', () => {
     const { container } = mount();
     const tab = container.querySelector('.team-tab')!;
-    const top = tab.querySelector('.team-tab-top');
-    const bottom = tab.querySelector('.team-tab-bottom');
+    const top = tab.querySelector('.team-tab-top')!;
     expect(top, 'la pestaña no tiene renglón de arriba').not.toBeNull();
-    expect(bottom, 'la pestaña no tiene renglón de abajo').not.toBeNull();
-
-    const name = tab.querySelector('.team-tab-name')!;
-    const chip = tab.querySelector('.team-member-state')!;
-    expect(name.textContent).toBe('Community Manager');
-    expect(chip.textContent).toBeTruthy();
-    // Lo que producía el pisado: los dos en la MISMA fila.
-    expect(top!.contains(name)).toBe(true);
-    expect(top!.contains(chip)).toBe(false);
-    expect(bottom!.contains(chip)).toBe(true);
-    expect(bottom!.contains(name)).toBe(false);
+    expect(tab.querySelector('.coord-av .coord-dot'), 'el avatar no lleva punto').not.toBeNull();
+    expect(top.querySelector('.team-tab-name')!.textContent).toBe('Community Manager');
+    // El chip se fue entero: no hay ninguna pastilla con una palabra de estado.
+    expect(tab.querySelector('.team-member-state')).toBeNull();
+    expect(tab.querySelector('.team-tab-bottom')).toBeNull();
   });
 
-  it('el avatar y el punto viajan con el nombre, arriba', () => {
+  it('el avatar va afuera del texto, y el texto es nombre + una línea', () => {
     const { container } = mount();
-    const top = container.querySelector('.team-tab .team-tab-top')!;
-    expect(top.querySelector('.team-avatar')).not.toBeNull();
-    // `working` dibuja el vapor en lugar del punto: cualquiera de los dos, arriba.
-    expect(top.querySelector('.team-tab-dot, .team-steam')).not.toBeNull();
+    const tab = container.querySelector('.team-tab')!;
+    const text = tab.querySelector('.team-tab-text')!;
+    expect(text.contains(tab.querySelector('.coord-av'))).toBe(false);
+    expect(text.querySelector('.team-tab-name')).not.toBeNull();
+    expect(text.querySelector('.team-tab-last')).not.toBeNull();
   });
 
-  it('el último intercambio acompaña al chip, abajo', () => {
+  it('lo que ese miembro hace ahora va en UNA línea bajo el nombre', () => {
     const { container } = mount();
-    const bottom = container.querySelector('.team-tab .team-tab-bottom')!;
-    expect(bottom.querySelector('.team-tab-last')!.textContent).toContain('Quedaron los 3 posts');
+    const line = container.querySelector('.team-tab .team-tab-last')!;
+    expect(line.textContent).toContain('Reportó');
+    expect(line.childElementCount).toBe(0);
   });
 });

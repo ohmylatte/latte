@@ -1058,3 +1058,6 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .coord-tic-live{background:var(--rust-wash);color:var(--rust)}
 .coord-tic-bad{background:var(--danger-wash);color:var(--danger)}
 .coord-tic-lg{width:34px;height:34px;flex-basis:34px}
+/* C2: el coordinador lleva un icono chico al lado del nombre. Es un adjetivo,
+   no una pastilla: no ocupa renglon ni repite en palabras lo que el punto dice. */
+.coord-row-coordinator{color:var(--muted-soft);flex-shrink:0}

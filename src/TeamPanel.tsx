@@ -8,8 +8,12 @@ import { useChatState } from './chat-store';
 import { canChangePermission } from './permission-ux';
 import { continuationModel, continuationOptions, type ContinuationTarget } from './provider-models';
 import { contextWeight, describeUsage, formatTokens, totalTokens } from './usage-format';
-import { Loading, roleColorVar, SteamWisp } from './brand-marks';
-import { describeInboxEvent, lastInboxEvent, pendingForMember, pendingForWork } from './coordination/inbox';
+import { Loading } from './brand-marks';
+import { pendingForMember, pendingForWork } from './coordination/inbox';
+import { CoordAvatar, CoordTime } from './coordination/anatomy';
+import { memberSignal, type MemberDot } from './coordination/member-line';
+import { hourOf } from './coordination/time';
+import { titleOf } from './coordination/text';
 import { TeamView } from './TeamView';
 
 /** A runtime the user can pick for a new member instead of the primary agent. */
@@ -211,6 +215,22 @@ export function TeamPanel(props: TeamPanelProps) {
    * coordinador. El rail lo maneja ESTE componente, asi que el salto vive aca
    * y no viaja como una prop que el contenedor tendria que inventar.
    */
+  /**
+   * C2: la MISMA derivacion que la lista del modo Equipo. La pestana y la fila
+   * cuentan el mismo hecho; si cada una lo derivara por su cuenta, "la misma
+   * anatomia" seria una intencion y no un hecho.
+   */
+  const taskTitle = (taskId: string) => titleOf((props.coordinationTasks ?? []).find(task => task.id === taskId)?.spec);
+  const memberTabSignal = (memberId: string) => {
+    const signal = memberSignal({ ...inbox, team, roles: props.roles, run: props.coordinationRun ?? null, taskTitle }, memberId);
+    return {
+      dot: signal.dot,
+      lastExchange: signal.line,
+      urgent: signal.urgent,
+      at: signal.at,
+      time: signal.at ? (props.formatTime ? props.formatTime(signal.at) : hourOf(signal.at)) : '',
+    };
+  };
   const openCoordinatorChat = () => {
     const target = props.coordinationRun?.coordinatorMemberId ?? props.coordinatorGrant ?? team[0]?.id ?? null;
     if (target && team.some(m => m.id === target)) props.onSelect(target);
@@ -261,9 +281,8 @@ export function TeamPanel(props: TeamPanelProps) {
         <div className="team-tab-strip">
           {team.map(member => <MemberTab key={member.id} member={member} chat={chats[member.id] ?? null} selected={member.id === selectedId} busy={busy} mode={mode}
             pending={pendingForMember(member.id, props.coordinationGates, props.coordinationAsks, props.coordinationRun ?? null)}
-            lastExchange={describeLastExchange(inbox, member.id, team, props.roles)}
-            support={props.coordinationSupport?.find(row => row.memberId === member.id) ?? null}
-            runActive={Boolean(props.coordinationRun?.active)}
+            {...memberTabSignal(member.id)}
+            coordinator={props.coordinationRun?.coordinatorMemberId === member.id}
             onSelect={() => props.onSelect(member.id)} />)}
         </div>
         {activity && <span className={'team-activity' + (activity.needsAttention ? ' attention' : '')} role="status" title={activity.detail}>{activity.label}</span>}
@@ -519,7 +538,7 @@ export function WorkPermissions({ mode, busy, hasClaude, isDesktop, onChange }: 
  * cosas -- run vivo y miembro con proceso (`working` o `idle` en `TeamMember`,
  * que es lo que `hub.describe()` reporta).
  */
-export function MemberTab({ member, chat, selected, busy, mode = 'simple', pending = 0, lastExchange = '', support = null, runActive = false, onSelect }: { member: TeamMember; chat: ChatSession | null; selected: boolean; busy: boolean; mode?: LatteMode; pending?: number; lastExchange?: string; support?: CoordinationMemberSupport | null; runActive?: boolean; onSelect: () => void }) {
+export function MemberTab({ member, chat, selected, busy, mode = 'simple', pending = 0, lastExchange = '', urgent = false, time = '', at = null, coordinator = false, dot = 'idle', onSelect }: { member: TeamMember; chat: ChatSession | null; selected: boolean; busy: boolean; mode?: LatteMode; pending?: number; lastExchange?: string; urgent?: boolean; time?: string; at?: string | null; coordinator?: boolean; dot?: MemberDot; onSelect: () => void }) {
   const state = useChatState(chatStore, chat ? chat.id : null);
   const live = Boolean(chat) && !state.closed;
   const status: TeamMemberStatus = live ? (state.status === 'idle' ? 'idle' : 'working') : member.status === 'ended' ? 'ended' : 'paused';
@@ -527,46 +546,40 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', pendi
   // The runtime is a technical detail the simple mode keeps out of the tooltip.
   // `title` es texto plano: `statusLabel` devuelve JSX y concatenarlo daba "[object Object]".
   const title = member.roleName + (mode === 'advanced' ? ' · ' + RUNTIME_SHORT[member.runtime] : '') + ' · ' + statusText(status, attention);
-  // El chip pide las DOS: un run vivo y un miembro con proceso.
-  const hasProcess = member.status === 'working' || member.status === 'idle';
-  const coordinationState = support && runActive && hasProcess ? memberCoordinationState(support) : null;
   /**
-   * B4.3b: DOS RENGLONES, NO UNA FILA APRETADA.
+   * C2: LA MISMA ANATOMIA QUE LA LISTA DEL MODO EQUIPO.
    *
-   * El avatar, el nombre y el punto arriba; el chip de estado y el ultimo
-   * intercambio abajo. En una sola fila de 190px el chip ("conectado") se
-   * montaba encima del nombre ("Community Manager") -- no es un problema de
-   * recorte, es que no entran los dos en el mismo renglon.
+   * Avatar con punto, nombre, una linea, hora a la derecha. El chip de
+   * coordinacion --"conectado", "arrancando", "sin confirmar"-- se fue: es una
+   * FRASE adentro de una pastilla, que es exactamente lo que el criterio 5
+   * prohibe, y encima repetia en palabras lo que el punto ya dice. Lo que el
+   * runtime confirmo o no no se pierde: sigue dicho entero, con su frase
+   * larga, al pie del modo Equipo en modo avanzado.
+   *
+   * El punto habla del PROCESO cuando hay proceso --trabajando ahora mismo es
+   * el hecho mas fuerte que esta fila puede contar-- y de la coordinacion
+   * cuando el proceso esta callado.
    */
-  const bottom = coordinationState || lastExchange;
-  return <button role="tab" aria-selected={selected} className={'team-tab status-' + status + (attention ? ' attention' : '')} disabled={busy} onClick={onSelect} title={title}>
-    <span className="team-tab-text">
-      <span className="team-tab-top">
-        <span className="team-avatar" data-role={member.roleId} aria-hidden="true">{member.initial}</span>
-        <span className="team-tab-name">{member.roleName}</span>
-        {status === 'working' && !attention
-          ? <SteamWisp className="team-steam" style={{ color: roleColorVar(member.roleId) }} />
-          : <i className="team-tab-dot" aria-hidden="true" />}
-        {/* B1.2: lo que ESTE miembro esta esperando de la persona. El punto de
-            atencion de al lado habla del runtime (un permiso, una pregunta del
-            CLI); esto habla de la coordinacion, y son dos cosas distintas: un
-            miembro puede tener un gate esperando con su proceso en silencio. */}
-        {pending > 0 && <span className="team-tab-pending" title={t('team.inbox.pending', { count: pending })}>{pending}</span>}
+  const signal: MemberDot = attention || status === 'working' ? 'live' : dot;
+  return <button role="tab" aria-selected={selected} className={'team-tab coord-row status-' + status + (attention ? ' attention' : '')} disabled={busy} onClick={onSelect} title={lastExchange ? title + ' · ' + lastExchange : title}>
+    <CoordAvatar name={member.roleName} roleId={member.roleId} dot={signal} />
+    <span className="team-tab-text coord-row-text">
+      <span className="team-tab-top coord-row-top">
+        <span className="team-tab-name coord-row-name">{member.roleName}{coordinator && <Users size={12} className="coord-row-coordinator" aria-label={t('coord.member.coordinator')} />}</span>
+        {/* B1.2: lo que ESTE miembro esta esperando de la persona, en el mismo
+            lugar que la hora: son la misma columna, y nunca hay que leer las
+            dos cosas a la vez. */}
+        {pending > 0
+          ? <span className="team-tab-pending coord-badge" title={t('team.inbox.pending', { count: pending })}>{pending}</span>
+          : <CoordTime at={at} label={time} />}
       </span>
-      {bottom && <span className="team-tab-bottom">
-        {coordinationState && <span className={'team-member-state ' + coordinationState.className} data-state={coordinationState.state} title={coordinationState.title}>{coordinationState.label}</span>}
-        {lastExchange && <span className="team-tab-last" title={lastExchange}>{lastExchange}</span>}
-      </span>}
+      {lastExchange && <span className={'team-tab-last coord-row-line' + (urgent ? ' is-urgent' : '')}>{lastExchange}</span>}
     </span>
     <span className="visually-hidden">{statusLabel(status, attention)}</span>
   </button>;
 }
 
-/** El ultimo intercambio de un miembro, ya en una linea. Sin un solo hecho devuelve '', y la pestana no dibuja un renglon vacio. */
-function describeLastExchange(input: Parameters<typeof lastInboxEvent>[0], memberId: string, team: readonly TeamMember[], roles: readonly AgentRole[]): string {
-  const last = lastInboxEvent(input, memberId);
-  return last ? describeInboxEvent(last, team, roles) : '';
-}
+
 
 /** Maps a `CoordinationDegradedReason` to the matching `coordination.degraded.*` and `coordination.short.*` key suffixes. */
 const DEGRADED_KEY: Record<CoordinationDegradedReason, string> = {

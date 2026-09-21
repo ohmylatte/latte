@@ -126,14 +126,14 @@ describe('superficie: el buzón y el hilo del panel del equipo', () => {
 
   it('resuelve al otro extremo por su rol cuando ya no está en el equipo', () => {
     const { container } = mountPanel({ coordinationRun: run(), coordinationMessages: [message()], roles });
-    const line = container.querySelector('[data-member-id="cm"] .team-inbox-line')!;
+    const line = container.querySelector('[data-member-id="cm"] .coord-row-line')!;
     expect(line.textContent).toContain('Paid Media');
     expect(line.textContent).not.toContain('mem_');
   });
 
   it('y si no queda ni el rol, lo dice con palabras', () => {
     const { container } = mountPanel({ coordinationRun: run(), coordinationMessages: [message({ from: { memberId: GONE, roleId: 'borrado' } })] });
-    expect(container.querySelector('[data-member-id="cm"] .team-inbox-line')!.textContent).toContain('miembro que ya no está');
+    expect(container.querySelector('[data-member-id="cm"] .coord-row-line')!.textContent).toContain('miembro que ya no está');
     expect(container.querySelector('.team-inbox')!.textContent).not.toContain('mem_');
   });
 });
