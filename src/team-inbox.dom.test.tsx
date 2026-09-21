@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { MessageKey } from './i18n';
 
@@ -20,7 +22,7 @@ vi.mock('./i18n', async (importOriginal) => {
 });
 
 const { createElement } = await import('react');
-const { fireEvent, render } = await import('@testing-library/react');
+const { render } = await import('@testing-library/react');
 const { TeamPanel } = await import('./TeamPanel');
 const { inboxEvents, lastInboxEvent, pendingForMember } = await import('./coordination/inbox');
 import type { TeamPanelProps } from './TeamPanel';
@@ -137,7 +139,7 @@ describe('B1.2: la derivación del buzón, sin montar nada', () => {
   });
 });
 
-describe('B1.2: el buzón, dibujado', () => {
+describe('B3.1: el buzón ya NO vive en la columna del chat', () => {
   const wired = {
     coordinationRun: run(),
     coordinationLog: [dispatchRow()],
@@ -147,36 +149,29 @@ describe('B1.2: el buzón, dibujado', () => {
     coordinationGates: [{ id: 'g1', kind: 'dispatch', runId: 'run1', createdAt: '' } as CoordinationGateView],
   };
 
-  it('una línea por miembro con su último intercambio y su hora', () => {
+  /**
+   * B3.1: EL HALLAZGO DEL DUEÑO, CONVERTIDO EN CANDADO.
+   *
+   * Tras B1 el buzón quedó apilado encima de la conversación, entre la tira de
+   * pestañas y los mensajes: tres filas fijas robándole alto a lo único que esa
+   * columna tiene que hacer. Ahora vive en la vista Equipo, y estos dos tests
+   * —uno por render, otro por fuente— impiden que vuelva. El de fuente existe
+   * porque el de render pasa en verde si alguien lo dibuja detrás de una rama
+   * que este archivo no monta.
+   */
+  it('con TODAS las fuentes cableadas, el panel no dibuja una sola fila de buzón', () => {
     const { container } = mount(wired);
-    const rows = [...container.querySelectorAll('.team-inbox-row')];
-    expect(rows.map((r) => r.getAttribute('data-member-id'))).toEqual(['coord', 'cm', 'paid']);
-    // `cm` recibió un despacho, lo reportó, y después le llegó un mensaje de Paid Media.
-    const cm = container.querySelector('[data-member-id="cm"] .team-inbox-line')!;
-    expect(cm.textContent).toContain('← Paid Media');
-    expect(cm.textContent).toContain('Necesito el copy');
-    expect(cm.querySelector('time')!.getAttribute('dateTime')).toBe('2026-09-01T12:00:00.000Z');
-  });
-
-  it('un miembro sin un solo hecho lo dice, en vez de dejar el renglón vacío', () => {
-    const { container } = mount(wired);
-    expect(container.querySelector('[data-member-id="coord"] .team-inbox-line')!.textContent).toBe('Sin novedades');
-  });
-
-  it('sin ninguna fuente cableada el buzón no se dibuja — cero filas nunca es un cero', () => {
-    const { container } = mount({ coordinationRun: run() });
     expect(container.querySelector('.team-inbox')).toBeNull();
+    expect(container.querySelector('.team-inbox-row')).toBeNull();
+    expect(container.querySelector('.team-thread')).toBeNull();
   });
 
-  it('"Hilo" despliega la lista cronológica de ese miembro, y sólo de ese miembro', () => {
-    const { container } = mount(wired);
-    expect(container.querySelector('.team-thread')).toBeNull();
-    fireEvent.click(container.querySelector('[data-member-id="paid"] .team-inbox-thread-toggle')!);
-    const kinds = [...container.querySelectorAll('.team-thread-row')].map((r) => r.getAttribute('data-kind'));
-    expect(kinds).toEqual(['hired', 'sent', 'ask']);
-    // Un solo hilo abierto: el de `paid`, dentro de su propia fila.
-    expect(container.querySelectorAll('.team-thread')).toHaveLength(1);
-    expect(container.querySelector('[data-member-id="paid"] .team-thread')).not.toBeNull();
+  it('y el panel tampoco tiene el componente en su fuente', () => {
+    const source = readFileSync(join(process.cwd(), 'src', 'TeamPanel.tsx'), 'utf8');
+    expect(source.length).toBeGreaterThan(1000); // el archivo existe y se leyó de verdad
+    expect(source).not.toContain('<TeamInbox');
+    expect(source).not.toContain('team-inbox-row');
+    expect(source).not.toContain('team-thread');
   });
 
   it('el contador de pendientes va en la pestaña del miembro al que le tocan', () => {
@@ -187,12 +182,10 @@ describe('B1.2: el buzón, dibujado', () => {
     expect(container.querySelectorAll('.team-tab-pending')[0]!.textContent).toBe('1');
   });
 
-  it('el estado del run vive compacto en la cabecera, con sus tres cuentas y su presupuesto', () => {
+  it('el estado del run sigue viviendo compacto en la cabecera del panel', () => {
     const { container } = mount({ ...wired, coordinationRun: run({ status: 'suspended' }) });
     const controls = container.querySelector('.team-coordination-controls')!;
     expect(controls.querySelector('.team-coordination-counts')!.textContent).toContain('3');
-    expect(controls.querySelector('.team-coordination-counts')!.textContent).toContain('1');
-    expect(controls.querySelector('.team-coordination-counts')!.textContent).toContain('2');
     expect(controls.querySelector('.team-coordination-budget')!.textContent).toContain('10');
   });
 
@@ -201,14 +194,5 @@ describe('B1.2: el buzón, dibujado', () => {
     const budget = container.querySelector('.team-coordination-budget')!.textContent ?? '';
     expect(budget.toLowerCase()).toContain('no se pudo leer');
     expect(budget).not.toContain('∞');
-  });
-
-  it('el mismo buzón en inglés, sin nada en castellano', () => {
-    const { container } = mount(wired, 'en-US');
-    const text = container.querySelector('.team-inbox')!.textContent ?? '';
-    expect(text).toContain('Thread');
-    expect(text).toContain('Nothing new');
-    expect(text).not.toContain('Hilo');
-    expect(text).not.toContain('Sin novedades');
   });
 });

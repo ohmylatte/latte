@@ -25,10 +25,10 @@ const { createElement } = await import('react');
 const { render } = await import('@testing-library/react');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { memberDisplayName, roleDisplayName } = await import('./coordination/names');
-const { TeamPanel } = await import('./TeamPanel');
+const { TeamView } = await import('./TeamView');
 const { TeamCards } = await import('./coordination/TeamCards');
 const { ResumenView } = await import('./ResumenView');
-import type { TeamPanelProps } from './TeamPanel';
+import type { TeamViewProps } from './TeamView';
 import type { ResumenViewProps } from './ResumenView';
 import { EMPTY_USAGE } from '../shared/contracts';
 import type {
@@ -91,19 +91,13 @@ const support = (patch: Partial<CoordinationMemberSupport> = {}): CoordinationMe
   runtimeReportsInjection: true, ...patch,
 } as CoordinationMemberSupport);
 
-const basePanel: TeamPanelProps = {
-  work, team, chats: {}, selectedId: null, roles: [], primaryLabel: 'Claude', primaryDetail: '', primaryReady: true,
-  checking: false, primaryRuntime: 'claude', primaryAccountId: null, primaryModel: null, choices: [], busy: false,
-  isDesktop: true, mode: 'advanced',
-  onSelect: () => {}, onAdd: async () => {}, onOpen: async () => {}, onPause: async () => {}, onFinish: async () => {},
-  onRestart: async () => {}, onContinue: async () => {}, handoffs: [], onAcceptHandoff: async () => {},
-  onDismissHandoff: async () => {}, onRemove: async () => {}, onProviders: () => {}, onRecheck: () => {},
-  onModel: () => {}, onTier: () => {}, onError: () => {}, onAttachFiles: async () => [], untracked: [],
-  onAdoptFile: () => {}, permissions: 'ask', permissionBusy: false, onPermissions: () => {},
+const basePanel: TeamViewProps = {
+  work, team, roles: [], mode: 'advanced', busy: false,
+  selectedMemberId: null, onSelectMember: () => {},
 };
-const mountPanel = (props: Partial<TeamPanelProps> = {}, locale: 'es-AR' | 'en-US' = 'es-AR') => {
+const mountPanel = (props: Partial<TeamViewProps> = {}, locale: 'es-AR' | 'en-US' = 'es-AR') => {
   ui.locale = locale;
-  return render(createElement(TeamPanel, { ...basePanel, formatDate: (v: string) => v, ...props }));
+  return render(createElement(TeamView, { ...basePanel, formatDate: (v: string) => v, ...props }));
 };
 
 describe('superficie: lo avanzado del equipo (.team-support y el coordinador)', () => {

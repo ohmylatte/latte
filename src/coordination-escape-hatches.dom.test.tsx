@@ -42,6 +42,7 @@ vi.mock('./browser-api', async (importOriginal) => {
 const { useCoordination } = await import('./useCoordination');
 const { DecisionsView } = await import('./DecisionsView');
 const { TeamPanel } = await import('./TeamPanel');
+const { TeamView } = await import('./TeamView');
 const { TeamCards } = await import('./coordination/TeamCards');
 
 const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => ({
@@ -210,9 +211,9 @@ describe('DecisionsView: un handoff se puede aceptar (juicio #14)', () => {
 describe('TeamPanel: el adaptador que se negó se dice con su propia frase (juicio #5)', () => {
   it('`runtime_refused_injection` nunca se lee como "sin restricciones" ni como "la función está apagada"', () => {
     const support: CoordinationMemberSupport[] = [{ memberId: 'm1', canPropose: false, memoryInjected: false, reason: 'runtime_refused_injection', runtimeConfirmed: true, runtimeReportsInjection: true }];
-    // B1.3: las dos políticas de inyección por miembro viven al pie del panel
-    // del equipo, en modo avanzado. La frase es la misma.
-    const { container } = render(<I18nProvider><TeamPanel {...teamPanelProps} mode="advanced" coordinationSupport={support} /></I18nProvider>);
+    // B1.3/B3.1: las dos políticas de inyección por miembro viven al pie de la
+    // vista Equipo, en modo avanzado. La frase es la misma.
+    const { container } = render(<I18nProvider><TeamView work={teamPanelProps.work} team={teamPanelProps.team} roles={[]} busy={false} selectedMemberId={null} onSelectMember={() => undefined} mode="advanced" coordinationSupport={support} /></I18nProvider>);
     const row = container.querySelector('.team-support-coordination');
     expect(row).not.toBeNull();
     // La aserción vieja (`not.toContain('Sin restricciones')` + `length > 0`) la

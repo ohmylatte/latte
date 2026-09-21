@@ -136,20 +136,6 @@ export interface TeamPanelProps {
    * existiendo, en el `title`.
    */
   coordinationSupport?: readonly CoordinationMemberSupport[];
-  /**
-   * B1.3: LOS AJUSTES DEL EQUIPO, EN MODO AVANZADO.
-   *
-   * El tope de despachos del Trabajo, la autoridad de coordinacion y el
-   * nombre del coordinador no son decisiones de marca: son la configuracion
-   * de ESTE equipo. Viven al pie del panel, dentro de un `<details>` que solo
-   * se renderiza en modo avanzado. Todo opcional: sin handler, el control no
-   * se ofrece -- nunca un boton que no puede hacer nada.
-   */
-  coordinationAuthority?: CoordinationAuthorityMode;
-  onSetCoordinationAuthority?: (mode: CoordinationAuthorityMode) => void;
-  coordinationBudget?: CoordinationBudgetView;
-  onSetCoordinationBudget?: (maxDispatches: number) => void;
-  coordinatorGrant?: string | null;
 }
 
 const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex' };
@@ -214,9 +200,6 @@ export function TeamPanel(props: TeamPanelProps) {
         </div>}
       </div>
       {selected && <MemberUsage member={selected} />}
-      <TeamInbox team={team} run={props.coordinationRun ?? null} support={props.coordinationSupport}
-        log={props.coordinationLog} messages={props.coordinationMessages} asks={props.coordinationAsks} hires={props.coordinationHires}
-        roles={props.roles} formatDate={props.formatDate} onSelect={props.onSelect} />
     </>}
     {firstTeam && <RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={team.length > 0} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} />}
     {adding && !firstTeam && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setAdding(false); }}>
@@ -228,7 +211,6 @@ export function TeamPanel(props: TeamPanelProps) {
     {!work && <div className="agent-idle"><div className="agent-symbol"><MessageSquare size={27} /></div><h3>{t('ui.auto.276')}<br />{t('ui.auto.277')}</h3><p className="footnote">{t('ui.auto.278')}</p></div>}
     {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} onAttachFiles={props.onAttachFiles} coordination={props.chatCoordination} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}
     {!showPicker && !selected && team.length > 0 && <p className="chat-empty">{t('ui.auto.279')}</p>}
-    {work && mode === 'advanced' && <TeamAdvanced {...props} />}
   </div>;
 }
 
@@ -265,7 +247,7 @@ function planRunControls(run: CoordinationRunView): RunControlPlan {
   }
 }
 
-function CoordinationRunControls({ run, busy, pending, onPause, onResume, onCancel }: {
+export function CoordinationRunControls({ run, busy, pending, onPause, onResume, onCancel }: {
   run: CoordinationRunView | null;
   busy: boolean;
   pending?: Record<string, boolean>;
@@ -524,189 +506,6 @@ export function describeMemorySupport(row: CoordinationMemberSupport): string {
   if (row.memoryInjected) return t('coordination.memory.available');
   if (row.reason === 'engram_not_installed') return t('coordination.degraded.engramMissing');
   return t('coordination.memory.unavailable');
-}
-
-/** Una fila por miembro con las DOS politicas, dichas aparte -- nunca un veredicto combinado. */
-function SupportRow({ row, team }: { row: CoordinationMemberSupport; team: TeamMember[] }) {
-  // B2.2: la fila de `support` no trae `roleId`, asi que cuando el miembro ya
-  // no esta la cadena termina en la frase. El id queda en `data-member-id`,
-  // que es para depurar, no para leer.
-  const name = memberDisplayName(row.memberId, team);
-  return <li className="team-support-row" data-member-id={row.memberId}>
-    <strong>{name}</strong>
-    <p className="team-support-coordination">{describeCoordinationSupport(row)}</p>
-    <p className="team-support-memory">{describeMemorySupport(row)}</p>
-  </li>;
-}
-
-/**
- * El presupuesto de este Trabajo, con sus TRES estados separados. `invalid` no
- * es `unset`: decir "sin presupuesto configurado" sobre bytes rotos manda a la
- * persona a buscar un campo vacio que en realidad tiene algo adentro, mientras
- * el motor deniega cada despacho contra esos mismos bytes.
- */
-function describeWorkBudget(view: CoordinationBudgetView | undefined): string {
-  if (view == null || view.state === 'unset') return t('coordination.budget.unset');
-  if (view.state === 'invalid') return t('coordination.budget.invalid');
-  if (view.budget.maxDispatches == null) return t('coordination.budget.unlimited');
-  return t('coordination.budget.limited', { count: view.budget.maxDispatches });
-}
-
-/**
- * El editor del tope de este Trabajo, con el MISMO patron que Ajustes usa para
- * el tope global: un `number`, un boton, y ninguna forma de guardar algo que
- * el validador vaya a rechazar.
- *
- * Se ofrece en los TRES estados a proposito. `unset` es obvio; `set` porque un
- * tope que no se puede cambiar es una trampa, no un ajuste; e `invalid` sobre
- * todo -- ese es el estado donde cada despacho ya se esta denegando y la
- * pantalla promete que escribirlo de nuevo lo arregla.
- *
- * No hay "sin tope" aca: un presupuesto ilimitado se confirma en la propuesta,
- * con su casilla, y no se cuela por un campo vacio.
- */
-function WorkBudgetEditor({ onSave }: { onSave: (maxDispatches: number) => void }) {
-  const [draft, setDraft] = useState('');
-  const parsed = Number(draft);
-  const valid = draft.trim() !== '' && Number.isInteger(parsed) && parsed > 0;
-  return <div className="team-advanced-budget-edit">
-    <label className="field-label">{t('coordination.budget.editLabel')}
-      <input className="team-advanced-budget-input" type="number" min={1} value={draft} onChange={(e) => setDraft(e.target.value)} />
-    </label>
-    <button className="team-advanced-budget-save" disabled={!valid} onClick={() => { if (valid) { onSave(parsed); setDraft(''); } }}>{t('coordination.budget.save')}</button>
-  </div>;
-}
-
-/**
- * B1.3: LA CONFIGURACION DEL EQUIPO, AL PIE Y EN MODO AVANZADO.
- *
- * El tope de despachos, la autoridad y el coordinador no son decisiones de
- * marca: son como trabaja ESTE equipo. En modo simple no se renderizan -- la
- * persona pide en el chat y aprueba en el chat --, y en avanzado viven
- * plegados, donde no le compiten a la conversacion.
- */
-function TeamAdvanced(props: TeamPanelProps) {
-  const coordinatorName = props.coordinatorGrant
-    ? memberDisplayName(props.coordinatorGrant, props.team, null, props.roles)
-    : null;
-  return <details className="team-advanced">
-    <summary>{t('team.advanced.title')}</summary>
-    {props.coordinationAuthority !== undefined && <>
-      <label className="field-label" htmlFor="team-coordination-authority">{t('team.advanced.authority')}</label>
-      {/* Sin handler no se ofrece un `<select>` que no guarda nada: se lee. */}
-      {props.onSetCoordinationAuthority
-        ? <select id="team-coordination-authority" className="team-advanced-authority" value={props.coordinationAuthority} onChange={e => props.onSetCoordinationAuthority!(e.target.value as CoordinationAuthorityMode)}>
-            <option value="manual">{t('coordination.authority.manual')}</option>
-            <option value="plan">{t('coordination.authority.plan')}</option>
-            <option value="auto">{t('coordination.authority.auto')}</option>
-          </select>
-        : <p className="team-advanced-authority">{t(`coordination.authority.${props.coordinationAuthority}` as 'coordination.authority.manual')}</p>}
-    </>}
-    <p className="team-advanced-budget">{describeWorkBudget(props.coordinationBudget)}</p>
-    {/* Q6/O5: el presupuesto del RUN EN CURSO, cuando es ilegible. Solo con el
-        equipo vivo: con el run terminado ya no se deniega ni se va a denegar
-        ningun despacho, y la frase del presupuesto del TRABAJO habla de otros
-        bytes. El editor de abajo escribe los dos. */}
-    {props.coordinationRun?.active && props.coordinationRun.budgetInvalid
-      && <p className="team-advanced-run-budget-invalid">{t('coordination.budget.runInvalid')}</p>}
-    {props.onSetCoordinationBudget && <WorkBudgetEditor onSave={props.onSetCoordinationBudget} />}
-    {/* Las dos politicas de inyeccion, por miembro y ENTERAS. Al lado del
-        nombre vive la version de una palabra; el detalle completo -- y la
-        linea de memoria, que es independiente de la de coordinacion -- vive
-        aca, donde hay lugar para decirlo sin taparle la conversacion a nadie. */}
-    {(props.coordinationSupport?.length ?? 0) > 0 && <ul className="team-support">
-      {props.coordinationSupport!.map(row => <SupportRow key={row.memberId} row={row} team={props.team} />)}
-    </ul>}
-    <p className="team-advanced-coordinator">
-      {coordinatorName ? t('coordination.coordinator.assigned', { name: coordinatorName }) : t('coordination.coordinator.none')}
-    </p>
-  </details>;
-}
-
-/** Como se lee un hecho del buzon, en una sola linea. El rol del otro extremo se resuelve contra el equipo: un id pelado no le dice nada a nadie. */
-function describeInboxEvent(event: InboxEvent, team: TeamMember[], roles: readonly AgentRole[]): string {
-  // Sin `otherMemberId` el remitente es Latte, no un miembro: queda sin
-  // nombrar, como estaba. Con uno, la cadena de `memberDisplayName` termina
-  // siempre en algo legible.
-  const other = event.otherMemberId ? memberDisplayName(event.otherMemberId, team, event.otherRoleId, roles) : '';
-  switch (event.kind) {
-    case 'dispatched': return t('team.inbox.dispatched', { text: event.text });
-    case 'reported': return t('team.inbox.reported', { text: event.text });
-    case 'dispatchFailed': return t('team.inbox.dispatchFailed', { text: event.text });
-    case 'sent': return t('team.inbox.sent', { role: other, text: event.text });
-    case 'received': return t('team.inbox.received', { role: other, text: event.text });
-    case 'ask': return t('team.inbox.ask', { text: event.text });
-    case 'answer': return t('team.inbox.answer', { text: event.text });
-    case 'hired': return t('team.inbox.hired');
-    default: {
-      const exhaustive: never = event.kind;
-      return exhaustive;
-    }
-  }
-}
-
-/**
- * EL BUZON: una linea por miembro con su ultimo intercambio, y el hilo
- * completo a un clic.
- *
- * Sin ninguna fuente cableada no se dibuja nada -- cero filas nunca es un
- * cero, la misma regla que la tarjeta de Inicio. Un miembro sin un solo hecho
- * dice que no tiene novedades, que es informacion, no un hueco.
- */
-function TeamInbox({ team, run, support, log, messages, asks, hires, roles, formatDate, onSelect }: {
-  team: TeamMember[];
-  run: CoordinationRunView | null;
-  support?: readonly CoordinationMemberSupport[];
-  log?: readonly CoordinationLogEntryView[];
-  messages?: readonly CoordinationMessageView[];
-  asks?: readonly CoordinationAskView[];
-  hires?: readonly CoordinationHireView[];
-  roles?: readonly AgentRole[];
-  formatDate?: (value: string) => string;
-  onSelect: (memberId: string) => void;
-}) {
-  const [open, setOpen] = useState<string | null>(null);
-  const input = { log, messages, asks, hires };
-  const wired = (log ?? messages ?? asks ?? hires) !== undefined;
-  const anything = (log?.length ?? 0) + (messages?.length ?? 0) + (asks?.length ?? 0) + (hires?.length ?? 0) > 0;
-  const stateOf = (memberId: string) => {
-    const row = support?.find(s => s.memberId === memberId);
-    return row ? memberCoordinationState(row) : null;
-  };
-  if (!wired || !anything || team.length === 0) return null;
-  const when = (at: string) => (formatDate ? formatDate(at) : at);
-  return <ul className="team-inbox">
-    {team.map(member => {
-      const last = lastInboxEvent(input, member.id);
-      const thread = open === member.id ? inboxEvents(input, member.id) : [];
-      const pending = pendingForMember(member.id, undefined, asks, run);
-      return <li key={member.id} className="team-inbox-row" data-member-id={member.id}>
-        <div className="team-inbox-head">
-          <button type="button" className="team-inbox-name" onClick={() => onSelect(member.id)}>{member.roleName}</button>
-          {(() => {
-            const state = stateOf(member.id);
-            // La frase larga no desaparece: se mueve al `title`. Corto no es lo
-            // mismo que mudo, y un estado que no se puede ampliar seria peor
-            // que el parrafo que reemplaza.
-            return state ? <span className={'team-member-state ' + state.className} data-state={state.state} title={state.title}>{state.label}</span> : null;
-          })()}
-          {pending > 0 && <span className="team-inbox-pending">{t('team.inbox.pending', { count: pending })}</span>}
-          <button type="button" className="team-inbox-thread-toggle" aria-expanded={open === member.id} onClick={() => setOpen(prev => (prev === member.id ? null : member.id))}>{t('team.inbox.thread')}</button>
-        </div>
-        <p className="team-inbox-line">
-          {last ? <><span className="team-inbox-text">{describeInboxEvent(last, team, roles ?? [])}</span><time dateTime={last.at}>{when(last.at)}</time></> : <span className="team-inbox-text">{t('team.inbox.nothing')}</span>}
-        </p>
-        {open === member.id && <ol className="team-thread">
-          {thread.length === 0
-            ? <li className="team-thread-empty">{t('team.inbox.threadEmpty')}</li>
-            : thread.map(event => <li key={event.id} className="team-thread-row" data-kind={event.kind}>
-                <span className="team-thread-text">{describeInboxEvent(event, team, roles ?? [])}</span>
-                <time dateTime={event.at}>{when(event.at)}</time>
-              </li>)}
-        </ol>}
-      </li>;
-    })}
-  </ul>;
 }
 
 function statusLabel(status: TeamMemberStatus, attention: boolean) {

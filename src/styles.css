@@ -926,6 +926,23 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .team-support-row strong{font-weight:550;color:var(--ink)}
 .team-support-coordination,.team-support-memory{margin:0;color:var(--muted);line-height:1.5}
 
+/* B3.1: LA VISTA EQUIPO. Dos columnas, cada una con su propio scroll: la lista
+   de miembros a la izquierda y el hilo del abierto a la derecha. `min-width:0`
+   en las dos porque una linea larga del buzon, sin eso, estira la grilla y
+   empuja el hilo fuera de la pantalla. */
+.team-view{display:flex;flex-direction:column;min-height:0;height:100%;padding:18px 20px;gap:10px}
+.team-view-empty{justify-content:center;align-items:center}
+.team-view-columns{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:18px;flex:1;min-height:0;min-width:0}
+.team-view-list{margin:0;overflow-y:auto;min-width:0;min-height:0;padding-right:6px;border-right:1px solid var(--line);scrollbar-width:thin}
+.team-view-list .team-inbox-row{cursor:default;padding:9px 6px;border-radius:var(--radius-sm)}
+.team-view-list .team-inbox-row.is-selected{background:var(--paper-raised);border-left:2px solid var(--rust);padding-left:8px}
+.team-inbox-open-chat{margin-left:auto;border:0;padding:2px 4px;font-size:var(--text-sm);color:var(--rust);flex-shrink:0}
+.team-view-thread{display:flex;flex-direction:column;min-width:0;min-height:0;overflow-y:auto;scrollbar-width:thin}
+.team-view-thread-title{margin:0 0 8px}
+.team-view-thread .team-thread{border-left:0;padding-left:0;margin:0}
+.team-view .team-advanced{margin-top:0;flex-shrink:0}
+@media (max-width:720px){.team-view-columns{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr}.team-view-list{border-right:0;border-bottom:1px solid var(--line);max-height:38vh}}
+
 /* La tira de equipos activos: marca, trabajo y estado sin desbordar. */
 .active-teams-strip{margin:10px 0 4px;min-width:0}
 .active-teams-strip .document-kicker{margin:0 0 6px;font-size:var(--text-sm);color:var(--muted-soft)}

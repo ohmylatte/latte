@@ -1,6 +1,8 @@
+import { translate as t } from '../i18n';
+import { memberDisplayName } from './names';
 import type {
-  CoordinationAskView, CoordinationGateView, CoordinationHireView,
-  CoordinationLogEntryView, CoordinationMessageView, CoordinationRunView,
+  AgentRole, CoordinationAskView, CoordinationGateView, CoordinationHireView,
+  CoordinationLogEntryView, CoordinationMessageView, CoordinationRunView, TeamMember,
 } from '../../shared/contracts';
 
 /**
@@ -125,6 +127,35 @@ export function lastInboxEvent(input: InboxInput, memberId: string): InboxEvent 
 }
 
 /**
+ * Cómo se lee un hecho del buzón, en una sola línea. El rol del otro extremo
+ * se resuelve contra el equipo: un id pelado no le dice nada a nadie.
+ *
+ * Vive acá, y no en la pantalla que lo dibuja, porque desde B3 lo dibujan DOS:
+ * la vista Equipo (la lista y el hilo) y el subtítulo de la pestaña de miembro
+ * del chat. Una misma fila tiene que leerse igual en las dos.
+ */
+export function describeInboxEvent(event: InboxEvent, team: readonly TeamMember[], roles: readonly AgentRole[]): string {
+  // Sin `otherMemberId` el remitente es Latte, no un miembro: queda sin
+  // nombrar, como estaba. Con uno, la cadena de `memberDisplayName` termina
+  // siempre en algo legible.
+  const other = event.otherMemberId ? memberDisplayName(event.otherMemberId, team, event.otherRoleId, roles) : '';
+  switch (event.kind) {
+    case 'dispatched': return t('team.inbox.dispatched', { text: event.text });
+    case 'reported': return t('team.inbox.reported', { text: event.text });
+    case 'dispatchFailed': return t('team.inbox.dispatchFailed', { text: event.text });
+    case 'sent': return t('team.inbox.sent', { role: other, text: event.text });
+    case 'received': return t('team.inbox.received', { role: other, text: event.text });
+    case 'ask': return t('team.inbox.ask', { text: event.text });
+    case 'answer': return t('team.inbox.answer', { text: event.text });
+    case 'hired': return t('team.inbox.hired');
+    default: {
+      const exhaustive: never = event.kind;
+      return exhaustive;
+    }
+  }
+}
+
+/**
  * Cuántas decisiones está esperando ESTE miembro: los gates, que son del
  * coordinador, y las preguntas que hizo él. Exactamente el mismo ruteo que
  * usan las tarjetas del chat — si acá dijera otra cosa, el contador mandaría
@@ -146,4 +177,20 @@ export function pendingForMember(
     if (target === memberId) count += 1;
   }
   return count;
+}
+
+/**
+ * B3.1: lo que el TRABAJO entero está esperando — el número de la pestaña
+ * "Equipo". Gates más preguntas, sin repartir por miembro: la pestaña no
+ * promete a quién le toca, promete que hay algo.
+ *
+ * Un run que cerró no espera nada, exactamente igual que arriba.
+ */
+export function pendingForWork(
+  gates: readonly CoordinationGateView[] | undefined,
+  asks: readonly CoordinationAskView[] | undefined,
+  run: CoordinationRunView | null | undefined,
+): number {
+  if (run != null && !run.active) return 0;
+  return (gates ?? []).length + (asks ?? []).length;
 }

@@ -19,8 +19,8 @@ vi.mock('./i18n', async (importOriginal) => {
 
 const { createElement } = await import('react');
 const { fireEvent, render, screen } = await import('@testing-library/react');
-const { TeamPanel } = await import('./TeamPanel');
-import type { TeamPanelProps } from './TeamPanel';
+const { TeamView } = await import('./TeamView');
+import type { TeamViewProps } from './TeamView';
 import { EMPTY_USAGE } from '../shared/contracts';
 import type { CoordinationDegradedReason, CoordinationMemberSupport, CoordinationRunView, TeamMember, Work } from '../shared/contracts';
 
@@ -42,22 +42,16 @@ const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => (
   tasksDone: 0, tasksFailed: 0, tasksPending: 0, ...patch,
 });
 
-const base: TeamPanelProps = {
-  work: work(), team: [member()], chats: {}, selectedId: null, roles: [], primaryLabel: 'Claude', primaryDetail: '',
-  primaryReady: true, checking: false, primaryRuntime: 'claude', primaryAccountId: null, primaryModel: null,
-  choices: [], busy: false, isDesktop: true, mode: 'advanced',
-  onSelect: () => {}, onAdd: async () => {}, onOpen: async () => {}, onPause: async () => {}, onFinish: async () => {},
-  onRestart: async () => {}, onContinue: async () => {}, handoffs: [], onAcceptHandoff: async () => {},
-  onDismissHandoff: async () => {}, onRemove: async () => {}, onProviders: () => {}, onRecheck: () => {},
-  onModel: () => {}, onTier: () => {}, onError: () => {}, onAttachFiles: async () => [], untracked: [],
-  onAdoptFile: () => {}, permissions: 'ask', permissionBusy: false, onPermissions: () => {},
+const base: TeamViewProps = {
+  work: work(), team: [member()], roles: [], mode: 'advanced', busy: false,
+  selectedMemberId: null, onSelectMember: () => {},
 };
 
 beforeEach(() => { ui.locale = 'es-AR'; });
 
-function renderAdvanced(locale: 'es-AR' | 'en-US', props: Partial<TeamPanelProps> = {}) {
+function renderAdvanced(locale: 'es-AR' | 'en-US', props: Partial<TeamViewProps> = {}) {
   ui.locale = locale;
-  return render(createElement(TeamPanel, { ...base, ...props }));
+  return render(createElement(TeamView, { ...base, ...props }));
 }
 
 /**
@@ -189,8 +183,6 @@ describe('the coordination settings summary (additive, Phase 2 of autonomous-coo
       coordinationBudget: { state: 'set', budget: { maxDispatches: 10, unlimitedConfirmedAt: null } },
       coordinatorGrant: 'm1',
       team: [member({ id: 'm1', roleId: 'strategist', roleName: 'Estratega' })],
-      permissions: 'ask',
-      handoffs: [],
     });
     const section = container.querySelector('.team-advanced');
     expect(section).not.toBeNull();
