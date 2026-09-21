@@ -39,6 +39,7 @@ import type {
   CoordinationEvent,
   CoordinationGateView,
   CoordinationHireView,
+  CoordinationMessageView,
   CoordinationLogEntryView,
   CoordinationMemberSupport,
   CoordinationRunView,
@@ -1803,6 +1804,22 @@ export class LatteService implements BackendApi {
       roleName: byMember.get(hire.memberId)?.roleName ?? roles.get(hire.roleId) ?? hire.roleId,
       hiredAt: hire.hiredAt,
     }));
+  }
+
+  /**
+   * M4: lo que los miembros se dijeron ENTRE ELLOS.
+   *
+   * Mismo criterio que `getCoordinationRun`: el run vivo, y si no hay, el
+   * último terminado — devolver `null` (o `[]`) en cuanto el run cierra hacía
+   * desaparecer de la vista justo la conversación que explica cómo se llegó al
+   * resultado. Un Trabajo sin ningún run devuelve una lista vacía: eso no es
+   * un error, es que todavía no pasó nada.
+   */
+  async listCoordinationMessages(workId: string): Promise<CoordinationMessageView[]> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    const run = this.deps.repo.findActiveCoordinationRun(id) ?? this.deps.repo.findLatestFinishedCoordinationRun(id);
+    return run ? this.coordination.listMessages(run.id) : [];
   }
 
   /** Las preguntas abiertas de un run, para que la persona pueda responderlas con `answerCoordinationAsk` en vez de quedarse sólo con "cancelar". */

@@ -105,9 +105,19 @@ export function createCoordinationTools(engine: CoordinationEngine) {
     latte_report: (grant: CoordinationGrant, args: { taskId: string; outcome: 'succeeded' | 'failed'; summary: string; files?: string | null }) =>
       wrap(engine, grant, false, () => engine.report(grant, args.taskId, args.outcome, args.summary, args.files ?? null), true),
 
-    // Sin `wait`: el servidor nunca esperó y el buzón todavía no tiene productor.
+    // Sin `wait`: el servidor nunca esperó. Lo que sí cambió es que el buzón YA
+    // TIENE productor (`latte_message`), así que esto dejó de devolver `[]` por
+    // diseño: trae lo que te escribieron —una sola vez— y cómo viene el run.
     latte_check: (grant: CoordinationGrant, _args: Record<string, never>) =>
-      wrap(engine, grant, false, () => engine.check(grant.memberId), true),
+      wrap(engine, grant, false, () => engine.check(grant.memberId, grant.runId), true),
+
+    // M2: la pieza que convierte a los roles en un equipo. Cualquier miembro
+    // del run puede escribirle a otro: sin esto, el que necesitaba algo de otro
+    // rol sólo podía inventarlo o hacerlo él mismo, que es exactamente lo que
+    // vuelve inútil tener roles. `requireCoordinator:false` a propósito — el
+    // pedido va de abajo hacia arriba tanto como al revés.
+    latte_message: (grant: CoordinationGrant, args: { to: string; text: string }) =>
+      wrap(engine, grant, false, () => engine.message(grant, args.to, args.text), true),
 
     // R7: devuelve el `askId` explícitamente. Antes devolvía la fila entera y
     // el id venía de rebote, como un `id` entre otros campos: el agente no

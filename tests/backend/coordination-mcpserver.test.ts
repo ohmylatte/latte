@@ -250,7 +250,12 @@ describe('CoordinationMcpServer', () => {
       // base: una pregunta CON tarea vuelve en el prompt del re-despacho, y esta
       // es la unica forma que tiene el coordinador de enterarse de la suya.
       expect(names).toEqual([
-        'latte_ask', 'latte_ask_status', 'latte_check', 'latte_dispatch', 'latte_plan_submit',
+        'latte_ask', 'latte_ask_status', 'latte_check', 'latte_dispatch',
+        // M2: `latte_message` es la pieza que convierte a los roles en un
+        // equipo. `coordination_message` existia en el esquema v12 y NADA la
+        // producia: un miembro que necesitaba algo de otro rol solo podia
+        // inventarlo o hacerlo el mismo.
+        'latte_message', 'latte_plan_submit',
         // A2: `latte_task_list` es la vuelta de la aprobación. `commitProposal`
         // crea TODA tarea del plan y el coordinador no tenía cómo verlas
         // (`latte_check` devuelve `[]` por diseño), así que las recreaba — con

@@ -54,6 +54,9 @@ work, they do not gate it.
   person decides. If that tool is not in your session, say exactly that and
   offer to do the work yourself; never act out the circuit. If the person would
   rather you do it alone, do it, and say that you did it.
+- **Need something from another role? Ask for it with `latte_message`** (to that
+  role, to a member, or to `"coordinator"`) instead of writing their part
+  yourself, and read what they sent you with `latte_check`.
 
 ## Brand compliance
 

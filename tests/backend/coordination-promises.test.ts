@@ -209,6 +209,17 @@ describe('lo que se publica existe y lo que entra se valida (crítico 12)', () =
       expect(source).toMatch(/latte_task_create/);
     });
 
+    /**
+     * M1/M2/M3: el coordinador consolida porque AHORA se entera. Latte le manda
+     * cada reporte y el cierre del run; leer el buzón y las tareas es lo que
+     * reemplaza a adivinar (o a rehacer el trabajo del otro).
+     */
+    it('dice que Latte le avisa cada reporte, y con qué se consolida', () => {
+      expect(source).toMatch(/every time a member reports/i);
+      expect(source).toMatch(/latte_check/);
+      expect(source).toMatch(/latte_message/);
+    });
+
     it('dice que la coordinación se cierra sola cuando reporta la última tarea, y que para seguir hay que pedir coordinar de nuevo', () => {
       expect(source).toMatch(/closes itself|closes on its own/i);
       expect(source).toMatch(/latte_request_coordination/);
@@ -245,6 +256,18 @@ describe('lo que se publica existe y lo que entra se valida (crítico 12)', () =
       expect(line(/latte_request_coordination/)).toBeDefined();
       expect(line(/spans several roles/i)).toBeDefined();
       expect(line(/not in your session/i)).toBeDefined();
+    });
+
+    /**
+     * M2: el criterio del dueño del producto, en el único archivo que TODOS
+     * los roles reciben: «si uno necesita algo se lo pide a otro». Sin esta
+     * línea, el miembro que necesita algo de otro rol lo inventa o lo hace él
+     * mismo — que es exactamente lo que vuelve inútil tener roles.
+     */
+    it('dice que lo que necesitás de otro rol se PIDE con latte_message, y se lee con latte_check', () => {
+      expect(line(/latte_message/)).toBeDefined();
+      expect(line(/latte_check/)).toBeDefined();
+      expect(line(/another role/i)).toBeDefined();
     });
 
     it('le llega al asistente sin rol: la base va en el prompt de sistema de CUALQUIER miembro', () => {
