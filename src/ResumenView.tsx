@@ -1,6 +1,7 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { translate as t } from './i18n';
+import { memberDisplayName } from './coordination/names';
 import { resumenSummary, type CoordinationHireEvent } from './resumen-summary';
 import { CycleMap } from './CycleMap';
 import type { Brand, CoordinationLogEntryView, Decision, DocumentState, TeamMember, Work, WorkDocument, WorkPermissionMode } from '../shared/contracts';
@@ -148,7 +149,14 @@ export function ResumenView(props: ResumenViewProps) {
                 ? t('resumen.bitacora.runDone', { done: row.tasksDone, failed: row.tasksFailed })
                 : row.kind === 'runCancelled'
                   ? t('resumen.bitacora.runCancelled', { done: row.tasksDone, failed: row.tasksFailed, pending: row.tasksPending })
-                  : t(`resumen.bitacora.status.${row.status}` as 'resumen.bitacora.status.reported')}</p>
+                  : t('coordination.bitacora.by', {
+                    // B2.2: una bitacora que dice "Reportado" sin decir QUIEN
+                    // reporto no se puede leer. El nombre sale de la misma
+                    // cadena que el resto de coordinacion, asi que un miembro
+                    // que ya no esta se nombra con palabras, nunca con su id.
+                    name: memberDisplayName(row.memberId, props.team),
+                    text: t(`resumen.bitacora.status.${row.status}` as 'resumen.bitacora.status.reported'),
+                  })}</p>
             <small>{props.formatDate(row.at)}</small>
             {row.kind === 'dispatch' && IN_FLIGHT_STATUSES.has(row.status) && props.onSettleDispatch && <div className="resumen-bitacora-settle">
               <button type="button" className="resumen-bitacora-settle-succeeded" onClick={() => {

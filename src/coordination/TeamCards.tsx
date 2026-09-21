@@ -2,6 +2,7 @@ import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { translate as t } from '../i18n';
+import { memberDisplayName, roleDisplayName } from './names';
 import type {
   AgentRole, CoordinationAskView, CoordinationGateAggregate, CoordinationGateView,
   CoordinationProposal, CoordinationRunView, TeamMember,
@@ -110,14 +111,6 @@ export function routeTeamCards(
   return { gates: mineGates, asks: mineAsks, elsewhere, firstElsewhereMemberId: first };
 }
 
-/** A proposal's `roleId` resolved to a display name: the hired member if one already exists, else the roles catalog, else the raw id — never invented. */
-function resolveRoleName(roleId: string, roles: readonly AgentRole[], team: readonly TeamMember[]): string {
-  const member = team.find((m) => m.roleId === roleId);
-  if (member) return member.roleName;
-  const role = roles.find((r) => r.id === roleId);
-  if (role) return role.name;
-  return roleId;
-}
 
 /**
  * Q4: DESTILDAR UNA CONTRATACIÓN RECORTA EL PLAN, A LA VISTA.
@@ -441,13 +434,13 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
     {/* Q6/P7: LO QUE SE APRUEBA, no lo que se propuso. */}
     <ul className="team-card-plan-list">
       {proposal.plan.map((task, i) => trimmed.dropped[i] ? null
-        : <li key={i}><strong>{resolveRoleName(task.roleId, roles, team)}</strong><MarkdownLine text={task.spec} className="team-card-spec" /></li>)}
+        : <li key={i}><strong>{roleDisplayName(task.roleId, roles, team)}</strong><MarkdownLine text={task.spec} className="team-card-spec" /></li>)}
     </ul>
     {trimmed.removed > 0 && <>
       <h3 className="team-card-plan-dropped-title">{t('coordination.proposal.droppedTitle')}</h3>
       <ul className="team-card-plan-dropped-list">
         {proposal.plan.map((task, i) => trimmed.dropped[i]
-          ? <li key={i}><s><strong>{resolveRoleName(task.roleId, roles, team)}</strong><span>{task.spec}</span></s></li>
+          ? <li key={i}><s><strong>{roleDisplayName(task.roleId, roles, team)}</strong><span>{task.spec}</span></s></li>
           : null)}
       </ul>
     </>}
@@ -460,7 +453,7 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
           es —la sacó ella— y sin tachado. La comparación es por ÍNDICE. */}
       <ul className="team-card-hire-list">
         {hires.map((hire, i) => {
-          const name = resolveRoleName(hire.roleId, roles, team);
+          const name = roleDisplayName(hire.roleId, roles, team);
           const reason = <span>{t('coordination.proposal.hireReason', { reason: hire.why })}</span>;
           if (!included[i]) {
             return <li key={i} className="team-card-hire-unticked">
@@ -503,7 +496,7 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
         <p className="field-label">{t('coordination.proposal.editHires')}</p>
         {hires.map((hire, i) => <label key={i} className="team-card-edit-hire">
           <input type="checkbox" checked={included[i] ?? false} onChange={() => setIncluded((prev) => prev.map((v, idx) => idx === i ? !v : v))} />
-          <span>{resolveRoleName(hire.roleId, roles, team)}</span>
+          <span>{roleDisplayName(hire.roleId, roles, team)}</span>
         </label>)}
       </>}
       {trimmed.plan.length === 0 && <p className="team-card-edit-dropped team-card-edit-empty">{t('coordination.proposal.editDropsAll')}</p>}
@@ -557,7 +550,9 @@ export function TeamCards(props: TeamCardsProps) {
   if (routing.gates.length === 0 && routing.asks.length === 0) {
     if (routing.elsewhere === 0 || !routing.firstElsewhereMemberId) return null;
     const target = routing.firstElsewhereMemberId;
-    const name = team.find((m) => m.id === target)?.roleName ?? target;
+    // B2.2: el miembro que espera puede ya no estar en el equipo. La cadena de
+    // `memberDisplayName` termina en una frase, nunca en `mem_…`.
+    const name = memberDisplayName(target, team, null, roles);
     return <section className="team-cards team-cards-elsewhere">
       <p className="team-cards-waiting">{t('coordination.cards.waiting', { count: routing.elsewhere })}</p>
       {props.onSelectMember && <button type="button" className="team-cards-goto" onClick={() => props.onSelectMember!(target)}>{t('coordination.cards.goToMember', { name })}</button>}

@@ -10,6 +10,7 @@ import { continuationModel, continuationOptions, type ContinuationTarget } from 
 import { contextWeight, describeUsage, formatTokens, totalTokens } from './usage-format';
 import { Loading, roleColorVar, SteamWisp } from './brand-marks';
 import { inboxEvents, lastInboxEvent, pendingForMember, type InboxEvent } from './coordination/inbox';
+import { memberDisplayName } from './coordination/names';
 
 /** A runtime the user can pick for a new member instead of the primary agent. */
 export interface RuntimeChoice { key: string; label: string; runtime: ChatRuntime; accountId: string | null }
@@ -215,7 +216,7 @@ export function TeamPanel(props: TeamPanelProps) {
       {selected && <MemberUsage member={selected} />}
       <TeamInbox team={team} run={props.coordinationRun ?? null} support={props.coordinationSupport}
         log={props.coordinationLog} messages={props.coordinationMessages} asks={props.coordinationAsks} hires={props.coordinationHires}
-        formatDate={props.formatDate} onSelect={props.onSelect} />
+        roles={props.roles} formatDate={props.formatDate} onSelect={props.onSelect} />
     </>}
     {firstTeam && <RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={team.length > 0} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} />}
     {adding && !firstTeam && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setAdding(false); }}>
@@ -527,7 +528,10 @@ export function describeMemorySupport(row: CoordinationMemberSupport): string {
 
 /** Una fila por miembro con las DOS politicas, dichas aparte -- nunca un veredicto combinado. */
 function SupportRow({ row, team }: { row: CoordinationMemberSupport; team: TeamMember[] }) {
-  const name = team.find(m => m.id === row.memberId)?.roleName ?? row.memberId;
+  // B2.2: la fila de `support` no trae `roleId`, asi que cuando el miembro ya
+  // no esta la cadena termina en la frase. El id queda en `data-member-id`,
+  // que es para depurar, no para leer.
+  const name = memberDisplayName(row.memberId, team);
   return <li className="team-support-row" data-member-id={row.memberId}>
     <strong>{name}</strong>
     <p className="team-support-coordination">{describeCoordinationSupport(row)}</p>
@@ -583,7 +587,7 @@ function WorkBudgetEditor({ onSave }: { onSave: (maxDispatches: number) => void 
  */
 function TeamAdvanced(props: TeamPanelProps) {
   const coordinatorName = props.coordinatorGrant
-    ? props.team.find(m => m.id === props.coordinatorGrant)?.roleName ?? props.coordinatorGrant
+    ? memberDisplayName(props.coordinatorGrant, props.team, null, props.roles)
     : null;
   return <details className="team-advanced">
     <summary>{t('team.advanced.title')}</summary>
@@ -620,8 +624,11 @@ function TeamAdvanced(props: TeamPanelProps) {
 }
 
 /** Como se lee un hecho del buzon, en una sola linea. El rol del otro extremo se resuelve contra el equipo: un id pelado no le dice nada a nadie. */
-function describeInboxEvent(event: InboxEvent, team: TeamMember[]): string {
-  const other = event.otherMemberId ? team.find(m => m.id === event.otherMemberId)?.roleName ?? event.otherMemberId : '';
+function describeInboxEvent(event: InboxEvent, team: TeamMember[], roles: readonly AgentRole[]): string {
+  // Sin `otherMemberId` el remitente es Latte, no un miembro: queda sin
+  // nombrar, como estaba. Con uno, la cadena de `memberDisplayName` termina
+  // siempre en algo legible.
+  const other = event.otherMemberId ? memberDisplayName(event.otherMemberId, team, event.otherRoleId, roles) : '';
   switch (event.kind) {
     case 'dispatched': return t('team.inbox.dispatched', { text: event.text });
     case 'reported': return t('team.inbox.reported', { text: event.text });
@@ -646,7 +653,7 @@ function describeInboxEvent(event: InboxEvent, team: TeamMember[]): string {
  * cero, la misma regla que la tarjeta de Inicio. Un miembro sin un solo hecho
  * dice que no tiene novedades, que es informacion, no un hueco.
  */
-function TeamInbox({ team, run, support, log, messages, asks, hires, formatDate, onSelect }: {
+function TeamInbox({ team, run, support, log, messages, asks, hires, roles, formatDate, onSelect }: {
   team: TeamMember[];
   run: CoordinationRunView | null;
   support?: readonly CoordinationMemberSupport[];
@@ -654,6 +661,7 @@ function TeamInbox({ team, run, support, log, messages, asks, hires, formatDate,
   messages?: readonly CoordinationMessageView[];
   asks?: readonly CoordinationAskView[];
   hires?: readonly CoordinationHireView[];
+  roles?: readonly AgentRole[];
   formatDate?: (value: string) => string;
   onSelect: (memberId: string) => void;
 }) {
@@ -686,13 +694,13 @@ function TeamInbox({ team, run, support, log, messages, asks, hires, formatDate,
           <button type="button" className="team-inbox-thread-toggle" aria-expanded={open === member.id} onClick={() => setOpen(prev => (prev === member.id ? null : member.id))}>{t('team.inbox.thread')}</button>
         </div>
         <p className="team-inbox-line">
-          {last ? <><span className="team-inbox-text">{describeInboxEvent(last, team)}</span><time dateTime={last.at}>{when(last.at)}</time></> : <span className="team-inbox-text">{t('team.inbox.nothing')}</span>}
+          {last ? <><span className="team-inbox-text">{describeInboxEvent(last, team, roles ?? [])}</span><time dateTime={last.at}>{when(last.at)}</time></> : <span className="team-inbox-text">{t('team.inbox.nothing')}</span>}
         </p>
         {open === member.id && <ol className="team-thread">
           {thread.length === 0
             ? <li className="team-thread-empty">{t('team.inbox.threadEmpty')}</li>
             : thread.map(event => <li key={event.id} className="team-thread-row" data-kind={event.kind}>
-                <span className="team-thread-text">{describeInboxEvent(event, team)}</span>
+                <span className="team-thread-text">{describeInboxEvent(event, team, roles ?? [])}</span>
                 <time dateTime={event.at}>{when(event.at)}</time>
               </li>)}
         </ol>}

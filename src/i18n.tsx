@@ -562,6 +562,11 @@ const es = {
   'coordination.budget.runInvalid': 'El presupuesto del equipo en curso quedó ilegible. Escribí uno nuevo acá: se aplica al equipo',
   'coordination.coordinator.none': 'Sin coordinador asignado',
   'coordination.coordinator.assigned': 'Coordinador: {name}',
+  // B2.2: el final de la cadena de nombres. Un miembro contratado por un run
+  // que ya terminó puede no estar más en el equipo: eso es un hecho que se
+  // dice, no un hueco que se tapa con el id de la base.
+  'coordination.member.gone': 'miembro que ya no está',
+  'coordination.bitacora.by': '{name}: {text}',
   // --- Coordinación: gates (autonomous-coordination, Phase 7) ------------
   'coordination.gate.approve': 'Aprobar',
   'coordination.gate.editApprove': 'Editar y aprobar',
@@ -1309,6 +1314,8 @@ const en: Record<MessageKey, string> = {
   'coordination.budget.runInvalid': 'The running team’s budget became unreadable. Write a new one here: it applies to the team',
   'coordination.coordinator.none': 'No coordinator assigned',
   'coordination.coordinator.assigned': 'Coordinator: {name}',
+  'coordination.member.gone': 'member no longer here',
+  'coordination.bitacora.by': '{name}: {text}',
   // --- Coordination: gates (autonomous-coordination, Phase 7) ------------
   'coordination.gate.approve': 'Approve',
   'coordination.gate.editApprove': 'Edit and approve',

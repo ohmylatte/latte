@@ -50,6 +50,12 @@ export interface InboxEvent {
   text: string;
   /** El OTRO extremo de un mensaje: el que lo recibió (`sent`) o el que lo mandó (`received`). */
   otherMemberId?: string;
+  /**
+   * El ROL del otro extremo, que la fila del mensaje ya trae. B2.2: cuando ese
+   * miembro ya no está en el equipo, el `memberId` no resuelve contra nada y
+   * sin esto la única salida era escupir el id.
+   */
+  otherRoleId?: string;
 }
 
 export interface InboxInput {
@@ -92,11 +98,11 @@ export function inboxEvents(input: InboxInput, memberId: string): InboxEvent[] {
   }
   for (const message of input.messages ?? []) {
     if (message.from?.memberId === memberId) {
-      out.push({ id: `${message.id}:sent`, memberId, kind: 'sent', at: message.createdAt, text: firstLine(message.text), otherMemberId: message.to.memberId });
+      out.push({ id: `${message.id}:sent`, memberId, kind: 'sent', at: message.createdAt, text: firstLine(message.text), otherMemberId: message.to.memberId, otherRoleId: message.to.roleId });
     } else if (message.to.memberId === memberId) {
       // `from: null` es un mensaje que escribió Latte, no un miembro: llega
       // igual, y su remitente queda sin nombrar en vez de inventado.
-      out.push({ id: `${message.id}:received`, memberId, kind: 'received', at: message.createdAt, text: firstLine(message.text), otherMemberId: message.from?.memberId });
+      out.push({ id: `${message.id}:received`, memberId, kind: 'received', at: message.createdAt, text: firstLine(message.text), otherMemberId: message.from?.memberId, otherRoleId: message.from?.roleId });
     }
   }
   for (const ask of input.asks ?? []) {
