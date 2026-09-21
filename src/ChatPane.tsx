@@ -9,7 +9,7 @@ import { api, chatStore } from './browser-api';
 import { useChatState } from './chat-store';
 import { friendlyTool } from './tool-names';
 import { isNearConversationEnd } from './conversation-scroll';
-import { TeamCards } from './coordination/TeamCards';
+import { TeamCardsCollapsible } from './coordination/TeamCards';
 
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -33,6 +33,15 @@ export interface ChatCoordinationProps {
   coordinationPending?: Record<string, boolean>;
   /** Cambia de pestaña dentro del Trabajo: lo que aprieta "El equipo te espera". */
   onSelectMember?: (memberId: string) => void;
+  /**
+   * B3.5: la persona ya pidio ver el pendiente.
+   *
+   * Inicio ("te espera una aprobacion") y la tira lateral abren la
+   * conversacion del coordinador JUSTAMENTE para que apruebe: dejarle la
+   * linea plegada seria cobrarle un clic mas por lo que ya pidio. En
+   * cualquier otra navegacion queda plegada, que es el default.
+   */
+  initiallyExpanded?: boolean;
 }
 
 export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked = [], onAdoptFile, onAttachFiles, beforeComposer, coordination }: { session: ChatSession; onStop: () => void; onError: (error: string) => void; onSaveAsDocument?: (text: string) => void; untracked?: string[]; onAdoptFile?: (fileName: string) => void; onAttachFiles?: () => Promise<string[]>; beforeComposer?: ReactNode; coordination?: ChatCoordinationProps }) {
@@ -167,7 +176,7 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
         miembro. No entra en el scroll de la conversación a propósito — una
         aprobación que se va hacia arriba con los mensajes es una aprobación
         que la persona no ve. */}
-    {coordination && <TeamCards
+    {coordination && <TeamCardsCollapsible
       memberId={session.id}
       coordinationRun={coordination.coordinationRun}
       gates={coordination.gates}
@@ -179,6 +188,7 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
       onAnswerAsk={coordination.onAnswerAsk}
       pending={coordination.coordinationPending}
       onSelectMember={coordination.onSelectMember}
+      initiallyExpanded={coordination.initiallyExpanded}
     />}
     {beforeComposer}
     <form className="prompt-form" onSubmit={e => { e.preventDefault(); void send(); }}>

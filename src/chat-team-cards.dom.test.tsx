@@ -32,15 +32,18 @@ beforeEach(() => { sessionId = `chat-cards-${++index}`; });
 afterEach(() => { chatStore.forget(sessionId); });
 
 describe('las tarjetas del equipo en el chat', () => {
+  // B3.2: ya no nacen desplegadas — la línea plegada vive en el mismo lugar
+  // y las tarjetas se abren debajo de ella, entre el scroll y el composer.
   it('se renderizan entre el scroll de la conversación y el formulario de escribir', () => {
     const { container } = render(<ChatPane session={session()} onStop={() => undefined} onError={() => undefined}
-      coordination={{ coordinationRun: run(sessionId), gates: [gate], onResolveGate: () => {} }} />);
+      coordination={{ coordinationRun: run(sessionId), gates: [gate], onResolveGate: () => {}, initiallyExpanded: true }} />);
     const pane = container.querySelector('.chat-pane')!;
     const kids = [...pane.children];
     const cards = container.querySelector('section.team-cards')!;
     expect(cards).not.toBeNull();
     expect(kids.indexOf(cards)).toBeGreaterThan(kids.indexOf(container.querySelector('.chat-scroll')!));
     expect(kids.indexOf(cards)).toBeLessThan(kids.indexOf(container.querySelector('form.prompt-form')!));
+    expect(kids.indexOf(container.querySelector('.team-cards-collapsed')!)).toBeGreaterThan(kids.indexOf(container.querySelector('.chat-scroll')!));
     expect(cards.textContent).toContain('Del equipo');
   });
 

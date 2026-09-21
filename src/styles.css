@@ -841,6 +841,13 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .team-cards-elsewhere{flex-direction:row;align-items:center;justify-content:space-between;gap:10px;max-height:none;overflow:visible}
 .team-cards-waiting{margin:0;font-size:var(--text-sm);color:var(--rust-deep)}
 .team-cards-goto{font-size:var(--text-sm);padding:5px 9px;white-space:nowrap}
+/* B3.2: la linea plegada. Una sola linea, ancho completo, y la flecha gira al
+   abrir: el chat recupera el alto que las tarjetas le comian todo el tiempo. */
+.team-cards-collapsed{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;margin:10px 0 0;padding:7px 10px;border:1px solid var(--line-strong);border-radius:var(--radius-md);background:var(--rust-wash);color:var(--rust-deep);font-size:var(--text-sm);text-align:left}
+.team-cards-collapsed-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team-cards-collapsed svg{flex-shrink:0;transition:transform .15s}
+.team-cards-collapsed.is-open svg{transform:rotate(90deg)}
+.team-cards-collapsed.is-open+.team-cards{margin-top:6px}
 .team-card{border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--foam);padding:12px 14px;display:flex;flex-direction:column;gap:8px}
 .team-card h3{margin:0;font-size:var(--text-md);font-weight:600;color:var(--ink)}
 .team-card p{margin:0;font-size:var(--text-sm);line-height:1.6;color:var(--ink-soft)}

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { ChevronRight } from 'lucide-react';
 import { translate as t } from '../i18n';
 import { memberDisplayName, roleDisplayName } from './names';
 import type {
@@ -571,4 +572,52 @@ export function TeamCards(props: TeamCardsProps) {
     })}
     {routing.asks.map((ask) => <AskCard key={ask.id} ask={ask} formatDate={props.formatDate} onAnswerAsk={props.onAnswerAsk} pending={props.pending} />)}
   </section>;
+}
+
+/**
+ * B3.2: QUÉ es lo que el equipo está esperando, en una frase contada.
+ *
+ * Los cuatro tipos de gate y la pregunta tienen nombres distintos porque son
+ * cosas distintas: "1 propuesta" y "1 presupuesto" mandan a la persona a
+ * decisiones que no se parecen en nada. Con más de un tipo a la vez no se
+ * elige uno —eso mentiría sobre lo que hay detrás de la línea— y se cuenta
+ * cuántos pendientes son.
+ */
+export function describeCardsPending(routing: TeamCardRouting): string {
+  const kinds = new Set<string>(routing.gates.map((gate) => gate.kind));
+  if (routing.asks.length > 0) kinds.add('ask');
+  const count = routing.gates.length + routing.asks.length;
+  const kind = kinds.size === 1 ? [...kinds][0]! : 'mixed';
+  return t(`coordination.cards.kind.${kind}` as 'coordination.cards.kind.mixed', { count });
+}
+
+/**
+ * B3.2: LAS TARJETAS, PLEGADAS POR DEFECTO.
+ *
+ * Arriba del composer es el lugar correcto —una aprobación dentro del scroll
+ * se va hacia arriba con el primer mensaje nuevo—, pero DESPLEGADAS ocupan
+ * hasta 46vh todo el tiempo, esté la persona por aprobar algo o no. El dueño
+ * lo dijo con la captura: el chat necesita ese alto.
+ *
+ * Plegadas son una línea que dice qué hay. Se abren al tocarla, y se vuelven a
+ * plegar al tocarla de nuevo o cuando ya no queda nada para este miembro: si
+ * llega un pendiente nuevo después, la persona lo ve como línea, no como una
+ * tarjeta que se le abrió sola encima del teclado.
+ *
+ * Sin nada para este miembro esto no decide nada: delega en `TeamCards`, que
+ * dibuja la línea de "hay algo en otro chat" o no dibuja nada.
+ */
+export function TeamCardsCollapsible(props: TeamCardsProps & { initiallyExpanded?: boolean }) {
+  const routing = routeTeamCards(props.memberId, props.gates, props.openAsks, props.coordinationRun);
+  const mine = routing.gates.length + routing.asks.length;
+  const [open, setOpen] = useState(Boolean(props.initiallyExpanded));
+  useEffect(() => { if (mine === 0) setOpen(false); }, [mine === 0]);
+  if (mine === 0) return <TeamCards {...props} />;
+  return <>
+    <button type="button" className={'team-cards-collapsed' + (open ? ' is-open' : '')} aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+      <span className="team-cards-collapsed-text">{t('coordination.cards.collapsed', { what: describeCardsPending(routing) })}</span>
+      <ChevronRight size={13} />
+    </button>
+    {open && <TeamCards {...props} />}
+  </>;
 }
