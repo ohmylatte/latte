@@ -36,7 +36,7 @@ import type {
 } from '../storage/repository';
 import { canAddTask, computeDoomedTasks, computeReadyTasks, computeTaskDepth, wouldCreateCycle, type DagEdge, type DagTask } from './dag';
 import { assertBudgetConfigured, BudgetUnsetError, readStoredCoordinationBudget, requireCoordinationBudget, reserveDispatch, type BudgetUsage, type StoredCoordinationBudgetRead } from './budget';
-import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, IN_FLIGHT_DISPATCH_STALE_MINUTES, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK, MAX_PENDING_NOTICES, TASK_LIST_SPEC_PREVIEW } from './limits';
+import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, IN_FLIGHT_DISPATCH_STALE_MINUTES, LOG_PREVIEW, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK, MAX_PENDING_NOTICES, TASK_LIST_SPEC_PREVIEW } from './limits';
 
 /**
  * Los roles que la persona aprobo, por run. Una clave propia y no `plan_json`:
@@ -166,6 +166,11 @@ export interface CoordinationDispatchLogEntry {
   taskId: string;
   memberId: string;
   status: CoordinationDispatchRecord['status'];
+  /** `'succeeded'` / `'failed'` cuando el despacho ya se liquido; `null` mientras sigue en vuelo. */
+  outcome: string | null;
+  /** Los primeros `LOG_PREVIEW` caracteres del prompt y del resumen: lo que entra en un renglon del buzon. */
+  promptPreview: string;
+  summaryPreview: string | null;
   createdAt: string;
   startedAt: string | null;
   settledAt: string | null;
@@ -1023,7 +1028,13 @@ export class CoordinationEngine {
    */
   listLog(runId: string): CoordinationLogEntry[] {
     const entries: CoordinationLogEntry[] = this.deps.repo.listCoordinationDispatches(runId).map((d) => ({
-      id: d.id, taskId: d.taskId, memberId: d.memberId, status: d.status, createdAt: d.createdAt, startedAt: d.startedAt, settledAt: d.settledAt,
+      id: d.id, taskId: d.taskId, memberId: d.memberId, status: d.status,
+      // El QUE y el COMO, no solo el cuando: sin esto el buzon del panel de
+      // equipo solo podia decir "hubo un despacho", que no le sirve a nadie.
+      outcome: d.outcome,
+      promptPreview: d.prompt.slice(0, LOG_PREVIEW),
+      summaryPreview: d.summary == null ? null : d.summary.slice(0, LOG_PREVIEW),
+      createdAt: d.createdAt, startedAt: d.startedAt, settledAt: d.settledAt,
     }));
     const run = this.deps.repo.getCoordinationRun(runId);
     if (run.status === 'done') {

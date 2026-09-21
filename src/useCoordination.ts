@@ -3,7 +3,7 @@ import { api } from './browser-api';
 import { shouldRefreshWork } from './coordination-event-routing';
 import type {
   CoordinationActiveRunSummary, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
-  CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationRunView, CoordinatorGrant,
+  CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationMessageView, CoordinationRunView, CoordinatorGrant,
 } from '../shared/contracts';
 
 export { shouldRefreshWork } from './coordination-event-routing';
@@ -15,6 +15,17 @@ export interface CoordinationState {
   run: CoordinationRunView | null;
   gates: CoordinationGateView[];
   log: CoordinationLogEntryView[];
+  /**
+   * El buzon del run: los `latte_message` entre miembros, con los dos extremos
+   * ya resueltos a `memberId` + `roleId`. Se refresca con el MISMO ritmo que
+   * la bitacora --el panel de equipo dibuja las dos cosas en una sola linea
+   * por miembro, y dos ritmos distintos harian que esa linea se contradijera
+   * consigo misma entre un refresco y el siguiente.
+   *
+   * Se pide por `workId`, no por `runId`: `listCoordinationMessages` resuelve
+   * el run del Trabajo por su cuenta y contesta `[]` cuando no hay ninguno.
+   */
+  messages: CoordinationMessageView[];
   /** Las contrataciones del run, para la bitacora. Antes esa prop no la llenaba nadie. */
   hires: CoordinationHireView[];
   support: CoordinationMemberSupport[];
@@ -117,6 +128,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
   const [run, setRun] = useState<CoordinationRunView | null>(null);
   const [gates, setGates] = useState<CoordinationGateView[]>([]);
   const [log, setLog] = useState<CoordinationLogEntryView[]>([]);
+  const [messages, setMessages] = useState<CoordinationMessageView[]>([]);
   const [hires, setHires] = useState<CoordinationHireView[]>([]);
   const [support, setSupport] = useState<CoordinationMemberSupport[]>([]);
   const [openAsks, setOpenAsks] = useState<CoordinationAskView[]>([]);
@@ -161,6 +173,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     void api.getCoordinationBudget(id).then((v) => { if (fresh()) setBudget(v); }).catch((e) => { report(e); if (fresh()) setBudget({ state: 'unset' }); });
     void api.getCoordinatorGrant(id).then((v) => { if (fresh()) setCoordinatorGrant(v); }).catch((e) => { report(e); if (fresh()) setCoordinatorGrant(null); });
     void api.coordinationRuntimeSupport(id).then((v) => { if (fresh()) setSupport(v); }).catch((e) => { report(e); if (fresh()) setSupport([]); });
+    void api.listCoordinationMessages(id).then((v) => { if (fresh()) setMessages(v); }).catch((e) => { report(e); if (fresh()) setMessages([]); });
     // `loaded()` marca el recorte de ESTE `id` como cargado, y sólo si sigue
     // siendo el vigente. Es lo que `markSeen` espera: hasta acá la pantalla
     // de Decisiones no tiene un solo gate dibujado.
@@ -191,7 +204,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     if (!workId) {
       generation.current += 1; // toda respuesta en vuelo queda huérfana
       setAuthority('manual'); setBudget({ state: 'unset' }); setCoordinatorGrant(null);
-      setRun(null); setGates([]); setLog([]); setHires([]); setSupport([]); setOpenAsks([]);
+      setRun(null); setGates([]); setLog([]); setHires([]); setSupport([]); setOpenAsks([]); setMessages([]);
       return;
     }
     refreshWork(workId);
@@ -262,7 +275,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
   };
 
   return {
-    authority, budget, coordinatorGrant, run, gates, log, hires, support, openAsks, activeRuns, pending,
+    authority, budget, coordinatorGrant, run, gates, log, messages, hires, support, openAsks, activeRuns, pending,
     // Comparado contra el `workId` de ESTE render: el `true` del Trabajo
     // anterior no puede sobrevivir a la navegación ni un solo render.
     workLoaded: workId != null && loadedWorkId === workId,

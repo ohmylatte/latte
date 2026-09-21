@@ -156,7 +156,7 @@ describe('the bitácora (additive, autonomous-coordination Phase 7 task 7.3)', (
   it('derives dispatch entries strictly from coordination_dispatch timestamps and adds one row for a hire', () => {
     const html = render('es-AR', {
       coordinationLog: [
-        { id: 'cd1', taskId: 't1', memberId: 'm1', status: 'reported', createdAt: '2026-09-01T10:00:00.000Z', startedAt: null, settledAt: '2026-09-01T10:05:00.000Z' },
+        { id: 'cd1', taskId: 't1', memberId: 'm1', status: 'reported', outcome: 'succeeded', promptPreview: '', summaryPreview: null, createdAt: '2026-09-01T10:00:00.000Z', startedAt: null, settledAt: '2026-09-01T10:05:00.000Z' },
       ],
       coordinationHires: [{ memberId: 'm2', roleName: 'Diseñador', hiredAt: '2026-09-01T09:00:00.000Z' }],
     });

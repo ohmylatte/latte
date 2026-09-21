@@ -1,7 +1,7 @@
 import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Check, CircleAlert, CircleCheck, FolderCheck, FolderLock, Forward, LoaderCircle, MessageSquare, MessageSquarePlus, Pause, Play, Plug, Plus, Settings2, Trash2, UserPlus, X, Zap } from 'lucide-react';
-import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
+import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationAskView, type CoordinationGateView, type CoordinationHireView, type CoordinationLogEntryView, type CoordinationMessageView, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { ChatPane, type ChatCoordinationProps } from './ChatPane';
 import { useChatState } from './chat-store';
@@ -9,6 +9,7 @@ import { canChangePermission } from './permission-ux';
 import { continuationModel, continuationOptions, type ContinuationTarget } from './provider-models';
 import { contextWeight, describeUsage, formatTokens, totalTokens } from './usage-format';
 import { Loading, roleColorVar, SteamWisp } from './brand-marks';
+import { inboxEvents, lastInboxEvent, pendingForMember, type InboxEvent } from './coordination/inbox';
 
 /** A runtime the user can pick for a new member instead of the primary agent. */
 export interface RuntimeChoice { key: string; label: string; runtime: ChatRuntime; accountId: string | null }
@@ -107,6 +108,22 @@ export interface TeamPanelProps {
    * Opcional y aditivo: sin esto el chat se dibuja exactamente como estaba.
    */
   chatCoordination?: ChatCoordinationProps;
+  /**
+   * EL BUZON DEL EQUIPO (B1.2). Todo aditivo: sin estas props el panel se
+   * dibuja exactamente como estaba.
+   *
+   * La bitacora, los mensajes entre miembros, las preguntas y las altas son
+   * las CUATRO fuentes de "que le paso a cada uno". Se pasan crudas y la
+   * derivacion vive en `./coordination/inbox`, sin React: la linea de cada
+   * miembro se puede probar sin montar medio panel.
+   */
+  coordinationLog?: readonly CoordinationLogEntryView[];
+  coordinationMessages?: readonly CoordinationMessageView[];
+  coordinationAsks?: readonly CoordinationAskView[];
+  coordinationHires?: readonly CoordinationHireView[];
+  /** Los gates del run: el contador de pendientes de la pestana del coordinador. */
+  coordinationGates?: readonly CoordinationGateView[];
+  formatDate?: (value: string) => string;
 }
 
 const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex' };
@@ -150,7 +167,9 @@ export function TeamPanel(props: TeamPanelProps) {
     {work && team.length > 0 && <>
       <div className="team-tabs" role="tablist" aria-label={t('ui.auto.268')}>
         <div className="team-tab-strip">
-          {team.map(member => <MemberTab key={member.id} member={member} chat={chats[member.id] ?? null} selected={member.id === selectedId} busy={busy} mode={mode} onSelect={() => props.onSelect(member.id)} />)}
+          {team.map(member => <MemberTab key={member.id} member={member} chat={chats[member.id] ?? null} selected={member.id === selectedId} busy={busy} mode={mode}
+            pending={pendingForMember(member.id, props.coordinationGates, props.coordinationAsks, props.coordinationRun ?? null)}
+            onSelect={() => props.onSelect(member.id)} />)}
         </div>
         {activity && <span className={'team-activity' + (activity.needsAttention ? ' attention' : '')} role="status" title={activity.detail}>{activity.label}</span>}
         {workTotal > 0 && <span className="team-usage-total" title={t('usage.help')}>{t('usage.workTotal', { tokens: formatTokens(workTotal, currentLocale()) })}</span>}
@@ -169,6 +188,9 @@ export function TeamPanel(props: TeamPanelProps) {
         </div>}
       </div>
       {selected && <MemberUsage member={selected} />}
+      <TeamInbox team={team} run={props.coordinationRun ?? null}
+        log={props.coordinationLog} messages={props.coordinationMessages} asks={props.coordinationAsks} hires={props.coordinationHires}
+        formatDate={props.formatDate} onSelect={props.onSelect} />
     </>}
     {firstTeam && <RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={team.length > 0} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} />}
     {adding && !firstTeam && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setAdding(false); }}>
@@ -231,11 +253,23 @@ function CoordinationRunControls({ run, busy, pending, onPause, onResume, onCanc
   // de run vivo a algo que ya cerró.
   const live = run.active;
   const inFlight = busy || Boolean(pending?.[`run:${run.id}`]);
+  // B1.2: LAS CUENTAS VIVEN ACA, en la cabecera del equipo.
+  //
+  // El banner de "este equipo termino: N listas, M fallidas" vivia en
+  // Decisiones, que es la pantalla de lo que PERMANECE. Un run es lo
+  // contrario: pasa. Su estado va donde estan sus controles -- pausar,
+  // reanudar, cancelar --, compacto, en una linea.
+  const counts = t('team.run.counts', { done: run.tasksDone, failed: run.tasksFailed, pending: run.tasksPending });
+  // Un presupuesto ILEGIBLE no se dibuja como un numero: eso seria exactamente
+  // la mentira que el `null` produce.
+  const budget = run.budgetInvalid ? t('coordination.budget.invalid') : t('team.run.budget', { used: run.tasksDone + run.tasksFailed, max: run.budget?.maxDispatches ?? '∞' });
   return <div className="team-coordination-controls">
     {/* `team-finished-coordination` se conserva como segunda clase para los
         dos finales: es el gancho con el que el resto del producto ya
         distingue "este equipo cerró" de "este equipo está en un estado". */}
     {plan.statusKey && <span className={'team-coordination-status' + (live ? '' : ' team-finished-coordination')} data-run-status={run.status} role="status">{t(plan.statusKey)}</span>}
+    <span className="team-coordination-counts">{counts}</span>
+    <span className="team-coordination-budget">{budget}</span>
     {live && plan.pause && <button className="team-pause-coordination" title={t('coordination.run.pauseHelp')} disabled={inFlight} onClick={() => onPause?.(run.id)}><Pause size={13} />{t('coordination.run.pause')}</button>}
     {live && plan.resume && <button className="team-resume-coordination" title={t('coordination.run.resumeHelp')} disabled={inFlight} onClick={() => onResume?.(run.id)}><Play size={13} />{t('coordination.run.resume')}</button>}
     {live && plan.cancel && <button className="team-cancel-coordination" title={t('coordination.run.cancelHelp')} disabled={inFlight} onClick={() => onCancel?.(run.id)}><X size={13} />{t('coordination.run.cancel')}</button>}
@@ -364,7 +398,7 @@ export function WorkPermissions({ mode, busy, hasClaude, isDesktop, onChange }: 
   </details>;
 }
 
-export function MemberTab({ member, chat, selected, busy, mode = 'simple', onSelect }: { member: TeamMember; chat: ChatSession | null; selected: boolean; busy: boolean; mode?: LatteMode; onSelect: () => void }) {
+export function MemberTab({ member, chat, selected, busy, mode = 'simple', pending = 0, onSelect }: { member: TeamMember; chat: ChatSession | null; selected: boolean; busy: boolean; mode?: LatteMode; pending?: number; onSelect: () => void }) {
   const state = useChatState(chatStore, chat ? chat.id : null);
   const live = Boolean(chat) && !state.closed;
   const status: TeamMemberStatus = live ? (state.status === 'idle' ? 'idle' : 'working') : member.status === 'ended' ? 'ended' : 'paused';
@@ -377,8 +411,83 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', onSel
     {status === 'working' && !attention
       ? <SteamWisp className="team-steam" style={{ color: roleColorVar(member.roleId) }} />
       : <i className="team-tab-dot" aria-hidden="true" />}
+    {/* B1.2: lo que ESTE miembro esta esperando de la persona. El punto de
+        atencion de arriba habla del runtime (un permiso, una pregunta del
+        CLI); esto habla de la coordinacion, y son dos cosas distintas: un
+        miembro puede tener un gate esperando con su proceso en silencio. */}
+    {pending > 0 && <span className="team-tab-pending" title={t('team.inbox.pending', { count: pending })}>{pending}</span>}
     <span className="visually-hidden">{statusLabel(status, attention)}</span>
   </button>;
+}
+
+/** Como se lee un hecho del buzon, en una sola linea. El rol del otro extremo se resuelve contra el equipo: un id pelado no le dice nada a nadie. */
+function describeInboxEvent(event: InboxEvent, team: TeamMember[]): string {
+  const other = event.otherMemberId ? team.find(m => m.id === event.otherMemberId)?.roleName ?? event.otherMemberId : '';
+  switch (event.kind) {
+    case 'dispatched': return t('team.inbox.dispatched', { text: event.text });
+    case 'reported': return t('team.inbox.reported', { text: event.text });
+    case 'dispatchFailed': return t('team.inbox.dispatchFailed', { text: event.text });
+    case 'sent': return t('team.inbox.sent', { role: other, text: event.text });
+    case 'received': return t('team.inbox.received', { role: other, text: event.text });
+    case 'ask': return t('team.inbox.ask', { text: event.text });
+    case 'answer': return t('team.inbox.answer', { text: event.text });
+    case 'hired': return t('team.inbox.hired');
+    default: {
+      const exhaustive: never = event.kind;
+      return exhaustive;
+    }
+  }
+}
+
+/**
+ * EL BUZON: una linea por miembro con su ultimo intercambio, y el hilo
+ * completo a un clic.
+ *
+ * Sin ninguna fuente cableada no se dibuja nada -- cero filas nunca es un
+ * cero, la misma regla que la tarjeta de Inicio. Un miembro sin un solo hecho
+ * dice que no tiene novedades, que es informacion, no un hueco.
+ */
+function TeamInbox({ team, run, log, messages, asks, hires, formatDate, onSelect }: {
+  team: TeamMember[];
+  run: CoordinationRunView | null;
+  log?: readonly CoordinationLogEntryView[];
+  messages?: readonly CoordinationMessageView[];
+  asks?: readonly CoordinationAskView[];
+  hires?: readonly CoordinationHireView[];
+  formatDate?: (value: string) => string;
+  onSelect: (memberId: string) => void;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+  const input = { log, messages, asks, hires };
+  const wired = (log ?? messages ?? asks ?? hires) !== undefined;
+  const anything = (log?.length ?? 0) + (messages?.length ?? 0) + (asks?.length ?? 0) + (hires?.length ?? 0) > 0;
+  if (!wired || !anything || team.length === 0) return null;
+  const when = (at: string) => (formatDate ? formatDate(at) : at);
+  return <ul className="team-inbox">
+    {team.map(member => {
+      const last = lastInboxEvent(input, member.id);
+      const thread = open === member.id ? inboxEvents(input, member.id) : [];
+      const pending = pendingForMember(member.id, undefined, asks, run);
+      return <li key={member.id} className="team-inbox-row" data-member-id={member.id}>
+        <div className="team-inbox-head">
+          <button type="button" className="team-inbox-name" onClick={() => onSelect(member.id)}>{member.roleName}</button>
+          {pending > 0 && <span className="team-inbox-pending">{t('team.inbox.pending', { count: pending })}</span>}
+          <button type="button" className="team-inbox-thread-toggle" aria-expanded={open === member.id} onClick={() => setOpen(prev => (prev === member.id ? null : member.id))}>{t('team.inbox.thread')}</button>
+        </div>
+        <p className="team-inbox-line">
+          {last ? <><span className="team-inbox-text">{describeInboxEvent(last, team)}</span><time dateTime={last.at}>{when(last.at)}</time></> : <span className="team-inbox-text">{t('team.inbox.nothing')}</span>}
+        </p>
+        {open === member.id && <ol className="team-thread">
+          {thread.length === 0
+            ? <li className="team-thread-empty">{t('team.inbox.threadEmpty')}</li>
+            : thread.map(event => <li key={event.id} className="team-thread-row" data-kind={event.kind}>
+                <span className="team-thread-text">{describeInboxEvent(event, team)}</span>
+                <time dateTime={event.at}>{when(event.at)}</time>
+              </li>)}
+        </ol>}
+      </li>;
+    })}
+  </ul>;
 }
 
 function statusLabel(status: TeamMemberStatus, attention: boolean) {

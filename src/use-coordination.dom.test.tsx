@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
-import type { CoordinationActiveRunSummary, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudget, CoordinationBudgetView, CoordinationEvent, CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationRunView, CoordinatorGrant } from '../shared/contracts';
+import type { CoordinationActiveRunSummary, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudget, CoordinationBudgetView, CoordinationEvent, CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationMessageView, CoordinationRunView, CoordinatorGrant } from '../shared/contracts';
 
 /**
  * `useCoordination(workId)` (autonomous-coordination Phase 7 task 7.11):
@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   listCoordinationGates: vi.fn<(runId: string) => Promise<CoordinationGateView[]>>(),
   listCoordinationLog: vi.fn<(runId: string) => Promise<CoordinationLogEntryView[]>>(),
   listCoordinationHires: vi.fn<(runId: string) => Promise<CoordinationHireView[]>>(),
+  listCoordinationMessages: vi.fn<(workId: string) => Promise<CoordinationMessageView[]>>(),
   listActiveCoordinationRuns: vi.fn<() => Promise<CoordinationActiveRunSummary[]>>(),
   listOpenCoordinationAsks: vi.fn<(runId: string) => Promise<CoordinationAskView[]>>(),
   resolveCoordinationGate: vi.fn(),
@@ -55,6 +56,7 @@ beforeEach(() => {
   mocks.listCoordinationGates.mockResolvedValue([]);
   mocks.listCoordinationLog.mockResolvedValue([]);
   mocks.listCoordinationHires.mockResolvedValue([]);
+  mocks.listCoordinationMessages.mockResolvedValue([]);
   mocks.listActiveCoordinationRuns.mockResolvedValue([]);
   mocks.listOpenCoordinationAsks.mockResolvedValue([]);
   mocks.resolveCoordinationGate.mockResolvedValue(run());
@@ -102,13 +104,38 @@ describe('useCoordination(workId): a Work is open', () => {
   it('when a run exists, also fetches its gates and its bitácora', async () => {
     mocks.getCoordinationRun.mockResolvedValue(run());
     mocks.listCoordinationGates.mockResolvedValue([{ id: 'g1', kind: 'dispatch', runId: 'run1', createdAt: '2026-09-01T00:00:00.000Z' }]);
-    mocks.listCoordinationLog.mockResolvedValue([{ id: 'l1', taskId: 't1', memberId: 'm1', status: 'running', createdAt: '2026-09-01T00:00:00.000Z', startedAt: '2026-09-01T00:00:00.000Z', settledAt: null }]);
+    mocks.listCoordinationLog.mockResolvedValue([{ id: 'l1', taskId: 't1', memberId: 'm1', status: 'running', outcome: null, promptPreview: '', summaryPreview: null, createdAt: '2026-09-01T00:00:00.000Z', startedAt: '2026-09-01T00:00:00.000Z', settledAt: null }]);
     const { result } = renderHook(() => useCoordination('w1'));
     await waitFor(() => expect(result.current.run).not.toBeNull());
     expect(mocks.listCoordinationGates).toHaveBeenCalledWith('run1');
     expect(mocks.listCoordinationLog).toHaveBeenCalledWith('run1');
     expect(result.current.gates).toHaveLength(1);
     expect(result.current.log).toHaveLength(1);
+  });
+
+  /**
+   * B1.2: EL BUZON SE PIDE CON EL MISMO RITMO QUE LA BITACORA.
+   *
+   * El panel de equipo dibuja las dos cosas en UNA linea por miembro. Con dos
+   * ritmos distintos esa linea se contradiria consigo misma entre un refresco
+   * y el siguiente: el ultimo despacho de una lectura y el ultimo mensaje de
+   * otra. `listCoordinationMessages` se pide por `workId` --resuelve el run
+   * por su cuenta-- y viaja en el mismo refresco por-Trabajo.
+   */
+  it('pide los mensajes entre miembros del Trabajo y los expone', async () => {
+    mocks.getCoordinationRun.mockResolvedValue(run());
+    mocks.listCoordinationMessages.mockResolvedValue([
+      { id: 'msg1', runId: 'run1', from: { memberId: 'm1', roleId: 'strategist' }, to: { memberId: 'm2', roleId: 'copywriter' }, text: 'Pasame el copy', readAt: null, createdAt: '2026-09-01T00:00:00.000Z' },
+    ]);
+    const { result } = renderHook(() => useCoordination('w1'));
+    await waitFor(() => expect(result.current.messages).toHaveLength(1));
+    expect(mocks.listCoordinationMessages).toHaveBeenCalledWith('w1');
+  });
+
+  it('sin Trabajo abierto el buzon queda vacio y no se pide nada', async () => {
+    const { result } = renderHook(() => useCoordination(null));
+    await waitFor(() => expect(result.current.messages).toEqual([]));
+    expect(mocks.listCoordinationMessages).not.toHaveBeenCalled();
   });
 
   it('when there is no run, gates and log stay empty without ever calling listCoordinationGates', async () => {
@@ -128,7 +155,7 @@ describe('useCoordination(workId): a Work is open', () => {
     mocks.getCoordinationRun.mockResolvedValue(run({ status: 'done', active: false }));
     mocks.listCoordinationGates.mockResolvedValue([]);
     mocks.listCoordinationLog.mockResolvedValue([
-      { id: 'l1', taskId: 't1', memberId: 'm1', status: 'reported', createdAt: '2026-09-01T00:00:00.000Z', startedAt: '2026-09-01T00:00:00.000Z', settledAt: '2026-09-01T00:01:00.000Z' },
+      { id: 'l1', taskId: 't1', memberId: 'm1', status: 'reported', outcome: 'succeeded', promptPreview: '', summaryPreview: null, createdAt: '2026-09-01T00:00:00.000Z', startedAt: '2026-09-01T00:00:00.000Z', settledAt: '2026-09-01T00:01:00.000Z' },
       { id: 'l2', kind: 'run_done', tasksDone: 1, tasksFailed: 0, createdAt: '2026-09-01T00:02:00.000Z' },
     ] as never);
     const { result } = renderHook(() => useCoordination('w1'));

@@ -875,6 +875,20 @@ export interface CoordinationDispatchLogEntryView {
   taskId: string;
   memberId: string;
   status: CoordinationDispatchStatus;
+  /**
+   * `'succeeded'` / `'failed'` once the dispatch settled; `null` while it is
+   * still in flight. The status alone could not tell a report that came back
+   * badly from one that never came back.
+   */
+  outcome: string | null;
+  /**
+   * The first 120 characters of the dispatch prompt and of the reported
+   * summary. The team panel's inbox shows ONE line per member — what last
+   * happened to them — and a line needs the WHAT, not only the when. The full
+   * texts stay where they already were: the gate card and the report.
+   */
+  promptPreview: string;
+  summaryPreview: string | null;
   createdAt: string;
   startedAt: string | null;
   settledAt: string | null;
