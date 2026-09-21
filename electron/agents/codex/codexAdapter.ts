@@ -727,21 +727,31 @@ export class CodexChatAdapter implements RuntimeAdapter {
       case 'turn/completed': {
         const turn = isRecord(params.turn) ? params.turn : null;
         const status = turn ? String(turn.status) : 'completed';
-        const turnError = turn && isRecord(turn.error) ? String(turn.error.message ?? 'Codex turn failed') : null;
+        const failed = status === 'failed';
+        // Se calcula UNA vez: el mensaje del turno y el evento de error dicen
+        // exactamente lo mismo, porque son la misma noticia. Y un turno que
+        // fallo SIEMPRE dice algo: antes, sin `turn.error`, esto era `null` y
+        // el turno terminaba mudo.
+        const turnError = failed ? turnErrorText(turn) : null;
+        if (failed) this.deps.log?.(`[codex ${chatId}] turn error: ${rawTurnLine(turn)}`);
         live.busy = false;
         const assistantId = turn && typeof turn.id === 'string' ? `turn-${turn.id}` : live.assistantId;
         if (assistantId) {
           const message = live.messages.get(assistantId) ?? this.ensureAssistant(live, assistantId);
-          const completed = { ...message, completed: true, error: status === 'failed' ? turnError : null };
+          const completed = { ...message, completed: true, error: turnError };
           live.messages.set(assistantId, completed);
           this.deps.emit({ chatId, type: 'message', message: completed });
         }
-        if (status === 'failed' && turnError) this.deps.emit({ chatId, type: 'error', message: turnError });
+        if (turnError) this.deps.emit({ chatId, type: 'error', message: turnError });
         this.deps.emit({ chatId, type: 'status', status: 'idle', detail: '' });
         return;
       }
       case 'error': {
-        const error = isRecord(params.error) ? String(params.error.message ?? 'Codex error') : 'Codex error';
+        // La misma cadena que el turno: el `code` del error tambien es
+        // informacion, y tirarlo dejaba dos fallos distintos con la misma
+        // frase.
+        const error = turnErrorText(params, 'Codex error');
+        this.deps.log?.(`[codex ${chatId}] thread error${params.willRetry === true ? ' (retrying)' : ''}: ${rawTurnLine(params)}`);
         if (params.willRetry === true) this.deps.emit({ chatId, type: 'status', status: 'retry', detail: error });
         else this.deps.emit({ chatId, type: 'error', message: error });
         return;
@@ -1080,6 +1090,55 @@ function stringify(value: unknown): string {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Lo que entra en una linea de error de la pantalla sin taparla entera. */
+const ERROR_TEXT_LIMIT = 300;
+/** Lo que entra en una linea de log sin volverla ilegible. */
+const RAW_LOG_LIMIT = 2_000;
+/**
+ * Lo que NO se escribe en el log de un turno: `items` es la conversacion
+ * entera del turno -- el texto del agente, los comandos, la salida -- y ya
+ * viajo por su propio evento. Un log de diagnostico no es un backup del chat.
+ */
+const TURN_LOG_OMIT = new Set(['items']);
+
+function clampText(text: string, limit: number): string {
+  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+}
+
+/**
+ * B2.5: QUE LE DECIMOS A LA PERSONA CUANDO EL TURNO DE CODEX SE ROMPE.
+ *
+ * `turn/completed` con `status: 'failed'` no siempre trae `turn.error`, y
+ * cuando lo trae no siempre trae `message`. El adaptador leia UNICAMENTE
+ * `error.message`: sin `error` el resultado era `null`, no se emitia ningun
+ * evento y el turno terminaba en silencio, como si hubiera salido bien.
+ *
+ * Se arma con lo que el protocolo manda de verdad -- el `code` y el `message`
+ * del error --, y si llega una forma que este repo no conoce se serializa
+ * entera antes que perderla. Nada de campos inventados.
+ */
+export function turnErrorText(turn: Record<string, unknown> | null, fallback = 'Codex turn failed'): string {
+  const error = turn && isRecord(turn.error) ? turn.error : null;
+  const message = error ? String(error.message ?? '').trim() : '';
+  const code = error && error.code != null ? String(error.code).trim() : '';
+  const unknownShape = error && !message && !code ? stringify(error).replace(/\s+/g, ' ').trim() : '';
+  const detail = message || unknownShape;
+  const text = detail ? (code ? `${code}: ${detail}` : detail) : (code || fallback);
+  return clampText(text, ERROR_TEXT_LIMIT);
+}
+
+/** El turno crudo para el log: todo menos la conversacion que ya se mostro. */
+export function rawTurnLine(turn: Record<string, unknown> | null): string {
+  const trimmed = Object.fromEntries(Object.entries(turn ?? {}).filter(([key]) => !TURN_LOG_OMIT.has(key)));
+  let text: string;
+  try {
+    text = JSON.stringify(trimmed);
+  } catch {
+    text = String(trimmed);
+  }
+  return clampText(text, RAW_LOG_LIMIT);
 }
 
 

@@ -263,6 +263,24 @@ rl.on('line', (line) => {
       if (/crash-server/i.test(text)) { process.exit(9); }
       // Lets a test see the reasoning effort the turn was actually started with.
       if (/effort/i.test(text)) { finish(`EFFORT ${params.effort || 'none'}`, 'completed'); return; }
+      // Un turno que falla SIN `error`: el app-server real manda `status:
+      // 'failed'` y nada mas cuando el motivo no le llega. Latte dejaba la
+      // pantalla muda ahi, sin mensaje y sin una linea en el log.
+      if (/fail-bare/i.test(text)) {
+        notify('turn/completed', { threadId, turn: { id: turnId, status: 'failed', items: [] } });
+        return;
+      }
+      // Un turno que falla con codigo y mensaje, que es la forma completa.
+      if (/fail-detail/i.test(text)) {
+        notify('turn/completed', { threadId, turn: { id: turnId, status: 'failed', items: [], error: { code: 'usage_limit_reached', message: 'weekly limit reached' } } });
+        return;
+      }
+      // La notificacion `error` del hilo, que no termina el turno.
+      if (/notify-error/i.test(text)) {
+        notify('error', { threadId, error: { code: -32000, message: 'upstream refused the request' }, willRetry: false });
+        finish('', 'completed');
+        return;
+      }
       if (/fail/i.test(text)) { finish('', 'failed'); return; }
       finish(`Echo: ${text}${record && record.dev ? ` [dev: ${record.dev}]` : ''}`, 'completed');
       return;
