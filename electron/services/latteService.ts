@@ -1673,11 +1673,17 @@ export class LatteService implements BackendApi {
     // bitácora ya usa para sus entradas de cierre. Una fila ilegible no puede
     // tumbar la vista del run, así que el conteo cae a ceros — y ceros es lo
     // que la interfaz muestra, nunca un número inventado.
-    let tasksDone = 0, tasksFailed = 0, tasksPending = 0;
+    // B5.3: CUATRO cuentas, no tres. Lo despachado no es "sin empezar": salió,
+    // hay alguien trabajando en ello y su despacho ya está comprometido contra
+    // el presupuesto. Meterlo adentro de `tasksPending` hacía que la cabecera
+    // del equipo dijera "3 sin empezar / 0 despachos usados" sobre un run con
+    // una tarea en manos de un miembro que estaba escribiendo.
+    let tasksDone = 0, tasksFailed = 0, tasksInFlight = 0, tasksPending = 0;
     try {
       for (const task of this.deps.repo.listCoordinationTasks(run.id)) {
         if (task.status === 'done') tasksDone += 1;
         else if (task.status === 'failed') tasksFailed += 1;
+        else if (task.status === 'dispatched' || task.status === 'running') tasksInFlight += 1;
         else tasksPending += 1;
       }
     } catch { /* una bitácora ilegible no puede romper la vista del run */ }
@@ -1703,7 +1709,7 @@ export class LatteService implements BackendApi {
       // `done`/`cancelled` quedan afuera, y por eso se marcan como no activos.
       active: run.status === 'planning' || run.status === 'running' || run.status === 'suspended',
       lastEventAt: this.lastCoordinationEventAt(run),
-      tasksDone, tasksFailed, tasksPending,
+      tasksDone, tasksFailed, tasksInFlight, tasksPending,
     };
   }
 

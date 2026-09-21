@@ -23,7 +23,7 @@ const run = (coordinatorMemberId: string): CoordinationRunView => ({
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId,
   budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
   suspendReason: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
-  tasksDone: 0, tasksFailed: 0, tasksPending: 0,
+  tasksDone: 0, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0,
 });
 const gate: CoordinationGateView = { id: 'g1', kind: 'dispatch', runId: 'run1', prompt: 'Escribir el copy', createdAt: '' };
 

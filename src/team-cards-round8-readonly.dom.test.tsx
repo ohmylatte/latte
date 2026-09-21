@@ -54,7 +54,7 @@ const runView: CoordinationRunView = {
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'coord',
   budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
   suspendReason: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
-  tasksDone: 0, tasksFailed: 0, tasksPending: 0,
+  tasksDone: 0, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0,
 };
 
 const base: TeamCardsProps = { memberId: 'coord', coordinationRun: runView, team: [], roles: [], formatDate: () => 'hace un rato' };

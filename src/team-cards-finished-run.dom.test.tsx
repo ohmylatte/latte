@@ -27,7 +27,7 @@ const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => (
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'coord',
   budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
   suspendReason: null, active: true, createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
-  lastEventAt: '2026-09-01T00:00:00.000Z', tasksDone: 0, tasksFailed: 0, tasksPending: 0, ...patch,
+  lastEventAt: '2026-09-01T00:00:00.000Z', tasksDone: 0, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0, ...patch,
 });
 const gate = (patch: Partial<CoordinationGateView> = {}): CoordinationGateView => ({
   id: 'g1', kind: 'dispatch', runId: 'run1', prompt: 'Escribir el copy', createdAt: '2026-09-01T00:00:00.000Z', ...patch,
@@ -42,7 +42,7 @@ const mountCards = (props: Partial<TeamCardsProps> = {}, locale: 'es-AR' | 'en-U
 describe('un run terminado, visto desde las tarjetas del chat', () => {
   it('sobre un run terminado no queda una sola acción de run vivo', () => {
     mountCards({
-      coordinationRun: run({ status: 'done', active: false, tasksDone: 1, tasksFailed: 0, tasksPending: 0 }),
+      coordinationRun: run({ status: 'done', active: false, tasksDone: 1, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0 }),
       // Aunque el backend devolviera gates (no lo hace), la interfaz no depende de eso.
       gates: [gate(), gate({ id: 'g2', kind: 'proposal', proposalJson: JSON.stringify({ plan: [{ roleId: 'copywriter', spec: 'x' }], estimatedDispatches: 3, membersToHire: [], rationale: 'y' }) })],
       onResolveGate: () => {},

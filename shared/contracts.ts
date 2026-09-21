@@ -783,6 +783,20 @@ export interface CoordinationRunView {
    */
   tasksDone: number;
   tasksFailed: number;
+  /**
+   * B5.3: LO QUE ESTÁ EN VUELO SE VE.
+   *
+   * `tasksPending` se tragaba lo despachado, así que con la única tarea del
+   * run en manos de un miembro que ya estaba trabajando la pantalla decía "3
+   * sin empezar" y "Despachos: 0 / 3". Las dos frases eran falsas al mismo
+   * tiempo y en la misma línea: había trabajo en curso y presupuesto ya
+   * comprometido, y la persona leía que no había pasado nada.
+   *
+   * `dispatched` + `running`: los dos estados en los que la tarea ya salió y
+   * todavía no volvió. `tasksPending` queda con lo que NUNCA se despachó
+   * (`pending`, `ready`, `blocked`) — que es lo que esa palabra promete.
+   */
+  tasksInFlight: number;
   tasksPending: number;
 }
 
@@ -927,7 +941,17 @@ export interface CoordinationRunCancelledLogEntryView {
   runId: string;
   tasksDone: number;
   tasksFailed: number;
-  /** Ni `done` ni `failed`: lo que quedó sin terminar cuando se cortó. */
+  /**
+   * Ni `done` ni `failed`: lo que quedó sin terminar cuando se cortó.
+   *
+   * B5.3: acá NO hay un `tasksInFlight` como en la vista del run, y no por
+   * olvido: en un run cerrado no queda vuelo por construcción. `cancelRun`
+   * liquida todo despacho `dispatched`/`running` (sin cobrar intento) ANTES de
+   * escribir `cancelled`, así que esas tareas ya volvieron a `ready` y están
+   * contadas acá; y `finishRunIfComplete` sólo cierra cuando no queda un solo
+   * despacho abierto. Una cuenta que siempre vale cero no informa nada: dice
+   * que hay una distinción donde no la hay.
+   */
   tasksPending: number;
   createdAt: string;
 }

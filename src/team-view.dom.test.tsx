@@ -42,7 +42,7 @@ const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => (
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'coord',
   budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
   suspendReason: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
-  tasksDone: 3, tasksFailed: 1, tasksPending: 2, ...patch,
+  tasksDone: 3, tasksFailed: 1, tasksInFlight: 0, tasksPending: 2, ...patch,
 });
 
 const dispatchRow = (patch: Partial<Extract<CoordinationLogEntryView, { taskId: string }>> = {}): CoordinationLogEntryView => ({

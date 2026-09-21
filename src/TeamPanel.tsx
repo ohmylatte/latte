@@ -332,10 +332,24 @@ export function CoordinationRunControls({ run, busy, pending, onPause, onResume,
   // Decisiones, que es la pantalla de lo que PERMANECE. Un run es lo
   // contrario: pasa. Su estado va donde estan sus controles -- pausar,
   // reanudar, cancelar --, compacto, en una linea.
-  const counts = t('team.run.counts', { done: run.tasksDone, failed: run.tasksFailed, pending: run.tasksPending });
+  // B5.3: LO QUE ESTA EN VUELO SE VE, en las dos frases.
+  //
+  // "3 sin empezar" sobre un run con su unica tarea ya despachada, y
+  // "Despachos: 0 / 3" con un miembro escribiendo: las dos eran falsas al
+  // mismo tiempo, en la misma linea. `tasksInFlight` viaja aparte desde el
+  // motor y `tasksPending` volvio a significar lo que su nombre dice.
+  //
+  // Se muestra SIEMPRE, tambien en cero: un run terminado diciendo "0 en
+  // curso" es cierto, y una frase que cambia de forma segun el numero obliga
+  // a aprender dos lecturas de la misma linea.
+  const counts = t('team.run.counts', { done: run.tasksDone, inFlight: run.tasksInFlight, failed: run.tasksFailed, pending: run.tasksPending });
   // Un presupuesto ILEGIBLE no se dibuja como un numero: eso seria exactamente
   // la mentira que el `null` produce.
-  const budget = run.budgetInvalid ? t('coordination.budget.invalid') : t('team.run.budget', { used: run.tasksDone + run.tasksFailed, max: run.budget?.maxDispatches ?? '∞' });
+  //
+  // `used` son los despachos CERRADOS y `inFlight` los comprometidos: sumarlos
+  // en un solo numero escondia cual de los dos era, y dejar afuera el segundo
+  // —como estaba— le mentia a la persona sobre su propio presupuesto.
+  const budget = run.budgetInvalid ? t('coordination.budget.invalid') : t('team.run.budget', { used: run.tasksDone + run.tasksFailed, inFlight: run.tasksInFlight, max: run.budget?.maxDispatches ?? '∞' });
   return <div className="team-coordination-controls">
     {/* `team-finished-coordination` se conserva como segunda clase para los
         dos finales: es el gancho con el que el resto del producto ya
