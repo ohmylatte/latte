@@ -737,6 +737,11 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .resumen-item h2{margin:0 0 8px;font-size:var(--text-md);font-weight:600;color:var(--ink)}
 .resumen-item p{margin:4px 0;font-size:var(--text-sm);color:var(--ink-soft)}
 .resumen-title{font-size:var(--text-base);font-weight:600;color:var(--ink)}
+.resumen-brief{position:relative;max-height:150px;overflow:hidden;margin:8px 0 4px;-webkit-mask-image:linear-gradient(to bottom,#000 105px,transparent 150px);mask-image:linear-gradient(to bottom,#000 105px,transparent 150px)}
+.resumen-brief>:first-child{margin-top:0}
+.resumen-brief h1,.resumen-brief h2,.resumen-brief h3{font:inherit;font-size:var(--text-base);font-weight:600;color:var(--ink);border-top:0;padding-top:0;margin:10px 0 4px;max-width:none}
+.resumen-brief p,.resumen-brief li{font-size:var(--text-sm);line-height:1.6;color:var(--ink-soft)}
+.resumen-brief>p:first-of-type{font-size:var(--text-sm);color:var(--ink-soft);margin-bottom:4px}
 .resumen-folder strong,.resumen-alcance strong{font-weight:550;color:var(--ink)}
 .resumen-result-path code{font-size:var(--text-sm)}
 .resumen-decision-list{list-style:none;margin:0;padding:0}

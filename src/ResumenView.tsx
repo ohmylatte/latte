@@ -1,3 +1,5 @@
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { translate as t } from './i18n';
 import { resumenSummary, type CoordinationHireEvent } from './resumen-summary';
 import { CycleMap } from './CycleMap';
@@ -106,9 +108,13 @@ export function ResumenView(props: ResumenViewProps) {
 
     <div className="resumen-items">
       <section className="resumen-item" data-item="objetivo">
-        <h2>{t('resumen.objetivo')}</h2>
+        <h2>{t('resumen.brief')}</h2>
         <p className="resumen-title">{summary.title}</p>
-        <p>{summary.brief}</p>
+        {/* The brief is Markdown in the store, so it is read as Markdown here —
+         * the same `ReactMarkdown + remarkGfm` as `DocumentsView`. Collapsed to
+         * a short height (CSS fades the cut) because the full brief already has
+         * a way out: the "Abrir el brief" button below. */}
+        <div className="resumen-brief markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{summary.brief}</ReactMarkdown></div>
         <button className="primary" onClick={props.onOpenBrief}>{t('resumen.openBrief')}</button>
       </section>
 

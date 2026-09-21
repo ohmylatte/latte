@@ -84,7 +84,7 @@ describe('the Resumen, in both interface languages', () => {
     for (const text of [
       'aria-label="Resumen"', 'role="region"',
       'DÓNDE ESTAMOS',
-      'Objetivo', 'Lanzamiento', 'Lanzar la campaña de primavera.', 'Abrir el brief',
+      'Brief', 'Lanzamiento', 'Lanzar la campaña de primavera.', 'Abrir el brief',
       'Resultado esperado', 'Un PDF de dos páginas', 'propuesta.pdf', 'sin definir',
       'Marca', 'Casa Oliva', 'Alcance', 'este trabajo', 'Carpeta', 'casa-oliva', 'Sin carpeta vinculada',
       'Estado actual', 'Con agente en vivo', 'Trabajando', 'En revisión', 'Decisiones pendientes', 'En pausa',
@@ -103,7 +103,7 @@ describe('the Resumen, in both interface languages', () => {
     for (const text of [
       'aria-label="Summary"',
       'WHERE WE ARE',
-      'Objective', 'Open the brief',
+      'Brief', 'Open the brief',
       'Expected output', 'not set',
       'Brand', 'Scope', 'this work', 'Folder', 'No folder linked',
       'Current state', 'Live agent', 'Working', 'In review', 'Pending decisions', 'Idle',
@@ -129,7 +129,7 @@ describe('the Resumen, in both interface languages', () => {
   it('renders a safe empty state when no work is selected, with no derived content', () => {
     const html = render('es-AR', { work: null });
     expect(html).toContain('aria-label="Resumen"');
-    expect(html).not.toContain('Objetivo');
+    expect(html).not.toContain('Brief');
     expect(html).not.toContain('Estado actual');
     expect(html).not.toContain('cycle-map');
   });
@@ -138,6 +138,38 @@ describe('the Resumen, in both interface languages', () => {
     const source = readFileSync(resolve('src/ResumenView.tsx'), 'utf8');
     // No attribute a screen reader or a tooltip reads is a literal.
     expect(source).not.toMatch(/\b(?:aria-label|title|placeholder)="/);
+  });
+});
+
+describe('the Brief block: an honest label and real Markdown', () => {
+  const markdown = '## Contexto\n\nLanzamos **en primavera** con dos piezas.\n\n- una gráfica\n- un video\n';
+
+  it('calls the block Brief, not Objetivo: the label matches what it shows', () => {
+    const html = render('es-AR');
+    expect(html).toContain('data-item="objetivo"');
+    expect(html).toMatch(/data-item="objetivo"[\s\S]*?<h2>Brief<\/h2>/);
+    expect(html).not.toContain('<h2>Objetivo</h2>');
+  });
+
+  it('renders the brief as Markdown, never as a wall of text with symbols', () => {
+    const html = render('es-AR', { work: work({ brief: markdown }) });
+    expect(html).toContain('<h2>Contexto</h2>');
+    expect(html).toContain('<strong>en primavera</strong>');
+    expect(html).toContain('<li>una gráfica</li>');
+    expect(html).not.toContain('## Contexto');
+    expect(html).not.toContain('**en primavera**');
+  });
+
+  it('collapses the brief and keeps the full brief one click away', () => {
+    const html = render('es-AR', { work: work({ brief: markdown }) });
+    expect(html).toContain('resumen-brief');
+    expect(html).toContain('Abrir el brief');
+  });
+
+  it('says Brief in English too', () => {
+    const html = render('en-US');
+    expect(html).toContain('<h2>Brief</h2>');
+    expect(html).toContain('Open the brief');
   });
 });
 
