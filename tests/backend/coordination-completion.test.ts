@@ -3,7 +3,7 @@ import { CoordinationEngine, type CoordinationGrant } from '../../electron/coord
 import { createCoordinationTools } from '../../electron/coordination/tools';
 import { CoordinationMcpServer, type ListenFn } from '../../electron/coordination/mcpServer';
 import { CoordinationTokenRegistry } from '../../electron/coordination/tokens';
-import { MAX_ACTIVE_COORDINATION_RUNS } from '../../electron/coordination/limits';
+import { LOG_PREVIEW, MAX_ACTIVE_COORDINATION_RUNS } from '../../electron/coordination/limits';
 import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
@@ -102,6 +102,40 @@ describe('CoordinationEngine — un run termina cuando no queda nada por hacer',
     expect(b.repo.listActiveCoordinationRuns().map((r) => r.id)).not.toContain(runId);
     expect(b.repo.countActiveCoordinationRuns()).toBe(0);
     expect(b.repo.findActiveCoordinationRun(workId)).toBeNull();
+  });
+
+  /**
+   * B1.2: LA BITÁCORA TIENE QUE DECIR QUÉ PASÓ, NO SÓLO CUÁNDO.
+   *
+   * `listLog` devolvía ids y timestamps. Con eso, el buzón del panel de equipo
+   * —una línea por miembro con su último intercambio— sólo podía escribir
+   * "hubo un despacho", que no le sirve a nadie. Van el `outcome` y los
+   * primeros `LOG_PREVIEW` caracteres del prompt y del resumen: lo que entra
+   * en un renglón. El texto completo sigue donde ya estaba.
+   */
+  it('cada fila de despacho lleva su outcome y un recorte del prompt y del resumen', async () => {
+    const largo = 'x'.repeat(LOG_PREVIEW + 40);
+    const task = engine.taskCreate(runId, { roleId: 'role_a', spec: largo });
+    const memberId = await dispatchTo(task.id);
+    await engine.report(worker(memberId), task.id, 'succeeded', largo);
+
+    const entry = engine.listLog(runId).find((e) => e.kind !== 'run_done' && e.kind !== 'run_cancelled');
+    expect(entry).toBeDefined();
+    expect(entry).toMatchObject({ memberId, outcome: 'succeeded' });
+    const dispatch = entry as { promptPreview: string; summaryPreview: string | null };
+    expect(dispatch.promptPreview.length).toBe(LOG_PREVIEW);
+    expect(dispatch.summaryPreview).toBe(largo.slice(0, LOG_PREVIEW));
+    // Y el recorte es un recorte, no el texto entero disfrazado.
+    expect(dispatch.summaryPreview!.length).toBeLessThan(largo.length);
+  });
+
+  it('un despacho que todavía no se liquidó no inventa un outcome ni un resumen', async () => {
+    const task = engine.taskCreate(runId, { roleId: 'role_a', spec: 'Escribir el copy' });
+    await dispatchTo(task.id);
+    const entry = engine.listLog(runId)[0] as { outcome: string | null; summaryPreview: string | null; promptPreview: string };
+    expect(entry.outcome).toBeNull();
+    expect(entry.summaryPreview).toBeNull();
+    expect(entry.promptPreview).toContain('Escribir el copy');
   });
 
   // --- 2: el índice único parcial ya no bloquea el Trabajo --------------------

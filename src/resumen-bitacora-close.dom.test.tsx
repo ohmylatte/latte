@@ -36,7 +36,7 @@ const base: ResumenViewProps = {
 };
 
 const dispatch: CoordinationLogEntryView = {
-  id: 'log1', taskId: 'task1', memberId: 'm1', status: 'reported',
+  id: 'log1', taskId: 'task1', memberId: 'm1', status: 'reported', outcome: 'succeeded', promptPreview: '', summaryPreview: null,
   createdAt: '2026-09-01T00:00:00.000Z', startedAt: '2026-09-01T00:00:00.000Z', settledAt: '2026-09-01T00:01:00.000Z',
 };
 const runDone: CoordinationLogEntryView = {

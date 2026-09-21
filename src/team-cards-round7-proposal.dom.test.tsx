@@ -9,9 +9,9 @@ vi.mock('./i18n', async (importOriginal) => {
 
 const { createElement } = await import('react');
 const { fireEvent, render, screen } = await import('@testing-library/react');
-const { DecisionsView } = await import('./DecisionsView');
-import type { DecisionsViewProps } from './DecisionsView';
-import type { AgentRole, CoordinationGateView, CoordinationProposal, Work } from '../shared/contracts';
+const { TeamCards } = await import('./coordination/TeamCards');
+import type { TeamCardsProps } from './coordination/TeamCards';
+import type { AgentRole, CoordinationGateView, CoordinationProposal, CoordinationRunView, Work } from '../shared/contracts';
 
 /**
  * Ronda 7 sobre la tarjeta de la propuesta:
@@ -42,21 +42,29 @@ const proposal = (patch: Partial<CoordinationProposal> = {}): CoordinationPropos
   ...patch,
 });
 
-const base: DecisionsViewProps = {
-  work: work(), decisions: [], team: [], roles: [], permissions: 'ask', handoffs: [],
-  decisionAuthority: 'suggest', draft: '', busy: false, formatDate: () => 'hace un rato',
-  titlesByWork: { w1: 'Lanzamiento' },
-  onDraftChange: () => {}, onAdd: () => {}, onApprove: () => {}, onEditApprove: () => {},
-  onReject: () => {}, onArchive: () => {}, onAuthorityChange: () => {},
+
+/**
+ * Las tarjetas se mudaron al chat del miembro al que le corresponden (B1.1).
+ * Un gate es una conversación con el COORDINADOR, así que el run de este
+ * archivo lo nombra y el chat que se monta es el suyo. Las aserciones son las
+ * mismas: lo que cambió es la casa, no la regla.
+ */
+const runView: CoordinationRunView = {
+  id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'coord',
+  budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
+  suspendReason: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
+  tasksDone: 0, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0,
 };
+
+const base: TeamCardsProps = { memberId: 'coord', coordinationRun: runView, team: [], roles: [], formatDate: () => 'hace un rato' };
 
 beforeEach(() => { ui.locale = 'es-AR'; });
 
-function renderView(props: Partial<DecisionsViewProps> = {}) {
-  return render(createElement(DecisionsView, { ...base, ...props }));
+function renderView(props: Partial<TeamCardsProps> = {}) {
+  return render(createElement(TeamCards, { ...base, ...props }));
 }
 
-const card = (container: HTMLElement) => container.querySelector('.decision-gate-proposal')!;
+const card = (container: HTMLElement) => container.querySelector('.team-card-proposal')!;
 
 describe('N7: un alta destildada no se tacha con un motivo falso', () => {
   /**
@@ -85,15 +93,15 @@ describe('N7: un alta destildada no se tacha con un motivo falso', () => {
       onResolveGate: vi.fn(),
     });
     fireEvent.click(screen.getByText('Editar y aprobar'));
-    const boxes = card(container).querySelectorAll<HTMLInputElement>('.decision-gate-edit-hire input');
+    const boxes = card(container).querySelectorAll<HTMLInputElement>('.team-card-edit-hire input');
     expect(boxes).toHaveLength(2); // la premisa
     fireEvent.click(boxes[1]!); // destilda al diseñador
 
-    const items = card(container).querySelectorAll('.decision-gate-hire-list li');
+    const items = card(container).querySelectorAll('.team-card-hire-list li');
     expect(items).toHaveLength(2);
     const designer = [...items].find((li) => li.textContent?.includes('Diseñador'))!;
     expect(designer).toBeDefined();
-    expect(designer.className).toContain('decision-gate-hire-unticked');
+    expect(designer.className).toContain('team-card-hire-unticked');
     expect(designer.querySelector('s')).toBeNull();
     expect(designer.textContent).not.toContain('se quedó sin tareas');
     expect(designer.textContent).toContain('La sacaste vos');
@@ -115,11 +123,11 @@ describe('N7: un alta destildada no se tacha con un motivo falso', () => {
       onResolveGate: vi.fn(),
     });
 
-    const dropped = card(container).querySelector('.decision-gate-hire-dropped')!;
+    const dropped = card(container).querySelector('.team-card-hire-dropped')!;
     expect(dropped).not.toBeNull();
     expect(dropped.querySelector('s')!.textContent).toContain('Diseñador');
     expect(dropped.textContent).toContain('se quedó sin tareas');
-    expect(dropped.className).not.toContain('decision-gate-hire-unticked');
+    expect(dropped.className).not.toContain('team-card-hire-unticked');
   });
 
   /**
@@ -144,13 +152,13 @@ describe('N7: un alta destildada no se tacha con un motivo falso', () => {
       onResolveGate: vi.fn(),
     });
     fireEvent.click(screen.getByText('Editar y aprobar'));
-    const boxes = card(container).querySelectorAll<HTMLInputElement>('.decision-gate-edit-hire input');
+    const boxes = card(container).querySelectorAll<HTMLInputElement>('.team-card-edit-hire input');
     fireEvent.click(boxes[0]!); // destilda SÓLO la primera
 
-    const items = [...card(container).querySelectorAll('.decision-gate-hire-list li')];
+    const items = [...card(container).querySelectorAll('.team-card-hire-list li')];
     expect(items).toHaveLength(2);
-    expect(items[0]!.className).toContain('decision-gate-hire-unticked');
-    expect(items[1]!.className).not.toContain('decision-gate-hire-unticked');
+    expect(items[0]!.className).toContain('team-card-hire-unticked');
+    expect(items[1]!.className).not.toContain('team-card-hire-unticked');
   });
 });
 
@@ -162,9 +170,9 @@ describe('N8: la casilla de ilimitado del EDITOR sigue viva; las ramas muertas d
     expect(screen.queryByText('Aprobar')).not.toBeNull();
 
     fireEvent.click(screen.getByText('Editar y aprobar'));
-    const number = card(container).querySelector<HTMLInputElement>('.decision-gate-edit input[type="number"]')!;
+    const number = card(container).querySelector<HTMLInputElement>('.team-card-edit input[type="number"]')!;
     fireEvent.change(number, { target: { value: '' } });
-    const unlimited = card(container).querySelector<HTMLInputElement>('.decision-gate-edit-unlimited input')!;
+    const unlimited = card(container).querySelector<HTMLInputElement>('.team-card-edit-unlimited input')!;
     expect(unlimited).not.toBeNull(); // la casilla del editor es alcanzable
     fireEvent.click(unlimited);
 
@@ -185,14 +193,14 @@ describe('N8: la casilla de ilimitado del EDITOR sigue viva; las ramas muertas d
     expect(text).toContain('8');
     expect(text).not.toContain('Sin tope');
     // Y no queda ningún aviso de "confirmá el ilimitado": esa rama no existe.
-    expect(card(container).querySelector('.decision-gate-unlimited-note')).toBeNull();
+    expect(card(container).querySelector('.team-card-unlimited-note')).toBeNull();
   });
 });
 
 describe('N10: sin handler la tarjeta es de sólo lectura', () => {
   it('no se renderizan los botones que no pueden hacer nada', () => {
     const { container } = renderView({ gates: [gateView({ proposalJson: JSON.stringify(proposal()) })] });
-    const actions = card(container).querySelector('.decision-gate-actions');
+    const actions = card(container).querySelector('.team-card-actions');
     expect(actions).toBeNull();
     expect(screen.queryByText('Aprobar')).toBeNull();
     expect(screen.queryByText('Editar y aprobar')).toBeNull();

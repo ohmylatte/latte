@@ -1,4 +1,7 @@
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { translate as t } from './i18n';
+import { memberDisplayName } from './coordination/names';
 import { resumenSummary, type CoordinationHireEvent } from './resumen-summary';
 import { CycleMap } from './CycleMap';
 import type { Brand, CoordinationLogEntryView, Decision, DocumentState, TeamMember, Work, WorkDocument, WorkPermissionMode } from '../shared/contracts';
@@ -106,9 +109,13 @@ export function ResumenView(props: ResumenViewProps) {
 
     <div className="resumen-items">
       <section className="resumen-item" data-item="objetivo">
-        <h2>{t('resumen.objetivo')}</h2>
+        <h2>{t('resumen.brief')}</h2>
         <p className="resumen-title">{summary.title}</p>
-        <p>{summary.brief}</p>
+        {/* The brief is Markdown in the store, so it is read as Markdown here —
+         * the same `ReactMarkdown + remarkGfm` as `DocumentsView`. Collapsed to
+         * a short height (CSS fades the cut) because the full brief already has
+         * a way out: the "Abrir el brief" button below. */}
+        <div className="resumen-brief markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{summary.brief}</ReactMarkdown></div>
         <button className="primary" onClick={props.onOpenBrief}>{t('resumen.openBrief')}</button>
       </section>
 
@@ -142,7 +149,14 @@ export function ResumenView(props: ResumenViewProps) {
                 ? t('resumen.bitacora.runDone', { done: row.tasksDone, failed: row.tasksFailed })
                 : row.kind === 'runCancelled'
                   ? t('resumen.bitacora.runCancelled', { done: row.tasksDone, failed: row.tasksFailed, pending: row.tasksPending })
-                  : t(`resumen.bitacora.status.${row.status}` as 'resumen.bitacora.status.reported')}</p>
+                  : t('coordination.bitacora.by', {
+                    // B2.2: una bitacora que dice "Reportado" sin decir QUIEN
+                    // reporto no se puede leer. El nombre sale de la misma
+                    // cadena que el resto de coordinacion, asi que un miembro
+                    // que ya no esta se nombra con palabras, nunca con su id.
+                    name: memberDisplayName(row.memberId, props.team),
+                    text: t(`resumen.bitacora.status.${row.status}` as 'resumen.bitacora.status.reported'),
+                  })}</p>
             <small>{props.formatDate(row.at)}</small>
             {row.kind === 'dispatch' && IN_FLIGHT_STATUSES.has(row.status) && props.onSettleDispatch && <div className="resumen-bitacora-settle">
               <button type="button" className="resumen-bitacora-settle-succeeded" onClick={() => {

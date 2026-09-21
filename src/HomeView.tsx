@@ -47,6 +47,12 @@ export interface HomeViewProps {
   formatDate: (value: string) => string;
   onOpenWork: (workId: string) => void;
   onOpenDecisions: (workId: string) => void;
+  /**
+   * B1.4: la fila de "te espera una aprobación" abre el Trabajo en la
+   * CONVERSACIÓN del coordinador, no en Decisiones. Ahí es donde está la
+   * tarjeta que la persona viene a resolver; Decisiones ya no tiene una sola.
+   */
+  onOpenCoordination: (workId: string) => void;
   onOpenDocument: (documentId: string) => void;
   onOpenContext: () => void;
   onNewWork: () => void;
@@ -131,7 +137,7 @@ export function HomeView(props: HomeViewProps) {
       {/* El `kind` viaja al DOM: un equipo que TERMINÓ no es una novedad
           cualquiera y su fila tiene que poder verse distinta sin que el estilo
           dependa de leer el texto de la frase. */}
-      <div className="home-rows">{summary.sinceLastVisitRows.map((row) => <button type="button" className={'home-row' + (row.kind === 'done' || row.kind === 'failed' ? ' home-row-finished' : '')} data-kind={row.kind} key={row.id} onClick={() => row.kind === 'awaitingYou' ? props.onOpenDecisions(row.workId) : props.onOpenWork(row.workId)}>
+      <div className="home-rows">{summary.sinceLastVisitRows.map((row) => <button type="button" className={'home-row' + (row.kind === 'done' || row.kind === 'failed' ? ' home-row-finished' : '')} data-kind={row.kind} key={row.id} onClick={() => row.kind === 'awaitingYou' ? props.onOpenCoordination(row.workId) : props.onOpenWork(row.workId)}>
         <span className="home-row-title">{t(`home.since.kind.${row.kind}` as 'home.since.kind.done', { workTitle: row.workTitle })}</span>
       </button>)}</div>
     </section>}

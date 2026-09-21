@@ -3,7 +3,7 @@ import { api } from './browser-api';
 import { shouldRefreshWork } from './coordination-event-routing';
 import type {
   CoordinationActiveRunSummary, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
-  CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationRunView, CoordinatorGrant,
+  CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationMessageView, CoordinationRunView, CoordinatorGrant,
 } from '../shared/contracts';
 
 export { shouldRefreshWork } from './coordination-event-routing';
@@ -15,6 +15,17 @@ export interface CoordinationState {
   run: CoordinationRunView | null;
   gates: CoordinationGateView[];
   log: CoordinationLogEntryView[];
+  /**
+   * El buzon del run: los `latte_message` entre miembros, con los dos extremos
+   * ya resueltos a `memberId` + `roleId`. Se refresca con el MISMO ritmo que
+   * la bitacora --el panel de equipo dibuja las dos cosas en una sola linea
+   * por miembro, y dos ritmos distintos harian que esa linea se contradijera
+   * consigo misma entre un refresco y el siguiente.
+   *
+   * Se pide por `workId`, no por `runId`: `listCoordinationMessages` resuelve
+   * el run del Trabajo por su cuenta y contesta `[]` cuando no hay ninguno.
+   */
+  messages: CoordinationMessageView[];
   /** Las contrataciones del run, para la bitacora. Antes esa prop no la llenaba nadie. */
   hires: CoordinationHireView[];
   support: CoordinationMemberSupport[];
@@ -110,13 +121,36 @@ export interface CoordinationState {
  * bajo el Trabajo de B — y tocar "Aprobar" ahí resolvía un gate de la plata y
  * el equipo de otra Marca. Cada `setState` pasa por el contador.
  */
-export function useCoordination(workId: string | null, onError?: (error: unknown) => void): CoordinationState {
+export function useCoordination(
+  workId: string | null,
+  onError?: (error: unknown) => void,
+  /**
+   * B5.2: "pasó algo de coordinación EN EL TRABAJO ABIERTO", para lo que este
+   * hook no tiene y no debe tener: el equipo.
+   *
+   * El motor contrata solo. En la prueba real contrató a paid-media, lo
+   * spawneó y le mandó la tarea, y la pestaña de ese miembro NO apareció
+   * nunca: `loadTeam` sólo corre al cambiar de Trabajo y después de una acción
+   * de la PERSONA, y las cinco lecturas de `refreshWork` no incluyen
+   * `listTeam`. La persona se quedó con un miembro trabajando al que no tenía
+   * forma de abrir.
+   *
+   * Va como callback de la suscripción que YA existe, no como una segunda
+   * suscripción a `onCoordinationEvent`: dos suscripciones sobre el mismo
+   * canal son dos ruteos que pueden desincronizarse, y el criterio de
+   * "¿es de este Trabajo?" (`shouldRefreshWork`) vive acá adentro, testeado,
+   * una sola vez. El contenedor pone el efecto (recargar el equipo), el hook
+   * pone el momento.
+   */
+  onWorkTouched?: (workId: string) => void,
+): CoordinationState {
   const [authority, setAuthority] = useState<CoordinationAuthorityMode>('manual');
   const [budget, setBudget] = useState<CoordinationBudgetView>({ state: 'unset' });
   const [coordinatorGrant, setCoordinatorGrant] = useState<CoordinatorGrant>(null);
   const [run, setRun] = useState<CoordinationRunView | null>(null);
   const [gates, setGates] = useState<CoordinationGateView[]>([]);
   const [log, setLog] = useState<CoordinationLogEntryView[]>([]);
+  const [messages, setMessages] = useState<CoordinationMessageView[]>([]);
   const [hires, setHires] = useState<CoordinationHireView[]>([]);
   const [support, setSupport] = useState<CoordinationMemberSupport[]>([]);
   const [openAsks, setOpenAsks] = useState<CoordinationAskView[]>([]);
@@ -146,6 +180,10 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
   // que el contenedor recree su callback.
   const errorSink = useRef(onError);
   errorSink.current = onError;
+  // El mismo patrón que `errorSink`: el contenedor recrea su callback en cada
+  // render y eso no puede re-suscribir el canal.
+  const touchedSink = useRef(onWorkTouched);
+  touchedSink.current = onWorkTouched;
   const report = (error: unknown) => { errorSink.current?.(error); };
 
   const refreshActiveRuns = () => {
@@ -161,6 +199,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     void api.getCoordinationBudget(id).then((v) => { if (fresh()) setBudget(v); }).catch((e) => { report(e); if (fresh()) setBudget({ state: 'unset' }); });
     void api.getCoordinatorGrant(id).then((v) => { if (fresh()) setCoordinatorGrant(v); }).catch((e) => { report(e); if (fresh()) setCoordinatorGrant(null); });
     void api.coordinationRuntimeSupport(id).then((v) => { if (fresh()) setSupport(v); }).catch((e) => { report(e); if (fresh()) setSupport([]); });
+    void api.listCoordinationMessages(id).then((v) => { if (fresh()) setMessages(v); }).catch((e) => { report(e); if (fresh()) setMessages([]); });
     // `loaded()` marca el recorte de ESTE `id` como cargado, y sólo si sigue
     // siendo el vigente. Es lo que `markSeen` espera: hasta acá la pantalla
     // de Decisiones no tiene un solo gate dibujado.
@@ -191,7 +230,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
     if (!workId) {
       generation.current += 1; // toda respuesta en vuelo queda huérfana
       setAuthority('manual'); setBudget({ state: 'unset' }); setCoordinatorGrant(null);
-      setRun(null); setGates([]); setLog([]); setHires([]); setSupport([]); setOpenAsks([]);
+      setRun(null); setGates([]); setLog([]); setHires([]); setSupport([]); setOpenAsks([]); setMessages([]);
       return;
     }
     refreshWork(workId);
@@ -202,7 +241,12 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
   // per-work slice only refreshes when the event names the OPEN Work.
   useEffect(() => api.onCoordinationEvent((event) => {
     refreshActiveRuns();
-    if (shouldRefreshWork(event, workId)) refreshWork(workId!);
+    if (!shouldRefreshWork(event, workId)) return;
+    refreshWork(workId!);
+    // B5.2: y lo que NO vive en este hook también se entera. Un alta hecha por
+    // el motor no dispara ninguna acción de la persona, así que sin esto la
+    // lista de miembros del contenedor se queda con la foto de antes.
+    try { touchedSink.current?.(workId!); } catch { /* el efecto del contenedor nunca puede voltear el ruteo del evento */ }
   }), [workId]);
 
   /**
@@ -262,7 +306,7 @@ export function useCoordination(workId: string | null, onError?: (error: unknown
   };
 
   return {
-    authority, budget, coordinatorGrant, run, gates, log, hires, support, openAsks, activeRuns, pending,
+    authority, budget, coordinatorGrant, run, gates, log, messages, hires, support, openAsks, activeRuns, pending,
     // Comparado contra el `workId` de ESTE render: el `true` del Trabajo
     // anterior no puede sobrevivir a la navegación ni un solo render.
     workLoaded: workId != null && loadedWorkId === workId,

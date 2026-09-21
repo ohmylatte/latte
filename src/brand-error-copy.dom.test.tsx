@@ -24,6 +24,11 @@ describe('M2: los errores del contexto de marca se leen con copy de marca', () =
     { code: 'CONTEXT_TOO_LONG', key: 'error.brand.contextTooLong' },
     { code: 'CONTEXT_EMPTY', key: 'error.brand.contextEmpty' },
     { code: 'BRAND_ARCHIVED', key: 'error.brand.archived' },
+    // B2.4: el conflicto de guardado del editor de contexto. `writeContext`
+    // ya prendia la salida (recargar / pisar), pero el aviso que la persona
+    // leia arriba era el `message` del motor, en ingles y escrito para quien
+    // lee codigo: "Brand context changed since it was loaded".
+    { code: 'CONTEXT_STALE', key: 'error.brand.contextStale' },
   ] as const;
 
   it('cada código de marca cae en su frase, no en el `message` crudo del backend', () => {

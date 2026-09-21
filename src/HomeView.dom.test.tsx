@@ -33,7 +33,7 @@ const decision = (patch: Partial<Decision> = {}): Decision => ({
 const outdated = (id: string): DocumentState => ({ documentId: id, fingerprint: 'fp', modifiedAt: null, baseOutdated: true });
 
 const handlers = () => ({
-  onOpenWork: vi.fn(), onOpenDecisions: vi.fn(), onOpenDocument: vi.fn(),
+  onOpenWork: vi.fn(), onOpenDecisions: vi.fn(), onOpenCoordination: vi.fn(), onOpenDocument: vi.fn(),
   onOpenContext: vi.fn(), onNewWork: vi.fn(), onAddBrand: vi.fn(),
 });
 
@@ -193,7 +193,7 @@ describe('the since-last-visit card (additive, autonomous-coordination Phase 7)'
     expect(container.querySelector('.home-since')).toBeNull();
   });
 
-  it('renders one row per event and routes a pending-approval row to Decisiones, the rest to the work', () => {
+  it('renders one row per event and routes a pending-approval row to the team chat, the rest to the work', () => {
     const input = props({
       works: [work({ id: 'w1', title: 'Lanzamiento' })],
       coordinationSinceLastVisit: [
@@ -210,7 +210,8 @@ describe('the since-last-visit card (additive, autonomous-coordination Phase 7)'
     expect(input.onOpenWork).toHaveBeenCalledWith('w1');
     expect(rows[1].textContent).toContain('espera tu aprobación');
     fireEvent.click(rows[1]);
-    expect(input.onOpenDecisions).toHaveBeenCalledWith('w1');
+    // B1.4: la aprobacion vive en el chat del coordinador, no en Decisiones.
+    expect(input.onOpenCoordination).toHaveBeenCalledWith('w1');
   });
 
   // U3c: un equipo que terminó se lee como terminado, no como una novedad
@@ -274,6 +275,36 @@ describe('the since-last-visit card (additive, autonomous-coordination Phase 7)'
     await waitFor(() => expect(container.textContent).toContain('Since coordination started'));
     expect(container.textContent).not.toContain('Since your last visit');
     localStorage.removeItem('latte-ui-locale');
+  });
+
+  /**
+   * B1.4: "te espera una aprobación" abre la CONVERSACIÓN del coordinador.
+   *
+   * Mandaba a Decisiones, que desde esta tanda no tiene una sola tarjeta de
+   * gate: la persona llegaba a una pantalla donde no estaba lo que fue a
+   * buscar. Las otras filas (un equipo que terminó, un presupuesto agotado)
+   * siguen abriendo el Trabajo: no hay nada que aprobar en ellas.
+   */
+  it('la fila de "te espera una aprobación" abre la conversación del equipo, no Decisiones', () => {
+    const input = props({
+      works: [work({ id: 'w1', title: 'Lanzamiento' })],
+      coordinationSinceLastVisit: [{ id: 'e1', workId: 'w1', kind: 'awaitingYou', sinceVisit: true }],
+    });
+    const { container } = mount(input);
+    fireEvent.click(container.querySelector('.home-since .home-row')!);
+    expect(input.onOpenCoordination).toHaveBeenCalledWith('w1');
+    expect(input.onOpenDecisions).not.toHaveBeenCalled();
+  });
+
+  it('una fila que no espera una aprobación sigue abriendo el Trabajo', () => {
+    const input = props({
+      works: [work({ id: 'w1', title: 'Lanzamiento' })],
+      coordinationSinceLastVisit: [{ id: 'e1', workId: 'w1', kind: 'done', sinceVisit: true }],
+    });
+    const { container } = mount(input);
+    fireEvent.click(container.querySelector('.home-since .home-row')!);
+    expect(input.onOpenWork).toHaveBeenCalledWith('w1');
+    expect(input.onOpenCoordination).not.toHaveBeenCalled();
   });
 
   it('renders the same card in English, with nothing left in Spanish', async () => {

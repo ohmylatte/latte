@@ -151,3 +151,15 @@ export const MAX_PENDING_NOTICES = 20;
  * la propuesta— y mandarlo entero por cada listado le quema el contexto.
  */
 export const TASK_LIST_SPEC_PREVIEW = 200;
+
+/**
+ * Cuanto de un prompt de despacho o de un resumen de reporte viaja en la
+ * bitacora, para la linea del buzon del panel de equipo.
+ *
+ * El buzon muestra UNA linea por miembro: lo ultimo que le paso. Mandar el
+ * prompt entero --que puede ser de miles de caracteres-- por cada fila seria
+ * cargar toda la conversacion del equipo para pintar un renglon. 120 es lo
+ * que entra en ese renglon; el texto completo se lee donde ya estaba, en la
+ * tarjeta del gate y en el reporte.
+ */
+export const LOG_PREVIEW = 120;

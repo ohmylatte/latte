@@ -61,6 +61,54 @@ describe('latte_check dice la verdad sobre lo que hace (juicio #6)', () => {
     const source = readFileSync(join(REPO_ROOT, 'electron', 'coordination', 'engine.ts'), 'utf8');
     expect(source).not.toContain('MAX_CHECK_WAIT_SECONDS');
   });
+
+  /**
+   * B4.2: LA DESCRIPCIÓN DICE CUÁNDO LLAMARLA.
+   *
+   * En la prueba real el asistente llamó `latte_check` ANTES de proponer nada
+   * y se llevó un `NO_ACTIVE_RUN`. La herramienta no miente sobre lo que hace,
+   * pero no decía en qué momento sirve: después de que Latte avise una
+   * aprobación o un reporte. Un agente que no sabe cuándo llamarla, sondea.
+   */
+  it('la descripción dice en qué momento llamarla, no sólo qué devuelve', () => {
+    expect(check().description).toMatch(/after Latte tells you/i);
+    expect(check().description).toMatch(/approved|approval/i);
+    expect(check().description).toMatch(/report/i);
+  });
+});
+
+/**
+ * B4.2: LOS MENSAJES QUE NIEGAN TIENEN QUE GUIAR.
+ *
+ * `NO_ACTIVE_RUN` decía "This Work has no active coordination run yet." y se
+ * quedaba ahí: el hecho, correcto, y ninguna salida. El agente que lo recibe
+ * está a un paso de proponer y no lo sabe. `FORBIDDEN`, al lado, ya lo hacía
+ * bien — decir el hecho Y qué hacer.
+ */
+describe('B4.2: un error de coordinación dice qué hacer después', () => {
+  const source = readFileSync(join(REPO_ROOT, 'electron', 'coordination', 'tools.ts'), 'utf8');
+
+  it('`NO_ACTIVE_RUN` manda a proponer y a esperar la decisión', () => {
+    const line = source.split(/\r?\n/).find((l) => l.includes("code: 'NO_ACTIVE_RUN'"));
+    expect(line, 'tools.ts ya no devuelve NO_ACTIVE_RUN en una línea').toBeDefined();
+    expect(line!).toContain('latte_request_coordination');
+    expect(line!).toMatch(/wait/i);
+    expect(line!).toMatch(/Latte tells you when the person decides/i);
+    // Y no se queda con el hecho pelado de antes.
+    expect(source).not.toContain('This Work has no active coordination run yet.');
+  });
+
+  /**
+   * `latte_dispatch` despacha tareas `ready`. Una `pending` espera a sus
+   * dependencias, no a que el coordinador insista — y en la prueba real ese
+   * malentendido fue exactamente lo que lo mandó a abrir un canal paralelo.
+   */
+  it('`latte_dispatch` publica que sólo las `ready` salen, y qué esperan las `pending`', () => {
+    const dispatch = MCP_TOOL_DEFINITIONS.find((tool) => tool.name === 'latte_dispatch')!;
+    expect(dispatch.description).toMatch(/ready/i);
+    expect(dispatch.description).toMatch(/pending/i);
+    expect(dispatch.description).toMatch(/dependencies/i);
+  });
 });
 
 describe('el interruptor de coordinación falla cerrado en el cableado real (juicio #4)', () => {

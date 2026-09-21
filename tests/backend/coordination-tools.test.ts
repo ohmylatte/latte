@@ -111,4 +111,22 @@ describe('coordination tools: grant enforcement and envelope stability', () => {
     });
     expect(envelope.data).toMatchObject({ status: 'pending_approval' });
   });
+
+  /**
+   * B4.2: el mensaje que llega al agente, no sólo el código.
+   *
+   * En la prueba real el asistente llamó `latte_check` antes de proponer nada
+   * y recibió "This Work has no active coordination run yet." — el hecho, sin
+   * una sola salida. Este test mira el texto que el agente LEE, no la
+   * constante: es lo único que decide qué hace después.
+   */
+  it('sin run, el mensaje de NO_ACTIVE_RUN dice cómo salir: proponer y esperar', async () => {
+    const grant = { workId, runId: null, memberId: 'mem_coord', role: 'coordinator' as const };
+    const envelope = await tools.latte_check(grant, {});
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('NO_ACTIVE_RUN');
+    expect(envelope.error?.message).toContain('latte_request_coordination');
+    expect(envelope.error?.message).toMatch(/wait/i);
+    expect(envelope.error?.message).toMatch(/Latte tells you when the person decides/i);
+  });
 });

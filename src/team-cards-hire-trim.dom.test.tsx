@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { I18nProvider } from './i18n';
 import { EMPTY_USAGE } from '../shared/contracts';
-import type { CoordinationGateView, CoordinationProposal, HandoffRequest, TeamMember } from '../shared/contracts';
-import { DecisionsView, trimPlanWithoutRoles } from './DecisionsView';
+import type { CoordinationGateView, CoordinationProposal, CoordinationRunView, HandoffRequest, TeamMember } from '../shared/contracts';
+import { TeamCards, trimPlanWithoutRoles } from './coordination/TeamCards';
+import type { TeamCardsProps } from './coordination/TeamCards';
 
 /**
  * Q4: DESTILDAR UNA CONTRATACIÓN RECORTA EL PLAN, Y SE VE.
@@ -48,22 +49,29 @@ const member = (roleId: string, status: TeamMember['status'] = 'idle'): TeamMemb
   usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 });
 
-const baseProps = {
-  work: { id: 'w1', brandId: 'b1', title: 'Trabajo', brief: '', outcome: '', resultPath: null, folder: '', createdAt: '', updatedAt: '' },
-  decisions: [], team: [] as readonly TeamMember[], roles: [], permissions: 'ask' as const, handoffs: [] as readonly HandoffRequest[],
-  decisionAuthority: 'suggest' as const, draft: '', busy: false,
-  formatDate: (v: string) => v, titlesByWork: {},
-  onDraftChange: () => undefined, onAdd: () => undefined, onApprove: () => undefined, onEditApprove: () => undefined,
-  onReject: () => undefined, onArchive: () => undefined, onAuthorityChange: () => undefined,
+
+/**
+ * Las tarjetas se mudaron al chat del miembro al que le corresponden (B1.1).
+ * Un gate es una conversación con el COORDINADOR, así que el run de este
+ * archivo lo nombra y el chat que se monta es el suyo. Las aserciones son las
+ * mismas: lo que cambió es la casa, no la regla.
+ */
+const runView: CoordinationRunView = {
+  id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'coord',
+  budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
+  suspendReason: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
+  tasksDone: 0, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0,
 };
 
+const baseProps: TeamCardsProps = { memberId: 'coord', coordinationRun: runView, team: [], roles: [], formatDate: () => 'hace un rato' };
+
 const mount = (extra: Record<string, unknown>) =>
-  render(<I18nProvider><DecisionsView {...baseProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
+  render(<I18nProvider><TeamCards {...baseProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
 
 /** Abre "Editar y aprobar" y devuelve las casillas de contratación, en orden. */
 function openEdit(container: HTMLElement): HTMLInputElement[] {
-  fireEvent.click(container.querySelector('.decision-gate-actions button:not(.primary)')!);
-  const boxes = [...container.querySelectorAll<HTMLInputElement>('.decision-gate-edit-hire input[type="checkbox"]')];
+  fireEvent.click(container.querySelector('.team-card-actions button:not(.primary)')!);
+  const boxes = [...container.querySelectorAll<HTMLInputElement>('.team-card-edit-hire input[type="checkbox"]')];
   expect(boxes).toHaveLength(2); // la premisa del test existe de verdad
   return boxes;
 }
@@ -73,10 +81,10 @@ describe('Q4: el recorte del plan al destildar una contratación', () => {
     const { container } = mount({ gates: [GATE], onResolveGate: vi.fn() });
     const [, copywriter] = openEdit(container);
 
-    expect(container.querySelector('.decision-gate-edit-dropped')).toBeNull();
+    expect(container.querySelector('.team-card-edit-dropped')).toBeNull();
     fireEvent.click(copywriter!);
 
-    const note = container.querySelector('.decision-gate-edit-dropped');
+    const note = container.querySelector('.team-card-edit-dropped');
     expect(note).not.toBeNull();
     // Dos: la del redactor y la del estratega que dependía de ella.
     expect(note!.textContent).toContain('2 tareas');
@@ -88,7 +96,7 @@ describe('Q4: el recorte del plan al destildar una contratación', () => {
     const [, copywriter] = openEdit(container);
     fireEvent.click(copywriter!);
 
-    fireEvent.click(container.querySelector('.decision-gate-edit-actions button.primary')!);
+    fireEvent.click(container.querySelector('.team-card-edit-actions button.primary')!);
 
     expect(onResolveGate).toHaveBeenCalledTimes(1);
     const [gateId, decision, json] = onResolveGate.mock.calls[0]!;
@@ -107,8 +115,8 @@ describe('Q4: el recorte del plan al destildar una contratación', () => {
     const [, copywriter] = openEdit(container);
     fireEvent.click(copywriter!);
 
-    expect(container.querySelector('.decision-gate-edit-dropped')).toBeNull();
-    fireEvent.click(container.querySelector('.decision-gate-edit-actions button.primary')!);
+    expect(container.querySelector('.team-card-edit-dropped')).toBeNull();
+    fireEvent.click(container.querySelector('.team-card-edit-actions button.primary')!);
     const edited = JSON.parse(onResolveGate.mock.calls[0]![2] as string) as CoordinationProposal;
     expect(edited.plan).toHaveLength(3);
   });
@@ -120,8 +128,8 @@ describe('Q4: el recorte del plan al destildar una contratación', () => {
     fireEvent.click(strategist!);
     fireEvent.click(copywriter!);
 
-    expect(container.querySelector('.decision-gate-edit-empty')).not.toBeNull();
-    const confirm = container.querySelector('.decision-gate-edit-actions button.primary') as HTMLButtonElement;
+    expect(container.querySelector('.team-card-edit-empty')).not.toBeNull();
+    const confirm = container.querySelector('.team-card-edit-actions button.primary') as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
     fireEvent.click(confirm);
     expect(onResolveGate).not.toHaveBeenCalled();
@@ -131,7 +139,7 @@ describe('Q4: el recorte del plan al destildar una contratación', () => {
     const onResolveGate = vi.fn();
     const { container } = mount({ gates: [GATE], onResolveGate });
     openEdit(container);
-    fireEvent.click(container.querySelector('.decision-gate-edit-actions button.primary')!);
+    fireEvent.click(container.querySelector('.team-card-edit-actions button.primary')!);
     const edited = JSON.parse(onResolveGate.mock.calls[0]![2] as string) as CoordinationProposal;
     expect(edited.plan).toEqual(PROPOSAL.plan);
   });
@@ -148,7 +156,7 @@ describe('Q6: los roles huérfanos, las altas sin tareas y lo que la pantalla mu
   it('el contador dice cuántas tareas se van por roles que nadie contrata', () => {
     const { container } = mount({ gates: [ORPHAN_GATE], onResolveGate: vi.fn() });
 
-    const note = container.querySelector('.decision-gate-orphan-note');
+    const note = container.querySelector('.team-card-orphan-note');
     expect(note).not.toBeNull();
     // La del redactor y la del estratega que dependía de ella.
     expect(note!.textContent).toContain('2 tareas');
@@ -158,7 +166,7 @@ describe('Q6: los roles huérfanos, las altas sin tareas y lo que la pantalla mu
     const onResolveGate = vi.fn();
     const { container } = mount({ gates: [ORPHAN_GATE], onResolveGate });
 
-    fireEvent.click(container.querySelector('.decision-gate-actions button.primary')!);
+    fireEvent.click(container.querySelector('.team-card-actions button.primary')!);
 
     expect(onResolveGate).toHaveBeenCalledTimes(1);
     const [, decision, json] = onResolveGate.mock.calls[0]!;
@@ -170,10 +178,10 @@ describe('Q6: los roles huérfanos, las altas sin tareas y lo que la pantalla mu
   it('las tareas que se van se muestran aparte, y la lista principal es la que se aprueba', () => {
     const { container } = mount({ gates: [ORPHAN_GATE], onResolveGate: vi.fn() });
 
-    const kept = [...container.querySelectorAll('.decision-gate-plan-list li')];
+    const kept = [...container.querySelectorAll('.team-card-plan-list li')];
     expect(kept).toHaveLength(1);
     expect(kept[0]!.textContent).toContain('Definir el naming');
-    const dropped = [...container.querySelectorAll('.decision-gate-plan-dropped-list li')];
+    const dropped = [...container.querySelectorAll('.team-card-plan-dropped-list li')];
     expect(dropped).toHaveLength(2);
     expect(dropped.map((li) => li.textContent).join(' ')).toContain('Escribir el copy');
   });
@@ -197,17 +205,17 @@ describe('Q6: los roles huérfanos, las altas sin tareas y lo que la pantalla mu
       roleCoverage: [{ roleId: 'copywriter', coverage: 'hire' }, { roleId: 'analyst', coverage: 'hire' }],
     };
     const { container } = mount({ gates: [gate], onResolveGate });
-    fireEvent.click(container.querySelector('.decision-gate-actions button:not(.primary)')!);
-    const boxes = [...container.querySelectorAll<HTMLInputElement>('.decision-gate-edit-hire input[type="checkbox"]')];
+    fireEvent.click(container.querySelector('.team-card-actions button:not(.primary)')!);
+    const boxes = [...container.querySelectorAll<HTMLInputElement>('.team-card-edit-hire input[type="checkbox"]')];
     expect(boxes).toHaveLength(2);
 
     fireEvent.click(boxes[0]!); // se destilda al redactor, y el analista queda sin tareas
 
-    const note = container.querySelector('.decision-gate-edit-hire-dropped');
+    const note = container.querySelector('.team-card-edit-hire-dropped');
     expect(note).not.toBeNull();
     expect(note!.textContent).toContain('1 contratación');
     // Y el payload no lo contrata: un proceso levantado para alguien sin nada que hacer.
-    expect(container.querySelector('.decision-gate-edit-empty')).not.toBeNull();
+    expect(container.querySelector('.team-card-edit-empty')).not.toBeNull();
   });
 
   it('un alta que NUNCA tuvo tareas en el plan se respeta: puede ser deliberada', () => {
@@ -224,13 +232,13 @@ describe('Q6: los roles huérfanos, las altas sin tareas y lo que la pantalla mu
       roleCoverage: [{ roleId: 'strategist', coverage: 'hire' }],
     };
     const { container } = mount({ gates: [gate], onResolveGate });
-    fireEvent.click(container.querySelector('.decision-gate-actions button:not(.primary)')!);
+    fireEvent.click(container.querySelector('.team-card-actions button:not(.primary)')!);
 
-    fireEvent.click(container.querySelector('.decision-gate-edit-actions button.primary')!);
+    fireEvent.click(container.querySelector('.team-card-edit-actions button.primary')!);
 
     const edited = JSON.parse(onResolveGate.mock.calls[0]![2] as string) as CoordinationProposal;
     expect(edited.membersToHire).toEqual(proposal.membersToHire);
-    expect(container.querySelector('.decision-gate-edit-hire-dropped')).toBeNull();
+    expect(container.querySelector('.team-card-edit-hire-dropped')).toBeNull();
   });
 });
 

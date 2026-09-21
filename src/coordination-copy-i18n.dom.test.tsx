@@ -18,7 +18,37 @@ import { formatMessage, type MessageKey } from './i18n';
  * no encuentra su ancla, en vez de pasar por vacío.
  */
 
-const FILES = ['TeamPanel.tsx', 'DecisionsView.tsx'];
+/**
+ * B1.6: y el escaneo alcanza a donde se mudó la coordinación.
+ *
+ * Las tarjetas viven en `coordination/TeamCards.tsx` y se dibujan dentro de
+ * `ChatPane.tsx`: dejar esos dos afuera hubiera sido mudar el copy fuera del
+ * alcance del test que lo protege. `ChatPane` traía lo suyo desde antes —
+ * `' · reanudado'`, `'Reintentando…'`, `'Hay mensajes nuevos · Ir al final'`,
+ * un `aria-label` literal y los cuatro estados de herramienta de `labelFor` —,
+ * y con el escaneo puesto encima no queda ninguno.
+ */
+/**
+ * B2.6: y alcanza tambien a las tres pantallas que quedaron afuera.
+ *
+ * `ResumenView`, `HomeView` y `ActiveTeamsStrip` leen el MISMO estado de
+ * coordinacion que el panel y las tarjetas, y ninguna estaba en la lista. Un
+ * literal ahi adentro tiene exactamente el mismo efecto que uno en
+ * `TeamPanel`: media pantalla en castellano cuando la interfaz habla ingles.
+ */
+/**
+ * B3.6: y alcanza a la vista Equipo y a la derivacion del buzon.
+ *
+ * `TeamView.tsx` es donde se mudo medio panel del equipo -- la lista, el hilo y
+ * lo avanzado --, y `coordination/inbox.ts` es donde se mudo el copy de cada
+ * renglon. Dejarlos afuera hubiera sido mudar el copy fuera del alcance del
+ * test que lo protege.
+ */
+const FILES = [
+  'TeamPanel.tsx', 'DecisionsView.tsx', 'ChatPane.tsx', 'coordination/TeamCards.tsx',
+  'ResumenView.tsx', 'HomeView.tsx', 'ActiveTeamsStrip.tsx',
+  'TeamView.tsx', 'coordination/inbox.ts',
+];
 
 /** Las líneas de código, sin comentarios: un comentario en castellano es documentación, no copy. */
 function codeLines(file: string): string[] {
@@ -73,6 +103,24 @@ describe('U8: el copy de coordinación vive en los diccionarios', () => {
   // Y las claves nuevas existen en los DOS diccionarios: una clave que sólo
   // está en castellano deja la interfaz en inglés mostrando la clave cruda.
   const NEW_KEYS: MessageKey[] = [
+    // B1.1-B1.6: el buzón, las tarjetas en el chat, lo avanzado y el copy de
+    // `ChatPane` que estaba a mano.
+    'coordination.cards.title', 'coordination.cards.waiting', 'coordination.cards.goToMember',
+    'coordination.card.more', 'coordination.card.less', 'coordination.gate.editPromptLabel',
+    'team.inbox.dispatched', 'team.inbox.reported', 'team.inbox.dispatchFailed',
+    'team.inbox.sent', 'team.inbox.received', 'team.inbox.ask', 'team.inbox.answer',
+    'team.inbox.hired', 'team.inbox.thread', 'team.inbox.threadEmpty', 'team.inbox.pending',
+    'team.inbox.nothing', 'team.member.starting', 'team.member.connected',
+    'team.member.unconfirmed', 'team.member.uncoordinated', 'team.advanced.title',
+    'team.advanced.authority', 'team.run.counts', 'team.run.budget',
+    'coordination.short.claudeBelowFloor', 'coordination.short.codexRunCap',
+    'coordination.short.codexGlobalCap', 'coordination.short.codexProcessCeiling',
+    'coordination.short.opencodeSharedServer', 'coordination.short.engramMissing',
+    'coordination.short.runtimeRefused', 'coordination.short.coordinationServerDown',
+    'coordination.short.disabled',
+    'chat.resumed', 'chat.retrying', 'chat.newMessages', 'chat.permission.group',
+    'chat.files.one', 'chat.files.many',
+    'chat.tool.running', 'chat.tool.completed', 'chat.tool.error', 'chat.tool.pending',
     'team.status.attention', 'team.status.paused', 'team.opening', 'team.checkingAgents',
     'team.checkingModels', 'team.recheck', 'team.providers.label', 'team.providers.title',
     'team.finish.label', 'team.rolePicker.group', 'team.model.isDefault',
@@ -81,6 +129,17 @@ describe('U8: el copy de coordinación vive en los diccionarios', () => {
     'decision.kicker', 'decision.headline.first', 'decision.headline.second', 'decision.draftPlaceholder',
     'coordination.run.finished.done', 'coordination.run.finished.cancelled', 'coordination.run.planning',
     'coordination.proposal.unreadable', 'coordination.budget.editLabel', 'coordination.budget.save',
+    // B3: el modo Equipo de la columna, la linea plegada y las formas enteras
+    // del buzon ("reporto" sin dos puntos vacios).
+    'team.rail.group', 'team.rail.chat', 'team.rail.team',
+    'team.view.openChat', 'team.view.thread', 'team.view.threadHelp',
+    'team.view.emptyTitle', 'team.view.emptyBody',
+    'coordination.cards.collapsed', 'coordination.cards.kind.proposal',
+    'coordination.cards.kind.dispatch', 'coordination.cards.kind.plan',
+    'coordination.cards.kind.budget', 'coordination.cards.kind.ask',
+    'coordination.cards.kind.mixed',
+    'team.inbox.dispatchedBare', 'team.inbox.reportedBare', 'team.inbox.dispatchFailedBare',
+    'team.inbox.sentBare', 'team.inbox.receivedBare', 'team.inbox.askBare', 'team.inbox.answerBare',
   ];
 
   /**
@@ -98,7 +157,18 @@ describe('U8: el copy de coordinación vive en los diccionarios', () => {
    * `trabajo.runtime`: nombres propios y préstamos), que es exactamente el tipo
    * de entrada que va acá cuando alguna caiga en esta lista.
    */
-  const SAME_IN_BOTH = new Map<MessageKey, string>([]);
+  const SAME_IN_BOTH = new Map<MessageKey, string>([
+    // Las flechas del buzón son el mensaje entero: `{role}` y `{text}` los pone
+    // el llamador, ya traducidos. No hay una palabra que traducir acá.
+    ['team.inbox.sent', 'la flecha y los dos huecos, sin una palabra propia'],
+    ['team.inbox.received', 'la flecha y los dos huecos, sin una palabra propia'],
+    // Préstamo: "error" es la misma palabra en los dos idiomas.
+    ['chat.tool.error', 'préstamo: la misma palabra en los dos idiomas'],
+    // Las formas enteras de los mensajes son la flecha y el nombre del otro
+    // extremo, que pone el llamador: no queda una palabra que traducir.
+    ['team.inbox.sentBare', 'la flecha y el hueco, sin una palabra propia'],
+    ['team.inbox.receivedBare', 'la flecha y el hueco, sin una palabra propia'],
+  ]);
 
   it('cada clave nueva tiene texto propio en los dos idiomas, y no son el mismo texto por olvido', () => {
     expect(NEW_KEYS.length).toBeGreaterThan(20);

@@ -18,7 +18,7 @@ const work = (patch: Partial<Work> = {}): Work => ({
   expectedOutput: null, resultPath: null, updatedAt: '2026-09-01T00:00:00.000Z', ...patch,
 });
 const logEntry = (patch: Partial<CoordinationDispatchLogEntryView> = {}): CoordinationLogEntryView => ({
-  id: 'log1', taskId: 'task1', memberId: 'm1', status: 'dispatched',
+  id: 'log1', taskId: 'task1', memberId: 'm1', status: 'dispatched', outcome: null, promptPreview: '', summaryPreview: null,
   createdAt: '2026-09-01T00:00:00.000Z', startedAt: '2026-09-01T00:00:00.000Z', settledAt: null, ...patch,
 });
 

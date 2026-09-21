@@ -36,7 +36,7 @@ import type {
 } from '../storage/repository';
 import { canAddTask, computeDoomedTasks, computeReadyTasks, computeTaskDepth, wouldCreateCycle, type DagEdge, type DagTask } from './dag';
 import { assertBudgetConfigured, BudgetUnsetError, readStoredCoordinationBudget, requireCoordinationBudget, reserveDispatch, type BudgetUsage, type StoredCoordinationBudgetRead } from './budget';
-import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, IN_FLIGHT_DISPATCH_STALE_MINUTES, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK, MAX_PENDING_NOTICES, TASK_LIST_SPEC_PREVIEW } from './limits';
+import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, IN_FLIGHT_DISPATCH_STALE_MINUTES, LOG_PREVIEW, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK, MAX_PENDING_NOTICES, TASK_LIST_SPEC_PREVIEW } from './limits';
 
 /**
  * Los roles que la persona aprobo, por run. Una clave propia y no `plan_json`:
@@ -166,6 +166,11 @@ export interface CoordinationDispatchLogEntry {
   taskId: string;
   memberId: string;
   status: CoordinationDispatchRecord['status'];
+  /** `'succeeded'` / `'failed'` cuando el despacho ya se liquido; `null` mientras sigue en vuelo. */
+  outcome: string | null;
+  /** Los primeros `LOG_PREVIEW` caracteres del prompt y del resumen: lo que entra en un renglon del buzon. */
+  promptPreview: string;
+  summaryPreview: string | null;
   createdAt: string;
   startedAt: string | null;
   settledAt: string | null;
@@ -311,6 +316,32 @@ export class CoordinationEngine {
    */
   private readonly pendingNotices = new Map<string, string[]>();
 
+  /**
+   * B5.1: EL DESPACHO QUE YA LE FUE ENVIADO a cada miembro, y si ya se le
+   * recordó una vez que no reportó.
+   *
+   * El agujero que tapa: un worker puede hacer el trabajo y terminar su turno
+   * SIN llamar `latte_report`. El despacho queda `dispatched` para siempre —el
+   * barrido de filas viejas (`IN_FLIGHT_DISPATCH_STALE_MINUTES`) sólo alcanza a
+   * las que no tienen dueño, y este miembro sigue vivo—, el run no cierra nunca
+   * y el coordinador no se entera de nada.
+   *
+   * La clave es el miembro y el valor es el despacho: hay uno solo en vuelo por
+   * miembro (la concurrencia se reserva por miembro en `assigning`).
+   *
+   * SE ESCRIBE DESPUÉS DE `hub.send`, no antes, y ése es el candado que
+   * distingue el `idle` del spawn del `idle` del turno: abrir o contratar a un
+   * miembro lo deja ocioso —y emite su `status:'idle'`— ANTES de que la tarea
+   * exista para él. Hasta que `hub.send` no resuelve no hay entrada acá, así
+   * que ningún idle anterior al envío puede disparar un aviso.
+   *
+   * En memoria y no en la base a propósito, igual que `assigning`,
+   * `pendingClose` y `pendingNotices`: "¿terminó su turno?" sale del adaptador,
+   * estado vivo de ESTE proceso. Un reinicio lo pierde, y eso es honesto — el
+   * barrido de arranque ya liquida todo despacho en vuelo sin cobrar intento.
+   */
+  private readonly sentDispatches = new Map<string, { dispatchId: string; nudged: boolean }>();
+
   constructor(private readonly deps: CoordinationEngineDeps) {}
 
   /**
@@ -322,9 +353,17 @@ export class CoordinationEngine {
    */
   private async deliverNotice(memberId: string, text: string): Promise<{ delivered: boolean; queued: boolean }> {
     if (!memberId || !text) return { delivered: false, queued: false };
-    if (this.memberIsBusy(memberId)) { this.queueNotice(memberId, text); return { delivered: false, queued: true }; }
+    // B5.5: se registra QUÉ pasó con el aviso, nunca su contenido. Un aviso
+    // lleva resúmenes y nombres de archivo; la bitácora del proceso lleva ids
+    // y estados.
+    if (this.memberIsBusy(memberId)) {
+      this.queueNotice(memberId, text);
+      this.deps.log?.(`[latte] coordination notice queued (member=${memberId} reason=busy)`);
+      return { delivered: false, queued: true };
+    }
     try {
       await this.deps.hub.send(memberId, text);
+      this.deps.log?.(`[latte] coordination notice delivered (member=${memberId})`);
       return { delivered: true, queued: false };
     } catch (error) {
       // Se encola en vez de perderse: el próximo fin de turno lo reintenta. Un
@@ -1023,7 +1062,13 @@ export class CoordinationEngine {
    */
   listLog(runId: string): CoordinationLogEntry[] {
     const entries: CoordinationLogEntry[] = this.deps.repo.listCoordinationDispatches(runId).map((d) => ({
-      id: d.id, taskId: d.taskId, memberId: d.memberId, status: d.status, createdAt: d.createdAt, startedAt: d.startedAt, settledAt: d.settledAt,
+      id: d.id, taskId: d.taskId, memberId: d.memberId, status: d.status,
+      // El QUE y el COMO, no solo el cuando: sin esto el buzon del panel de
+      // equipo solo podia decir "hubo un despacho", que no le sirve a nadie.
+      outcome: d.outcome,
+      promptPreview: d.prompt.slice(0, LOG_PREVIEW),
+      summaryPreview: d.summary == null ? null : d.summary.slice(0, LOG_PREVIEW),
+      createdAt: d.createdAt, startedAt: d.startedAt, settledAt: d.settledAt,
     }));
     const run = this.deps.repo.getCoordinationRun(runId);
     if (run.status === 'done') {
@@ -1104,6 +1149,10 @@ export class CoordinationEngine {
     if (hires.some((hire) => hire.memberId === memberId)) return;
     hires.push({ memberId, roleId, hiredAt: at });
     this.deps.repo.setMeta(HIRES_META + runId, JSON.stringify(hires));
+    // B5.5: el alta es el primer eslabón del circuito, y `agents.log` no tenía
+    // una sola línea de coordinación. El guard de arriba lo deja idempotente:
+    // un alta ya anotada no vuelve a escribir ni fila ni línea.
+    this.deps.log?.(`[latte] coordination hire (run=${runId} member=${memberId} role=${roleId})`);
   }
 
   /**
@@ -1887,6 +1936,12 @@ export class CoordinationEngine {
         this.touch(run.workId, run.id);
         throw error;
       }
+      // B5.1: LA TAREA YA ESTÁ EN SUS MANOS. A partir de acá, y no antes, un
+      // fin de turno de este miembro sin `latte_report` es un turno que no
+      // reportó. Todo `idle` anterior —el del spawn, el de la confirmación— es
+      // de alguien que todavía no tenía nada que reportar.
+      this.sentDispatches.set(session.id, { dispatchId: dispatched.id, nudged: false });
+      this.deps.log?.(`[latte] coordination dispatch sent (run=${run.id} dispatch=${dispatched.id} task=${task.id} role=${task.roleId} member=${session.id})`);
       this.touch(run.workId, run.id);
       return { status: 'dispatched', taskId: task.id, dispatchId: dispatched.id };
     } finally {
@@ -2340,6 +2395,9 @@ export class CoordinationEngine {
         this.deps.repo.updateCoordinationTask(taskId, { status: 'ready', attempts, assignedMemberId: null }, now);
       }
     }
+    // B5.5: el reporte, en `agents.log`. Sin contenido: el resumen y los
+    // archivos ya viven en la fila del despacho y en el aviso al coordinador.
+    this.deps.log?.(`[latte] coordination report (run=${task.runId} dispatch=${current?.id ?? 'none'} task=${taskId} member=${grant.memberId} outcome=${outcome})`);
     // EL punto único: toda tarea que pasa a un estado terminal sale por acá.
     this.finishRunIfComplete(task.runId, now);
     // O6: Y LA SUSPENSIÓN SE RE-EVALÚA ACÁ, no en el próximo tick.
@@ -2492,6 +2550,9 @@ export class CoordinationEngine {
     this.deps.repo.setMeta('coordination_coordinator:' + run.workId, '');
     this.pendingClose.delete(runId);
     const closed = this.deps.repo.updateCoordinationRunStatus(runId, status, now, null);
+    // B5.5: el último eslabón. Un run que cierra es el hecho que la persona
+    // más busca en el log cuando algo quedó a medias.
+    this.deps.log?.(`[latte] coordination run closed (run=${runId} work=${run.workId} status=${status})`);
     if (notice) void this.deliverNotice(coordinatorId, notice);
     return closed;
   }
@@ -2528,10 +2589,15 @@ export class CoordinationEngine {
    * todavía está ocupado el run se vuelve a aparcar igual.
    */
   noteTurnEnded(memberId: string): void {
-    if (!memberId || this.pendingClose.size === 0) return;
+    if (!memberId) return;
+    const now = this.deps.clock();
+    // B5.1: PRIMERO el turno que terminó sin reportar. Va antes del cierre
+    // pendiente porque puede LIQUIDAR un despacho, y liquidar es justamente lo
+    // que puede volver cerrable a un run que hasta este instante no lo era.
+    this.noteTurnWithoutReport(memberId, now);
+    if (this.pendingClose.size === 0) return;
     // Se recorre lo PENDIENTE, no el miembro: `findMember` no sirve acá (el
     // coordinador puede no tener fila propia). Como mucho hay un puñado.
-    const now = this.deps.clock();
     for (const runId of [...this.pendingClose]) {
       let run: CoordinationRunRecord;
       try {
@@ -2543,6 +2609,100 @@ export class CoordinationEngine {
       this.finishRunIfComplete(runId, now);
       this.touch(run.workId, run.id);
     }
+  }
+
+  /**
+   * B5.1: EL TURNO QUE TERMINA SIN REPORTAR NO SE QUEDA EN VUELO PARA SIEMPRE.
+   *
+   * Lo que pasó de verdad (run `crn_3f40b0633ab99bf4636b`): el worker recibió
+   * su tarea, la HIZO —dejó el archivo en la carpeta del Trabajo— y terminó su
+   * turno sin llamar `latte_report`. El despacho quedó `dispatched`, el
+   * miembro siguió vivo (así que el barrido de filas huérfanas nunca lo miró),
+   * el run quedó `running` eterno y el coordinador esperó un reporte que no
+   * iba a llegar nunca.
+   *
+   * Dos golpes, no uno. El primero es un AVISO: casi siempre el agente
+   * simplemente se olvidó, y decirle qué llamar le cuesta un turno y recupera
+   * el trabajo entero, con su resumen y sus archivos. El segundo —otro turno
+   * terminado sin reportar— ya no es un olvido: ahí se liquida el despacho con
+   * motivo visible (`no_report`), se cobra el intento y se le dice al
+   * coordinador qué pasó, porque el único desenlace peor que perder la tarea es
+   * que nadie sepa que se perdió.
+   *
+   * Los candados, todos por la misma razón (un aviso es un turno de usuario, y
+   * un turno de usuario de más sobre alguien que no hizo nada mal es ruido que
+   * cuesta plata):
+   * - Sin envío no hay aviso: `sentDispatches` se escribe DESPUÉS de
+   *   `hub.send`, así que el `idle` del spawn y cualquiera anterior al envío
+   *   no existen para este camino.
+   * - Una `latte_ask` abierta de este miembro (o sobre esta tarea) es ocio
+   *   LEGÍTIMO: preguntó y está esperando. Se sale sin consumir el aviso, así
+   *   que el candado no se gasta.
+   * - Un run que ya no está activo no espera ningún reporte.
+   * - Al coordinador no se lo empuja: su turno termina todo el tiempo sin
+   *   reportar nada, porque lo suyo es despachar.
+   */
+  private noteTurnWithoutReport(memberId: string, now: string): void {
+    const tracked = this.sentDispatches.get(memberId);
+    if (!tracked) return;
+    try {
+      const dispatch = this.deps.repo.getCoordinationDispatch(tracked.dispatchId);
+      // Reportado, liquidado o cancelado: el rastro ya no sirve para nada, y
+      // borrarlo es lo que hace que un `latte_report` normal después del aviso
+      // no deje un solo residuo.
+      if (dispatch.status !== 'dispatched' && dispatch.status !== 'running') { this.sentDispatches.delete(memberId); return; }
+      const run = this.deps.repo.getCoordinationRun(dispatch.runId);
+      if (run.status !== 'running' && run.status !== 'suspended' && run.status !== 'planning') { this.sentDispatches.delete(memberId); return; }
+      if (this.coordinatorOf(run) === memberId) return;
+      // El candado de la pregunta abierta: NO se consume el aviso. Cuando la
+      // persona conteste y el miembro vuelva a terminar su turno, el chequeo
+      // corre otra vez desde cero.
+      if (this.openAsksHolding(run.id, now).some((ask) => ask.memberId === memberId || (ask.taskId != null && ask.taskId === dispatch.taskId))) return;
+      const task = this.deps.repo.getCoordinationTask(dispatch.taskId);
+      if (!tracked.nudged) {
+        tracked.nudged = true;
+        this.deps.log?.(`[latte] coordination turn ended without report (run=${run.id} dispatch=${dispatch.id} task=${task.id} member=${memberId}) nudged`);
+        void this.deliverNotice(memberId, this.noReportNudgeText(task));
+        return;
+      }
+      this.sentDispatches.delete(memberId);
+      this.settleUncertain(dispatch.id, { incrementAttempts: true, reason: 'no_report' });
+      const settled = this.deps.repo.getCoordinationTask(dispatch.taskId);
+      this.deps.log?.(`[latte] coordination dispatch settled (run=${run.id} dispatch=${dispatch.id} task=${task.id} member=${memberId} reason=no_report task_status=${settled.status})`);
+      const coordinatorId = this.coordinatorOf(run);
+      if (coordinatorId && coordinatorId !== memberId) {
+        void this.deliverNotice(
+          coordinatorId,
+          `«${task.roleId}» (${memberId}) ended two turns without calling \`latte_report\` for task ${task.id}, even after being reminded. `
+          + `Latte closed dispatch ${dispatch.id} as \`no_report\` and charged the attempt; the task is now \`${settled.status}\`. `
+          + 'Nothing was reported about its result: whatever it did is unrecorded. If you still need it, dispatch it again — '
+          + 'and check the Work folder first, because it may have left files behind without telling anyone.',
+        );
+      }
+    } catch (error) {
+      // Un rastro que ya no se puede leer (la fila borrada, la base trabada) no
+      // puede volver a intentarse para siempre: se suelta, y el barrido de
+      // arranque sigue siendo la red de abajo.
+      this.sentDispatches.delete(memberId);
+      this.deps.log?.(`[latte] coordination turn-end check failed (${memberId}): ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * El texto del aviso, en inglés y sin i18n como el resto de lo que el motor
+   * le manda a un agente: esto no lo lee una persona. Dice EXACTAMENTE qué
+   * llamar y con qué argumentos, porque un aviso que sólo señala el error
+   * gasta un turno y no arregla nada.
+   */
+  private noReportNudgeText(task: CoordinationTaskRecord): string {
+    const title = task.spec.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim().slice(0, 120) ?? task.id;
+    return `Your turn ended without reporting the task Latte gave you. Task ${task.id}: «${title}».\n\n`
+      + `Call \`latte_report\` now: \`taskId: "${task.id}"\`, \`outcome: "succeeded"\` if you finished it or \`"failed"\` if you could not, `
+      + 'and a `summary` of what you actually did.\n\n'
+      + 'If you left work for another role — a file, a draft, a handoff — say so in the summary and name the file in `files`. '
+      + 'Latte delivers your report to the coordinator, and that report is the ONLY way anyone learns what you produced: '
+      + 'a file written in the Work folder that no report mentions is invisible to the rest of the team.\n\n'
+      + 'If this turn also ends without a report, Latte will close the dispatch as unreported, charge the attempt and tell the coordinator the task was lost.';
   }
 
   /** Las preguntas que TODAVÍA retienen el cierre: sin responder y sin vencer. Una vencida ya no espera a nadie. */
@@ -3247,8 +3407,18 @@ export class CoordinationEngine {
     return `${task.spec}\n\n## Answers to your questions\n\nYou asked about this task and the human answered. These answers are binding: follow them, and do not ask the same thing again.\n\n${lines.join('\n')}`;
   }
 
-  /** Crash/death settlement. `incrementAttempts:false` for an app-restart crash (not the agent's fault); `true` for a member-process death (a real failure). */
-  settleUncertain(dispatchId: string, opts: { incrementAttempts: boolean }): CoordinationDispatchRecord {
+  /**
+   * Crash/death settlement. `incrementAttempts:false` for an app-restart crash
+   * (not the agent's fault); `true` for a member-process death (a real failure).
+   *
+   * B5.1: `reason` SE ESCRIBE EN LA FILA. Había un pendiente documentado
+   * ("settleUncertain sin motivo en la bitácora") y hasta acá toda liquidación
+   * quedaba igual a cualquier otra: `cancelled` sin `outcome`, sin una palabra
+   * sobre por qué. La bitácora ya dibuja `outcome`, así que un despacho cerrado
+   * porque nadie reportó se lee como lo que es. Sin `reason` la fila queda
+   * exactamente como quedaba antes — los dos llamadores viejos no cambian.
+   */
+  settleUncertain(dispatchId: string, opts: { incrementAttempts: boolean; reason?: string }): CoordinationDispatchRecord {
     const dispatch = this.deps.repo.getCoordinationDispatch(dispatchId);
     const now = this.deps.clock();
     // Las escrituras van juntas, por lo mismo que en `report`: cerrar la
@@ -3264,10 +3434,12 @@ export class CoordinationEngine {
       if (dispatch.reservationId && this.deps.repo.settleCoordinationCostReservation(dispatch.reservationId, null, now, true)) {
         this.deps.repo.insertCoordinationCostLedger({
           id: newId('cld'), runId: dispatch.runId, reservationId: dispatch.reservationId, kind: 'spend', dispatches: 1, costMicros: 0,
-          detailJson: JSON.stringify({ taskId: dispatch.taskId, outcome: 'uncertain' }), createdAt: now,
+          detailJson: JSON.stringify({ taskId: dispatch.taskId, outcome: opts.reason ?? 'uncertain' }), createdAt: now,
         });
       }
-      const settled = this.deps.repo.updateCoordinationDispatch(dispatchId, { status: 'cancelled', settledAt: now });
+      const settled = this.deps.repo.updateCoordinationDispatch(dispatchId, opts.reason
+        ? { status: 'cancelled', outcome: opts.reason, settledAt: now }
+        : { status: 'cancelled', settledAt: now });
       const task = this.deps.repo.getCoordinationTask(dispatch.taskId);
       const attempts = opts.incrementAttempts ? task.attempts + 1 : task.attempts;
       // `failed` por la misma razón que en `report`: agotar los intentos es

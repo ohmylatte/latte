@@ -4,15 +4,47 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUpRight, Check, ChevronRight, CircleAlert, FilePlus, Paperclip, ShieldQuestion, Square, Wrench, X } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { ChatMessage, ChatPart, ChatPermission, ChatQuestion, ChatSession, ChatToolStatus } from '../shared/contracts';
+import type { AgentRole, ChatMessage, ChatPart, ChatPermission, ChatQuestion, ChatSession, ChatToolStatus, CoordinationAskView, CoordinationGateView, CoordinationRunView, TeamMember } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { useChatState } from './chat-store';
 import { friendlyTool } from './tool-names';
 import { isNearConversationEnd } from './conversation-scroll';
+import { TeamCardsCollapsible } from './coordination/TeamCards';
 
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked = [], onAdoptFile, onAttachFiles, beforeComposer }: { session: ChatSession; onStop: () => void; onError: (error: string) => void; onSaveAsDocument?: (text: string) => void; untracked?: string[]; onAdoptFile?: (fileName: string) => void; onAttachFiles?: () => Promise<string[]>; beforeComposer?: ReactNode }) {
+/**
+ * Lo que la coordinación le pide a ESTE chat.
+ *
+ * Todo opcional y aditivo: un llamador sin cablear (la vista previa del
+ * navegador, un test de otra cosa) ve el chat exactamente como estaba. El id
+ * del miembro es el id de la sesión — en Latte un chat ES un miembro —, así
+ * que no hace falta pasarlo aparte.
+ */
+export interface ChatCoordinationProps {
+  coordinationRun?: CoordinationRunView | null;
+  gates?: readonly CoordinationGateView[];
+  openAsks?: readonly CoordinationAskView[];
+  roles?: readonly AgentRole[];
+  team?: readonly TeamMember[];
+  formatDate?: (value: string) => string;
+  onResolveGate?: (gateId: string, decision: 'approve' | 'reject', editedPayload?: string | null) => void | boolean | Promise<boolean | void>;
+  onAnswerAsk?: (askId: string, answer: string) => void;
+  coordinationPending?: Record<string, boolean>;
+  /** Cambia de pestaña dentro del Trabajo: lo que aprieta "El equipo te espera". */
+  onSelectMember?: (memberId: string) => void;
+  /**
+   * B3.5: la persona ya pidio ver el pendiente.
+   *
+   * Inicio ("te espera una aprobacion") y la tira lateral abren la
+   * conversacion del coordinador JUSTAMENTE para que apruebe: dejarle la
+   * linea plegada seria cobrarle un clic mas por lo que ya pidio. En
+   * cualquier otra navegacion queda plegada, que es el default.
+   */
+  initiallyExpanded?: boolean;
+}
+
+export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked = [], onAdoptFile, onAttachFiles, beforeComposer, coordination }: { session: ChatSession; onStop: () => void; onError: (error: string) => void; onSaveAsDocument?: (text: string) => void; untracked?: string[]; onAdoptFile?: (fileName: string) => void; onAttachFiles?: () => Promise<string[]>; beforeComposer?: ReactNode; coordination?: ChatCoordinationProps }) {
   const state = useChatState(chatStore, session.id);
   const draft = state.draft;
   const setDraft = (text: string) => chatStore.setDraft(session.id, text);
@@ -121,7 +153,7 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
 
   return <div className="chat-pane">
     <div className="session-heading">
-      <span title={`${session.roleName} · ${session.label}`}><i className={'role-dot ' + (state.closed ? 'ended' : busy ? 'busy' : '')} data-role={session.roleId} /><strong>{session.roleName}</strong><span className="chat-heading-runtime">{session.label}</span>{session.resumed ? ' · reanudado' : ''}</span>
+      <span title={`${session.roleName} · ${session.label}`}><i className={'role-dot ' + (state.closed ? 'ended' : busy ? 'busy' : '')} data-role={session.roleId} /><strong>{session.roleName}</strong><span className="chat-heading-runtime">{session.label}</span>{session.resumed ? t('chat.resumed') : ''}</span>
       <div className="chat-heading-actions">
         {busy && <button aria-label={t('ui.auto.086')} title={t('ui.auto.086')} onClick={abort}><Square size={12} /></button>}
         <button aria-label={t('ui.auto.087')} title={t('ui.auto.088')} onClick={onStop}><X size={13} /></button>
@@ -136,10 +168,28 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
       {state.messages.map(message => <MessageView key={message.id} message={message} roleName={session.roleName} onSaveAsDocument={onSaveAsDocument} untracked={untracked} onAdoptFile={onAdoptFile} />)}
       {state.permissions.map(permission => <PermissionCard key={permission.id} chatId={session.id} runtime={session.provider} request={permission} onError={onError} />)}
       {state.questions.map(question => <QuestionCard key={question.id} chatId={session.id} request={question} onError={onError} />)}
-      {busy && <div className="chat-status"><Loading size={16} />{state.status === 'retry' ? state.statusDetail || 'Reintentando…' : t('ui.auto.091')}</div>}
+      {busy && <div className="chat-status"><Loading size={16} />{state.status === 'retry' ? state.statusDetail || t('chat.retrying') : t('ui.auto.091')}</div>}
       {state.error && <div className="chat-error" role="alert"><CircleAlert size={14} /><span>{state.error}</span><button aria-label={t('ui.auto.092')} onClick={() => chatStore.clearError(session.id)}><X size={13} /></button></div>}
     </div>
-    {unread && <button className="conversation-new-messages" onClick={showLatest}>Hay mensajes nuevos · Ir al final</button>}
+    {unread && <button className="conversation-new-messages" onClick={showLatest}>{t('chat.newMessages')}</button>}
+    {/* Arriba del composer, fija: lo que el equipo le está pidiendo a ESTE
+        miembro. No entra en el scroll de la conversación a propósito — una
+        aprobación que se va hacia arriba con los mensajes es una aprobación
+        que la persona no ve. */}
+    {coordination && <TeamCardsCollapsible
+      memberId={session.id}
+      coordinationRun={coordination.coordinationRun}
+      gates={coordination.gates}
+      openAsks={coordination.openAsks}
+      roles={coordination.roles}
+      team={coordination.team}
+      formatDate={coordination.formatDate}
+      onResolveGate={coordination.onResolveGate}
+      onAnswerAsk={coordination.onAnswerAsk}
+      pending={coordination.coordinationPending}
+      onSelectMember={coordination.onSelectMember}
+      initiallyExpanded={coordination.initiallyExpanded}
+    />}
     {beforeComposer}
     <form className="prompt-form" onSubmit={e => { e.preventDefault(); void send(); }}>
       <textarea ref={composer} aria-label={t('ui.auto.019')} placeholder={state.closed ? t('ui.auto.093') : t('ui.auto.020')} value={draft} disabled={state.closed} onFocus={() => { composerHadFocus.current = true; }} onBlur={e => { if (e.relatedTarget) composerHadFocus.current = false; }} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
@@ -168,7 +218,7 @@ function MessageView({ message, roleName, onSaveAsDocument, untracked, onAdoptFi
       {worthKeeping && onSaveAsDocument && <button className="save-as-document" title={t('ui.auto.096')} onClick={() => onSaveAsDocument(text)}><FilePlus size={12} />{pending.length > 0 ? t('ui.auto.097') : t('ui.auto.098')}</button>}
     </div>
     {pending.length > 0 && onAdoptFile && <div className="answer-file-hint">
-      <span>{t('ui.auto.099')} {pending.length === 1 ? t('ui.auto.100') : 'estos archivos'}  {t('ui.auto.101')}</span>
+      <span>{t('ui.auto.099')} {pending.length === 1 ? t('chat.files.one') : t('chat.files.many')}  {t('ui.auto.101')}</span>
       {pending.map(fileName => <button key={fileName} className="primary" onClick={() => onAdoptFile(fileName)}><FilePlus size={12} />{t('ui.auto.357')} {fileName}</button>)}
     </div>}
     {visible.map(part => <PartView key={part.id} part={part} />)}
@@ -189,10 +239,10 @@ function PartView({ part }: { part: ChatPart }) {
 
 function labelFor(status: ChatToolStatus): string {
   switch (status) {
-    case 'running': return 'en curso';
-    case 'completed': return 'listo';
-    case 'error': return 'error';
-    default: return 'pendiente';
+    case 'running': return t('chat.tool.running');
+    case 'completed': return t('chat.tool.completed');
+    case 'error': return t('chat.tool.error');
+    default: return t('chat.tool.pending');
   }
 }
 
@@ -215,7 +265,7 @@ function PermissionCard({ chatId, runtime, request, onError }: { chatId: string;
     api.replyPermission(chatId, request.id, value).catch(e => onError(displayError(e))).finally(() => setBusy(false));
   };
   if (request.url) {
-    return <div className="chat-card permission" role="group" aria-label="Solicitud de permiso">
+    return <div className="chat-card permission" role="group" aria-label={t('chat.permission.group')}>
       <div className="chat-card-title"><ShieldQuestion size={15} />{request.serverName ? t('chat.elicitation.server', { name: request.serverName }) : t('ui.auto.102')}</div>
       {request.title && <p>{request.title}</p>}
       <p><code>{request.url}</code></p>
@@ -225,7 +275,7 @@ function PermissionCard({ chatId, runtime, request, onError }: { chatId: string;
       </div>
     </div>;
   }
-  return <div className="chat-card permission" role="group" aria-label="Solicitud de permiso">
+  return <div className="chat-card permission" role="group" aria-label={t('chat.permission.group')}>
     <div className="chat-card-title"><ShieldQuestion size={15} />{t('ui.auto.102')}<strong title={request.permission}>{friendlyTool(request.permission)}</strong></div>
     {request.title && <p>{request.title}</p>}
     {request.patterns.length > 0 && <ul>{request.patterns.map(p => <li key={p}><code>{p}</code></li>)}</ul>}
