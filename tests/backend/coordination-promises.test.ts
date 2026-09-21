@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RoleCatalog } from '../../electron/agents/roles';
+import { loadInstructionPack } from '../../electron/workspace/packs';
 import { CoordinationEngine } from '../../electron/coordination/engine';
 import { MCP_TOOL_DEFINITIONS } from '../../electron/coordination/mcpServer';
 import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
@@ -210,6 +212,52 @@ describe('lo que se publica existe y lo que entra se valida (crítico 12)', () =
     it('dice que la coordinación se cierra sola cuando reporta la última tarea, y que para seguir hay que pedir coordinar de nuevo', () => {
       expect(source).toMatch(/closes itself|closes on its own/i);
       expect(source).toMatch(/latte_request_coordination/);
+    });
+  });
+  /**
+   * El agujero real (uso de hoy): el miembro "Asistente" (rol builtin
+   * `assistant`, sin instrucciones propias) hizo todo el trabajo solo y lo
+   * narró como si lo hubieran hecho Paid Media y CM. No hubo ningún run de
+   * coordinación ni despacho. `strategist.md` es el único que habla de
+   * coordinar, y el asistente nunca lo lee: lo único que TODOS reciben es
+   * `base.md`. Así que la regla vive ahí.
+   *
+   * CRLF: `base.md` se lee tal cual del disco, así que nada de saltos de linea literales.
+   */
+  describe('la base que reciben TODOS los roles dice quién hizo el trabajo y cuándo proponer coordinar', () => {
+    const base = fs.readFileSync(path.resolve(__dirname, '../../packs/marketing-core/base.md'), 'utf8');
+    const lines = base.split(/\r?\n/);
+    const line = (re: RegExp) => lines.find((l) => re.test(l));
+
+    it('prohíbe atribuirle a otro rol un trabajo que no se despachó', () => {
+      expect(line(/never present work as done by another member or role/i)).toBeDefined();
+      expect(line(/dispatch made it happen/i)).toBeDefined();
+      expect(line(/latte_dispatch/)).toBeDefined();
+      // Y dice qué decir cuando lo hiciste vos.
+      expect(line(/I did it myself/)).toBeDefined();
+      // Escribir un archivo con el nombre de otro rol no es que ese rol trabajó.
+      expect(line(/is not that role/i)).toBeDefined();
+      // El relato tiene que coincidir con la bitácora que lee la persona.
+      expect(line(/log to know who did what/i)).toBeDefined();
+    });
+
+    it('dice que un pedido que abarca al equipo se propone con latte_request_coordination y se espera la aprobación', () => {
+      expect(line(/latte_request_coordination/)).toBeDefined();
+      expect(line(/spans several roles/i)).toBeDefined();
+      expect(line(/not in your session/i)).toBeDefined();
+    });
+
+    it('le llega al asistente sin rol: la base va en el prompt de sistema de CUALQUIER miembro', () => {
+      const catalog = new RoleCatalog(loadInstructionPack(path.resolve(__dirname, '../../packs'), 'marketing-core'));
+      const assistant = catalog.promptFor('assistant');
+      // El asistente no tiene instrucciones propias: si la sección no está en
+      // base.md, no está en ninguna parte de su prompt.
+      expect(catalog.get('assistant')!.instructions).toBe('');
+      expect(assistant).toContain('The team, and who actually did the work');
+      expect(assistant).toContain('latte_request_coordination');
+      expect(assistant).toContain('I did it myself');
+      // Y le sigue llegando a un rol con cuerpo propio.
+      expect(catalog.promptFor('paid-media')).toContain('I did it myself');
     });
   });
 });
