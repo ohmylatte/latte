@@ -910,6 +910,12 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .team-thread-row time{flex-shrink:0;color:var(--muted-soft)}
 .team-thread-empty{font-size:var(--text-sm);color:var(--muted)}
 .team-tab-pending{font-size:var(--text-sm);color:var(--on-accent);background:var(--rust);border-radius:var(--radius-pill);padding:0 5px;line-height:1.5}
+/* B3.3: el subtitulo de la pestana. Una linea chica bajo el nombre con el
+   ultimo intercambio; lo que no entra se recorta y el texto entero vive en el
+   `title`. `min-width:0` porque sin eso la linea larga estira la pestana. */
+.team-tab-text{display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:0;flex:1}
+.team-tab-last{font-size:var(--text-sm);color:var(--muted);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team-tab .team-member-state{padding:0 6px}
 
 /* Los controles del run, en una linea con sus cuentas. */
 .team-coordination-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}

@@ -184,6 +184,7 @@ export function TeamPanel(props: TeamPanelProps) {
   const showPicker = adding || firstTeam;
   const workTotal = useTeamUsageTotal(team);
   const railPending = pendingForWork(props.coordinationGates, props.coordinationAsks, props.coordinationRun ?? null);
+  const inbox = { log: props.coordinationLog, messages: props.coordinationMessages, asks: props.coordinationAsks, hires: props.coordinationHires };
 
   return <div className="team">
     {/* FUERA del guard `team.length > 0`: un run `planning` es exactamente el
@@ -222,6 +223,9 @@ export function TeamPanel(props: TeamPanelProps) {
         <div className="team-tab-strip">
           {team.map(member => <MemberTab key={member.id} member={member} chat={chats[member.id] ?? null} selected={member.id === selectedId} busy={busy} mode={mode}
             pending={pendingForMember(member.id, props.coordinationGates, props.coordinationAsks, props.coordinationRun ?? null)}
+            lastExchange={describeLastExchange(inbox, member.id, team, props.roles)}
+            support={props.coordinationSupport?.find(row => row.memberId === member.id) ?? null}
+            runActive={Boolean(props.coordinationRun?.active)}
             onSelect={() => props.onSelect(member.id)} />)}
         </div>
         {activity && <span className={'team-activity' + (activity.needsAttention ? ' attention' : '')} role="status" title={activity.detail}>{activity.label}</span>}
@@ -450,16 +454,36 @@ export function WorkPermissions({ mode, busy, hasClaude, isDesktop, onChange }: 
   </details>;
 }
 
-export function MemberTab({ member, chat, selected, busy, mode = 'simple', pending = 0, onSelect }: { member: TeamMember; chat: ChatSession | null; selected: boolean; busy: boolean; mode?: LatteMode; pending?: number; onSelect: () => void }) {
+/**
+ * B3.3: LA PESTANA DICE EN QUE ANDA ESE MIEMBRO.
+ *
+ * Con el buzon mudado al modo Equipo, la tira se quedaba con el nombre del rol
+ * y nada mas. Bajo el nombre va su ultimo intercambio, recortado, con el texto
+ * entero en el `title`: recortar no es callar.
+ *
+ * Y el chip de coordinacion se calla cuando no tiene nada que decir. La captura
+ * del dueno mostraba tres miembros con "arrancando" y el run `cancelled`: nadie
+ * estaba arrancando nada. El chip habla de un PROCESO, asi que pide las dos
+ * cosas -- run vivo y miembro con proceso (`working` o `idle` en `TeamMember`,
+ * que es lo que `hub.describe()` reporta).
+ */
+export function MemberTab({ member, chat, selected, busy, mode = 'simple', pending = 0, lastExchange = '', support = null, runActive = false, onSelect }: { member: TeamMember; chat: ChatSession | null; selected: boolean; busy: boolean; mode?: LatteMode; pending?: number; lastExchange?: string; support?: CoordinationMemberSupport | null; runActive?: boolean; onSelect: () => void }) {
   const state = useChatState(chatStore, chat ? chat.id : null);
   const live = Boolean(chat) && !state.closed;
   const status: TeamMemberStatus = live ? (state.status === 'idle' ? 'idle' : 'working') : member.status === 'ended' ? 'ended' : 'paused';
   const attention = live && (state.permissions.length > 0 || state.questions.length > 0);
   // The runtime is a technical detail the simple mode keeps out of the tooltip.
   const title = member.roleName + (mode === 'advanced' ? ' · ' + RUNTIME_SHORT[member.runtime] : '') + ' · ' + statusLabel(status, attention);
+  // El chip pide las DOS: un run vivo y un miembro con proceso.
+  const hasProcess = member.status === 'working' || member.status === 'idle';
+  const coordinationState = support && runActive && hasProcess ? memberCoordinationState(support) : null;
   return <button role="tab" aria-selected={selected} className={'team-tab status-' + status + (attention ? ' attention' : '')} disabled={busy} onClick={onSelect} title={title}>
     <span className="team-avatar" data-role={member.roleId} aria-hidden="true">{member.initial}</span>
-    <span className="team-tab-name">{member.roleName}</span>
+    <span className="team-tab-text">
+      <span className="team-tab-name">{member.roleName}</span>
+      {lastExchange && <span className="team-tab-last" title={lastExchange}>{lastExchange}</span>}
+    </span>
+    {coordinationState && <span className={'team-member-state ' + coordinationState.className} data-state={coordinationState.state} title={coordinationState.title}>{coordinationState.label}</span>}
     {status === 'working' && !attention
       ? <SteamWisp className="team-steam" style={{ color: roleColorVar(member.roleId) }} />
       : <i className="team-tab-dot" aria-hidden="true" />}
@@ -470,6 +494,12 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', pendi
     {pending > 0 && <span className="team-tab-pending" title={t('team.inbox.pending', { count: pending })}>{pending}</span>}
     <span className="visually-hidden">{statusLabel(status, attention)}</span>
   </button>;
+}
+
+/** El ultimo intercambio de un miembro, ya en una linea. Sin un solo hecho devuelve '', y la pestana no dibuja un renglon vacio. */
+function describeLastExchange(input: Parameters<typeof lastInboxEvent>[0], memberId: string, team: readonly TeamMember[], roles: readonly AgentRole[]): string {
+  const last = lastInboxEvent(input, memberId);
+  return last ? describeInboxEvent(last, team, roles) : '';
 }
 
 /** Maps a `CoordinationDegradedReason` to the matching `coordination.degraded.*` and `coordination.short.*` key suffixes. */
