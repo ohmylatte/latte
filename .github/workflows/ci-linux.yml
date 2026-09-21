@@ -2,8 +2,15 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+# Una sola corrida por rama: un push a una rama con PR abierto disparaba dos
+# (push + pull_request) y la duplicada de Windows vencía tests por timeout.
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
