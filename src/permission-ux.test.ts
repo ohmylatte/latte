@@ -38,10 +38,18 @@ describe('work permission UX', () => {
     expect(panel).not.toContain("open={mode === 'auto'}");
   });
 
-  it('offers chat attachments and tells the agent which imported files to use', () => {
+  // Antes este test exigía las DOS frases en castellano incrustadas en el
+  // componente («Adjuntar archivos al trabajo» y «Están disponibles en la
+  // carpeta de este trabajo»), y así clavaba el bug: copy fija en el JSX y un
+  // envío automático al adjuntar. Ahora el copy vive en los diccionarios y el
+  // adjunto deja el borrador escrito; lo que se verifica es eso.
+  it('offers chat attachments with copy from the dictionaries and without sending on its own', () => {
     const pane = fs.readFileSync('src/ChatPane.tsx', 'utf8');
     expect(pane).toContain('onAttachFiles?: () => Promise<string[]>');
-    expect(pane).toContain('Adjuntar archivos al trabajo');
-    expect(pane).toContain('Están disponibles en la carpeta de este trabajo');
+    expect(pane).toContain("t('chat.attach.label')");
+    expect(pane).toContain("t('chat.attach.note'");
+    expect(pane).not.toContain('Adjuntar archivos al trabajo');
+    // El único `sendChat` del panel es el del botón de enviar: adjuntar no manda.
+    expect(pane.match(/api\.sendChat\(/g)).toHaveLength(1);
   });
 });

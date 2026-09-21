@@ -519,6 +519,40 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
         } else if (msg.subtype === 'status' && msg.status === 'requesting' && !live.busy) {
           live.busy = true;
           this.deps.emit({ chatId, type: 'status', status: 'busy', detail: '' });
+        } else {
+          // Los `system` que Latte no maneja (`informational`, `hook_response`,
+          // los que el CLI agregue manana) se DESCARTABAN en silencio. Algunos
+          // traen la unica explicacion que hay de por que el turno se comporto
+          // como se comporto. No se muestran —no son para la persona— pero
+          // quedan escritos.
+          const note = str(msg.message) || str(msg.text);
+          if (note) this.deps.log?.(`[claude ${chatId}] system/${str(msg.subtype, 'unknown')}: ${note.slice(0, RAW_LOG_LIMIT)}`);
+        }
+        return;
+      }
+      /**
+       * El aviso de limite de uso. No es un `result` y no termina el turno: el
+       * CLI lo manda cuando el cupo cambia de estado. `rejected` es el momento
+       * exacto en que la persona necesita saber que no es su culpa y hasta
+       * cuando dura, asi que sube como error a la pantalla. `allowed` no
+       * interrumpe nada y no se muestra; solo se loguea cuando el uso ya raspa
+       * el techo, que es el unico aviso util antes del corte.
+       */
+      case 'rate_limit_event': {
+        const info = isRecord(msg.rate_limit_info) ? msg.rate_limit_info : {};
+        const status = str(info.status, 'allowed');
+        const kind = str(info.rateLimitType, 'rate limit');
+        const resetsAt = typeof info.resetsAt === 'number' && Number.isFinite(info.resetsAt) ? new Date(info.resetsAt * 1000) : null;
+        const peak = Math.max(0, ...Object.entries(info)
+          .filter(([key, value]) => /utilization/i.test(key) && typeof value === 'number' && Number.isFinite(value))
+          .map(([, value]) => value as number));
+        if (status !== 'allowed') {
+          const until = resetsAt ? ` Resets at ${resetsAt.toLocaleString()}.` : '';
+          const message = `Claude Code usage limit reached (${kind}).${until}`;
+          this.deps.log?.(`[claude ${chatId}] rate limit: ${status} ${kind}${resetsAt ? ` resets ${resetsAt.toISOString()}` : ''}`);
+          this.deps.emit({ chatId, type: 'error', message });
+        } else if (peak > 0.9) {
+          this.deps.log?.(`[claude ${chatId}] rate limit: allowed ${kind} utilization ${peak.toFixed(2)}${resetsAt ? ` resets ${resetsAt.toISOString()}` : ''}`);
         }
         return;
       }
@@ -579,17 +613,22 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       }
       case 'result': {
         live.busy = false;
+        const failed = msg.is_error === true;
+        // Se calcula UNA vez: el mensaje del turno y el evento de error dicen
+        // exactamente lo mismo, porque son la misma noticia.
+        const reason = failed ? resultErrorText(msg) : '';
+        if (failed) this.deps.log?.(`[claude ${chatId}] result error: ${rawResultLine(msg)}`);
         if (live.currentMessageId) {
           const current = live.messages.get(live.currentMessageId);
           if (current) {
-            const completed = { ...current, completed: true, error: msg.is_error === true ? str(msg.result, 'Claude Code reported an error') : current.error };
+            const completed = { ...current, completed: true, error: failed ? reason : current.error };
             live.messages.set(current.id, completed);
             this.record(live, completed);
             this.deps.emit({ chatId, type: 'message', message: completed });
           }
         }
         this.reportUsage(live, msg);
-        if (msg.is_error === true) this.deps.emit({ chatId, type: 'error', message: str(msg.result, 'Claude Code reported an error') });
+        if (failed) this.deps.emit({ chatId, type: 'error', message: reason });
         this.deps.emit({ chatId, type: 'status', status: 'idle', detail: '' });
         return;
       }
@@ -830,6 +869,55 @@ function patternsFromInput(input: unknown): string[] {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Lo que entra en una linea de error de la pantalla sin taparla entera. */
+const ERROR_TEXT_LIMIT = 300;
+/** Lo que entra en una linea de log sin volverla ilegible. */
+const RAW_LOG_LIMIT = 2_000;
+/**
+ * Lo que NO se escribe en el log: el identificador de sesion y el recuento de
+ * tokens. El primero es lo unico identificable que hay en un `result`; el
+ * segundo es ruido para quien diagnostica y ya viaja por el evento `usage`.
+ */
+const RESULT_LOG_OMIT = new Set(['session_id', 'usage', 'modelUsage']);
+
+/**
+ * QUE LE DECIMOS A LA PERSONA CUANDO EL TURNO SE ROMPE.
+ *
+ * El CLI no siempre manda `result`. Cuando el turno falla de verdad
+ * (`error_during_execution`, `error_max_turns`) manda `subtype`, `is_error` y
+ * un array `errors` — y nada mas. Latte leia solo `result`, asi que la persona
+ * recibia "Claude Code reported an error", que no dice absolutamente nada, y
+ * el detalle se tiraba a la basura sin pasar ni por el log.
+ *
+ * Se arma con lo que haya, en orden de cuanto explica: el texto propio, si no
+ * los errores juntos, si no el subtype pelado —que al menos distingue "se
+ * rompio" de "se quedo sin turnos"— y recien al final el generico.
+ */
+export function resultErrorText(msg: Record<string, unknown>): string {
+  const subtype = str(msg.subtype).trim();
+  const errors = Array.isArray(msg.errors)
+    ? msg.errors.filter((e): e is string => typeof e === 'string' && e.trim().length > 0).map((e) => e.trim()).join(' · ')
+    : '';
+  const detail = str(msg.result).trim() || errors;
+  // `success` como subtype de un `is_error` es una contradiccion del CLI:
+  // prefijarlo diria justo lo contrario de lo que paso.
+  const prefix = subtype && subtype !== 'success' ? subtype : '';
+  const text = detail ? (prefix ? `${prefix}: ${detail}` : detail) : (prefix || 'Claude Code reported an error');
+  return text.length > ERROR_TEXT_LIMIT ? `${text.slice(0, ERROR_TEXT_LIMIT - 1)}…` : text;
+}
+
+/** El `result` crudo para el log: todo lo que no identifique ni sea ruido. */
+export function rawResultLine(msg: Record<string, unknown>): string {
+  const trimmed = Object.fromEntries(Object.entries(msg).filter(([key]) => !RESULT_LOG_OMIT.has(key)));
+  let text: string;
+  try {
+    text = JSON.stringify(trimmed);
+  } catch {
+    text = String(trimmed);
+  }
+  return text.length > RAW_LOG_LIMIT ? `${text.slice(0, RAW_LOG_LIMIT - 1)}…` : text;
 }
 
 /**

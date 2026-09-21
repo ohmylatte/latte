@@ -251,7 +251,10 @@ describe('ClaudeChatAdapter against a fake Claude Code', () => {
 
     await adapter.send(session.id, 'please fail');
     await waitFor(() => events.some((e) => e.type === 'error'));
-    expect(events.find((e) => e.type === 'error')).toMatchObject({ message: 'Simulated failure' });
+    // El `subtype` va adelante: dice si el turno se rompió, si se quedó sin
+    // turnos o si lo cortaron, y es lo único que hay cuando el CLI manda un
+    // `result` sin texto. Ver `claude-error-surface.test.ts`.
+    expect(events.find((e) => e.type === 'error')).toMatchObject({ message: 'error_during_execution: Simulated failure' });
 
     adapter.stop(session.id);
     expect(events.at(-1)).toMatchObject({ type: 'closed', reason: 'stopped' });
