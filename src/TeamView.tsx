@@ -7,8 +7,9 @@ import type {
   CoordinationMessageView, CoordinationRunTaskView, CoordinationRunView, TeamMember, Work,
 } from '../shared/contracts';
 import { describeCoordinationSupport, describeMemorySupport, memberCoordinationState, type LatteMode } from './TeamPanel';
-import { describeInboxEvent, inboxEvents, pendingForMember } from './coordination/inbox';
+import { inboxEvents, pendingForMember } from './coordination/inbox';
 import { RunHeader } from './coordination/RunHeader';
+import { MemberDetail } from './coordination/MemberDetail';
 import { CoordRow } from './coordination/anatomy';
 import { memberSignal } from './coordination/member-line';
 import { hourOf } from './coordination/time';
@@ -103,7 +104,6 @@ export function TeamView(props: TeamViewProps) {
     hires: props.coordinationHires,
   };
   const selected = selectedThreadMember(team, props.selectedMemberId, run);
-  const when = (at: string) => (props.formatDate ? props.formatDate(at) : at);
   const hour = (at: string) => (props.formatTime ? props.formatTime(at) : hourOf(at));
   /**
    * C2: el titulo de una tarea sale del PLAN, no del prompt del despacho.
@@ -113,7 +113,6 @@ export function TeamView(props: TeamViewProps) {
    */
   const taskTitle = (taskId: string) => titleOf((props.coordinationTasks ?? []).find((task) => task.id === taskId)?.spec);
   const thread = selected ? inboxEvents(input, selected) : [];
-  const openName = selected ? memberDisplayName(selected, team, null, roles) : '';
 
   if (!work || team.length === 0) {
     return <div className="team-view team-view-empty">
@@ -164,16 +163,14 @@ export function TeamView(props: TeamViewProps) {
           </li>;
         })}
       </ul>
+      {/* C3: EL DETALLE DE UN MIEMBRO ES UNA LÍNEA DE TIEMPO, NO UNA LISTA DE
+          RENGLONES IGUALES. El ícono hace el sustantivo, la palabra agrega lo
+          específico, y lo último va arriba. */}
       <div className="team-view-thread">
-        <div className="document-kicker team-view-thread-title">{openName}</div>
-        <ol className="team-thread">
-          {thread.length === 0
-            ? <li className="team-thread-empty">{t('team.inbox.threadEmpty')}</li>
-            : thread.map((event) => <li key={event.id} className="team-thread-row" data-kind={event.kind}>
-                <span className="team-thread-text">{describeInboxEvent(event, team, roles)}</span>
-                <time dateTime={event.at}>{when(event.at)}</time>
-              </li>)}
-        </ol>
+        {selected && <MemberDetail memberId={selected} team={team} roles={roles} run={run}
+          events={thread} tasks={props.coordinationTasks}
+          signal={memberSignal({ ...input, team, roles, run, taskTitle }, selected)}
+          formatTime={hour} onOpenChat={props.onOpenChat} />}
       </div>
     </div>
     {props.mode === 'advanced' && <TeamAdvanced {...props} />}

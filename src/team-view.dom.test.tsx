@@ -22,7 +22,7 @@ vi.mock('./i18n', async (importOriginal) => {
 });
 
 const { createElement } = await import('react');
-const { fireEvent, render } = await import('@testing-library/react');
+const { cleanup, fireEvent, render } = await import('@testing-library/react');
 const { TeamView } = await import('./TeamView');
 import type { TeamViewProps } from './TeamView';
 import { EMPTY_USAGE } from '../shared/contracts';
@@ -201,19 +201,120 @@ describe('B3.1: el hilo del miembro seleccionado', () => {
     expect(onSelectMember).toHaveBeenCalledWith('paid');
   });
 
-  it('el hilo es el del seleccionado, cronológico, y sólo hay uno', () => {
+  /** C3: DESCENDENTE. Lo último arriba: un equipo que trabaja se lee por lo que acaba de pasar. */
+  it('la línea de tiempo es la del seleccionado, lo último arriba, y sólo hay una', () => {
     const { container } = mount({ ...wired, selectedMemberId: 'paid' });
-    const kinds = [...container.querySelectorAll('.team-thread-row')].map((r) => r.getAttribute('data-kind'));
-    expect(kinds).toEqual(['hired', 'sent', 'ask']);
-    expect(container.querySelectorAll('.team-thread')).toHaveLength(1);
+    const kinds = [...container.querySelectorAll('.coord-event')].map((r) => r.getAttribute('data-kind'));
+    expect(kinds).toEqual(['ask', 'sent', 'hired']);
+    expect(container.querySelectorAll('.coord-timeline')).toHaveLength(1);
   });
 
-  it('un miembro sin un solo hecho tiene un hilo que lo dice', () => {
+  it('un miembro sin un solo hecho tiene una línea de tiempo que lo dice', () => {
     const { container } = mount({ ...wired, selectedMemberId: 'coord' });
-    expect(container.querySelector('.team-thread-empty')).not.toBeNull();
+    expect(container.querySelector('.coord-timeline-empty')).not.toBeNull();
+  });
+});
+
+/**
+ * C3: EL DETALLE DE UN MIEMBRO ES UNA LÍNEA DE TIEMPO.
+ *
+ * Y es donde se cierran los dos bugs que la captura del dueño mostraba: el
+ * numeral de Markdown filtrándose al título del despacho, y un "reportó"
+ * pelado sobre un despacho que nadie reportó.
+ */
+describe('C3: el detalle del miembro', () => {
+  it('el encabezado dice quién es, qué hace y desde cuándo', () => {
+    const { container } = mount({ ...wired, selectedMemberId: 'cm', formatTime: (v: string) => v });
+    const head = container.querySelector('.coord-detail-head')!;
+    expect(head.querySelector('.coord-detail-name')!.textContent).toBe('CM');
+    expect(head.querySelector('.coord-av')).not.toBeNull();
+    expect(head.querySelector('.coord-detail-sub')!.textContent).toContain('Le escribió Paid Media');
   });
 
+  it('"Conversación" abre el chat de ESE miembro, y sin handler no se ofrece', () => {
+    const onOpenChat = vi.fn();
+    const wiredChat = mount({ ...wired, selectedMemberId: 'cm', onOpenChat });
+    fireEvent.click(wiredChat.container.querySelector('.coord-detail-chat')!);
+    expect(onOpenChat).toHaveBeenCalledWith('cm');
+    cleanup();
+    const { container } = mount({ ...wired, selectedMemberId: 'cm' });
+    expect(container.querySelector('.coord-detail-chat')).toBeNull();
+  });
 
+  /** Criterio 3: el ícono hace el sustantivo; la palabra sólo agrega lo específico. */
+  it('cada hecho entra por su círculo-ícono y su título corto', () => {
+    const { container } = mount({ ...wired, selectedMemberId: 'cm', coordinationTasks: tasks });
+    const events = [...container.querySelectorAll('.coord-event')];
+    for (const event of events) expect(event.querySelector('.coord-tic')).not.toBeNull();
+    const titles = events.map((e) => e.querySelector('.coord-event-title')!.textContent);
+    expect(titles).toContain('Despacho de Coordinador');
+    expect(titles).toContain('CM reportó');
+  });
+
+  /**
+   * C3 BUG (a): el numeral de Markdown del traspaso puenteado a tarea se
+   * filtraba al título: "despachó: # Piezas exactas…". Se limpia en el puente
+   * Y en el render, para que una tarea vieja se siga leyendo bien.
+   */
+  it('ningún título empieza con un numeral de Markdown', () => {
+    const { container } = mount({
+      ...wired, selectedMemberId: 'cm', coordinationTasks: tasks,
+      coordinationLog: [dispatchRow({ taskId: 't2', promptPreview: '# Producir 14 piezas Feed y Story\nCon las piezas que reportó Paid Media.' })],
+    });
+    const task = container.querySelector('.coord-event-task')!;
+    expect(task.textContent).toBe('Producir 14 piezas Feed y Story');
+    expect(container.querySelector('.coord-timeline')!.textContent).not.toContain('#');
+  });
+
+  /** El spec de la tarea acompaña al título, en gris. */
+  it('el despacho muestra el título de la tarea y su spec', () => {
+    const { container } = mount({
+      ...wired, selectedMemberId: 'cm',
+      coordinationLog: [dispatchRow({ promptPreview: 'Producir 14 piezas\nExportar como angulo1-feed-v1.png.' })],
+    });
+    expect(container.querySelector('.coord-event-task')!.textContent).toBe('Producir 14 piezas');
+    expect(container.querySelector('.coord-event-spec')!.textContent).toContain('Exportar como');
+  });
+
+  /**
+   * C3 BUG (b): el evento de reporte MUESTRA su resumen. Y un despacho que se
+   * cerró sin reportar deja de disfrazarse de reporte.
+   */
+  it('el reporte muestra su resumen', () => {
+    const { container } = mount({ ...wired, selectedMemberId: 'cm' });
+    const reported = container.querySelector('.coord-event[data-kind="reported"]')!;
+    expect(reported.querySelector('.coord-event-text')!.textContent).toBe('Quedaron los 3 posts');
+  });
+
+  it('un despacho cerrado sin reportar NO dice que reportó', () => {
+    const { container } = mount({
+      ...wired, selectedMemberId: 'cm',
+      coordinationLog: [dispatchRow({ status: 'cancelled', outcome: null, summaryPreview: null })],
+    });
+    expect(container.querySelector('.coord-event[data-kind="reported"]')).toBeNull();
+    const closed = container.querySelector('.coord-event[data-kind="dispatchClosed"]')!;
+    expect(closed).not.toBeNull();
+    expect(closed.querySelector('.coord-event-title')!.textContent).toBe('El despacho se cerró sin reporte');
+  });
+
+  /**
+   * Las fichas de archivo salen del TEXTO del reporte. No hay ninguna lista de
+   * archivos producidos en el modelo de datos, y no se inventa una: si el
+   * resumen nombra un archivo, eso es un hecho del texto.
+   */
+  it('si el resumen nombra archivos, cada uno tiene su ficha', () => {
+    const { container } = mount({
+      ...wired, selectedMemberId: 'cm',
+      coordinationLog: [dispatchRow({ summaryPreview: '14 piezas listas en piezas-para-produccion-cm.md y angulo1-feed-v1.png' })],
+    });
+    const files = [...container.querySelectorAll('.coord-file')].map((f) => f.textContent);
+    expect(files).toEqual(['piezas-para-produccion-cm.md', 'angulo1-feed-v1.png']);
+  });
+
+  it('si no nombra ninguno, no se inventa una ficha', () => {
+    const { container } = mount({ ...wired, selectedMemberId: 'cm' });
+    expect(container.querySelector('.coord-file')).toBeNull();
+  });
 });
 
 describe('B3.1: el run, arriba y con sus salidas', () => {

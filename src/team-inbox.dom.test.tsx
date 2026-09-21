@@ -24,7 +24,7 @@ vi.mock('./i18n', async (importOriginal) => {
 const { createElement } = await import('react');
 const { render } = await import('@testing-library/react');
 const { TeamPanel } = await import('./TeamPanel');
-const { inboxEvents, lastInboxEvent, pendingForMember } = await import('./coordination/inbox');
+const { inboxEvents, lastInboxEvent, pendingForMember, settledKind } = await import('./coordination/inbox');
 import type { TeamPanelProps } from './TeamPanel';
 import { EMPTY_USAGE } from '../shared/contracts';
 import type {
@@ -194,5 +194,27 @@ describe('B3.1: el buzón ya NO vive en la columna del chat', () => {
     const budget = container.querySelector('.team-coordination-budget')!.textContent ?? '';
     expect(budget.toLowerCase()).toContain('no se pudo leer');
     expect(budget).not.toContain('∞');
+  });
+});
+
+describe('C3 (b): un despacho cerrado sin reportar no es un reporte', () => {
+  it('sólo `reported` produce un reporte', () => {
+    expect(settledKind('reported', 'succeeded')).toBe('reported');
+  });
+
+  it('un fracaso es un fracaso, por su estado o por su resultado', () => {
+    expect(settledKind('failed', null)).toBe('dispatchFailed');
+    expect(settledKind('reported', 'failed')).toBe('dispatchFailed');
+  });
+
+  /**
+   * EL BUG, EXACTO: `rejected` (la persona rechazó el gate) y `cancelled` (el
+   * barrido de arranque liquida lo que quedó en vuelo) tienen `settled_at`
+   * puesto y `summary` en NULL. La pantalla decía "reportó", pelado.
+   */
+  it('lo que se cerró sin reportar tiene su propio hecho', () => {
+    expect(settledKind('rejected', null)).toBe('dispatchClosed');
+    expect(settledKind('cancelled', null)).toBe('dispatchClosed');
+    expect(settledKind('cancelled', 'role_not_approved')).toBe('dispatchClosed');
   });
 });

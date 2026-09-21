@@ -135,6 +135,8 @@ export function memberSignal(input: MemberSignalInput, memberId: string): Member
       const what = (entry ? title(entry) : '') || firstLine(last.text, 80);
       return { dot: 'ok', line: what ? t('coord.member.reported', { text: what }) : t('team.inbox.reportedBare'), at: last.at, asks: 0, urgent: false };
     }
+    case 'dispatchClosed':
+      return { dot: 'idle', line: t('coord.member.closed'), at: last.at, asks: 0, urgent: false };
     case 'dispatchFailed':
       return { dot: 'idle', line: last.text ? t('coord.member.failed', { text: firstLine(last.text, 80) }) : t('team.inbox.dispatchFailedBare'), at: last.at, asks: 0, urgent: false };
     case 'answer':

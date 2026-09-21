@@ -100,6 +100,7 @@ import nodePath from 'node:path';
 import { createHash } from 'node:crypto';
 import { writeFileAtomic } from '../core/atomicFile';
 import { LatteError, NotFoundError, UnavailableError, ValidationError } from '../core/errors';
+import { stripLeadingHeading } from '../../shared/markdown';
 import { isValidId, newId, nowIso, slugify } from '../core/ids';
 import { WORK_FILES } from '../core/paths';
 import { EngramClient, memoryProjectFor } from '../memory/engram';
@@ -1874,7 +1875,12 @@ export class LatteService implements BackendApi {
     const pending = await this.listHandoffs(id);
     const handoff = pending.find((h) => h.fileName === fileName);
     if (!handoff) throw new ValidationError('Ese pedido ya no está en la carpeta');
-    const result = await this.coordination.bridgeHandoffToTask(id, handoff.roleId, handoff.request);
+    // C3 BUG (a): la tarea NACE limpia. El cuerpo del traspaso lo escribe un
+    // agente y empieza con un encabezado de Markdown; ese cuerpo se vuelve el
+    // spec de la tarea, el spec se vuelve el prompt del despacho y su recorte
+    // terminaba en pantalla como "despachó: # Piezas exactas...". Se saca la
+    // SINTAXIS de la primera linea, nunca su contenido.
+    const result = await this.coordination.bridgeHandoffToTask(id, handoff.roleId, stripLeadingHeading(handoff.request));
     if (!result.bridged) return { bridged: false, task: null, outcome: null, reason: null };
     await this.dismissHandoff(id, fileName).catch(() => undefined);
     // R3/Q1: el pedido se consumió igual — la tarea existe — pero el despacho
