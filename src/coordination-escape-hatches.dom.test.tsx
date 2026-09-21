@@ -160,6 +160,22 @@ const renderDecisions = (extra: Record<string, unknown>) =>
  * chat es donde caen las dos cosas. Las aserciones no cambiaron.
  */
 const cardsProps = { memberId: 'm1', coordinationRun: run(), team: [], roles: [], formatDate: (v: string) => v };
+/** Lo minimo para montar el panel del equipo fuera de un describe. */
+const teamPanelProps = {
+  work: { id: 'w1', brandId: 'b1', title: 'Trabajo', brief: '', outcome: '', resultPath: null, folder: '', createdAt: '', updatedAt: '' },
+  team: [{ id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', runtime: 'claude' as const, model: null, accountId: null, label: 'Claude', status: 'idle' as const, tier: 'balanced' as const, usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '' }],
+  chats: {}, selectedId: null, roles: [], primaryLabel: '', primaryDetail: '', primaryReady: true,
+  checking: false, primaryRuntime: 'claude' as const, primaryAccountId: null, primaryModel: null, choices: [],
+  busy: false, isDesktop: true, mode: 'simple' as const,
+  onSelect: () => undefined, onAdd: async () => undefined, onOpen: async () => undefined, onPause: async () => undefined,
+  onFinish: async () => undefined, onRestart: async () => undefined, onContinue: async () => undefined,
+  handoffs: [], onAcceptHandoff: async () => undefined, onDismissHandoff: async () => undefined,
+  onRemove: async () => undefined, onProviders: () => undefined, onRecheck: () => undefined,
+  onModel: () => undefined, onTier: () => undefined, onError: () => undefined,
+  onAttachFiles: async () => [], untracked: [], onAdoptFile: () => undefined,
+  permissions: 'ask' as const, permissionBusy: false, onPermissions: () => undefined,
+};
+
 const renderCards = (extra: Record<string, unknown>) =>
   render(<I18nProvider><TeamCards {...cardsProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
 
@@ -191,11 +207,13 @@ describe('DecisionsView: un handoff se puede aceptar (juicio #14)', () => {
   });
 });
 
-describe('DecisionsView: el adaptador que se negó se dice con su propia frase (juicio #5)', () => {
+describe('TeamPanel: el adaptador que se negó se dice con su propia frase (juicio #5)', () => {
   it('`runtime_refused_injection` nunca se lee como "sin restricciones" ni como "la función está apagada"', () => {
     const support: CoordinationMemberSupport[] = [{ memberId: 'm1', canPropose: false, memoryInjected: false, reason: 'runtime_refused_injection', runtimeConfirmed: true, runtimeReportsInjection: true }];
-    const { container } = renderDecisions({ coordinationSupport: support });
-    const row = container.querySelector('.decision-support-coordination');
+    // B1.3: las dos políticas de inyección por miembro viven al pie del panel
+    // del equipo, en modo avanzado. La frase es la misma.
+    const { container } = render(<I18nProvider><TeamPanel {...teamPanelProps} mode="advanced" coordinationSupport={support} /></I18nProvider>);
+    const row = container.querySelector('.team-support-coordination');
     expect(row).not.toBeNull();
     // La aserción vieja (`not.toContain('Sin restricciones')` + `length > 0`) la
     // pasaba también una búsqueda de i18n rota que pintara la clave cruda

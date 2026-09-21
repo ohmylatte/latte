@@ -1,7 +1,7 @@
 import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Check, CircleAlert, CircleCheck, FolderCheck, FolderLock, Forward, LoaderCircle, MessageSquare, MessageSquarePlus, Pause, Play, Plug, Plus, Settings2, Trash2, UserPlus, X, Zap } from 'lucide-react';
-import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationAskView, type CoordinationGateView, type CoordinationHireView, type CoordinationLogEntryView, type CoordinationMessageView, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
+import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationAskView, type CoordinationAuthorityMode, type CoordinationBudgetView, type CoordinationDegradedReason, type CoordinationGateView, type CoordinationHireView, type CoordinationLogEntryView, type CoordinationMemberSupport, type CoordinationMessageView, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { ChatPane, type ChatCoordinationProps } from './ChatPane';
 import { useChatState } from './chat-store';
@@ -124,6 +124,31 @@ export interface TeamPanelProps {
   /** Los gates del run: el contador de pendientes de la pestana del coordinador. */
   coordinationGates?: readonly CoordinationGateView[];
   formatDate?: (value: string) => string;
+  /**
+   * B1.3: EL ESTADO DE COORDINACION POR MIEMBRO, CORTO.
+   *
+   * `coordinationRuntimeSupport` dice, por miembro, si el runtime confirmo lo
+   * que Latte le pidio inyectar. Esa informacion vivia en Decisiones como un
+   * parrafo de dos lineas por miembro ("el runtime todavia no confirmo la
+   * coordinacion: Latte la pidio, falta que el agente diga que la levanto").
+   * Aca se dice en una palabra al lado del nombre; la frase larga sigue
+   * existiendo, en el `title`.
+   */
+  coordinationSupport?: readonly CoordinationMemberSupport[];
+  /**
+   * B1.3: LOS AJUSTES DEL EQUIPO, EN MODO AVANZADO.
+   *
+   * El tope de despachos del Trabajo, la autoridad de coordinacion y el
+   * nombre del coordinador no son decisiones de marca: son la configuracion
+   * de ESTE equipo. Viven al pie del panel, dentro de un `<details>` que solo
+   * se renderiza en modo avanzado. Todo opcional: sin handler, el control no
+   * se ofrece -- nunca un boton que no puede hacer nada.
+   */
+  coordinationAuthority?: CoordinationAuthorityMode;
+  onSetCoordinationAuthority?: (mode: CoordinationAuthorityMode) => void;
+  coordinationBudget?: CoordinationBudgetView;
+  onSetCoordinationBudget?: (maxDispatches: number) => void;
+  coordinatorGrant?: string | null;
 }
 
 const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex' };
@@ -188,7 +213,7 @@ export function TeamPanel(props: TeamPanelProps) {
         </div>}
       </div>
       {selected && <MemberUsage member={selected} />}
-      <TeamInbox team={team} run={props.coordinationRun ?? null}
+      <TeamInbox team={team} run={props.coordinationRun ?? null} support={props.coordinationSupport}
         log={props.coordinationLog} messages={props.coordinationMessages} asks={props.coordinationAsks} hires={props.coordinationHires}
         formatDate={props.formatDate} onSelect={props.onSelect} />
     </>}
@@ -202,6 +227,7 @@ export function TeamPanel(props: TeamPanelProps) {
     {!work && <div className="agent-idle"><div className="agent-symbol"><MessageSquare size={27} /></div><h3>{t('ui.auto.276')}<br />{t('ui.auto.277')}</h3><p className="footnote">{t('ui.auto.278')}</p></div>}
     {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} onAttachFiles={props.onAttachFiles} coordination={props.chatCoordination} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}
     {!showPicker && !selected && team.length > 0 && <p className="chat-empty">{t('ui.auto.279')}</p>}
+    {work && mode === 'advanced' && <TeamAdvanced {...props} />}
   </div>;
 }
 
@@ -420,6 +446,179 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', pendi
   </button>;
 }
 
+/** Maps a `CoordinationDegradedReason` to the matching `coordination.degraded.*` and `coordination.short.*` key suffixes. */
+const DEGRADED_KEY: Record<CoordinationDegradedReason, string> = {
+  claude_below_floor: 'claudeBelowFloor',
+  codex_run_cap: 'codexRunCap',
+  codex_global_cap: 'codexGlobalCap',
+  codex_process_ceiling: 'codexProcessCeiling',
+  opencode_shared_server: 'opencodeSharedServer',
+  engram_not_installed: 'engramMissing',
+  runtime_refused_injection: 'runtimeRefused',
+  coordination_server_unavailable: 'coordinationServerDown',
+};
+
+/**
+ * B1.3: EL ESTADO DE COORDINACION DE UN MIEMBRO, EN UNA PALABRA.
+ *
+ * Cuatro estados, y ninguno afirma lo que el runtime no confirmo:
+ *
+ *  - `connected`: el runtime hablo y dijo que la levanto. Recien ahi se afirma.
+ *  - `starting`: Latte la pidio y el runtime TODAVIA no contesto. Puede llegar.
+ *  - `unconfirmed`: este runtime no tiene forma de informarlo NUNCA (OpenCode:
+ *    su servidor no expone ningun endpoint que liste servidores MCP).
+ *    "Arrancando" ahi dejaria a la persona esperando algo que no va a pasar.
+ *  - `uncoordinated`: no puede proponer, y se nombra por que.
+ *
+ * La frase larga -- la que vivia en Decisiones -- viaja en el `title`.
+ */
+export function memberCoordinationState(row: CoordinationMemberSupport): { state: string; label: string; title: string; className: string } {
+  if (!row.canPropose) {
+    const short = row.reason
+      ? t(`coordination.short.${DEGRADED_KEY[row.reason]}` as 'coordination.short.claudeBelowFloor')
+      : t('coordination.short.disabled');
+    const long = row.reason
+      ? t(`coordination.degraded.${DEGRADED_KEY[row.reason]}` as 'coordination.degraded.claudeBelowFloor')
+      : t('coordination.support.disabled');
+    return { state: 'uncoordinated', label: t('team.member.uncoordinated', { reason: short }), title: long, className: 'is-uncoordinated' };
+  }
+  if (row.runtimeConfirmed) return { state: 'connected', label: t('team.member.connected'), title: t('coordination.support.available'), className: 'is-connected' };
+  if (row.runtimeReportsInjection) return { state: 'starting', label: t('team.member.starting'), title: t('coordination.support.unconfirmed'), className: 'is-starting' };
+  return { state: 'unconfirmed', label: t('team.member.unconfirmed'), title: t('coordination.support.notReported'), className: 'is-unconfirmed' };
+}
+
+/**
+ * La linea de coordinacion, entera: nada que marcar cuando el miembro puede
+ * proponer; la frase de su motivo en cualquier otro caso.
+ *
+ * "Sin restricciones" es una afirmacion sobre un proceso que esta andando.
+ * Mientras el runtime no diga que levanto, lo unico que Latte sabe es lo que
+ * PIDIO, y eso se dice con esas palabras. "Sin confirmar" promete que la
+ * confirmacion puede llegar; cuando el runtime no tiene forma de informarla
+ * NUNCA (OpenCode: su servidor no expone ningun endpoint que liste servidores
+ * MCP), esa frase deja a la persona esperando algo que no va a pasar.
+ */
+export function describeCoordinationSupport(row: CoordinationMemberSupport): string {
+  if (row.canPropose && !row.runtimeConfirmed) {
+    return row.runtimeReportsInjection ? t('coordination.support.unconfirmed') : t('coordination.support.notReported');
+  }
+  if (row.canPropose) return t('coordination.support.available');
+  // Un miembro que no puede proponer SIN motivo adjunto significa que el flag
+  // `coordination` esta apagado app-wide: una causa distinta y real, nunca la
+  // misma frase que "sin restricciones".
+  return row.reason
+    ? t(`coordination.degraded.${DEGRADED_KEY[row.reason]}` as 'coordination.degraded.claudeBelowFloor')
+    : t('coordination.support.disabled');
+}
+
+/**
+ * La linea de memoria, INDEPENDIENTE de la de coordinacion: son dos politicas
+ * de inyeccion distintas. Un miembro puede llevar memoria sin coordinacion, o
+ * coordinacion sin memoria, y nunca se calla ninguna de las dos.
+ */
+export function describeMemorySupport(row: CoordinationMemberSupport): string {
+  if (row.memoryInjected && !row.runtimeConfirmed) {
+    return row.runtimeReportsInjection ? t('coordination.memory.unconfirmed') : t('coordination.memory.notReported');
+  }
+  if (row.memoryInjected) return t('coordination.memory.available');
+  if (row.reason === 'engram_not_installed') return t('coordination.degraded.engramMissing');
+  return t('coordination.memory.unavailable');
+}
+
+/** Una fila por miembro con las DOS politicas, dichas aparte -- nunca un veredicto combinado. */
+function SupportRow({ row, team }: { row: CoordinationMemberSupport; team: TeamMember[] }) {
+  const name = team.find(m => m.id === row.memberId)?.roleName ?? row.memberId;
+  return <li className="team-support-row" data-member-id={row.memberId}>
+    <strong>{name}</strong>
+    <p className="team-support-coordination">{describeCoordinationSupport(row)}</p>
+    <p className="team-support-memory">{describeMemorySupport(row)}</p>
+  </li>;
+}
+
+/**
+ * El presupuesto de este Trabajo, con sus TRES estados separados. `invalid` no
+ * es `unset`: decir "sin presupuesto configurado" sobre bytes rotos manda a la
+ * persona a buscar un campo vacio que en realidad tiene algo adentro, mientras
+ * el motor deniega cada despacho contra esos mismos bytes.
+ */
+function describeWorkBudget(view: CoordinationBudgetView | undefined): string {
+  if (view == null || view.state === 'unset') return t('coordination.budget.unset');
+  if (view.state === 'invalid') return t('coordination.budget.invalid');
+  if (view.budget.maxDispatches == null) return t('coordination.budget.unlimited');
+  return t('coordination.budget.limited', { count: view.budget.maxDispatches });
+}
+
+/**
+ * El editor del tope de este Trabajo, con el MISMO patron que Ajustes usa para
+ * el tope global: un `number`, un boton, y ninguna forma de guardar algo que
+ * el validador vaya a rechazar.
+ *
+ * Se ofrece en los TRES estados a proposito. `unset` es obvio; `set` porque un
+ * tope que no se puede cambiar es una trampa, no un ajuste; e `invalid` sobre
+ * todo -- ese es el estado donde cada despacho ya se esta denegando y la
+ * pantalla promete que escribirlo de nuevo lo arregla.
+ *
+ * No hay "sin tope" aca: un presupuesto ilimitado se confirma en la propuesta,
+ * con su casilla, y no se cuela por un campo vacio.
+ */
+function WorkBudgetEditor({ onSave }: { onSave: (maxDispatches: number) => void }) {
+  const [draft, setDraft] = useState('');
+  const parsed = Number(draft);
+  const valid = draft.trim() !== '' && Number.isInteger(parsed) && parsed > 0;
+  return <div className="team-advanced-budget-edit">
+    <label className="field-label">{t('coordination.budget.editLabel')}
+      <input className="team-advanced-budget-input" type="number" min={1} value={draft} onChange={(e) => setDraft(e.target.value)} />
+    </label>
+    <button className="team-advanced-budget-save" disabled={!valid} onClick={() => { if (valid) { onSave(parsed); setDraft(''); } }}>{t('coordination.budget.save')}</button>
+  </div>;
+}
+
+/**
+ * B1.3: LA CONFIGURACION DEL EQUIPO, AL PIE Y EN MODO AVANZADO.
+ *
+ * El tope de despachos, la autoridad y el coordinador no son decisiones de
+ * marca: son como trabaja ESTE equipo. En modo simple no se renderizan -- la
+ * persona pide en el chat y aprueba en el chat --, y en avanzado viven
+ * plegados, donde no le compiten a la conversacion.
+ */
+function TeamAdvanced(props: TeamPanelProps) {
+  const coordinatorName = props.coordinatorGrant
+    ? props.team.find(m => m.id === props.coordinatorGrant)?.roleName ?? props.coordinatorGrant
+    : null;
+  return <details className="team-advanced">
+    <summary>{t('team.advanced.title')}</summary>
+    {props.coordinationAuthority !== undefined && <>
+      <label className="field-label" htmlFor="team-coordination-authority">{t('team.advanced.authority')}</label>
+      {/* Sin handler no se ofrece un `<select>` que no guarda nada: se lee. */}
+      {props.onSetCoordinationAuthority
+        ? <select id="team-coordination-authority" className="team-advanced-authority" value={props.coordinationAuthority} onChange={e => props.onSetCoordinationAuthority!(e.target.value as CoordinationAuthorityMode)}>
+            <option value="manual">{t('coordination.authority.manual')}</option>
+            <option value="plan">{t('coordination.authority.plan')}</option>
+            <option value="auto">{t('coordination.authority.auto')}</option>
+          </select>
+        : <p className="team-advanced-authority">{t(`coordination.authority.${props.coordinationAuthority}` as 'coordination.authority.manual')}</p>}
+    </>}
+    <p className="team-advanced-budget">{describeWorkBudget(props.coordinationBudget)}</p>
+    {/* Q6/O5: el presupuesto del RUN EN CURSO, cuando es ilegible. Solo con el
+        equipo vivo: con el run terminado ya no se deniega ni se va a denegar
+        ningun despacho, y la frase del presupuesto del TRABAJO habla de otros
+        bytes. El editor de abajo escribe los dos. */}
+    {props.coordinationRun?.active && props.coordinationRun.budgetInvalid
+      && <p className="team-advanced-run-budget-invalid">{t('coordination.budget.runInvalid')}</p>}
+    {props.onSetCoordinationBudget && <WorkBudgetEditor onSave={props.onSetCoordinationBudget} />}
+    {/* Las dos politicas de inyeccion, por miembro y ENTERAS. Al lado del
+        nombre vive la version de una palabra; el detalle completo -- y la
+        linea de memoria, que es independiente de la de coordinacion -- vive
+        aca, donde hay lugar para decirlo sin taparle la conversacion a nadie. */}
+    {(props.coordinationSupport?.length ?? 0) > 0 && <ul className="team-support">
+      {props.coordinationSupport!.map(row => <SupportRow key={row.memberId} row={row} team={props.team} />)}
+    </ul>}
+    <p className="team-advanced-coordinator">
+      {coordinatorName ? t('coordination.coordinator.assigned', { name: coordinatorName }) : t('coordination.coordinator.none')}
+    </p>
+  </details>;
+}
+
 /** Como se lee un hecho del buzon, en una sola linea. El rol del otro extremo se resuelve contra el equipo: un id pelado no le dice nada a nadie. */
 function describeInboxEvent(event: InboxEvent, team: TeamMember[]): string {
   const other = event.otherMemberId ? team.find(m => m.id === event.otherMemberId)?.roleName ?? event.otherMemberId : '';
@@ -447,9 +646,10 @@ function describeInboxEvent(event: InboxEvent, team: TeamMember[]): string {
  * cero, la misma regla que la tarjeta de Inicio. Un miembro sin un solo hecho
  * dice que no tiene novedades, que es informacion, no un hueco.
  */
-function TeamInbox({ team, run, log, messages, asks, hires, formatDate, onSelect }: {
+function TeamInbox({ team, run, support, log, messages, asks, hires, formatDate, onSelect }: {
   team: TeamMember[];
   run: CoordinationRunView | null;
+  support?: readonly CoordinationMemberSupport[];
   log?: readonly CoordinationLogEntryView[];
   messages?: readonly CoordinationMessageView[];
   asks?: readonly CoordinationAskView[];
@@ -461,6 +661,10 @@ function TeamInbox({ team, run, log, messages, asks, hires, formatDate, onSelect
   const input = { log, messages, asks, hires };
   const wired = (log ?? messages ?? asks ?? hires) !== undefined;
   const anything = (log?.length ?? 0) + (messages?.length ?? 0) + (asks?.length ?? 0) + (hires?.length ?? 0) > 0;
+  const stateOf = (memberId: string) => {
+    const row = support?.find(s => s.memberId === memberId);
+    return row ? memberCoordinationState(row) : null;
+  };
   if (!wired || !anything || team.length === 0) return null;
   const when = (at: string) => (formatDate ? formatDate(at) : at);
   return <ul className="team-inbox">
@@ -471,6 +675,13 @@ function TeamInbox({ team, run, log, messages, asks, hires, formatDate, onSelect
       return <li key={member.id} className="team-inbox-row" data-member-id={member.id}>
         <div className="team-inbox-head">
           <button type="button" className="team-inbox-name" onClick={() => onSelect(member.id)}>{member.roleName}</button>
+          {(() => {
+            const state = stateOf(member.id);
+            // La frase larga no desaparece: se mueve al `title`. Corto no es lo
+            // mismo que mudo, y un estado que no se puede ampliar seria peor
+            // que el parrafo que reemplaza.
+            return state ? <span className={'team-member-state ' + state.className} data-state={state.state} title={state.title}>{state.label}</span> : null;
+          })()}
           {pending > 0 && <span className="team-inbox-pending">{t('team.inbox.pending', { count: pending })}</span>}
           <button type="button" className="team-inbox-thread-toggle" aria-expanded={open === member.id} onClick={() => setOpen(prev => (prev === member.id ? null : member.id))}>{t('team.inbox.thread')}</button>
         </div>
