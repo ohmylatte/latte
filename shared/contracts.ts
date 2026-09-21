@@ -971,6 +971,34 @@ export interface CoordinationTaskView {
   resultSummary: string | null;
 }
 
+/**
+ * C1: UNA TAREA DEL RUN, COMO LA TIRA DEL ENCABEZADO LA NECESITA.
+ *
+ * Es el MISMO shape que `CoordinationEngine.taskList` le devuelve a un agente
+ * por `latte_task_list`, no una segunda lectura escrita al lado: dos formas de
+ * contestar "qué tareas tiene este run" es exactamente cómo la pantalla y el
+ * motor terminan diciendo cosas distintas del mismo plan.
+ *
+ * Aparte de `CoordinationTaskView` a propósito: esa es la tarea DESPUÉS de
+ * liquidar su despacho (`settleCoordinationDispatch`) y trae `resultSummary`,
+ * que acá no hace falta y que el motor no propaga en `taskList`. Un campo que
+ * siempre llega vacío es una promesa que la pantalla no puede cumplir.
+ */
+export interface CoordinationRunTaskView {
+  id: string;
+  roleId: string;
+  /** Recortado a 200 caracteres por el motor, igual que para un agente. */
+  spec: string;
+  status: CoordinationTaskStatus;
+  /** Si la tarea es parte del plan aprobado o nació después, de un despacho. */
+  inPlan: boolean;
+  /** Los ids de las tareas que tienen que terminar antes que ésta. */
+  dependsOn: string[];
+  attempts: number;
+  /** El miembro que la tiene, o `null` cuando todavía no se despachó a nadie. */
+  assignedMemberId: string | null;
+}
+
 export interface CoordinationAskView {
   id: string;
   runId: string;
@@ -1500,6 +1528,20 @@ export interface LatteAPI {
    * falls over because one stored value went bad.
    */
   listCoordinationHires(runId: string): Promise<CoordinationHireView[]>;
+  /**
+   * C1: LAS TAREAS DEL RUN, PARA LA TIRA DEL ENCABEZADO.
+   *
+   * La bitácora cuenta DESPACHOS, que no es lo mismo: una tarea que todavía no
+   * salió no tiene ni una fila ahí, y la tira del mockup la dibuja igual — con
+   * su reloj gris — porque lo que la persona quiere ver de un pedido es el
+   * pedido ENTERO, no sólo la parte que ya se movió.
+   *
+   * No se inventa una lectura nueva: es exactamente lo que el motor ya le
+   * contesta a un agente en `latte_task_list` (`CoordinationEngine.taskList`),
+   * con el mismo recorte de `spec`. Lista vacía cuando el run no tiene
+   * tareas: "todavía no hay plan" no es un error.
+   */
+  listCoordinationTasks(runId: string): Promise<CoordinationRunTaskView[]>;
   /**
    * Lo que los miembros se escribieron entre sí (`latte_message`) en el run
    * activo del Trabajo, o en el último terminado si no hay ninguno vivo — el

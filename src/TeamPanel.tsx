@@ -1,7 +1,7 @@
 import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Check, CircleAlert, CircleCheck, FolderCheck, FolderLock, Forward, LoaderCircle, MessageSquare, MessageSquarePlus, Pause, Play, Plug, Plus, Settings2, Trash2, UserPlus, Users, X, Zap } from 'lucide-react';
-import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationAskView, type CoordinationAuthorityMode, type CoordinationBudgetView, type CoordinationDegradedReason, type CoordinationGateView, type CoordinationHireView, type CoordinationLogEntryView, type CoordinationMemberSupport, type CoordinationMessageView, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
+import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationAskView, type CoordinationAuthorityMode, type CoordinationBudgetView, type CoordinationDegradedReason, type CoordinationGateView, type CoordinationHireView, type CoordinationLogEntryView, type CoordinationMemberSupport, type CoordinationMessageView, type CoordinationRunTaskView, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { ChatPane, type ChatCoordinationProps } from './ChatPane';
 import { useChatState } from './chat-store';
@@ -135,6 +135,10 @@ export interface TeamPanelProps {
   coordinationHires?: readonly CoordinationHireView[];
   /** Los gates del run: el contador de pendientes de la pestana del coordinador. */
   coordinationGates?: readonly CoordinationGateView[];
+  /** C1: las tareas del run, para la tira del encabezado del modo Equipo. */
+  coordinationTasks?: readonly CoordinationRunTaskView[];
+  /** La hora local de un ISO, inyectable para los tests. */
+  formatTime?: (value: string) => string;
   formatDate?: (value: string) => string;
   /**
    * B1.3: EL ESTADO DE COORDINACION POR MIEMBRO, CORTO.
@@ -202,6 +206,16 @@ export function TeamPanel(props: TeamPanelProps) {
    * prometiendo un despacho que nadie puede hacer.
    */
   const bridgeHandoffs = Boolean(props.coordinationRun?.active) && typeof props.onAcceptHandoffAsTask === 'function';
+  /**
+   * C5: "Pedirlo en el chat" y "Nuevo pedido" abren la conversacion del
+   * coordinador. El rail lo maneja ESTE componente, asi que el salto vive aca
+   * y no viaja como una prop que el contenedor tendria que inventar.
+   */
+  const openCoordinatorChat = () => {
+    const target = props.coordinationRun?.coordinatorMemberId ?? props.coordinatorGrant ?? team[0]?.id ?? null;
+    if (target && team.some(m => m.id === target)) props.onSelect(target);
+    setRail('chat');
+  };
 
   return <div className="team">
     {/* FUERA del guard `team.length > 0`: un run `planning` es exactamente el
@@ -236,7 +250,8 @@ export function TeamPanel(props: TeamPanelProps) {
       coordinationRun={props.coordinationRun} pending={props.pending}
       coordinationLog={props.coordinationLog} coordinationMessages={props.coordinationMessages}
       coordinationAsks={props.coordinationAsks} coordinationHires={props.coordinationHires}
-      coordinationGates={props.coordinationGates} coordinationSupport={props.coordinationSupport}
+      coordinationGates={props.coordinationGates} coordinationTasks={props.coordinationTasks}
+      formatTime={props.formatTime} onNewRequest={openCoordinatorChat} coordinationSupport={props.coordinationSupport}
       formatDate={props.formatDate} coordinationAuthority={props.coordinationAuthority}
       onSetCoordinationAuthority={props.onSetCoordinationAuthority} coordinationBudget={props.coordinationBudget}
       onSetCoordinationBudget={props.onSetCoordinationBudget} coordinatorGrant={props.coordinatorGrant} />}

@@ -39,6 +39,7 @@ import type {
   CoordinationEvent,
   CoordinationGateView,
   CoordinationHireView,
+  CoordinationRunTaskView,
   CoordinationMessageView,
   CoordinationLogEntryView,
   CoordinationMemberSupport,
@@ -1810,6 +1811,18 @@ export class LatteService implements BackendApi {
       roleName: byMember.get(hire.memberId)?.roleName ?? roles.get(hire.roleId) ?? hire.roleId,
       hiredAt: hire.hiredAt,
     }));
+  }
+
+  /**
+   * C1: las tareas del run, sin una segunda lectura.
+   *
+   * `taskList` es la MISMA función que contesta `latte_task_list` para un
+   * agente: mismo filtro por run, mismo orden (`seq`), mismo recorte del
+   * `spec`. Escribir acá una consulta propia sería abrir la puerta a que la
+   * tira del encabezado y el motor cuenten dos planes distintos.
+   */
+  async listCoordinationTasks(runId: string): Promise<CoordinationRunTaskView[]> {
+    return this.coordination.taskList(requireId(runId, 'runId'));
   }
 
   /**

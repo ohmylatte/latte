@@ -4,13 +4,14 @@ import { MessageSquare } from 'lucide-react';
 import type {
   AgentRole, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
   CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport,
-  CoordinationMessageView, CoordinationRunView, TeamMember, Work,
+  CoordinationMessageView, CoordinationRunTaskView, CoordinationRunView, TeamMember, Work,
 } from '../shared/contracts';
 import {
-  CoordinationRunControls, describeCoordinationSupport, describeMemorySupport,
+  describeCoordinationSupport, describeMemorySupport,
   memberCoordinationState, type LatteMode,
 } from './TeamPanel';
 import { describeInboxEvent, inboxEvents, lastInboxEvent, pendingForMember } from './coordination/inbox';
+import { RunHeader } from './coordination/RunHeader';
 import { memberDisplayName } from './coordination/names';
 
 /**
@@ -57,6 +58,12 @@ export interface TeamViewProps {
   coordinationAsks?: readonly CoordinationAskView[];
   coordinationHires?: readonly CoordinationHireView[];
   coordinationGates?: readonly CoordinationGateView[];
+  /** C1: las tareas del run, para la tira del encabezado. */
+  coordinationTasks?: readonly CoordinationRunTaskView[];
+  /** La hora local de un ISO, inyectable para los tests. */
+  formatTime?: (value: string) => string;
+  /** C5: empezar otro pedido cuando el run terminó — abre el chat del coordinador. */
+  onNewRequest?: () => void;
   coordinationSupport?: readonly CoordinationMemberSupport[];
   formatDate?: (value: string) => string;
   /** B3.1: la configuración del equipo, que bajó del panel a esta vista. */
@@ -109,8 +116,15 @@ export function TeamView(props: TeamViewProps) {
   }
 
   return <div className="team-view">
-    <CoordinationRunControls run={run} busy={props.busy} pending={props.pending}
-      onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination} />
+    {/* C1: EL ENCABEZADO DEL PEDIDO, NO DOS LÍNEAS DE CONTADORES.
+        Sin `run` no se dibuja nada de esto: un Trabajo sin equipo trabajando
+        no tiene un pedido del que informar avance. */}
+    {run && <RunHeader run={run} title={props.work?.title || t('coord.run.untitled')}
+      coordinatorName={run.coordinatorMemberId ? memberDisplayName(run.coordinatorMemberId, team, null, roles) : ''}
+      tasks={props.coordinationTasks} asks={props.coordinationAsks} team={team} roles={roles}
+      busy={props.busy} pending={props.pending} formatTime={props.formatTime}
+      onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination}
+      onNewRequest={props.onNewRequest} />}
     <div className="team-view-columns">
       <ul className="team-inbox team-view-list">
         {team.map((member) => {

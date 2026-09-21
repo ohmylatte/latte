@@ -28,7 +28,7 @@ import type { TeamViewProps } from './TeamView';
 import { EMPTY_USAGE } from '../shared/contracts';
 import type {
   CoordinationAskView, CoordinationGateView, CoordinationHireView, CoordinationLogEntryView,
-  CoordinationMessageView, CoordinationRunView, TeamMember, Work,
+  CoordinationMessageView, CoordinationRunTaskView, CoordinationRunView, TeamMember, Work,
 } from '../shared/contracts';
 
 const work: Work = { id: 'w1', brandId: 'b1', title: 'Lanzamiento', brief: '', folder: null, updatedAt: '' };
@@ -62,6 +62,17 @@ const hire = (patch: Partial<CoordinationHireView> = {}): CoordinationHireView =
   memberId: 'paid', roleId: 'paid', roleName: 'Paid Media', hiredAt: '2026-09-01T09:00:00.000Z', ...patch,
 });
 const gate: CoordinationGateView = { id: 'g1', kind: 'dispatch', runId: 'run1', createdAt: '' };
+
+/** C1: las cuatro tareas del pedido real, con el `#` de Markdown que el motor deja entrar. */
+const task = (id: string, roleId: string, spec: string, status: CoordinationRunTaskView['status']): CoordinationRunTaskView =>
+  ({ id, roleId, spec, status, inPlan: true, dependsOn: [], attempts: 0, assignedMemberId: null });
+const tasks: CoordinationRunTaskView[] = [
+  task('t1', 'paid', 'Piezas publicitarias Meta', 'done'),
+  task('t2', 'cm', '# Producir 14 piezas Feed y Story', 'running'),
+  task('t3', 'cm', 'Calendario de la semana 1', 'ready'),
+  // La pregunta abierta de Paid Media apunta a esta tarea: su ficha lo dice.
+  task('t4', 'paid', 'Campañas A y B en Meta Ads', 'dispatched'),
+];
 
 const base: TeamViewProps = {
   work, team, roles: [], mode: 'simple', busy: false,
@@ -165,11 +176,44 @@ describe('B3.1: el hilo del miembro seleccionado', () => {
 });
 
 describe('B3.1: el run, arriba y con sus salidas', () => {
-  it('el estado del run vive compacto arriba, con sus tres cuentas y su presupuesto', () => {
+  /**
+   * C1: EL ENCABEZADO DEL PEDIDO, NO DOS LÍNEAS DE CONTADORES.
+   *
+   * Lo que había eran siete números repartidos en dos frases con "·". Lo que
+   * hay es el título del pedido, quién lo coordina, UNA barra y el presupuesto
+   * en una pastilla.
+   */
+  it('el encabezado dice el pedido, el avance y el presupuesto', () => {
     const { container } = mount({ ...wired, coordinationRun: run({ status: 'suspended' }) });
-    const controls = container.querySelector('.team-coordination-controls')!;
-    expect(controls.querySelector('.team-coordination-counts')!.textContent).toContain('3');
-    expect(controls.querySelector('.team-coordination-budget')!.textContent).toContain('10');
+    const head = container.querySelector('.coord-head')!;
+    expect(head.querySelector('.coord-head-name')!.textContent).toBe('Lanzamiento');
+    expect(head.querySelector('.coord-head-sub')!.textContent).toContain('Coordinador');
+    // 3 listas + 1 fallida + 0 en vuelo + 2 sin empezar = 6 tareas.
+    expect(head.querySelector('.coord-progress-done')!.textContent).toContain('6');
+    expect(head.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow')).toBe('3');
+    expect(head.querySelector('.coord-pill-dispatches')!.textContent).toContain('10');
+    expect(container.querySelector('.team-coordination-counts')).toBeNull();
+  });
+
+  /** C1: la tira de tareas es el pedido ENTERO, también lo que todavía no salió. */
+  it('la tira dibuja una ficha por tarea, con su estado y su dueño', () => {
+    const { container } = mount({ ...wired, coordinationTasks: tasks, coordinationAsks: [ask({ taskId: 't4' })] });
+    const chips = [...container.querySelectorAll('.coord-task')];
+    expect(chips.map((c) => c.getAttribute('data-task-state'))).toEqual(['done', 'live', 'pending', 'asking']);
+    expect(chips[0]!.querySelector('.coord-task-title')!.textContent).toBe('Piezas publicitarias Meta');
+    // Criterio 3: el numeral de Markdown del spec no llega a la pantalla.
+    expect(chips[1]!.querySelector('.coord-task-title')!.textContent).toBe('Producir 14 piezas Feed y Story');
+    expect(container.querySelector('.coord-tasks')!.textContent).not.toContain('#');
+  });
+
+  it('sin tareas no se dibuja una tira vacía', () => {
+    const { container } = mount(wired);
+    expect(container.querySelector('.coord-tasks')).toBeNull();
+  });
+
+  it('sin run no hay encabezado: un Trabajo sin equipo no tiene un pedido del que informar', () => {
+    const { container } = mount({ ...wired, coordinationRun: null });
+    expect(container.querySelector('.coord-head')).toBeNull();
   });
 
   it('Pausar y Cancelar son los verbos reales del run', () => {

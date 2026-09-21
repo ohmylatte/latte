@@ -995,3 +995,66 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .active-teams-strip-row[data-live="false"]{opacity:.6}
 /* La misma regla en Inicio, para la fila de un equipo que ya termino. */
 .home-row-finished{opacity:.75}
+
+/* --- C1..C6: LA GRAMATICA DE LA COORDINACION ---------------------------------
+   Un solo acento (--rust) significa vivo / te necesita / accion principal;
+   listo es --green-ok; fallo es --danger; todo lo demas es gris. Nada de hex
+   sueltos: cada color de este bloque sale de un token. El piso tipografico es
+   --text-sm; --text-xs no existe. */
+.coord-av{width:30px;height:30px;flex:0 0 30px;border-radius:var(--radius-pill);background:var(--paper-deep);color:var(--ink);font-weight:600;font-size:var(--text-sm);display:flex;align-items:center;justify-content:center;position:relative}
+.coord-av-s{width:20px;height:20px;flex-basis:20px;font-size:var(--text-sm)}
+.coord-dot{width:8px;height:8px;flex:0 0 8px;border-radius:var(--radius-pill);background:var(--neutral-mid);display:inline-block}
+.coord-av .coord-dot{position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border:2px solid var(--paper)}
+.coord-dot-live{background:var(--rust);box-shadow:0 0 0 3px var(--rust-wash)}
+.coord-dot-ok{background:var(--green-ok)}
+.coord-dot-idle{background:var(--neutral-mid)}
+.coord-time{font-family:var(--mono);font-size:var(--text-sm);color:var(--muted-soft);flex-shrink:0}
+.coord-badge{min-width:18px;height:18px;padding:0 5px;border-radius:var(--radius-pill);background:var(--rust);color:var(--on-accent);font-size:var(--text-sm);font-weight:600;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+/* Criterio 4: LA FILA ES LA ACCION. Un boton entero, sin un verbo repetido al costado. */
+.coord-row{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;padding:9px 10px;border-radius:var(--radius-sm);border:1px solid transparent;background:transparent;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.coord-row:hover{background:var(--paper-raised)}
+.coord-row.is-selected{background:var(--foam);border-color:var(--line)}
+.coord-row-text{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.coord-row-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.coord-row-name{display:flex;align-items:center;gap:5px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coord-row-line{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.coord-row-line.is-urgent{color:var(--rust)}
+/* C1: el encabezado del pedido. UNA linea, y debajo la tira de tareas. */
+.coord-head{display:flex;flex-direction:column;gap:10px;flex-shrink:0;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:4px}
+.coord-head-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;min-width:0}
+.coord-head-title{flex:1 1 200px;min-width:0;display:flex;flex-direction:column;gap:1px}
+.coord-head-name{font-family:var(--serif);font-size:var(--text-xl);line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.coord-head-sub{color:var(--muted);font-size:var(--text-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.coord-head-actions{display:flex;gap:6px;flex-shrink:0}
+.coord-progress{display:flex;flex-direction:column;gap:5px;width:200px;flex-shrink:0}
+.coord-progress-line{display:flex;justify-content:space-between;gap:8px;font-size:var(--text-sm)}
+.coord-progress-done{font-weight:550;color:var(--ink)}
+.coord-progress-rest{color:var(--muted)}
+.coord-bar{height:6px;border-radius:var(--radius-pill);background:var(--line);display:flex;overflow:hidden}
+.coord-bar-done{background:var(--green-ok)}
+.coord-bar-live{background:var(--rust)}
+.coord-bar-failed{background:var(--danger)}
+.coord-pill{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:var(--radius-pill);background:var(--paper-deep);color:var(--ink-soft);font-size:var(--text-sm);font-weight:500;white-space:nowrap;flex-shrink:0}
+.coord-pill-dispatches{font-variant-numeric:tabular-nums}
+.coord-pill-live{background:var(--rust-wash);color:var(--rust)}
+.coord-btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:var(--radius-sm);border:1px solid var(--line-strong);background:var(--paper-raised);color:var(--ink);font:inherit;font-size:var(--text-sm);font-weight:500;cursor:pointer;white-space:nowrap}
+.coord-btn-primary{background:var(--rust);border-color:var(--rust);color:var(--on-accent)}
+.coord-btn-ghost{border-color:transparent;background:transparent;color:var(--ink-soft)}
+.coord-icon-btn{width:30px;padding:0;justify-content:center}
+/* La tira de tareas: una ficha por tarea, el icono hace el sustantivo. */
+.coord-tasks{list-style:none;margin:0;padding:0;display:flex;gap:8px;overflow-x:auto;scrollbar-width:thin;min-width:0}
+.coord-task{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--paper-raised);min-width:0;flex:1 1 0;font-size:var(--text-sm)}
+.coord-task-title{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.coord-task.is-done .coord-task-title,.coord-task.is-live .coord-task-title,.coord-task.is-asking .coord-task-title{color:var(--ink)}
+.coord-task.is-live,.coord-task.is-asking{border-color:var(--rust-soft)}
+.coord-task.is-failed{border-color:var(--danger)}
+.coord-ic-ok{color:var(--green-ok);flex-shrink:0}
+.coord-ic-bad{color:var(--danger);flex-shrink:0}
+.coord-ic-live{color:var(--rust);flex-shrink:0}
+.coord-ic-idle{color:var(--muted-soft);flex-shrink:0}
+/* C3: el circulo-icono de la linea de tiempo. */
+.coord-tic{width:28px;height:28px;flex:0 0 28px;border-radius:var(--radius-pill);background:var(--paper-deep);color:var(--ink-soft);display:flex;align-items:center;justify-content:center}
+.coord-tic-ok{background:var(--green-wash);color:var(--green-ok)}
+.coord-tic-live{background:var(--rust-wash);color:var(--rust)}
+.coord-tic-bad{background:var(--danger-wash);color:var(--danger)}
+.coord-tic-lg{width:34px;height:34px;flex-basis:34px}
