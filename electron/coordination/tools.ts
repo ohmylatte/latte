@@ -48,7 +48,11 @@ async function wrap<T>(engine: CoordinationEngine, grant: CoordinationGrant, req
     // permiso, proponé un plan"— cuando el hecho real es que su equipo ya
     // terminó. Se responde el hecho, no su consecuencia.
     if (requiresRun && grant.runId == null) {
-      return { ok: false, authority, budget, data: null, error: { code: 'NO_ACTIVE_RUN', message: 'This Work has no active coordination run yet.' } };
+      // B4.2: el hecho Y la salida, como ya hacía FORBIDDEN acá al lado. Decir
+      // sólo "no hay run" deja al agente a un paso de proponer sin saberlo: en
+      // la prueba real llamó `latte_check` antes de proponer nada y se quedó
+      // sondeando. Un mensaje que niega sin guiar produce exactamente eso.
+      return { ok: false, authority, budget, data: null, error: { code: 'NO_ACTIVE_RUN', message: 'This Work has no coordination run yet. Propose one with latte_request_coordination and wait: Latte tells you when the person decides.' } };
     }
     if (requireCoordinator && grant.role !== 'coordinator') {
       return { ok: false, authority, budget, data: null, error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE } };

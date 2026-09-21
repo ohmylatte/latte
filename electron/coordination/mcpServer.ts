@@ -135,7 +135,11 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'latte_dispatch',
-    description: 'Coordinator only. Starts a ready task on its assigned member, subject to the Work\'s authority mode and budget.',
+    // B4.2: QUÉ tareas salen, y qué esperan las que no. Decía sólo "a ready
+    // task" y un coordinador que no sabe qué hace `ready` a una tarea lee el
+    // rechazo de una `pending` como "el despacho no funciona" — y en la prueba
+    // real eso terminó en un canal paralelo para "adelantar" ese trabajo.
+    description: "Coordinator only. Starts a task whose status is `ready` on its assigned member, subject to the Work's authority mode and budget. A task that is still `pending` is waiting for the tasks it depends on to report, not for you: it becomes `ready` by itself when those dependencies report, and Latte tells you about every report. Never work around a pending task by doing it yourself or asking the person to pass it along.",
     inputSchema: {
       type: 'object',
       // `approvedGateId` se publicaba acá y el handler de `tools.ts` lo
@@ -188,7 +192,10 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
     // Sigue sin `wait` (el servidor nunca esperó, y publicarlo era anunciar un
     // comportamiento que no implementa) y sigue consumiendo: leer entrega una
     // sola vez, para que un sondeo no haga contestar dos veces lo mismo.
-    description: "Reads this member's mailbox and the state of the coordination run: the messages other members sent you with latte_message (each one delivered exactly once — reading consumes them), plus how many tasks are ready, dispatched, done, failed, blocked or pending. Never blocks and never waits.",
+    // B4.2: y CUÁNDO llamarla. La verdad sobre lo que devuelve ya estaba; lo
+    // que faltaba era el momento, y sin eso un agente sondea (o, peor, la
+    // llama antes de que exista un run y lee el rechazo como una pared).
+    description: "Reads this member's mailbox and the state of the coordination run: the messages other members sent you with latte_message (each one delivered exactly once — reading consumes them), plus how many tasks are ready, dispatched, done, failed, blocked or pending. Never blocks and never waits, so call it after Latte tells you something happened — your proposal was approved, or a member reported — instead of polling.",
     inputSchema: { type: 'object', properties: {} },
   },
   {
