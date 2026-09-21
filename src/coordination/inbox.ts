@@ -139,14 +139,23 @@ export function describeInboxEvent(event: InboxEvent, team: readonly TeamMember[
   // nombrar, como estaba. Con uno, la cadena de `memberDisplayName` termina
   // siempre en algo legible.
   const other = event.otherMemberId ? memberDisplayName(event.otherMemberId, team, event.otherRoleId, roles) : '';
+  /**
+   * B3.4: LOS DOS PUNTOS SON DEL TEXTO, NO DEL VERBO.
+   *
+   * La captura del dueno mostraba, literal, "reporto:" y despues nada: el
+   * motor puede cerrar un despacho sin `summaryPreview` y el formato con el
+   * hueco vacio anuncia algo que no llega. Sin texto se usa la forma entera
+   * del verbo, que dice el hecho igual y no promete nada.
+   */
+  const text = event.text.trim();
   switch (event.kind) {
-    case 'dispatched': return t('team.inbox.dispatched', { text: event.text });
-    case 'reported': return t('team.inbox.reported', { text: event.text });
-    case 'dispatchFailed': return t('team.inbox.dispatchFailed', { text: event.text });
-    case 'sent': return t('team.inbox.sent', { role: other, text: event.text });
-    case 'received': return t('team.inbox.received', { role: other, text: event.text });
-    case 'ask': return t('team.inbox.ask', { text: event.text });
-    case 'answer': return t('team.inbox.answer', { text: event.text });
+    case 'dispatched': return text ? t('team.inbox.dispatched', { text }) : t('team.inbox.dispatchedBare');
+    case 'reported': return text ? t('team.inbox.reported', { text }) : t('team.inbox.reportedBare');
+    case 'dispatchFailed': return text ? t('team.inbox.dispatchFailed', { text }) : t('team.inbox.dispatchFailedBare');
+    case 'sent': return text ? t('team.inbox.sent', { role: other, text }) : t('team.inbox.sentBare', { role: other });
+    case 'received': return text ? t('team.inbox.received', { role: other, text }) : t('team.inbox.receivedBare', { role: other });
+    case 'ask': return text ? t('team.inbox.ask', { text }) : t('team.inbox.askBare');
+    case 'answer': return text ? t('team.inbox.answer', { text }) : t('team.inbox.answerBare');
     case 'hired': return t('team.inbox.hired');
     default: {
       const exhaustive: never = event.kind;
