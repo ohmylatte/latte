@@ -36,9 +36,18 @@ import { formatMessage, type MessageKey } from './i18n';
  * literal ahi adentro tiene exactamente el mismo efecto que uno en
  * `TeamPanel`: media pantalla en castellano cuando la interfaz habla ingles.
  */
+/**
+ * B3.6: y alcanza a la vista Equipo y a la derivacion del buzon.
+ *
+ * `TeamView.tsx` es donde se mudo medio panel del equipo -- la lista, el hilo y
+ * lo avanzado --, y `coordination/inbox.ts` es donde se mudo el copy de cada
+ * renglon. Dejarlos afuera hubiera sido mudar el copy fuera del alcance del
+ * test que lo protege.
+ */
 const FILES = [
   'TeamPanel.tsx', 'DecisionsView.tsx', 'ChatPane.tsx', 'coordination/TeamCards.tsx',
   'ResumenView.tsx', 'HomeView.tsx', 'ActiveTeamsStrip.tsx',
+  'TeamView.tsx', 'coordination/inbox.ts',
 ];
 
 /** Las líneas de código, sin comentarios: un comentario en castellano es documentación, no copy. */
@@ -120,6 +129,17 @@ describe('U8: el copy de coordinación vive en los diccionarios', () => {
     'decision.kicker', 'decision.headline.first', 'decision.headline.second', 'decision.draftPlaceholder',
     'coordination.run.finished.done', 'coordination.run.finished.cancelled', 'coordination.run.planning',
     'coordination.proposal.unreadable', 'coordination.budget.editLabel', 'coordination.budget.save',
+    // B3: el modo Equipo de la columna, la linea plegada y las formas enteras
+    // del buzon ("reporto" sin dos puntos vacios).
+    'team.rail.group', 'team.rail.chat', 'team.rail.team',
+    'team.view.openChat', 'team.view.thread', 'team.view.threadHelp',
+    'team.view.emptyTitle', 'team.view.emptyBody',
+    'coordination.cards.collapsed', 'coordination.cards.kind.proposal',
+    'coordination.cards.kind.dispatch', 'coordination.cards.kind.plan',
+    'coordination.cards.kind.budget', 'coordination.cards.kind.ask',
+    'coordination.cards.kind.mixed',
+    'team.inbox.dispatchedBare', 'team.inbox.reportedBare', 'team.inbox.dispatchFailedBare',
+    'team.inbox.sentBare', 'team.inbox.receivedBare', 'team.inbox.askBare', 'team.inbox.answerBare',
   ];
 
   /**
@@ -144,6 +164,10 @@ describe('U8: el copy de coordinación vive en los diccionarios', () => {
     ['team.inbox.received', 'la flecha y los dos huecos, sin una palabra propia'],
     // Préstamo: "error" es la misma palabra en los dos idiomas.
     ['chat.tool.error', 'préstamo: la misma palabra en los dos idiomas'],
+    // Las formas enteras de los mensajes son la flecha y el nombre del otro
+    // extremo, que pone el llamador: no queda una palabra que traducir.
+    ['team.inbox.sentBare', 'la flecha y el hueco, sin una palabra propia'],
+    ['team.inbox.receivedBare', 'la flecha y el hueco, sin una palabra propia'],
   ]);
 
   it('cada clave nueva tiene texto propio en los dos idiomas, y no son el mismo texto por olvido', () => {

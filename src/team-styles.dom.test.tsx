@@ -54,6 +54,11 @@ const NEW_CLASSES = [
   'team-finished-coordination', 'team-advanced', 'team-advanced-budget-edit',
   'team-advanced-budget-input', 'team-advanced-budget-save', 'team-advanced-run-budget-invalid',
   'team-support', 'team-support-row', 'team-support-coordination', 'team-support-memory',
+  // B3: el modo Equipo de la columna, la linea plegada y el subtitulo de la pestana.
+  'team-rail-head', 'team-rail-modes', 'team-rail-chat', 'team-rail-team', 'team-rail-pending',
+  'team-tab-thread', 'team-view', 'team-view-empty', 'team-view-columns', 'team-view-list',
+  'team-view-thread', 'team-view-thread-title', 'team-inbox-open-chat',
+  'team-cards-collapsed', 'team-cards-collapsed-text', 'team-tab-text', 'team-tab-last',
   // La tira lateral y la fila de Inicio, que venían sin una sola regla.
   'active-teams-strip', 'active-teams-strip-row', 'active-teams-strip-brand',
   'active-teams-strip-work', 'active-teams-strip-status', 'active-teams-strip-budget',
@@ -91,6 +96,38 @@ describe('B1.5: el CSS del equipo', () => {
   it('un run terminado se atenúa, en la tira y por `data-live="false"`', () => {
     expect(ruleBodyFor('active-teams-strip-row-finished')).toContain('opacity');
     expect(css).toContain('.active-teams-strip-row[data-live="false"]');
+  });
+
+  /**
+   * B3.1: la vista del equipo y el hilo no pueden desbordar la columna. Las dos
+   * celdas con `min-width:0` y su propio scroll: sin eso, un renglon largo del
+   * buzon estira la grilla y empuja el hilo fuera de la pantalla.
+   */
+  it('la vista del equipo recorta y scrollea, en sus dos celdas', () => {
+    expect(ruleBodyFor('team-view-columns')).toContain('min-width:0');
+    expect(ruleBodyFor('team-view-list')).toContain('overflow-y:auto');
+    expect(ruleBodyFor('team-view-list')).toContain('min-width:0');
+    expect(ruleBodyFor('team-view-thread')).toContain('overflow-y:auto');
+    expect(ruleBodyFor('team-view-thread')).toContain('min-width:0');
+  });
+
+  /** En una columna angosta la lista y el hilo van uno sobre otro; se reparten cuando hay ancho. */
+  it('las dos columnas son una sola hasta que la columna da el ancho', () => {
+    expect(ruleBodyFor('team-view-columns')).toContain('grid-template-columns:minmax(0,1fr)');
+    expect(css).toContain('@container (min-width:560px)');
+    expect(css).toContain('.team{container-type:inline-size}');
+  });
+
+  /** B3.3: el subtitulo de la pestana recorta en vez de estirar la tira. */
+  it('el subtitulo de la pestana recorta', () => {
+    expect(ruleBodyFor('team-tab-last')).toContain('text-overflow:ellipsis');
+    expect(ruleBodyFor('team-tab-text')).toContain('min-width:0');
+  });
+
+  /** B3.2: la linea plegada es UNA linea; lo que no entra se recorta. */
+  it('la linea plegada no puede crecer a dos renglones', () => {
+    expect(ruleBodyFor('team-cards-collapsed-text')).toContain('white-space:nowrap');
+    expect(ruleBodyFor('team-cards-collapsed-text')).toContain('text-overflow:ellipsis');
   });
 
   /** Las tarjetas viven arriba del composer: no pueden comerse la conversación. */
