@@ -56,6 +56,17 @@ export interface TeamPanelProps {
   /** Roles one agent asked for; the human decides whether any conversation opens. */
   handoffs: HandoffRequest[];
   onAcceptHandoff: (handoff: HandoffRequest) => Promise<void>;
+  /**
+   * B4.1: EL TRASPASO DURANTE UNA COORDINACION NO PASA POR LA PERSONA.
+   *
+   * Aditivo y opcional: sin esta prop el aviso se comporta exactamente como
+   * estaba. Con un run VIVO la accion primaria deja de prellenar el borrador
+   * del otro miembro --que dejaba a la persona apretando enviar en el medio de
+   * un circuito que ya estaba andando-- y pasa a crear la tarea y despacharla
+   * con la autoridad del run (`acceptHandoffAsTask`). Sin run vivo, nada
+   * cambia.
+   */
+  onAcceptHandoffAsTask?: (handoff: HandoffRequest) => Promise<void>;
   onDismissHandoff: (handoff: HandoffRequest) => Promise<void>;
   onRemove: (memberId: string) => Promise<void>;
   onProviders: () => void;
@@ -185,6 +196,12 @@ export function TeamPanel(props: TeamPanelProps) {
   const workTotal = useTeamUsageTotal(team);
   const railPending = pendingForWork(props.coordinationGates, props.coordinationAsks, props.coordinationRun ?? null);
   const inbox = { log: props.coordinationLog, messages: props.coordinationMessages, asks: props.coordinationAsks, hires: props.coordinationHires };
+  /**
+   * B4.1: las DOS condiciones, no una. `active` porque un run cerrado no puede
+   * despachar nada, y la prop porque sin el puente cableado el boton estaria
+   * prometiendo un despacho que nadie puede hacer.
+   */
+  const bridgeHandoffs = Boolean(props.coordinationRun?.active) && typeof props.onAcceptHandoffAsTask === 'function';
 
   return <div className="team">
     {/* FUERA del guard `team.length > 0`: un run `planning` es exactamente el
@@ -204,7 +221,7 @@ export function TeamPanel(props: TeamPanelProps) {
     {work && props.handoffs.map(handoff => <div key={handoff.fileName} className="doc-banner handoff" role="status">
       <UserPlus size={14} />
       <span>{t('ui.auto.266')} <strong>{handoff.roleName}</strong> {t('handoff.wants')} <em>{handoff.request.split(/\r?\n/)[0].slice(0, 140)}</em>{handoff.known ? '' : t('handoff.unknownRole')}</span>
-      {handoff.known && <button className="primary" disabled={busy} onClick={() => void props.onAcceptHandoff(handoff)}>{t('ui.auto.267')}</button>}
+      {handoff.known && <button className="primary" disabled={busy} onClick={() => void (bridgeHandoffs ? props.onAcceptHandoffAsTask!(handoff) : props.onAcceptHandoff(handoff))}>{bridgeHandoffs ? t('handoff.dispatchAsTask') : t('ui.auto.267')}</button>}
       <button disabled={busy} onClick={() => void props.onDismissHandoff(handoff)}>{t('ui.auto.379')}</button>
     </div>)}
     {rail === 'team' && <TeamView work={work} team={team} roles={roles} mode={mode} busy={busy}

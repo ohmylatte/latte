@@ -282,5 +282,53 @@ describe('lo que se publica existe y lo que entra se valida (crítico 12)', () =
       // Y le sigue llegando a un rol con cuerpo propio.
       expect(catalog.promptFor('paid-media')).toContain('I did it myself');
     });
+
+    /**
+     * B4.1: EL CANAL PARALELO, PROHIBIDO MIENTRAS HAY COORDINACIÓN.
+     *
+     * Prueba real de hoy: con el run vivo y una tarea sin despachar por
+     * dependencias, el coordinador escribió un archivo de traspaso
+     * (`para: community-manager`) para "adelantarle" trabajo. Latte lo ofreció
+     * y aceptarlo dejó el borrador del CM cargado esperando que la PERSONA
+     * apretara enviar. Durante una coordinación la persona no puede quedar en
+     * el medio: las tareas salen con `latte_dispatch` cuando sus dependencias
+     * reportan.
+     *
+     * CRLF: se busca por línea, nunca con saltos literales.
+     */
+    it('prohíbe el traspaso por archivo y pedirle a la persona que reenvíe, mientras haya propuesta o run', () => {
+      expect(line(/handoff file/i), 'base.md no nombra el archivo de traspaso').toBeDefined();
+      expect(line(/para:/), 'base.md no nombra el front-matter `para:`').toBeDefined();
+      // Y dice cuál es la salida correcta en su lugar.
+      expect(line(/latte_dispatch/)).toBeDefined();
+      expect(line(/latte_message/)).toBeDefined();
+    });
+
+    /** Y después de proponer se ESPERA: Latte avisa, no se abren canales laterales. */
+    it('dice que después de proponer se espera la decisión, sin canales laterales', () => {
+      expect(line(/wait/i)).toBeDefined();
+      expect(line(/Latte tells you when the person decides/i)).toBeDefined();
+    });
+  });
+
+  /**
+   * B4.1: la misma regla en el rol que COORDINA, que es el que tiene el
+   * `latte_dispatch` en la mano y el que la rompió en la prueba real.
+   */
+  describe('el strategist sabe que durante un run no hay traspaso por archivo', () => {
+    const source = fs.readFileSync(path.resolve(__dirname, '../../packs/marketing-core/roles/strategist.md'), 'utf8');
+    const lines = source.split(/\r?\n/);
+    const line = (re: RegExp) => lines.find((l) => re.test(l));
+
+    it('prohíbe el archivo de traspaso y le dice qué hacer en su lugar', () => {
+      expect(line(/handoff file/i)).toBeDefined();
+      expect(line(/para:/)).toBeDefined();
+      expect(line(/latte_dispatch/)).toBeDefined();
+      expect(line(/latte_message/)).toBeDefined();
+    });
+
+    it('dice que una tarea bloqueada espera a sus dependencias, no a la persona', () => {
+      expect(line(/dependencies report/i)).toBeDefined();
+    });
   });
 });

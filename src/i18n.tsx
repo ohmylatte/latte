@@ -679,6 +679,10 @@ const es = {
   // esperando un gesto de la persona, y si la frase no se lo dice nadie va a ir
   // a darlo.
   'handoff.bridged.pendingApproval': 'Tarea creada para {role}. Esperando tu aprobación en Decisiones.',
+  // B4.1: con un run vivo la accion primaria del aviso de traspaso no prellena
+  // el borrador de nadie -- crea la tarea y la despacha con la autoridad del
+  // run. La copy tiene que decir eso, porque es otra cosa que "aceptar".
+  'handoff.dispatchAsTask': 'Despachar como tarea del equipo',
   // --- Coordinación: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
   'coordination.teams.status.planning': 'Planificando',
   'coordination.teams.status.running': 'En curso',
@@ -1424,6 +1428,7 @@ const en: Record<MessageKey, string> = {
   'handoff.bridged.dispatched': 'Task created for {role} and dispatched to the team. Follow it in Decisions.',
   'handoff.bridged.queued': 'Task created for {role}, but it has not started yet: {reason}. It stays queued, in Decisions.',
   'handoff.bridged.pendingApproval': 'Task created for {role}. Waiting for your approval in Decisions.',
+  'handoff.dispatchAsTask': 'Dispatch as a team task',
   // --- Coordination: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
   'coordination.teams.status.planning': 'Planning',
   'coordination.teams.status.running': 'Running',
