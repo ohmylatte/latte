@@ -4,15 +4,38 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUpRight, Check, ChevronRight, CircleAlert, FilePlus, Paperclip, ShieldQuestion, Square, Wrench, X } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { ChatMessage, ChatPart, ChatPermission, ChatQuestion, ChatSession, ChatToolStatus } from '../shared/contracts';
+import type { AgentRole, ChatMessage, ChatPart, ChatPermission, ChatQuestion, ChatSession, ChatToolStatus, CoordinationAskView, CoordinationGateView, CoordinationRunView, TeamMember } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { useChatState } from './chat-store';
 import { friendlyTool } from './tool-names';
 import { isNearConversationEnd } from './conversation-scroll';
+import { TeamCards } from './coordination/TeamCards';
 
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked = [], onAdoptFile, onAttachFiles, beforeComposer }: { session: ChatSession; onStop: () => void; onError: (error: string) => void; onSaveAsDocument?: (text: string) => void; untracked?: string[]; onAdoptFile?: (fileName: string) => void; onAttachFiles?: () => Promise<string[]>; beforeComposer?: ReactNode }) {
+/**
+ * Lo que la coordinación le pide a ESTE chat.
+ *
+ * Todo opcional y aditivo: un llamador sin cablear (la vista previa del
+ * navegador, un test de otra cosa) ve el chat exactamente como estaba. El id
+ * del miembro es el id de la sesión — en Latte un chat ES un miembro —, así
+ * que no hace falta pasarlo aparte.
+ */
+export interface ChatCoordinationProps {
+  coordinationRun?: CoordinationRunView | null;
+  gates?: readonly CoordinationGateView[];
+  openAsks?: readonly CoordinationAskView[];
+  roles?: readonly AgentRole[];
+  team?: readonly TeamMember[];
+  formatDate?: (value: string) => string;
+  onResolveGate?: (gateId: string, decision: 'approve' | 'reject', editedPayload?: string | null) => void | boolean | Promise<boolean | void>;
+  onAnswerAsk?: (askId: string, answer: string) => void;
+  coordinationPending?: Record<string, boolean>;
+  /** Cambia de pestaña dentro del Trabajo: lo que aprieta "El equipo te espera". */
+  onSelectMember?: (memberId: string) => void;
+}
+
+export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked = [], onAdoptFile, onAttachFiles, beforeComposer, coordination }: { session: ChatSession; onStop: () => void; onError: (error: string) => void; onSaveAsDocument?: (text: string) => void; untracked?: string[]; onAdoptFile?: (fileName: string) => void; onAttachFiles?: () => Promise<string[]>; beforeComposer?: ReactNode; coordination?: ChatCoordinationProps }) {
   const state = useChatState(chatStore, session.id);
   const draft = state.draft;
   const setDraft = (text: string) => chatStore.setDraft(session.id, text);
@@ -140,6 +163,23 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
       {state.error && <div className="chat-error" role="alert"><CircleAlert size={14} /><span>{state.error}</span><button aria-label={t('ui.auto.092')} onClick={() => chatStore.clearError(session.id)}><X size={13} /></button></div>}
     </div>
     {unread && <button className="conversation-new-messages" onClick={showLatest}>Hay mensajes nuevos · Ir al final</button>}
+    {/* Arriba del composer, fija: lo que el equipo le está pidiendo a ESTE
+        miembro. No entra en el scroll de la conversación a propósito — una
+        aprobación que se va hacia arriba con los mensajes es una aprobación
+        que la persona no ve. */}
+    {coordination && <TeamCards
+      memberId={session.id}
+      coordinationRun={coordination.coordinationRun}
+      gates={coordination.gates}
+      openAsks={coordination.openAsks}
+      roles={coordination.roles}
+      team={coordination.team}
+      formatDate={coordination.formatDate}
+      onResolveGate={coordination.onResolveGate}
+      onAnswerAsk={coordination.onAnswerAsk}
+      pending={coordination.coordinationPending}
+      onSelectMember={coordination.onSelectMember}
+    />}
     {beforeComposer}
     <form className="prompt-form" onSubmit={e => { e.preventDefault(); void send(); }}>
       <textarea ref={composer} aria-label={t('ui.auto.019')} placeholder={state.closed ? t('ui.auto.093') : t('ui.auto.020')} value={draft} disabled={state.closed} onFocus={() => { composerHadFocus.current = true; }} onBlur={e => { if (e.relatedTarget) composerHadFocus.current = false; }} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />

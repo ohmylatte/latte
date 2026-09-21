@@ -9,9 +9,9 @@ vi.mock('./i18n', async (importOriginal) => {
 
 const { createElement } = await import('react');
 const { fireEvent, render, screen } = await import('@testing-library/react');
-const { DecisionsView } = await import('./DecisionsView');
-import type { DecisionsViewProps } from './DecisionsView';
-import type { CoordinationGateView, CoordinationProposal, Work } from '../shared/contracts';
+const { TeamCards } = await import('./coordination/TeamCards');
+import type { TeamCardsProps } from './coordination/TeamCards';
+import type { CoordinationGateView, CoordinationProposal, CoordinationRunView, Work } from '../shared/contracts';
 
 /**
  * U5: el formulario de la propuesta no puede quedarse con el estado viejo.
@@ -42,31 +42,40 @@ const gate = (p: CoordinationProposal): CoordinationGateView => ({
   id: 'g-prop', kind: 'proposal', runId: 'run1', proposalJson: JSON.stringify(p), createdAt: '2026-09-01T00:00:00.000Z',
 });
 
-const base: DecisionsViewProps = {
-  work, decisions: [], team: [], roles: [], permissions: 'ask', handoffs: [], decisionAuthority: 'suggest',
-  draft: '', busy: false, formatDate: () => 'hace un rato', titlesByWork: { w1: 'Lanzamiento' },
-  onDraftChange: () => {}, onAdd: () => {}, onApprove: () => {}, onEditApprove: () => {},
-  onReject: () => {}, onArchive: () => {}, onAuthorityChange: () => {},
+
+/**
+ * Las tarjetas se mudaron al chat del miembro al que le corresponden (B1.1).
+ * Un gate es una conversación con el COORDINADOR, así que el run de este
+ * archivo lo nombra y el chat que se monta es el suyo. Las aserciones son las
+ * mismas: lo que cambió es la casa, no la regla.
+ */
+const runView: CoordinationRunView = {
+  id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'coord',
+  budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
+  suspendReason: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
+  tasksDone: 0, tasksFailed: 0, tasksPending: 0,
 };
 
-const dispatchesInput = (container: HTMLElement) => container.querySelector('.decision-gate-edit input[type="number"]') as HTMLInputElement;
-const unlimitedBox = (container: HTMLElement) => container.querySelector('.decision-gate-edit-unlimited input[type="checkbox"]') as HTMLInputElement;
+const base: TeamCardsProps = { memberId: 'coord', coordinationRun: runView, team: [], roles: [], formatDate: () => 'hace un rato' };
+
+const dispatchesInput = (container: HTMLElement) => container.querySelector('.team-card-edit input[type="number"]') as HTMLInputElement;
+const unlimitedBox = (container: HTMLElement) => container.querySelector('.team-card-edit-unlimited input[type="checkbox"]') as HTMLInputElement;
 
 describe('una propuesta re-enviada no deja estado viejo en el formulario', () => {
   it('cambiar `proposalJson` con el MISMO gate id resetea el formulario', () => {
     const onResolveGate = vi.fn();
     const props = (p: CoordinationProposal) => ({ ...base, gates: [gate(p)], onResolveGate });
-    const { container, rerender } = render(createElement(DecisionsView, props(proposal({ estimatedDispatches: 8 }))));
+    const { container, rerender } = render(createElement(TeamCards, props(proposal({ estimatedDispatches: 8 }))));
 
     fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
     expect(dispatchesInput(container).value).toBe('8');
 
     // El agente re-envía la propuesta: mismo gate, otro tope.
-    rerender(createElement(DecisionsView, props(proposal({ estimatedDispatches: 3 }))));
+    rerender(createElement(TeamCards, props(proposal({ estimatedDispatches: 3 }))));
 
     // El formulario se cerró con la propuesta vieja: no queda una edición a
     // medio hacer sobre un plan que ya no existe.
-    expect(container.querySelector('.decision-gate-edit')).toBeNull();
+    expect(container.querySelector('.team-card-edit')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
     expect(dispatchesInput(container).value).toBe('3');
   });
@@ -74,10 +83,10 @@ describe('una propuesta re-enviada no deja estado viejo en el formulario', () =>
   it('confirmar después de una propuesta re-enviada manda el tope NUEVO, no el viejo', () => {
     const onResolveGate = vi.fn();
     const props = (p: CoordinationProposal) => ({ ...base, gates: [gate(p)], onResolveGate });
-    const { rerender } = render(createElement(DecisionsView, props(proposal({ estimatedDispatches: 8 }))));
+    const { rerender } = render(createElement(TeamCards, props(proposal({ estimatedDispatches: 8 }))));
     fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
 
-    rerender(createElement(DecisionsView, props(proposal({ estimatedDispatches: 3 }))));
+    rerender(createElement(TeamCards, props(proposal({ estimatedDispatches: 3 }))));
     fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar edición y aprobar' }));
 
@@ -90,11 +99,11 @@ describe('una propuesta re-enviada no deja estado viejo en el formulario', () =>
   it('un re-render con la MISMA propuesta no tira la edición en curso', () => {
     const onResolveGate = vi.fn();
     const props = () => ({ ...base, gates: [gate(proposal({ estimatedDispatches: 8 }))], onResolveGate });
-    const { container, rerender } = render(createElement(DecisionsView, props()));
+    const { container, rerender } = render(createElement(TeamCards, props()));
     fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
     fireEvent.change(dispatchesInput(container), { target: { value: '5' } });
 
-    rerender(createElement(DecisionsView, props()));
+    rerender(createElement(TeamCards, props()));
 
     expect(dispatchesInput(container).value).toBe('5');
   });
@@ -105,7 +114,7 @@ describe('la confirmación de presupuesto ilimitado no sobrevive a un cambio del
 
   it('tildar ilimitado, escribir un tope y volver a borrarlo deja la casilla DESTILDADA', () => {
     const onResolveGate = vi.fn();
-    const { container } = render(createElement(DecisionsView, { ...base, gates: [gate(unlimited())], onResolveGate }));
+    const { container } = render(createElement(TeamCards, { ...base, gates: [gate(unlimited())], onResolveGate }));
     fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
 
     fireEvent.click(unlimitedBox(container));
@@ -119,7 +128,7 @@ describe('la confirmación de presupuesto ilimitado no sobrevive a un cambio del
 
   it('y confirmar ahí NO manda un `unlimitedConfirmedAt` que la persona no acaba de dar', () => {
     const onResolveGate = vi.fn();
-    const { container } = render(createElement(DecisionsView, { ...base, gates: [gate(unlimited())], onResolveGate }));
+    const { container } = render(createElement(TeamCards, { ...base, gates: [gate(unlimited())], onResolveGate }));
     fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
     fireEvent.click(unlimitedBox(container));
     fireEvent.change(dispatchesInput(container), { target: { value: '7' } });
@@ -132,7 +141,7 @@ describe('la confirmación de presupuesto ilimitado no sobrevive a un cambio del
 
   it('tildar la casilla y confirmar sin tocar nada más SÍ manda la confirmación', () => {
     const onResolveGate = vi.fn();
-    const { container } = render(createElement(DecisionsView, { ...base, gates: [gate(unlimited())], onResolveGate }));
+    const { container } = render(createElement(TeamCards, { ...base, gates: [gate(unlimited())], onResolveGate }));
     fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
     fireEvent.click(unlimitedBox(container));
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar edición y aprobar' }));

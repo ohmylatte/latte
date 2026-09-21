@@ -83,8 +83,14 @@ describe('useCoordination wiring adds no new VIEWS entry (task 7.11)', () => {
   });
 
   it('wires the coordination gates and the settle action into the real IPC verbs, not a reinvention', () => {
-    expect(app).toMatch(/DecisionsView[\s\S]{0,2000}gates=\{work \? coordination\.gates/);
-    expect(app).toMatch(/DecisionsView[\s\S]{0,2000}onResolveGate=\{coordination\.resolveGate\}/);
+    // B1.1: los gates ya no van a Decisiones. Van al CHAT del miembro al que
+    // le corresponden, por `chatCoordination` de `TeamPanel`; Decisiones queda
+    // para lo que perdura. El verbo es el mismo (`resolveCoordinationGate`,
+    // via `coordination.resolveGate`): lo que cambio es a quien se lo pasa.
+    expect(app).toMatch(/TeamPanel[\s\S]{0,4000}chatCoordination=\{\{[\s\S]{0,600}gates: work \? coordination\.gates/);
+    expect(app).toMatch(/TeamPanel[\s\S]{0,4000}chatCoordination=\{\{[\s\S]{0,600}onResolveGate: coordination\.resolveGate/);
+    expect(app).toMatch(/TeamPanel[\s\S]{0,4000}chatCoordination=\{\{[\s\S]{0,600}onAnswerAsk: coordination\.answerAsk/);
+    expect(app).not.toMatch(/DecisionsView[\s\S]{0,2000}gates=\{/);
     expect(app).toMatch(/ResumenView[\s\S]{0,2000}onSettleDispatch=\{coordination\.settleDispatch\}/);
     expect(app).toMatch(/TeamPanel[\s\S]{0,4000}coordinationRun=\{work \? coordination\.run/);
     expect(app).toMatch(/TeamPanel[\s\S]{0,4000}onPauseCoordination=\{coordination\.pauseRun\}/);

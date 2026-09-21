@@ -42,6 +42,7 @@ vi.mock('./browser-api', async (importOriginal) => {
 const { useCoordination } = await import('./useCoordination');
 const { DecisionsView } = await import('./DecisionsView');
 const { TeamPanel } = await import('./TeamPanel');
+const { TeamCards } = await import('./coordination/TeamCards');
 
 const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => ({
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'm1',
@@ -153,11 +154,20 @@ const decisionsProps = {
 const renderDecisions = (extra: Record<string, unknown>) =>
   render(<I18nProvider><DecisionsView {...decisionsProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
 
-describe('DecisionsView: la pregunta abierta se puede responder (juicio #7)', () => {
+/**
+ * B1.1: las tarjetas se mudaron al chat del miembro al que le corresponden.
+ * `m1` es el coordinador de este run Y quien hace la pregunta, asi que su
+ * chat es donde caen las dos cosas. Las aserciones no cambiaron.
+ */
+const cardsProps = { memberId: 'm1', coordinationRun: run(), team: [], roles: [], formatDate: (v: string) => v };
+const renderCards = (extra: Record<string, unknown>) =>
+  render(<I18nProvider><TeamCards {...cardsProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
+
+describe('TeamCards: la pregunta abierta se puede responder (juicio #7)', () => {
   it('renderiza la ask y su acción de responder', () => {
     const onAnswerAsk = vi.fn();
-    const { container } = renderDecisions({ openAsks: [ask()], onAnswerAsk });
-    const card = container.querySelector('.decision-ask');
+    const { container } = renderCards({ openAsks: [ask()], onAnswerAsk });
+    const card = container.querySelector('.team-card-ask');
     expect(card).not.toBeNull();
     expect(card!.textContent).toContain('naming largo');
   });
@@ -243,10 +253,10 @@ describe('TeamPanel: un equipo pausado se puede reanudar o cancelar (juicio #2)'
 // `disabled` — un doble click en el gate de PROPUESTA corría `hub.addMember`
 // (la contratación) dos veces antes de que la transacción del perdedor
 // tirara, dejando un proceso de agente spawneado sin gate ni token.
-describe('DecisionsView + useCoordination: un click doble no puede disparar la misma mutación dos veces (ítem 14)', () => {
+describe('TeamCards + useCoordination: un click doble no puede disparar la misma mutación dos veces (ítem 14)', () => {
   function Harness() {
     const coordination = useCoordination('w1');
-    return <DecisionsView {...decisionsProps} gates={coordination.gates} onResolveGate={coordination.resolveGate} pending={coordination.pending} />;
+    return <TeamCards {...cardsProps} coordinationRun={coordination.run} gates={coordination.gates} onResolveGate={coordination.resolveGate} pending={coordination.pending} />;
   }
 
   it('click doble y síncrono en "Aprobar" de un gate de propuesta sólo llama a resolveCoordinationGate una vez', async () => {
@@ -262,8 +272,8 @@ describe('DecisionsView + useCoordination: un click doble no puede disparar la m
     mocks.listCoordinationGates.mockResolvedValue([{ id: 'g1', kind: 'proposal', runId: 'run1', createdAt: '2026-09-01T00:00:00.000Z', proposalJson: JSON.stringify(proposal) }]);
 
     const { container } = render(<I18nProvider><Harness /></I18nProvider>);
-    await waitFor(() => expect(container.querySelector('.decision-gate-proposal')).not.toBeNull());
-    const approve = container.querySelector('.decision-gate-actions button.primary') as HTMLButtonElement;
+    await waitFor(() => expect(container.querySelector('.team-card-proposal')).not.toBeNull());
+    const approve = container.querySelector('.team-card-actions button.primary') as HTMLButtonElement;
     fireEvent.click(approve);
     fireEvent.click(approve);
     expect(mocks.resolveCoordinationGate).toHaveBeenCalledTimes(1);
@@ -274,7 +284,7 @@ describe('DecisionsView + useCoordination: un click doble no puede disparar la m
 // Ronda 4 del juicio, ítem 15: el aviso de "sin tope" y el "Aprobar" simple del
 // gate de propuesta miraban el estado del FORMULARIO de edición, no el de la
 // propuesta -- y "Cancelar" no reseteaba nada.
-describe('DecisionsView: el gate de propuesta no confunde el estado del formulario con el de la propuesta (ítem 15)', () => {
+describe('TeamCards: el gate de propuesta no confunde el estado del formulario con el de la propuesta (ítem 15)', () => {
   const cappedProposal: CoordinationProposal = {
     plan: [{ roleId: 'strategist', spec: 'Definir el naming' }],
     membersToHire: [],
@@ -285,15 +295,15 @@ describe('DecisionsView: el gate de propuesta no confunde el estado del formular
 
   it('abrir la edición, borrar el número y Cancelar: el "Aprobar" simple sigue ahí y el aviso de ilimitado NO aparece', () => {
     const onResolveGate = vi.fn();
-    const { container } = renderDecisions({ gates: [cappedGate], onResolveGate });
+    const { container } = renderCards({ gates: [cappedGate], onResolveGate });
     // "Editar y aprobar": el único botón sin `.primary` en las acciones del gate, antes de editar.
-    fireEvent.click(container.querySelector('.decision-gate-actions button:not(.primary)')!);
+    fireEvent.click(container.querySelector('.team-card-actions button:not(.primary)')!);
     const numberInput = container.querySelector('input[type="number"]') as HTMLInputElement;
     fireEvent.change(numberInput, { target: { value: '' } });
     // "Cancelar", en el formulario de edición -- no en las acciones del gate.
-    fireEvent.click(container.querySelector('.decision-gate-edit-actions button:not(.primary)')!);
-    expect(container.querySelector('.decision-gate-actions button.primary')).not.toBeNull();
-    expect(container.querySelector('.decision-gate-unlimited-note')).toBeNull();
+    fireEvent.click(container.querySelector('.team-card-edit-actions button:not(.primary)')!);
+    expect(container.querySelector('.team-card-actions button.primary')).not.toBeNull();
+    expect(container.querySelector('.team-card-unlimited-note')).toBeNull();
     expect(onResolveGate).not.toHaveBeenCalled();
   });
 
@@ -313,14 +323,14 @@ describe('DecisionsView: el gate de propuesta no confunde el estado del formular
     // N10: sin `onResolveGate` la tarjeta es de sólo lectura y no renderiza
     // ningún botón. Lo que este test mira es el estado del FORMULARIO, así que
     // el handler va puesto y no se usa.
-    const { container } = renderDecisions({ gates: [cappedGate], onResolveGate: vi.fn() });
-    fireEvent.click(container.querySelector('.decision-gate-actions button:not(.primary)')!);
+    const { container } = renderCards({ gates: [cappedGate], onResolveGate: vi.fn() });
+    fireEvent.click(container.querySelector('.team-card-actions button:not(.primary)')!);
     // Abierto e intacto: nada que descartar, el botón sigue.
-    expect(container.querySelector('.decision-gate-actions button.primary')).not.toBeNull();
+    expect(container.querySelector('.team-card-actions button.primary')).not.toBeNull();
 
     fireEvent.change(container.querySelector('input[type="number"]') as HTMLInputElement, { target: { value: '4' } });
 
-    expect(container.querySelector('.decision-gate-actions button.primary')).toBeNull();
+    expect(container.querySelector('.team-card-actions button.primary')).toBeNull();
   });
 });
 

@@ -9,14 +9,14 @@ vi.mock('./i18n', async (importOriginal) => {
 
 const { createElement } = await import('react');
 const { render, within } = await import('@testing-library/react');
-const { DecisionsView } = await import('./DecisionsView');
-import type { DecisionsViewProps } from './DecisionsView';
-import type { CoordinationGateView, CoordinationProposal, Work } from '../shared/contracts';
+const { TeamCards } = await import('./coordination/TeamCards');
+import type { TeamCardsProps } from './coordination/TeamCards';
+import type { CoordinationGateView, CoordinationProposal, CoordinationRunView, Work } from '../shared/contracts';
 
 /**
  * Ronda 8 (M4): LA MISMA REGLA EN LAS CINCO TARJETAS.
  *
- * `DecisionsView` renderiza cinco tarjetas de decisión —plan, presupuesto,
+ * `TeamCards` renderiza cinco tarjetas de decisión —plan, presupuesto,
  * despacho, propuesta legible y propuesta ilegible— y sólo UNA (la propuesta
  * legible, por N10) escondía sus botones cuando no había `onResolveGate`. Las
  * otras cuatro ofrecían "Aprobar" y "Rechazar" que no hacían absolutamente
@@ -43,18 +43,26 @@ const proposal = (patch: Partial<CoordinationProposal> = {}): CoordinationPropos
   ...patch,
 });
 
-const base: DecisionsViewProps = {
-  work: work(), decisions: [], team: [], roles: [], permissions: 'ask', handoffs: [],
-  decisionAuthority: 'suggest', draft: '', busy: false, formatDate: () => 'hace un rato',
-  titlesByWork: { w1: 'Lanzamiento' },
-  onDraftChange: () => {}, onAdd: () => {}, onApprove: () => {}, onEditApprove: () => {},
-  onReject: () => {}, onArchive: () => {}, onAuthorityChange: () => {},
+
+/**
+ * Las tarjetas se mudaron al chat del miembro al que le corresponden (B1.1).
+ * Un gate es una conversación con el COORDINADOR, así que el run de este
+ * archivo lo nombra y el chat que se monta es el suyo. Las aserciones son las
+ * mismas: lo que cambió es la casa, no la regla.
+ */
+const runView: CoordinationRunView = {
+  id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'coord',
+  budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
+  suspendReason: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
+  tasksDone: 0, tasksFailed: 0, tasksPending: 0,
 };
+
+const base: TeamCardsProps = { memberId: 'coord', coordinationRun: runView, team: [], roles: [], formatDate: () => 'hace un rato' };
 
 beforeEach(() => { ui.locale = 'es-AR'; });
 
-function renderGate(gate: CoordinationGateView, onResolveGate?: DecisionsViewProps['onResolveGate']) {
-  return render(createElement(DecisionsView, { ...base, gates: [gate], onResolveGate }));
+function renderGate(gate: CoordinationGateView, onResolveGate?: TeamCardsProps['onResolveGate']) {
+  return render(createElement(TeamCards, { ...base, gates: [gate], onResolveGate }));
 }
 
 const gate = (patch: Partial<CoordinationGateView>): CoordinationGateView => ({
@@ -63,11 +71,11 @@ const gate = (patch: Partial<CoordinationGateView>): CoordinationGateView => ({
 
 /** Las cinco, cada una con su gate y su selector. */
 const CARDS = [
-  { name: 'plan', gate: gate({ kind: 'plan' }), selector: '.decision-gate-plan' },
-  { name: 'presupuesto', gate: gate({ kind: 'budget' }), selector: '.decision-gate-budget' },
-  { name: 'despacho', gate: gate({ kind: 'dispatch', prompt: 'Escribí los posts' }), selector: '.decision-gate-dispatch' },
-  { name: 'propuesta legible', gate: gate({ kind: 'proposal', proposalJson: JSON.stringify(proposal()) }), selector: '.decision-gate-proposal' },
-  { name: 'propuesta ilegible', gate: gate({ kind: 'proposal', proposalJson: '{ esto no es json' }), selector: '.decision-gate-proposal' },
+  { name: 'plan', gate: gate({ kind: 'plan' }), selector: '.team-card-plan' },
+  { name: 'presupuesto', gate: gate({ kind: 'budget' }), selector: '.team-card-budget' },
+  { name: 'despacho', gate: gate({ kind: 'dispatch', prompt: 'Escribí los posts' }), selector: '.team-card-dispatch' },
+  { name: 'propuesta legible', gate: gate({ kind: 'proposal', proposalJson: JSON.stringify(proposal()) }), selector: '.team-card-proposal' },
+  { name: 'propuesta ilegible', gate: gate({ kind: 'proposal', proposalJson: '{ esto no es json' }), selector: '.team-card-proposal' },
 ] as const;
 
 describe('M4: sin handler, las cinco tarjetas son de sólo lectura y lo dicen', () => {
@@ -90,7 +98,7 @@ describe('M4: sin handler, las cinco tarjetas son de sólo lectura y lo dicen', 
   it.each(CARDS.map((c) => [c.name, c] as const))('%s: sin `onResolveGate` se explica que es de sólo lectura', (_name, card) => {
     const { container } = renderGate(card.gate);
     const el = container.querySelector(card.selector)!;
-    expect(el.querySelector('.decision-gate-readonly')).not.toBeNull();
+    expect(el.querySelector('.team-card-readonly')).not.toBeNull();
     expect(el.textContent).toContain('sólo lectura');
   });
 
@@ -98,13 +106,13 @@ describe('M4: sin handler, las cinco tarjetas son de sólo lectura y lo dicen', 
     const { container } = renderGate(card.gate, vi.fn());
     const el = container.querySelector(card.selector)! as HTMLElement;
     expect(within(el).getByRole('button', { name: 'Rechazar' })).toBeTruthy();
-    expect(el.querySelector('.decision-gate-readonly')).toBeNull();
+    expect(el.querySelector('.team-card-readonly')).toBeNull();
   });
 
   it('la nota existe en inglés también', () => {
     ui.locale = 'en-US';
     const { container } = renderGate(CARDS[0].gate);
-    const note = container.querySelector('.decision-gate-readonly')!;
+    const note = container.querySelector('.team-card-readonly')!;
     expect(note.textContent?.trim().length).toBeGreaterThan(0);
     expect(note.textContent).not.toContain('sólo lectura');
   });
