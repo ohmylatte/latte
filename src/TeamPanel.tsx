@@ -275,6 +275,7 @@ export function TeamPanel(props: TeamPanelProps) {
       coordinationGates={props.coordinationGates} coordinationTasks={props.coordinationTasks}
       formatTime={props.formatTime} onNewRequest={openCoordinatorChat} coordinationSupport={props.coordinationSupport}
       onAnswerAsk={props.chatCoordination?.onAnswerAsk} now={props.now}
+      onAddMember={isDesktop && !busy ? () => setAdding(true) : undefined}
       formatDate={props.formatDate} coordinationAuthority={props.coordinationAuthority}
       onSetCoordinationAuthority={props.onSetCoordinationAuthority} coordinationBudget={props.coordinationBudget}
       onSetCoordinationBudget={props.onSetCoordinationBudget} coordinatorGrant={props.coordinatorGrant} />}

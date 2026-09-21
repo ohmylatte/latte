@@ -1098,3 +1098,29 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .coord-ask-form{display:flex;gap:8px;align-items:center;min-width:0}
 .coord-ask-input{flex:1 1 auto;min-width:0;height:30px}
 .coord-ask-send{flex-shrink:0}
+/* C5: el vacio con proposito. O muestra algo entero, o dice que hacer. */
+.coord-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:30px 24px;min-width:0}
+.coord-empty-icon{color:var(--muted-soft);stroke-width:1.1}
+.coord-empty-title{font-family:var(--serif);font-size:var(--text-2xl);line-height:1.2;margin:0;max-width:420px}
+.coord-empty-body{color:var(--muted);font-size:var(--text-md);line-height:1.6;margin:0;max-width:460px}
+/* El ejemplo se ve como un ejemplo: punteado e italica, nunca como un campo. */
+.coord-empty-example{margin:0;font-style:italic;color:var(--muted);border:1px dashed var(--line-strong);border-radius:var(--radius-pill);padding:6px 14px;font-size:var(--text-sm)}
+.coord-empty-action{margin-top:4px}
+/* La fila de "Sumar un rol": la misma anatomia, con el avatar punteado. */
+.coord-add-row .coord-av{background:transparent;border:1px dashed var(--line-strong);color:var(--muted)}
+.coord-add{color:var(--muted)}
+/* C5: lo que el equipo produjo. Resumenes, porque resumenes es lo que hay. */
+.coord-output{display:flex;flex-direction:column;gap:12px;min-width:0;flex:1}
+.coord-output-head{display:flex;align-items:center;gap:12px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.coord-output-title{flex:1 1 auto;min-width:0;font-family:var(--serif);font-size:var(--text-2xl);line-height:1.2}
+.coord-output-log{flex-shrink:0}
+.coord-output-empty{margin:0;color:var(--muted)}
+.coord-output-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.coord-output-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 6px;border-radius:var(--radius-sm);min-width:0}
+.coord-output-row:hover{background:var(--paper-raised)}
+.coord-output-row.is-failed .coord-output-summary{color:var(--danger)}
+.coord-output-summary{flex:1 1 220px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.coord-output-files{flex-basis:100%;padding-left:24px}
+.coord-log{list-style:none;margin:0;padding:8px 0 0;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:4px}
+.coord-log-row{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--text-sm);color:var(--muted)}
+.coord-log-text{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

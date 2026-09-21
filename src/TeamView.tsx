@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { translate as t } from './i18n';
-import { MessageSquare, Users } from 'lucide-react';
+import { MessageSquare, UserPlus, Users } from 'lucide-react';
 import type {
   AgentRole, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
   CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport,
@@ -10,7 +10,8 @@ import { describeCoordinationSupport, describeMemorySupport, memberCoordinationS
 import { inboxEvents, pendingForMember } from './coordination/inbox';
 import { RunHeader } from './coordination/RunHeader';
 import { MemberDetail } from './coordination/MemberDetail';
-import { CoordRow } from './coordination/anatomy';
+import { CoordAvatar, CoordRow } from './coordination/anatomy';
+import { EmptyTeam, RunOutput } from './coordination/TeamOutcome';
 import { memberSignal } from './coordination/member-line';
 import { hourOf } from './coordination/time';
 import { titleOf } from './coordination/text';
@@ -68,8 +69,10 @@ export interface TeamViewProps {
   onAnswerAsk?: (askId: string, answer: string) => void;
   /** C4: el instante contra el que se cuenta "vence en N min". Inyectable para los tests. */
   now?: number;
-  /** C5: empezar otro pedido cuando el run terminó — abre el chat del coordinador. */
+  /** C5: empezar otro pedido, o pedir el primero: abre el chat del coordinador. */
   onNewRequest?: () => void;
+  /** C5: abre el flujo de alta que ya existe. Sin handler, la fila no se ofrece. */
+  onAddMember?: () => void;
   coordinationSupport?: readonly CoordinationMemberSupport[];
   formatDate?: (value: string) => string;
   /** B3.1: la configuración del equipo, que bajó del panel a esta vista. */
@@ -117,6 +120,15 @@ export function TeamView(props: TeamViewProps) {
    */
   const taskTitle = (taskId: string) => titleOf((props.coordinationTasks ?? []).find((task) => task.id === taskId)?.spec);
   const thread = selected ? inboxEvents(input, selected) : [];
+  const coordinatorName = run?.coordinatorMemberId
+    ? memberDisplayName(run.coordinatorMemberId, team, null, roles)
+    : (props.coordinatorGrant ? memberDisplayName(props.coordinatorGrant, team, null, roles) : '');
+  /**
+   * C5: el vacio manda MIENTRAS la persona no haya abierto a nadie. Abrir un
+   * miembro es una decision suya, y taparsela con la pantalla de bienvenida
+   * seria decidir por ella.
+   */
+  const openedMember = Boolean(props.selectedMemberId && team.some((m) => m.id === props.selectedMemberId));
 
   if (!work || team.length === 0) {
     return <div className="team-view team-view-empty">
@@ -166,12 +178,26 @@ export function TeamView(props: TeamViewProps) {
             />
           </li>;
         })}
+        {/* C5: SUMAR UN ROL ES UNA FILA MÁS, con la misma anatomía y el avatar
+            punteado. Abre el flujo de alta que ya existe; sin handler no se
+            ofrece un botón que no abre nada. */}
+        {props.onAddMember && <li className="team-inbox-row coord-add-row">
+          <button type="button" className="coord-row coord-add" onClick={props.onAddMember}>
+            <CoordAvatar name="" dot="none"><UserPlus size={14} /></CoordAvatar>
+            <span className="coord-row-text"><span className="coord-row-name">{t('coord.empty.addRole')}</span></span>
+          </button>
+        </li>}
       </ul>
       {/* C3: EL DETALLE DE UN MIEMBRO ES UNA LÍNEA DE TIEMPO, NO UNA LISTA DE
           RENGLONES IGUALES. El ícono hace el sustantivo, la palabra agrega lo
-          específico, y lo último va arriba. */}
+          específico, y lo último va arriba.
+
+          C5: y el panel derecho cambia con el estado del pedido. Sin run es el
+          vacío con propósito; con el run terminado, lo que el equipo dejó. */}
       <div className="team-view-thread">
-        {selected && <MemberDetail memberId={selected} team={team} roles={roles} run={run}
+        {!run && !openedMember && <EmptyTeam coordinatorName={coordinatorName} onAsk={props.onNewRequest} />}
+        {run && !run.active && <RunOutput run={run} log={props.coordinationLog} team={team} roles={roles} formatTime={hour} />}
+        {(run?.active || openedMember) && selected && <MemberDetail memberId={selected} team={team} roles={roles} run={run}
           events={thread} tasks={props.coordinationTasks}
           signal={memberSignal({ ...input, team, roles, run, taskTitle }, selected)}
           formatTime={hour} onOpenChat={props.onOpenChat}
