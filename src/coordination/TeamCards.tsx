@@ -612,6 +612,10 @@ export function TeamCardsCollapsible(props: TeamCardsProps & { initiallyExpanded
   const mine = routing.gates.length + routing.asks.length;
   const [open, setOpen] = useState(Boolean(props.initiallyExpanded));
   useEffect(() => { if (mine === 0) setOpen(false); }, [mine === 0]);
+  // B3.5: el aviso puede llegar con el chat YA montado -- la persona ya estaba
+  // en la conversacion del coordinador cuando toco 'te espera una aprobacion'.
+  // Sin esto, ese camino no desplegaba nada.
+  useEffect(() => { if (props.initiallyExpanded) setOpen(true); }, [props.initiallyExpanded]);
   if (mine === 0) return <TeamCards {...props} />;
   return <>
     <button type="button" className={'team-cards-collapsed' + (open ? ' is-open' : '')} aria-expanded={open} onClick={() => setOpen((v) => !v)}>

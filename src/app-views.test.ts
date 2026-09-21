@@ -128,6 +128,37 @@ describe('useCoordination wiring adds no new VIEWS entry (task 7.11)', () => {
   });
 });
 
+/**
+ * B3.5: LLEGAR DESDE UN PENDIENTE ES PEDIR VER ESE PENDIENTE.
+ *
+ * `openWorkCoordination` (la fila "te espera una aprobacion" de Inicio, la tira
+ * lateral) abre la conversacion del coordinador justamente para que la persona
+ * apruebe. Desde B3.2 la tarjeta nace plegada; dejarsela plegada JUSTO en este
+ * camino seria cobrarle un clic mas por lo que ya pidio. En cualquier otra
+ * navegacion queda plegada, que es el default.
+ */
+describe('B3.5: la navegacion desde un pendiente despliega la tarjeta', () => {
+  it('openWorkCoordination marca que se viene de un pendiente', () => {
+    const fn = app.match(/const openWorkCoordination = \(workId: string\) => \{[\s\S]{0,600}?\};/);
+    expect(fn, 'no se encontro openWorkCoordination').not.toBeNull();
+    expect(fn![0]).toContain('setCardsFromPending(true)');
+  });
+
+  it('la tira en OTRA marca marca lo mismo', () => {
+    expect(app).toMatch(/openActiveRun[\s\S]{0,900}setCardsFromPending\(true\)/);
+  });
+
+  it('el chat del miembro recibe el aviso por `initiallyExpanded`', () => {
+    expect(app).toMatch(/chatCoordination=\{\{[\s\S]{0,800}initiallyExpanded: cardsFromPending/);
+  });
+
+  it('y elegir un miembro a mano lo apaga: ese clic no viene de ningun pendiente', () => {
+    const fn = app.match(/const selectMember = \(memberId: string\) => \{[\s\S]{0,400}?\};/);
+    expect(fn, 'no se encontro selectMember').not.toBeNull();
+    expect(fn![0]).toContain('setCardsFromPending(false)');
+  });
+});
+
 describe('orphaned context assets', () => {
   it('uses the context.* keys the restored view was meant to show', () => {
     for (const key of ['context.ask', 'context.ask.needWork', 'context.proposal', 'context.accept', 'context.editAccept', 'context.reject', 'context.diff', 'context.mode.replace', 'context.mode.append', 'context.changedSince', 'context.acceptStale']) {

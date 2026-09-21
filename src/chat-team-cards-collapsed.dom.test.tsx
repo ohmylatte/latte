@@ -110,6 +110,16 @@ describe('B3.2: la línea plegada', () => {
     expect(container.querySelector('.team-cards-collapsed')!.getAttribute('aria-expanded')).toBe('true');
   });
 
+  it('y el aviso llega tambien con el chat YA montado', () => {
+    const props = { coordinationRun: run(sessionId), gates: [gate('g1', 'dispatch')], onResolveGate: () => {} };
+    const { container, rerender } = render(
+      <ChatPane session={session()} onStop={() => undefined} onError={() => undefined} coordination={props as never} />,
+    );
+    expect(container.querySelector('[data-gate-kind="dispatch"]')).toBeNull();
+    rerender(<ChatPane session={session()} onStop={() => undefined} onError={() => undefined} coordination={{ ...props, initiallyExpanded: true } as never} />);
+    expect(container.querySelector('[data-gate-kind="dispatch"]')).not.toBeNull();
+  });
+
   it('sin pendientes para este miembro y sin nada en otro lado, no se renderiza NADA', () => {
     const { container } = mount({ coordinationRun: run(sessionId), gates: [], openAsks: [], onResolveGate: () => {} });
     expect(container.querySelector('.team-cards-collapsed')).toBeNull();

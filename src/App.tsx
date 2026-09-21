@@ -742,11 +742,22 @@ export function App() {
    * a ese miembro" y el efecto de abajo lo cumple. Sin coordinador no se elige
    * a nadie -- el Trabajo se abre igual, en su conversacion.
    */
+  /**
+   * B3.5: VENGO DE UN PENDIENTE.
+   *
+   * Desde B3.2 las tarjetas del chat nacen plegadas. Pero cuando la persona
+   * llego hasta aca por 'te espera una aprobacion' o por la tira, ya pidio ver
+   * ese pendiente: dejarle la linea plegada seria cobrarle un clic mas por lo
+   * que ya pidio. Elegir un miembro a mano lo apaga -- ese clic no viene de
+   * ningun pendiente.
+   */
+  const [cardsFromPending, setCardsFromPending] = useState(false);
   const wantCoordinatorRef = useRef<string | null>(null);
   const openWorkCoordination = (workId: string) => {
     const target = works.find((w) => w.id === workId);
     if (!target) return;
     wantCoordinatorRef.current = workId;
+    setCardsFromPending(true);
     selectWork(target, 'brief', 'conversation');
   };
   /**
@@ -766,6 +777,7 @@ export function App() {
     pendingWorkRef.current = run.workId;
     pendingViewRef.current = 'brief';
     wantCoordinatorRef.current = run.workId;
+    setCardsFromPending(true);
     setBrand(target);
     setContext(target.context);
     setMemory(''); setMemoryAvailable(false); memoryGeneration.current++;
@@ -1021,7 +1033,7 @@ export function App() {
   const warnUnsaved = () => { if (dirty) setNotice(t('ui.auto.008')); };
   const start = async () => { if (!work || starting || session) return; setStarting(true); setError(''); try { warnUnsaved(); const s = await api.startAgent(work.id, provider); setSession(s); setNotice(t('ui.auto.009')); } catch (e) { setError(displayError(e)); } finally { setStarting(false); } };
   // Team actions. A member's chat id is its member id, so the store state follows it through pause and resume.
-  const selectMember = (memberId: string) => { if (work) setSelectedMembers(prev => ({ ...prev, [work.id]: memberId })); };
+  const selectMember = (memberId: string) => { setCardsFromPending(false); if (work) setSelectedMembers(prev => ({ ...prev, [work.id]: memberId })); };
   const openSession = async (open: () => Promise<ChatSession>, workId: string) => {
     setStartingChat(true); setError('');
     try { warnUnsaved(); const s = await open(); setChats(prev => ({ ...prev, [s.id]: s })); if (s.resumed) await chatStore.sync(s.id); setSelectedMembers(prev => ({ ...prev, [workId]: s.id })); await loadTeam(workId); setNotice(s.resumed ? t('app.resumed', { name: s.roleName }) : t('ui.auto.341', { p0: s.roleName })); return s; }
@@ -1258,7 +1270,7 @@ export function App() {
       <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
     </main>
     <aside className="agent-panel">{focusChat && (error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}<button type="button" className={'panel-resizer' + (dragging ? ' dragging' : '')} aria-label={t('ui.auto.066')} title={t('ui.auto.067')} onPointerDown={startResize} />
-      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} coordinationLog={work ? coordination.log : undefined} coordinationMessages={work ? coordination.messages : undefined} coordinationAsks={work ? coordination.openAsks : undefined} coordinationHires={work ? coordination.hires : undefined} coordinationGates={work ? coordination.gates : undefined} formatDate={date} coordinationSupport={work ? coordination.support : undefined} coordinationAuthority={work ? coordination.authority : undefined} onSetCoordinationAuthority={changeCoordinationAuthority} coordinationBudget={work ? coordination.budget : undefined} onSetCoordinationBudget={coordination.setBudget} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} chatCoordination={{ coordinationRun: work ? coordination.run : undefined, gates: work ? coordination.gates : undefined, openAsks: work ? coordination.openAsks : undefined, roles, team, formatDate: date, onResolveGate: coordination.resolveGate, onAnswerAsk: coordination.answerAsk, coordinationPending: coordination.pending, onSelectMember: selectMember }} />
+      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} coordinationLog={work ? coordination.log : undefined} coordinationMessages={work ? coordination.messages : undefined} coordinationAsks={work ? coordination.openAsks : undefined} coordinationHires={work ? coordination.hires : undefined} coordinationGates={work ? coordination.gates : undefined} formatDate={date} coordinationSupport={work ? coordination.support : undefined} coordinationAuthority={work ? coordination.authority : undefined} onSetCoordinationAuthority={changeCoordinationAuthority} coordinationBudget={work ? coordination.budget : undefined} onSetCoordinationBudget={coordination.setBudget} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} chatCoordination={{ coordinationRun: work ? coordination.run : undefined, gates: work ? coordination.gates : undefined, openAsks: work ? coordination.openAsks : undefined, roles, team, formatDate: date, onResolveGate: coordination.resolveGate, onAnswerAsk: coordination.answerAsk, coordinationPending: coordination.pending, onSelectMember: selectMember, initiallyExpanded: cardsFromPending }} />
       <details className="active-context">
         <summary><Bookmark size={12} />{t('ui.auto.035')}<span>{[brand?.context ? 'marca' : null, work ? 'trabajo' : null, decisions.length ? `${decisions.length} decisiones` : null].filter(Boolean).join(' · ') || t('ui.auto.068')}</span></summary>
         <div className="active-context-body">
