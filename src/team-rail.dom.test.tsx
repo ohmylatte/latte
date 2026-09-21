@@ -68,11 +68,18 @@ describe('B3.1: el toggle de la columna', () => {
     expect(container.querySelector('.team-tab-strip')).not.toBeNull();
   });
 
-  it('vive en la cabecera, junto a los controles del run', () => {
+  /**
+   * C7: la cabecera del rail se queda SOLO con el control segmentado. Las dos
+   * lineas de contadores del run se fueron al encabezado del pedido, en el
+   * modo Equipo: eran el deposito de texto compitiendo por el alto con lo
+   * unico que la columna del chat tiene que hacer.
+   */
+  it('la cabecera lleva el control segmentado, y ningun contador del run', () => {
     const { container } = mount({ coordinationRun: run() });
     const head = container.querySelector('.team-rail-head')!;
-    expect(head.querySelector('.team-coordination-controls')).not.toBeNull();
     expect(head.querySelector('.team-rail-modes')).not.toBeNull();
+    expect(head.querySelector('.team-coordination-controls')).toBeNull();
+    expect(container.querySelector('.coord-head')).toBeNull();
   });
 
   it('el modo Equipo REEMPLAZA la conversación: nunca los dos a la vez', () => {

@@ -251,7 +251,20 @@ export function TeamPanel(props: TeamPanelProps) {
           una encima de la otra: dos "Cancelar equipo" distintos para el mismo
           run es una pantalla que no dice cual es cual. En modo conversacion
           `TeamView` no se dibuja, asi que ahi esta es la unica. */}
-      {rail === 'chat' && <CoordinationRunControls run={props.coordinationRun ?? null} busy={busy} pending={props.pending}
+      {/* C7: EL ESTADO DEL RUN VIVE EN EL MODO EQUIPO, NO ACA.
+
+          Las dos lineas de contadores arriba de la conversacion eran el
+          deposito de texto que el rediseno saca: siete numeros y tres botones
+          con la palabra escrita al lado del icono, compitiendo por el alto con
+          lo unico que esa columna tiene que hacer. El encabezado del pedido
+          --titulo, barra, presupuesto, salidas-- vive en el modo Equipo, a un
+          clic del segmento de al lado.
+
+          La UNICA excepcion es un equipo VACIO: sin miembros no hay modo
+          Equipo al que ir (el toggle no se dibuja y la vista cae en su
+          pantalla vacia), asi que un run que todavia esta planificando se
+          quedaria sin ninguna salida. Ahi, y solo ahi, siguen aca. */}
+      {rail === 'chat' && team.length === 0 && <CoordinationRunControls run={props.coordinationRun ?? null} busy={busy} pending={props.pending}
         onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination} />}
       {work && team.length > 0 && <div className="team-rail-modes" role="group" aria-label={t('team.rail.group')}>
         <button type="button" className={'team-rail-chat' + (rail === 'chat' ? ' selected' : '')} aria-pressed={rail === 'chat'} onClick={() => setRail('chat')}><MessageSquare size={13} />{t('team.rail.chat')}</button>
@@ -266,10 +279,17 @@ export function TeamPanel(props: TeamPanelProps) {
       {handoff.known && <button className="primary" disabled={busy} onClick={() => void (bridgeHandoffs ? props.onAcceptHandoffAsTask!(handoff) : props.onAcceptHandoff(handoff))}>{bridgeHandoffs ? t('handoff.dispatchAsTask') : t('ui.auto.267')}</button>}
       <button disabled={busy} onClick={() => void props.onDismissHandoff(handoff)}>{t('ui.auto.379')}</button>
     </div>)}
+    {/* C7: las salidas del run, CABLEADAS. TeamView las declaraba desde B3.1 y
+        nadie se las pasaba: mientras los controles vivieron tambien en la
+        cabecera del chat eso no se notaba, pero el dia que el encabezado del
+        pedido paso a ser el unico lugar donde estan, pausar y cancelar
+        habrian sido dos botones que no hacian nada. */}
     {rail === 'team' && <TeamView work={work} team={team} roles={roles} mode={mode} busy={busy}
       selectedMemberId={threadMember} onSelectMember={setThreadMember}
       onOpenChat={(memberId) => { props.onSelect(memberId); setRail('chat'); }}
       coordinationRun={props.coordinationRun} pending={props.pending}
+      onPauseCoordination={props.onPauseCoordination} onResumeCoordination={props.onResumeCoordination}
+      onCancelCoordination={props.onCancelCoordination}
       coordinationLog={props.coordinationLog} coordinationMessages={props.coordinationMessages}
       coordinationAsks={props.coordinationAsks} coordinationHires={props.coordinationHires}
       coordinationGates={props.coordinationGates} coordinationTasks={props.coordinationTasks}

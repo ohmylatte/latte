@@ -239,8 +239,13 @@ describe('TeamPanel: un equipo pausado se puede reanudar o cancelar (juicio #2)'
     permissions: 'ask' as const, permissionBusy: false, onPermissions: () => undefined,
   };
 
-  const mount = (extra: Record<string, unknown>) =>
-    render(<I18nProvider><TeamPanel {...teamProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
+  /** C7: las salidas del run viven en el modo Equipo: el mount entra ahi. */
+  const mount = (extra: Record<string, unknown>) => {
+    const view = render(<I18nProvider><TeamPanel {...teamProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
+    const toTeam = view.container.querySelector('.team-rail-team');
+    if (toTeam) fireEvent.click(toTeam);
+    return view;
+  };
 
   it('mientras corre sólo ofrece pausar', () => {
     // Un equipo (aunque vacío de miembros no renderiza la barra), así que se
@@ -370,8 +375,13 @@ describe('TeamPanel: los controles de pausar/reanudar/cancelar honran `pending` 
     onAttachFiles: async () => [], untracked: [], onAdoptFile: () => undefined,
     permissions: 'ask' as const, permissionBusy: false, onPermissions: () => undefined,
   };
-  const mount = (extra: Record<string, unknown>) =>
-    render(<I18nProvider><TeamPanel {...teamProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
+  /** C7: las salidas del run viven en el modo Equipo: el mount entra ahi. */
+  const mount = (extra: Record<string, unknown>) => {
+    const view = render(<I18nProvider><TeamPanel {...teamProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
+    const toTeam = view.container.querySelector('.team-rail-team');
+    if (toTeam) fireEvent.click(toTeam);
+    return view;
+  };
 
   it('con `pending["run:run1"]` en true, "Pausar equipo" queda deshabilitado aunque `busy` sea false', () => {
     const { container } = mount({ coordinationRun: run(), onPauseCoordination: vi.fn(), pending: { 'run:run1': true } });

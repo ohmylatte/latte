@@ -105,14 +105,19 @@ export function RunHeader(props: RunHeaderProps) {
   const used = done + failed;
   const max = run.budget?.maxDispatches ?? null;
   const finished = !run.active;
+  const cancelled = run.status === 'cancelled';
 
   return <div className="coord-head">
     <div className="coord-head-top">
-      {finished && <span className="coord-tic coord-tic-ok coord-tic-lg"><Flag size={16} /></span>}
+      {/* C7: TERMINADO Y CANCELADO SON DOS FINALES DISTINTOS.
+          Un run cancelado no "termino": lo cortaron. Decirle lo mismo a los dos
+          --bandera verde incluida-- le mentiria a la persona sobre lo que
+          paso con su pedido. */}
+      {finished && <span className={'coord-tic coord-tic-lg ' + (cancelled ? 'coord-tic-bad' : 'coord-tic-ok')} data-run-status={run.status}>{cancelled ? <CircleX size={16} /> : <Flag size={16} />}</span>}
       <div className="coord-head-title">
         <div className="coord-head-name">{props.title}</div>
         <div className="coord-head-sub">{finished
-          ? t('coord.done.at', { time: time(run.updatedAt) })
+          ? (cancelled ? t('coord.cancelled.at', { time: time(run.updatedAt) }) : t('coord.done.at', { time: time(run.updatedAt) }))
           : props.coordinatorName
             ? t('coord.run.coordinates', { name: props.coordinatorName, time: time(run.createdAt) })
             : ''}</div>

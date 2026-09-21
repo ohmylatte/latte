@@ -55,10 +55,16 @@ const mount = () => render(<I18nProvider><TeamPanel {...panelProps()} /></I18nPr
 const openTeam = (container: HTMLElement) => { fireEvent.click(container.querySelector('.team-rail-team')!); };
 
 describe('B5.4 + C1: el estado del run se dibuja una sola vez', () => {
-  it('en modo conversación hay exactamente un control del run, y ningún encabezado', () => {
+  /**
+   * C7: en modo conversación no hay NI controles NI encabezado. Las dos líneas
+   * de contadores eran el depósito de texto que el rediseño saca, y el
+   * encabezado del pedido vive donde está el equipo, a un segmento de acá.
+   */
+  it('en modo conversación no hay ni contadores ni encabezado del run', () => {
     const { container } = mount();
-    expect(container.querySelectorAll('.team-coordination-controls')).toHaveLength(1);
+    expect(container.querySelectorAll('.team-coordination-controls')).toHaveLength(0);
     expect(container.querySelectorAll('.coord-head')).toHaveLength(0);
+    expect(container.querySelector('.team-rail-modes')).not.toBeNull();
   });
 
   it('en modo Equipo hay un encabezado, ningún contador viejo y una sola salida', () => {
