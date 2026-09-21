@@ -258,7 +258,7 @@ it('keeps the skill out of the per-request base prompt, which has its own budget
     // base.md is charged on every message and stays under its own limit.
     const base = fs.readFileSync(path.join(process.cwd(), 'packs', 'marketing-core', 'base.md'), 'utf8');
     expect(base).not.toContain('Prueba de portabilidad');
-    expect(base.length).toBeLessThan(6_000);
+    expect(base.length).toBeLessThan(7_500);
     const skill = fs.readFileSync(path.join(process.cwd(), 'packs', 'marketing-core', 'skills', 'writing.md'), 'utf8');
     expect(skill.length).toBeGreaterThan(1_000);
   } finally { b.cleanup(); }

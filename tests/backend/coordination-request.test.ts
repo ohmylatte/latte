@@ -104,9 +104,28 @@ describe('latte_request_coordination: the sentence becomes a gate', () => {
   describe('the single-choke-point invariant survives the new entry', () => {
     const engineSource = fs.readFileSync(path.resolve(__dirname, '../../electron/coordination/engine.ts'), 'utf8');
 
-    it('hub.send appears exactly once in engine.ts (the real call site, this.deps.hub.send — doc-comment mentions of hub.send() do not count)', () => {
+    /**
+     * A1: el invariante es sobre el DESPACHO, y sigue en pie.
+     *
+     * `this.deps.hub.send` pasó de uno a tres sitios, y los dos nuevos no
+     * despachan nada: son avisos a un miembro (la aprobación de su plan, la
+     * respuesta a su pregunta) y viven ENTEROS dentro de la entrega de avisos,
+     * que no escribe una sola fila de `coordination_dispatch`. Se afirma
+     * dónde viven, no sólo cuántos son: un `hub.send` nuevo en cualquier otro
+     * lado vuelve a romper este test.
+     */
+    it('hub.send tiene exactamente tres sitios en engine.ts: el único despacho, y los dos de la entrega de avisos', () => {
       const matches = engineSource.match(/\bthis\.deps\.hub\.send\(/g) ?? [];
-      expect(matches).toHaveLength(1);
+      expect(matches).toHaveLength(3);
+
+      const noticesStart = engineSource.indexOf('private async deliverNotice(');
+      const noticesEnd = engineSource.indexOf('private assertRunMutable(');
+      expect(noticesStart).toBeGreaterThan(-1);
+      expect(noticesEnd).toBeGreaterThan(noticesStart);
+      const notices = engineSource.slice(noticesStart, noticesEnd);
+      const elsewhere = engineSource.slice(0, noticesStart) + engineSource.slice(noticesEnd);
+      expect(notices.match(/\bthis\.deps\.hub\.send\(/g) ?? []).toHaveLength(2);
+      expect(elsewhere.match(/\bthis\.deps\.hub\.send\(/g) ?? []).toHaveLength(1); // el despacho, el de siempre
     });
 
     it("requestCoordination's own body calls none of hub.send / insertCoordinationDispatch / startDispatch", () => {

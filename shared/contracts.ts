@@ -1011,6 +1011,24 @@ export interface CoordinationMemberSupport {
  * A member hired for a run, as the bitácora shows it. `roleName` is resolved
  * by the backend: the surface never renders a raw id.
  */
+/**
+ * Un mensaje de un miembro a otro (`latte_message`), con los dos extremos
+ * resueltos a `memberId` + `roleId`: un id pelado no le dice nada a nadie.
+ *
+ * `from: null` es un mensaje que escribió Latte, no un miembro. `readAt` es
+ * cuándo el destinatario lo consumió con `latte_check`; `null` es "todavía no
+ * lo leyó", que es información, no un hueco.
+ */
+export interface CoordinationMessageView {
+  id: string;
+  runId: string;
+  from: { memberId: string; roleId: string } | null;
+  to: { memberId: string; roleId: string };
+  text: string;
+  readAt: string | null;
+  createdAt: string;
+}
+
 export interface CoordinationHireView {
   memberId: string;
   roleId: string;
@@ -1444,6 +1462,14 @@ export interface LatteAPI {
    * falls over because one stored value went bad.
    */
   listCoordinationHires(runId: string): Promise<CoordinationHireView[]>;
+  /**
+   * Lo que los miembros se escribieron entre sí (`latte_message`) en el run
+   * activo del Trabajo, o en el último terminado si no hay ninguno vivo — el
+   * mismo criterio que `getCoordinationRun`, para que la lectura no se vacíe
+   * en cuanto el equipo termina. Oldest first. Sin ningún run, lista vacía:
+   * "todavía no pasó nada" no es un error.
+   */
+  listCoordinationMessages(workId: string): Promise<CoordinationMessageView[]>;
   /** Fires on a run/task/dispatch/gate change, so the renderer can route an event from a Brand the person is not currently looking at (task 6.37). */
   onCoordinationEvent(callback: (event: CoordinationEvent) => void): () => void;
 }

@@ -194,7 +194,12 @@ describe('conversational entry: latte_request_coordination -> proposal gate -> a
     const dispatch = await tools.latte_dispatch(coordinatorGrant, { taskId: readyTask.id });
     expect(dispatch.ok).toBe(true);
     expect(dispatch.data).toMatchObject({ status: 'dispatched' });
-    expect(b.hub.send).toHaveBeenCalledTimes(1);
+    // A1: DOS `hub.send`, y sólo UNO es un despacho. El otro es el aviso que
+    // la aprobación le manda al coordinador con las tareas que acaba de crear:
+    // sin él, el agente no se entera de que aprobaron y recrea el plan entero.
+    const sends = (b.hub.send as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(sends.filter((c) => String(c[1]).startsWith('Your plan was approved'))).toHaveLength(1);
+    expect(sends.filter((c) => !String(c[1]).startsWith('Your plan was '))).toHaveLength(1);
 
     // Zero real spawns: the fake runner/pty from `makeBackend()` was never touched.
     expect(await b.service.listCoordinationGates(runAfter!.id)).toEqual([]);

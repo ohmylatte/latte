@@ -44,10 +44,17 @@ describe('latte_check dice la verdad sobre lo que hace (juicio #6)', () => {
   // Ronda 4, juicio 13b: `/empty|vac/` también matchea "vacuum" y "vacation".
   // Una descripción que dijera cualquier otra cosa con esas letras pasaba el
   // guard sin decir NADA sobre el buzón. Se afirma la frase de verdad.
-  it('la descripción dice que hoy no hay productor de mensajes, en vez de prometer un buzón', () => {
-    expect(check().description).toContain('Latte has no producer of coordination messages yet');
-    expect(check().description).toContain('always returns an empty list');
-    expect(check().description).toContain('never blocks and never waits');
+  // M3: LA VERDAD CAMBIÓ PORQUE EL MOTOR CAMBIÓ. `latte_message` es el
+  // productor que no existía, así que la descripción ya no puede decir que el
+  // buzón siempre vuelve vacío: ahora tiene que decir qué trae y que LEER
+  // CONSUME (un mensaje que reaparece en cada sondeo se contesta dos veces).
+  // Lo único que no cambió es que no espera, porque el servidor nunca esperó.
+  it('la descripción dice qué trae el buzón hoy, que leer consume y que nunca espera', () => {
+    expect(check().description).toContain('latte_message');
+    expect(check().description).toContain('delivered exactly once');
+    expect(check().description).toContain('Never blocks and never waits');
+    // Y no vuelve a prometer lo que ya no es cierto.
+    expect(check().description).not.toContain('no producer');
   });
 
   it('MAX_CHECK_WAIT_SECONDS ya no se importa en engine.ts: era un import muerto', () => {

@@ -134,3 +134,20 @@ export const MAX_ACTIVE_COORDINATION_RUNS = 4;
  * process per Brand+account (task 6.30).
  */
 export const MAX_CODEX_APP_SERVERS_TOTAL = 10;
+
+/**
+ * Cuántos avisos sin entregar puede acumular un miembro. Un aviso es un turno
+ * de usuario que no se le pudo mandar porque estaba en medio de otro: se
+ * guarda en memoria hasta su próximo `idle`. Un miembro que se murió sin
+ * volver nunca dejaría la cola creciendo para siempre, así que la cola olvida
+ * el más viejo en vez de crecer.
+ */
+export const MAX_PENDING_NOTICES = 20;
+
+/**
+ * Cuánto `spec` publica `latte_task_list` por tarea. La lista existe para que
+ * el coordinador VEA las tareas que la aprobación ya creó y las despache en
+ * vez de recrearlas; el texto completo de cada una es suyo —lo escribió él en
+ * la propuesta— y mandarlo entero por cada listado le quema el contexto.
+ */
+export const TASK_LIST_SPEC_PREVIEW = 200;

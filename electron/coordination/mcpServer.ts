@@ -155,6 +155,14 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'latte_task_list',
+    // A2: lo que hacía falta para no recrear el plan. La descripción dice para
+    // qué existe, porque el error que corrige es exactamente el de un agente
+    // que no sabía que las tareas ya estaban.
+    description: "Coordinator only. Lists the tasks of the active coordination run: id, role, status, whether the task belongs to the approved plan, its dependencies, attempts and assigned member. Approving a plan already creates every task of it — list them here and dispatch them with latte_dispatch instead of creating them again.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'latte_report',
     description: 'Reports the outcome of a task this member was dispatched to do.',
     inputSchema: {
@@ -175,16 +183,29 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'latte_check',
-    // La verdad, no la promesa: hoy NADA en Latte escribe en el buzón
-    // (`insertCoordinationMessage` no tiene ningún llamador de producción), así
-    // que esta herramienta siempre devuelve una lista vacía. El parámetro
-    // `wait` se publicaba documentado como "hasta ~30s" mientras la
-    // implementación era `void _wait;`: se saca en vez de seguir anunciando un
-    // comportamiento que el servidor no implementa. La herramienta queda —
-    // AGENTS.md prohíbe sacar capacidades para simplificar — pero descripta
-    // por lo que hace, no por lo que va a hacer.
-    description: "Reads this member's mailbox. Latte has no producer of coordination messages yet, so this always returns an empty list; it never blocks and never waits.",
+    // La verdad, no la promesa — y la verdad CAMBIÓ: `latte_message` es el
+    // productor que no existía, así que el buzón ya no está vacío por diseño.
+    // Sigue sin `wait` (el servidor nunca esperó, y publicarlo era anunciar un
+    // comportamiento que no implementa) y sigue consumiendo: leer entrega una
+    // sola vez, para que un sondeo no haga contestar dos veces lo mismo.
+    description: "Reads this member's mailbox and the state of the coordination run: the messages other members sent you with latte_message (each one delivered exactly once — reading consumes them), plus how many tasks are ready, dispatched, done, failed, blocked or pending. Never blocks and never waits.",
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'latte_message',
+    // M2: lo que faltaba para que los roles sean roles. La descripción dice las
+    // tres formas de `to` porque un agente que no sabe cómo direccionar
+    // termina haciendo el trabajo del otro en vez de pedírselo.
+    description: "Sends a message to another member of this Work's coordination run. `to` is either \"coordinator\", the roleId of a member on the team (for example \"designer\"), or a memberId you were given. Use it when you need something from another role instead of doing their work yourself or inventing their output; they read it with latte_check. A message never leaves this Work.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', maxLength: LIMITS.name, description: '"coordinator", a roleId on this team, or a memberId of this Work.' },
+        text: { type: 'string', maxLength: LIMITS.decision, description: 'What you need from them, concretely.' },
+      },
+      required: ['to', 'text'],
+      additionalProperties: false,
+    },
   },
   {
     name: 'latte_ask',

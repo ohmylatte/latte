@@ -41,6 +41,8 @@ const BASE_MARKERS: Array<[string, RegExp]> = [
   ['review cadence', /\*\*review cadence\*\*/],
   ['no publishing without authority', /may not publish, send, spend/i],
   ['no credentials in deliverables', /never write credentials/i],
+  ['no borrowed credit', /Never present work as done by another member or role/i],
+  ['propose coordinating instead of doing it all alone', /latte_request_coordination/],
 ];
 
 describe('Marketing base prompt composition', () => {
@@ -52,7 +54,7 @@ describe('Marketing base prompt composition', () => {
       expect(pattern.test(base), `base prompt is missing: ${name}`).toBe(true);
     }
     // Compact on purpose: a long prompt per request is a cost and a distraction.
-    expect(base.length).toBeLessThan(6_000);
+    expect(base.length).toBeLessThan(7_500);
   });
 
   it('gives the neutral assistant the base and nothing role-specific', () => {

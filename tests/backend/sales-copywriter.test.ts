@@ -12,7 +12,7 @@ const catalog = new RoleCatalog(pack);
 
 it('loads Sales Copywriter from the manifest as a shipped, cloneable profile', () => {
   const profile = catalog.listProfiles().find((item) => item.id === 'sales-copywriter');
-  expect(pack?.version).toBe('0.8.0');
+  expect(pack?.version).toBe('0.8.1');
   expect(profile).toMatchObject({ name: 'Sales Copywriter', initial: 'C', source: 'builtin', directory: null });
   expect(catalog.list().filter((item) => item.id === 'sales-copywriter')).toHaveLength(1);
   expect(profile?.soul).toContain('# Role: Sales Copywriter');

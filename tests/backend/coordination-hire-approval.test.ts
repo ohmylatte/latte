@@ -71,6 +71,18 @@ describe('la contratación que la persona destildó', () => {
     });
   }
 
+  /**
+   * A1: los `hub.send` que son DESPACHOS, sin el aviso de la aprobación.
+   *
+   * Aprobar le manda ahora un mensaje al coordinador ("tu plan fue aprobado",
+   * con las tareas que acaban de nacer): sin ese aviso el agente no se
+   * enteraba de nada y recreaba el plan entero. No es trabajo despachado, y lo
+   * que estos tests miden es trabajo despachado.
+   */
+  function dispatchSends(): unknown[][] {
+    return send.mock.calls.filter((c) => !String(c[1]).startsWith('Your plan was '));
+  }
+
   function taskFor(runId: string, roleId: string): string {
     const task = b.repo.listCoordinationTasks(runId).find((t) => t.roleId === roleId);
     expect(task).toBeDefined();
@@ -125,7 +137,7 @@ describe('la contratación que la persona destildó', () => {
     // dependientes. Una tarea que el motor sabe que no puede correr no se
     // escribe; la persona destildó esa contratación y eso se respeta entero.
     expect(b.repo.listCoordinationTasks(run.id).map((t) => t.roleId)).toEqual(['copywriter']);
-    expect(send.mock.calls).toHaveLength(0);
+    expect(dispatchSends()).toHaveLength(0);
   });
 
   // --- 2: el plan aprobado es el recortado, y la foto de roles lo acompaña ----
@@ -157,7 +169,7 @@ describe('la contratación que la persona destildó', () => {
 
     expect(b.repo.listCoordinationTasks(run.id)).toHaveLength(before);
     expect(members.map((m) => m.roleId)).toEqual(['copywriter']);
-    expect(send.mock.calls).toHaveLength(0);
+    expect(dispatchSends()).toHaveLength(0);
   });
 
   it('el puente de handoffs tampoco contrata un rol que nadie aprobó', async () => {
@@ -178,7 +190,7 @@ describe('la contratación que la persona destildó', () => {
 
     expect(b.repo.listCoordinationTasks(run.id)).toHaveLength(before); // el puente no escribió ninguna tarea nueva
     expect(members.map((m) => m.roleId)).toEqual(['copywriter']);
-    expect(send.mock.calls).toHaveLength(0);
+    expect(dispatchSends()).toHaveLength(0);
   });
 
   // --- 3: un rol que YA es del equipo sigue pudiendo trabajar ----------------
@@ -199,7 +211,7 @@ describe('la contratación que la persona destildó', () => {
     expect(outcome.status).toBe('dispatched');
     expect(b.repo.getCoordinationDispatch(outcome.dispatchId).memberId).toBe('mem_proposer');
     expect(members).toHaveLength(1); // se reutilizó al que ya estaba, no se contrató a nadie
-    expect(send.mock.calls).toHaveLength(1);
+    expect(dispatchSends()).toHaveLength(1);
   });
 
   // --- 4: el camino feliz, sin editar, sigue igual ---------------------------
@@ -214,6 +226,6 @@ describe('la contratación que la persona destildó', () => {
     const outcome = await engine.startDispatch({ grant: coordinator(run.id), taskId: designerTask });
     expect(outcome.status).toBe('dispatched');
     expect(b.repo.getCoordinationTask(designerTask).status).toBe('dispatched');
-    expect(send.mock.calls).toHaveLength(1);
+    expect(dispatchSends()).toHaveLength(1);
   });
 });

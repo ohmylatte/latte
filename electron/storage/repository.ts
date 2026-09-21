@@ -1485,6 +1485,18 @@ export class LatteRepository {
       .map(toCoordinationMessage);
   }
 
+  /**
+   * TODO el buzón del run, leído y sin leer, en orden de llegada. La lectura
+   * de la PERSONA (`listCoordinationMessages` por IPC): la del agente es
+   * `listUndeliveredCoordinationMessages`, que consume, y ésta no consume
+   * nada — un mensaje que alguien ya leyó sigue siendo parte de lo que pasó.
+   */
+  listCoordinationMessages(runId: string): CoordinationMessageRecord[] {
+    return this.db
+      .all<CoordinationMessageRow>('SELECT * FROM coordination_message WHERE run_id = ? ORDER BY created_at ASC, id ASC', [runId])
+      .map(toCoordinationMessage);
+  }
+
   markCoordinationMessageDelivered(id: string, deliveredAt: string): void {
     this.db.run('UPDATE coordination_message SET delivered_at = ? WHERE id = ?', [deliveredAt, id]);
   }

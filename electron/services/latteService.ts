@@ -39,6 +39,7 @@ import type {
   CoordinationEvent,
   CoordinationGateView,
   CoordinationHireView,
+  CoordinationMessageView,
   CoordinationLogEntryView,
   CoordinationMemberSupport,
   CoordinationRunView,
@@ -1805,6 +1806,22 @@ export class LatteService implements BackendApi {
     }));
   }
 
+  /**
+   * M4: lo que los miembros se dijeron ENTRE ELLOS.
+   *
+   * Mismo criterio que `getCoordinationRun`: el run vivo, y si no hay, el
+   * último terminado — devolver `null` (o `[]`) en cuanto el run cierra hacía
+   * desaparecer de la vista justo la conversación que explica cómo se llegó al
+   * resultado. Un Trabajo sin ningún run devuelve una lista vacía: eso no es
+   * un error, es que todavía no pasó nada.
+   */
+  async listCoordinationMessages(workId: string): Promise<CoordinationMessageView[]> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    const run = this.deps.repo.findActiveCoordinationRun(id) ?? this.deps.repo.findLatestFinishedCoordinationRun(id);
+    return run ? this.coordination.listMessages(run.id) : [];
+  }
+
   /** Las preguntas abiertas de un run, para que la persona pueda responderlas con `answerCoordinationAsk` en vez de quedarse sólo con "cancelar". */
   async listOpenCoordinationAsks(runId: string): Promise<CoordinationAskView[]> {
     return this.coordination.listOpenAsks(requireId(runId, 'runId'));
@@ -2563,6 +2580,20 @@ export class LatteService implements BackendApi {
     try {
       this.coordination.noteTurnEnded(memberId);
     } catch { /* el fin de un turno nunca puede voltear el evento de chat */ }
+  }
+
+  /**
+   * A1: y el fin de un turno es también cuándo se le puede HABLAR al miembro.
+   *
+   * Un aviso —"tu plan fue aprobado", "te contestaron esto"— es un turno de
+   * usuario, y mandarlo encima de un turno en vuelo lo pierde: los dos
+   * adaptadores tiran "still working on the previous message". El motor lo
+   * guarda y acá, en el mismo `status:'idle'` que destraba el cierre del run,
+   * se lo entrega.
+   */
+  flushCoordinationNotices(memberId: string): void {
+    void this.coordination.flushMemberNotices(memberId)
+      .catch(() => { /* un aviso no entregado nunca puede voltear el evento de chat */ });
   }
 
   // Internals ---------------------------------------------------------------

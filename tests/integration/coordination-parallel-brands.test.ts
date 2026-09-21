@@ -128,8 +128,10 @@ describe('coordination parallel brands: two Brands, two Works, two active runs, 
     b.repo.insertCoordinationMessage({ id: 'cms_a', runId: runA, toMemberId: 'mem_worker_a', fromMemberId: null, kind: 'note', body: 'For A only', deliveredAt: null, createdAt: now });
     b.repo.insertCoordinationMessage({ id: 'cms_b', runId: runB, toMemberId: 'mem_worker_b', fromMemberId: null, kind: 'note', body: 'For B only', deliveredAt: null, createdAt: now });
 
-    expect(engine.check('mem_worker_a').map((m) => m.body)).toEqual(['For A only']);
-    expect(engine.check('mem_worker_b').map((m) => m.body)).toEqual(['For B only']);
+    // M3: `check` devuelve buzón + estado del run; el aislamiento entre Marcas
+    // es el mismo de siempre — cada uno ve SÓLO lo suyo.
+    expect(engine.check('mem_worker_a').messages.map((m) => m.text)).toEqual(['For A only']);
+    expect(engine.check('mem_worker_b').messages.map((m) => m.text)).toEqual(['For B only']);
 
     const askA = engine.ask({ workId: workA, runId: runA, memberId: 'mem_worker_a', role: 'worker' }, '¿A?');
     const askB = engine.ask({ workId: workB, runId: runB, memberId: 'mem_worker_b', role: 'worker' }, '¿B?');
