@@ -352,7 +352,13 @@ export function App() {
    */
   // El canal de error de la app, no una promesa sin manejar: un
   // `BUDGET_EXCEEDED` o un `ValidationError` al resolver un gate se ve.
-  const coordination = useCoordination(work?.id ?? null, (e) => setError(displayError(e)));
+  // B5.2: y todo evento de coordinación del Trabajo abierto RECARGA EL EQUIPO.
+  // El motor contrata por su cuenta —eso es la mitad del producto—, y ese alta
+  // no pasa por ninguna acción de la persona: sin esto, el miembro que el motor
+  // acaba de contratar y spawnear no tiene pestaña, y no hay forma de abrirlo.
+  // `loadTeam` ya está guardado por generación, así que una respuesta lenta no
+  // puede pintar el equipo de otro Trabajo.
+  const coordination = useCoordination(work?.id ?? null, (e) => setError(displayError(e)), (id) => { void loadTeam(id).catch(() => undefined); });
   // La visita a la coordinación se marca cuando la persona ABRE el panel de
   // coordinación de un Trabajo (Decisiones: gates, autoridad, presupuesto,
   // coordinador) o vuelve a él. Es lo único que hace honesto el "Desde tu
@@ -1041,7 +1047,27 @@ export function App() {
     finally { setStartingChat(false); }
   };
   const addMember = async (roleId: string, options: TeamMemberOptions | null) => { if (!work || startingChat) return; await openSession(() => api.addTeamMember(work.id, roleId, options), work.id).catch(() => undefined); };
-  const openMember = async (memberId: string) => { if (!work || startingChat) return; chatStore.forget(memberId); await openSession(() => api.openTeamMember(memberId), work.id).catch(() => undefined); };
+  /**
+   * B5.2: abrir una pestaña NO abre un segundo proceso —`hub.openMember`
+   * devuelve la sesión viva si la hay, y la que spawneó el motor lo está—,
+   * pero el chat aparecía VACÍO igual.
+   *
+   * El motivo: `forget` borra lo que el renderer tenía de esa conversación y
+   * `openSession` sólo pide el transcripto cuando la sesión viene `resumed`.
+   * Una sesión que ESTE proceso ya tenía abierta no se resume: se devuelve tal
+   * cual, con `resumed:false`. O sea que justo en el caso que importa —el
+   * miembro que contrató y puso a trabajar el motor— se borraba el historial y
+   * no se volvía a pedir nunca, y la persona abría la pestaña de alguien que
+   * había recibido un despacho y contestado para encontrarse una pantalla en
+   * blanco. Se sincroniza siempre: `forget` dejó el store vacío, así que la
+   * única fuente honesta es el transcripto del backend.
+   */
+  const openMember = async (memberId: string) => {
+    if (!work || startingChat) return;
+    chatStore.forget(memberId);
+    const opened = await openSession(() => api.openTeamMember(memberId), work.id).catch(() => undefined);
+    if (opened && !opened.resumed) await chatStore.sync(opened.id).catch(() => undefined);
+  };
   /**
    * The grant is a start-time flag of the agent process, so a conversation
    * already running would not see it. Rather than say "next time", the idle

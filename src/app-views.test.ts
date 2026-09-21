@@ -126,6 +126,39 @@ describe('useCoordination wiring adds no new VIEWS entry (task 7.11)', () => {
     expect(tab![0]).not.toContain('coordination.gates');
     expect(tab![0]).not.toContain('pendingGates');
   });
+
+  /**
+   * B5.2: ABRIR LA PESTAÑA DE UN MIEMBRO QUE YA ESTÁ VIVO MUESTRA SU CHAT.
+   *
+   * `hub.openMember` devuelve la sesión viva si la hay —o sea que no se abre
+   * un segundo proceso encima del que spawneó el motor, que era la primera
+   * mitad de la duda—, pero esa sesión viene con `resumed:false`: no se
+   * resumió nada, ya estaba abierta. Y `openSession` sólo pide el transcripto
+   * cuando la sesión viene `resumed`. Como `openMember` hace `forget` antes,
+   * el renderer borraba lo que tenía y no volvía a pedirlo NUNCA: la persona
+   * abría la pestaña del miembro que el motor había puesto a trabajar y
+   * encontraba una pantalla en blanco, sin el despacho ni la respuesta que el
+   * transcripto sí tiene guardados.
+   *
+   * Source-level por lo mismo que el resto de este archivo: importar `App`
+   * arrastra la terminal y la browser-api.
+   */
+  it('openMember sincroniza el transcripto aunque la sesión viva no venga `resumed`', () => {
+    const fn = app.match(/const openMember = async \(memberId: string\) => \{[\s\S]{0,600}?\n  \};/);
+    expect(fn, 'no se encontró openMember en App.tsx').not.toBeNull();
+    expect(fn![0]).toContain('chatStore.forget(memberId)');
+    expect(fn![0]).toContain('chatStore.sync(opened.id)');
+    expect(fn![0]).toContain('!opened.resumed');
+  });
+
+  /**
+   * B5.2: y el equipo se recarga con cada evento de coordinación del Trabajo
+   * abierto. `coordination-hire-appears.dom.test.tsx` lo prueba corriendo;
+   * esto pincha el cableado exacto para que no se pierda en un refactor.
+   */
+  it('todo evento de coordinación del Trabajo abierto recarga el equipo', () => {
+    expect(app).toMatch(/useCoordination\(work\?\.id \?\? null,[\s\S]{0,200}loadTeam\(id\)/);
+  });
 });
 
 /**
