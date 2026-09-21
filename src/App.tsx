@@ -354,6 +354,18 @@ export function App() {
   // coordinador) o vuelve a él. Es lo único que hace honesto el "Desde tu
   // última visita" de Inicio: antes no se medía ninguna visita.
   const markSeen = coordination.markSeen;
+  /**
+   * B1.4: cuando el run del Trabajo que la persona acaba de abrir por una fila
+   * de coordinacion dice quien es el coordinador, se salta a su pestana. La ref
+   * se consume una sola vez: una seleccion posterior de la persona no se pisa.
+   */
+  useEffect(() => {
+    const wanted = wantCoordinatorRef.current;
+    const coordinator = coordination.run?.coordinatorMemberId ?? null;
+    if (!wanted || work?.id !== wanted || !coordinator) return;
+    wantCoordinatorRef.current = null;
+    setSelectedMembers((prev) => ({ ...prev, [wanted]: coordinator }));
+  }, [work?.id, coordination.run?.coordinatorMemberId]);
   // DESPUÉS de que el recorte de coordinación cargue, nunca en el mismo tick
   // del clic. Antes esto corría al montar la pestaña, antes de pedir un solo
   // gate: la visita quedaba anotada sobre una pantalla vacía y todo lo que
@@ -714,21 +726,42 @@ export function App() {
   const openWork = (workId: string) => { const target = works.find((w) => w.id === workId); if (target) selectWork(target); };
   const openWorkDecisions = (workId: string) => { const target = works.find((w) => w.id === workId); if (target) selectWork(target, 'decisions'); };
   /**
+   * B1.4: ABRE EL TRABAJO EN LA CONVERSACION DEL COORDINADOR.
+   *
+   * "Te espera una aprobacion" mandaba a Decisiones, que desde esta tanda no
+   * tiene una sola tarjeta de gate: la persona llegaba a una pantalla donde no
+   * estaba lo que fue a buscar. La aprobacion vive en el chat del coordinador,
+   * asi que ahi se abre.
+   *
+   * Quien es el coordinador lo dice el run, y el run del Trabajo recien se
+   * carga despues de abrirlo: la ref deja anotado "cuando lo sepas, selecciona
+   * a ese miembro" y el efecto de abajo lo cumple. Sin coordinador no se elige
+   * a nadie -- el Trabajo se abre igual, en su conversacion.
+   */
+  const wantCoordinatorRef = useRef<string | null>(null);
+  const openWorkCoordination = (workId: string) => {
+    const target = works.find((w) => w.id === workId);
+    if (!target) return;
+    wantCoordinatorRef.current = workId;
+    selectWork(target, 'brief', 'conversation');
+  };
+  /**
    * The active-teams strip (task 7.8) only observes and navigates: clicking
-   * a row selects that Brand + Work and opens Decisiones, where the real
-   * approve/reject controls live. When the run's Brand is already open,
-   * this is `openWorkDecisions` unchanged. When it is a DIFFERENT Brand —
+   * a row selects that Brand + Work and opens the coordinator's conversation,
+   * where the real approve/reject cards live (B1.4). When the run's Brand is already open,
+   * this is `openWorkCoordination` unchanged. When it is a DIFFERENT Brand —
    * the interesting case, a run the person was not looking at — the same
    * `pendingWorkRef` mechanism `finishOnboarding` uses lands on the right
    * work once its list loads, and `pendingViewRef` (added for this task)
    * makes it land on Decisiones instead of the default Brief.
    */
   const openActiveRun = (run: CoordinationActiveRunSummary) => {
-    if (brand?.id === run.brandId) { openWorkDecisions(run.workId); return; }
+    if (brand?.id === run.brandId) { openWorkCoordination(run.workId); return; }
     const target = brands.find((b) => b.id === run.brandId);
     if (!target || !guard()) return;
     pendingWorkRef.current = run.workId;
-    pendingViewRef.current = 'decisions';
+    pendingViewRef.current = 'brief';
+    wantCoordinatorRef.current = run.workId;
     setBrand(target);
     setContext(target.context);
     setMemory(''); setMemoryAvailable(false); memoryGeneration.current++;
@@ -1182,7 +1215,7 @@ export function App() {
     <header className="topbar"><div className="breadcrumb">{brand?.name ?? 'Bienvenido a Latte'}<span>/</span><strong>{work?.title ?? 'Tu espacio de marketing'}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
     <main className="workspace" aria-hidden={focusChat} inert={focusChat}>
       <MemoryNotice support={coordination.support} dismissed={Boolean(brand && memoryNoticeDismissed.has(brand.id))} onDismiss={() => { if (brand) setMemoryNoticeDismissed(prev => new Set(prev).add(brand.id)); }} />
-      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} coordinationSinceLastVisit={brand ? sinceLastVisitFromActiveRuns(coordination.activeRuns, brand.id) : []} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} />}
+      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} coordinationSinceLastVisit={brand ? sinceLastVisitFromActiveRuns(coordination.activeRuns, brand.id) : []} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenCoordination={openWorkCoordination} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} />}
       {/* The tabs and the knowledge-scope filter are in-work chrome: on Inicio
           they would read as "a work with no tab selected". */}
       {view !== 'home' && <><div className="tabs"><button className={view === 'resumen' ? 'selected' : ''} onClick={() => setView('resumen')}>{t('resumen.tab')}</button><button className={view === 'trabajo' ? 'selected' : ''} onClick={() => setView('trabajo')}>{t('trabajo.tab')}</button><button className={view === 'evidencia' ? 'selected' : ''} onClick={() => setView('evidencia')}>{t('evidencia.tab')}</button><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><button className={view === 'resultados' ? 'selected' : ''} onClick={() => setView('resultados')}>{t('resultados.tab')}</button><div className="tab-spacer" /></div>
@@ -1216,7 +1249,7 @@ export function App() {
         onReload={() => void reloadContext()}
         onOverride={() => void overrideContext()}
       />}
-      {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} coordinationRun={work ? coordination.run : undefined} onAcceptHandoff={acceptHandoffAsTask} />}
+      {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} onAcceptHandoff={acceptHandoffAsTask} />}
       {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice('Aprendizaje guardado en Engram'); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
       <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
     </main>

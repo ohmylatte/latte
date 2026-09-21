@@ -50,6 +50,36 @@ function panelProps(team: TeamMember[], mode: LatteMode = 'simple') {
 const mount = (patch: Record<string, unknown> = {}, team: TeamMember[] = [member]) =>
   render(<I18nProvider><TeamPanel {...panelProps(team)} {...patch} /></I18nProvider>);
 
+/**
+ * B1.4: COMO TERMINO ESTE EQUIPO SE DICE DONDE ESTAN SUS CONTROLES.
+ *
+ * El cartel vivia en Decisiones, que es la pantalla de lo que PERMANECE. Un
+ * run es lo contrario: pasa. `done` y `cancelled` son dos finales distintos y
+ * no comparten frase --un run cancelado no "termino", y sus tareas sin empezar
+ * no son fracasos de nadie--, y las tres cuentas viajan separadas por eso
+ * mismo.
+ */
+describe('un run terminado, en la cabecera del equipo', () => {
+  it('dice como termino, con las tres cuentas separadas', () => {
+    const { container } = mount({ coordinationRun: run({ status: 'done', active: false, tasksDone: 4, tasksFailed: 1, tasksPending: 0 }) });
+    const status = container.querySelector('.team-coordination-status')!;
+    expect(status).not.toBeNull();
+    expect(status.className).toContain('team-finished-coordination');
+    expect(status.getAttribute('data-run-status')).toBe('done');
+    const counts = container.querySelector('.team-coordination-counts')!.textContent ?? '';
+    expect(counts).toContain('4');
+    expect(counts).toContain('1');
+  });
+
+  it('un run cancelado lo dice con sus propias palabras, no con las del terminado', () => {
+    const { container } = mount({ coordinationRun: run({ status: 'cancelled', active: false, tasksDone: 1, tasksFailed: 0, tasksPending: 2 }) });
+    const status = container.querySelector('.team-coordination-status')!;
+    expect(status.getAttribute('data-run-status')).toBe('cancelled');
+    expect(status.textContent?.toLowerCase()).toContain('cancel');
+    expect(container.querySelector('.team-coordination-counts')!.textContent).toContain('2');
+  });
+});
+
 const ACTIVE: CoordinationRunStatus[] = ['planning', 'running', 'suspended'];
 
 describe('siempre hay una salida de un run activo', () => {

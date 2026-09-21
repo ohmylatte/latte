@@ -95,6 +95,37 @@ describe('useCoordination wiring adds no new VIEWS entry (task 7.11)', () => {
     expect(app).toMatch(/TeamPanel[\s\S]{0,4000}coordinationRun=\{work \? coordination\.run/);
     expect(app).toMatch(/TeamPanel[\s\S]{0,4000}onPauseCoordination=\{coordination\.pauseRun\}/);
   });
+
+  /**
+   * B1.4: INICIO Y LA TIRA ABREN EL CHAT DEL COORDINADOR.
+   *
+   * Las dos mandaban a Decisiones, que desde esta tanda no tiene una sola
+   * tarjeta de gate: la persona llegaba a una pantalla donde no estaba lo que
+   * fue a buscar. La aprobacion vive en el chat del coordinador.
+   */
+  it('la fila de aprobacion de Inicio y la tira de equipos abren la conversacion del coordinador', () => {
+    expect(app).toMatch(/HomeView[\s\S]{0,2000}onOpenCoordination=\{openWorkCoordination\}/);
+    expect(app).toContain("selectWork(target, 'brief', 'conversation')");
+    // La tira, en la MISMA marca y en otra: las dos ramas piden el coordinador.
+    expect(app).toMatch(/openActiveRun[\s\S]{0,600}openWorkCoordination\(run\.workId\)/);
+    expect(app).toMatch(/openActiveRun[\s\S]{0,800}wantCoordinatorRef\.current = run\.workId/);
+    // Y ninguna de las dos aterriza ya en Decisiones.
+    expect(app).not.toMatch(/pendingViewRef\.current = 'decisions'/);
+  });
+
+  /**
+   * B1.4: EL CONTADOR DE LA PESTANA DECISIONES CUENTA DECISIONES.
+   *
+   * Sumarle los gates de un run haria que la pestana prometiera pendientes
+   * que ya no viven ahi.
+   */
+  it('el contador de la pestana Decisiones no suma gates', () => {
+    const tab = app.match(/view === 'decisions' \? 'selected'[\s\S]{0,300}?<\/button>/);
+    expect(tab, 'no se encontro la pestana Decisiones').not.toBeNull();
+    expect(tab![0]).toContain('visibleDecisions.filter');
+    expect(tab![0]).not.toContain('coordination.gates');
+    expect(tab![0]).not.toContain('pendingGates');
+  });
 });
 
 describe('orphaned context assets', () => {

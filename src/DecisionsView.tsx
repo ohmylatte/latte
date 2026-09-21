@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { KnowledgeOrigin } from './KnowledgeScope';
 import type {
-  AgentRole, CoordinationRunView, Decision, DecisionAuthorityMode, HandoffRequest, TeamMember, Work, WorkPermissionMode,
+  AgentRole, Decision, DecisionAuthorityMode, HandoffRequest, TeamMember, Work, WorkPermissionMode,
 } from '../shared/contracts';
 
 /**
@@ -46,21 +46,6 @@ export interface DecisionsViewProps {
   onArchive: (id: string) => void;
   onAuthorityChange: (mode: DecisionAuthorityMode) => void;
   /**
-   * El run de coordinación de este Trabajo, o `null` cuando no hay ninguno.
-   * `undefined` es un llamador sin cablear y deja la pantalla exactamente como
-   * estaba, igual que el resto de las props aditivas de acá.
-   *
-   * Sin esto, Decisiones —la pantalla donde la persona aprueba y rechaza— no
-   * tenía forma de saber si el equipo seguía vivo: un run TERMINADO se dibujaba
-   * idéntico a uno trabajando, con sus tarjetas de gate y sus botones sobre
-   * algo que el motor no va a ejecutar nunca más. El backend ya devuelve gates
-   * vacíos para un run no activo, pero la interfaz NO depende de eso: `active`
-   * se lee acá, explícito, para que la promesa "un run terminado no puede
-   * parecer vivo" sea una propiedad de esta pantalla y no una consecuencia de
-   * otra capa.
-   */
-  coordinationRun?: CoordinationRunView | null;
-  /**
    * Acepta un handoff como TAREA de la coordinación (`acceptHandoffAsTask`).
    * `undefined` deja la lista de sólo lectura, como estaba. Sin esto la función
    * existía cableada en cinco lugares y no había forma humana de dispararla.
@@ -102,26 +87,16 @@ function resolveRoleName(roleId: string, roles: readonly AgentRole[], team: read
 }
 
 /**
- * Cómo terminó este equipo, dicho con las cuentas separadas.
+ * B1.4: DECISIONES QUEDA PARA LO QUE PERDURA.
  *
- * `done` y `cancelled` son dos finales distintos y no comparten frase: un run
- * cancelado no "terminó", y sus tareas sin empezar no son fracasos de nadie.
- * Las tres cuentas viajan aparte por eso mismo — colapsar `failed` dentro de
- * "sin terminar" borraba la única diferencia que importa.
+ * "Decisiones es de marca y permanente; cada coordinación la llena de ruido."
+ * De acá se fueron las tarjetas de gate, las preguntas, el estado de los
+ * equipos, el bloque de coordinación autónoma, el editor de presupuesto y el
+ * cartel del run terminado: todo eso es lo que PASA, y vive donde pasa --el
+ * chat del miembro y el panel del equipo. Lo que queda es lo que dura: las
+ * decisiones de marca y quién puede hacer qué.
  */
-function FinishedRunBanner({ run }: { run: CoordinationRunView }) {
-  const text = run.status === 'cancelled'
-    ? t('coordination.run.finished.cancelled', { done: run.tasksDone, failed: run.tasksFailed, pending: run.tasksPending })
-    : t('coordination.run.finished.done', { done: run.tasksDone, failed: run.tasksFailed });
-  return <p className="decision-coordination-finished" data-run-status={run.status} role="status">{text}</p>;
-}
-
 export function DecisionsView(props: DecisionsViewProps) {
-  // Un run que cerró no ofrece NADA de un run vivo. `active` se lee explícito
-  // (no se deduce de que la lista de gates venga vacía): que el backend ya
-  // devuelva cero gates para un run terminado es una segunda defensa, no la
-  // razón por la que esto funciona.
-  const runFinished = props.coordinationRun != null && !props.coordinationRun.active;
   return <div className="document-scroll">
     <div className="document-kicker">{t('decision.kicker')}</div>
     <h1>{t('decision.headline.first')}<br />{t('decision.headline.second')}</h1>
@@ -164,7 +139,6 @@ export function DecisionsView(props: DecisionsViewProps) {
       })}
       {!props.decisions.filter(d => d.status === 'approved' || d.status === 'pending').length && <p className="footnote">{t('ui.auto.056')}</p>}
     </div>
-    {runFinished && <FinishedRunBanner run={props.coordinationRun!} />}
     {props.work && <section className="decision-permissions">
       <div className="document-kicker">{t('decision.permissions.kicker')}</div>
       <p className="decision-permissions-lead">{t('decision.permissions.lead')}</p>
