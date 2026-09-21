@@ -2565,6 +2565,20 @@ export class LatteService implements BackendApi {
     } catch { /* el fin de un turno nunca puede voltear el evento de chat */ }
   }
 
+  /**
+   * A1: y el fin de un turno es también cuándo se le puede HABLAR al miembro.
+   *
+   * Un aviso —"tu plan fue aprobado", "te contestaron esto"— es un turno de
+   * usuario, y mandarlo encima de un turno en vuelo lo pierde: los dos
+   * adaptadores tiran "still working on the previous message". El motor lo
+   * guarda y acá, en el mismo `status:'idle'` que destraba el cierre del run,
+   * se lo entrega.
+   */
+  flushCoordinationNotices(memberId: string): void {
+    void this.coordination.flushMemberNotices(memberId)
+      .catch(() => { /* un aviso no entregado nunca puede voltear el evento de chat */ });
+  }
+
   // Internals ---------------------------------------------------------------
 
   /**

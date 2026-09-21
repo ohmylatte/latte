@@ -92,6 +92,16 @@ export function createCoordinationTools(engine: CoordinationEngine) {
     latte_team_list: (grant: CoordinationGrant, _args: Record<string, never>) =>
       wrap(engine, grant, true, () => engine.teamList(grant.workId)),
 
+    // A2: la otra mitad de `latte_team_list`. Se sabía quién está en el equipo
+    // y no se sabía QUÉ TAREAS TIENE EL RUN: `latte_check` devuelve `[]` por
+    // diseño y no había nada más, así que un coordinador que perdía el hilo
+    // —típicamente porque la aprobación de su propuesta no le llegó— sólo
+    // podía volver a crear el plan entero, con tareas `inPlan:false` que
+    // después gatean una por una. `requiresRun:true`: sin run no hay tareas, y
+    // decirlo acá no lee una sola fila.
+    latte_task_list: (grant: CoordinationGrant, _args: Record<string, never>) =>
+      wrap(engine, grant, true, () => engine.taskList(grant.runId as string), true),
+
     latte_report: (grant: CoordinationGrant, args: { taskId: string; outcome: 'succeeded' | 'failed'; summary: string; files?: string | null }) =>
       wrap(engine, grant, false, () => engine.report(grant, args.taskId, args.outcome, args.summary, args.files ?? null), true),
 

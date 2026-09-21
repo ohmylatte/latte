@@ -215,7 +215,13 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     }
     // El fin de un turno: si el coordinador tenía el cierre del run esperando
     // por él (D17), acá es donde se destraba.
-    if (event.type === 'status' && event.status === 'idle') service.noteCoordinationTurnEnded(event.chatId);
+    if (event.type === 'status' && event.status === 'idle') {
+      service.noteCoordinationTurnEnded(event.chatId);
+      // A1: y lo que no se le pudo decir mientras trabajaba, se le dice ahora.
+      // Mismo momento, misma señal: un miembro ocioso es un miembro al que se
+      // le puede mandar un turno.
+      service.flushCoordinationNotices(event.chatId);
+    }
     if (event.type === 'message' && event.message.role === 'assistant' && event.message.completed) {
       const assistantText = event.message.parts.filter(p=>p.type==='text').map(p=>(p as {text:string}).text).join('\n');
       for (const proposal of decisionProtocolBlocks(assistantText)) {

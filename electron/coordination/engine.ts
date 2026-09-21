@@ -36,7 +36,7 @@ import type {
 } from '../storage/repository';
 import { canAddTask, computeDoomedTasks, computeReadyTasks, computeTaskDepth, wouldCreateCycle, type DagEdge, type DagTask } from './dag';
 import { assertBudgetConfigured, BudgetUnsetError, readStoredCoordinationBudget, requireCoordinationBudget, reserveDispatch, type BudgetUsage, type StoredCoordinationBudgetRead } from './budget';
-import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, IN_FLIGHT_DISPATCH_STALE_MINUTES, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK } from './limits';
+import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, IN_FLIGHT_DISPATCH_STALE_MINUTES, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK, MAX_PENDING_NOTICES, TASK_LIST_SPEC_PREVIEW } from './limits';
 
 /**
  * Los roles que la persona aprobo, por run. Una clave propia y no `plan_json`:
@@ -239,6 +239,12 @@ function isDagStatus(status: CoordinationTaskRecord['status']): DagTask['status'
   return status;
 }
 
+/** La primera línea de un texto: un `spec` de doce párrafos no puede volver ilegible la lista de tareas de un aviso. */
+function firstLine(text: string): string {
+  const line = text.split('\n', 1)[0]?.trim() ?? '';
+  return line.length > 0 ? line : text.trim();
+}
+
 export class CoordinationEngine {
   /**
    * Los miembros que un despacho YA eligió y todavía está levantando.
@@ -266,7 +272,79 @@ export class CoordinationEngine {
    */
   private readonly pendingClose = new Set<string>();
 
+  /**
+   * Los avisos que todavía no se le pudieron entregar a un miembro, en orden.
+   *
+   * Un aviso (la aprobación de un plan, la respuesta a una pregunta) es un
+   * turno de usuario: `hub.send` sobre un miembro que está EN MEDIO de un turno
+   * lo rechaza —los dos adaptadores tiran "still working on the previous
+   * message"— y el aviso se perdía. Se guarda acá y se entrega cuando el hub
+   * publica el `status: 'idle'` de ese miembro, el mismo camino que ya destraba
+   * el cierre del run (`noteTurnEnded`).
+   *
+   * En memoria y no en la base a propósito, igual que `assigning` y
+   * `pendingClose`: "¿está ocupado?" sale del adaptador, estado vivo de ESTE
+   * proceso, y hay un solo motor por proceso. Un reinicio lo pierde, y eso es
+   * honesto: el agente que se reinicia no está esperando nada.
+   */
+  private readonly pendingNotices = new Map<string, string[]>();
+
   constructor(private readonly deps: CoordinationEngineDeps) {}
+
+  /**
+   * Un aviso para un miembro, entregado AHORA o encolado.
+   *
+   * Nunca tira: lo llaman caminos —aprobar una propuesta, contestar una
+   * pregunta— cuyo efecto real ya está commiteado. Que el agente no se entere
+   * es malo; que la aprobación se caiga porque el agente no se enteró es peor.
+   */
+  private async deliverNotice(memberId: string, text: string): Promise<void> {
+    if (!memberId || !text) return;
+    if (this.memberIsBusy(memberId)) { this.queueNotice(memberId, text); return; }
+    try {
+      await this.deps.hub.send(memberId, text);
+    } catch (error) {
+      // Se encola en vez de perderse: el próximo fin de turno lo reintenta. Un
+      // miembro que ya no existe deja su cola colgada y no molesta a nadie —
+      // está acotada, y muere con el proceso.
+      this.queueNotice(memberId, text);
+      this.deps.log?.(`[latte] coordination notice queued after send failed (${memberId}): ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** Un `isMemberBusy` que tira se lee como "ocupado": encolar de más sólo retrasa, mandar sobre un turno en vuelo pierde el aviso. */
+  private memberIsBusy(memberId: string): boolean {
+    try { return this.deps.hub.isMemberBusy(memberId); } catch { return true; }
+  }
+
+  private queueNotice(memberId: string, text: string): void {
+    const queue = this.pendingNotices.get(memberId) ?? [];
+    // Acotada: un miembro muerto no puede hacer crecer esta cola para siempre.
+    if (queue.length >= MAX_PENDING_NOTICES) queue.shift();
+    queue.push(text);
+    this.pendingNotices.set(memberId, queue);
+  }
+
+  /**
+   * El turno de este miembro terminó: se le entrega lo que quedó esperando, en
+   * orden. Si vuelve a fallar (o si ya arrancó otro turno con el primer aviso),
+   * lo que falta se devuelve a la cola y espera al próximo `idle`.
+   */
+  async flushMemberNotices(memberId: string): Promise<void> {
+    const queue = this.pendingNotices.get(memberId);
+    if (!queue || queue.length === 0) return;
+    this.pendingNotices.delete(memberId);
+    for (let i = 0; i < queue.length; i += 1) {
+      try {
+        await this.deps.hub.send(memberId, queue[i]);
+      } catch (error) {
+        const rest = queue.slice(i);
+        for (const pending of rest) this.queueNotice(memberId, pending);
+        this.deps.log?.(`[latte] coordination notice still undeliverable (${memberId}): ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+    }
+  }
 
   /**
    * D3: un run `done`/`cancelled` no acepta una sola mutación más. Cancelar,
@@ -627,7 +705,21 @@ export class CoordinationEngine {
    */
   private async resolveProposalGate(runId: string, decision: 'approve' | 'reject', editedProposalJson?: string): Promise<CoordinationRunRecord> {
     const run = this.deps.repo.getCoordinationRun(runId);
-    if (decision === 'reject') return this.cancelRun(runId);
+    if (decision === 'reject') {
+      const cancelled = this.cancelRun(runId);
+      // A1: EL RECHAZO TAMBIÉN SE AVISA. Sin esto el agente que propuso queda
+      // esperando una aprobación que ya no va a llegar, sondeando o —peor—
+      // pidiéndole a la persona que apruebe algo que la persona ya rechazó.
+      // El texto que la interfaz manda al rechazar (si manda alguno) es el
+      // motivo: al rechazar nunca viaja una propuesta editada, editar sólo
+      // tiene sentido para aprobar.
+      const reason = editedProposalJson?.trim();
+      await this.deliverNotice(
+        run.coordinatorMemberId ?? '',
+        `Your plan was rejected. The person did not approve this coordination plan, so no task was created and no budget was granted.${reason ? `\n\nReason: ${reason}` : ''}\n\nDo not wait for it: nothing is pending on Latte's side. Ask the person what to change, and propose again with \`latte_request_coordination\` when you know.`,
+      );
+      return cancelled;
+    }
 
     // Defensa en profundidad (D12): la frontera IPC ya la valida, pero este
     // método es público y desde acá se contrata gente y se levantan procesos.
@@ -674,7 +766,28 @@ export class CoordinationEngine {
         const session = await this.deps.hub.addMember({ ...this.deps.memberContext(run.workId), roleId: hire.roleId });
         hired.push({ memberId: session.id, roleId: hire.roleId });
       }
-      return this.commitProposal(run.id, proposal, budget, hired);
+      const committed = this.commitProposal(run.id, proposal, budget, hired);
+      // A1: Y EL COORDINADOR SE ENTERA, fuera de la transacción.
+      //
+      // Éste era el agujero medido en uso real: la persona aprobaba y el
+      // coordinador no se enteraba NUNCA. Cuando se lo decían por chat, el
+      // agente volvía a crear las tareas que esta transacción acaba de crear
+      // —no tenía cómo verlas— y esas tareas nuevas, `inPlan:false` bajo la
+      // autoridad `plan` que la aprobación acaba de conceder, abrían un gate
+      // por cada despacho. La autonomía existía en el motor y el silencio la
+      // desactivaba.
+      //
+      // Nunca tira: `deliverNotice` se traga todo. La aprobación ya está
+      // commiteada y no se deshace porque un agente no se haya enterado.
+      try {
+        await this.deliverNotice(committed.coordinatorMemberId ?? '', this.approvalNoticeText(committed, hired));
+      } catch (error) {
+        // Armar el texto lee filas, y una lectura puede fallar. El `catch` de
+        // abajo despide al equipo recién contratado: un aviso que no se pudo
+        // redactar no puede entrar ahí.
+        this.deps.log?.(`[latte] approval notice failed (${committed.id}): ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return committed;
     } catch (error) {
       for (const { memberId } of hired.reverse()) {
         try { this.deps.hub.removeMember(memberId); } catch { /* el rollback nunca tapa el error original */ }
@@ -1059,6 +1172,22 @@ export class CoordinationEngine {
     // único que quedaba en pie (D2).
     this.finishRunIfComplete(run.id, now);
     this.touch(run.workId, run.id);
+    // A4: Y LA RESPUESTA LLEGA A QUIEN PREGUNTÓ.
+    //
+    // `coordination_ask` guarda `memberId` desde siempre, así que la respuesta
+    // tuvo destinatario todo este tiempo y nadie se la mandaba. Una pregunta
+    // CON tarea vuelve en el prompt del re-despacho (R7), pero la del
+    // coordinador —que no está despachado a nada— sólo se podía sondear con
+    // `latte_ask_status`: el agente quedaba puliendo una tool o, directamente,
+    // esperando. Mismo mecanismo que el aviso de aprobación: se manda, y si
+    // está en medio de un turno se encola hasta su `idle`.
+    //
+    // `void`: este método es sincrónico y su valor de retorno es la fila
+    // escrita. `deliverNotice` nunca tira.
+    void this.deliverNotice(
+      answered.memberId,
+      `Answer to your question «${answered.question}»: ${answer}`,
+    );
     return answered;
   }
 
@@ -1288,6 +1417,79 @@ export class CoordinationEngine {
 
   teamList(workId: string) {
     return this.deps.hub.listTeam(workId);
+  }
+
+  /**
+   * A2: LAS TAREAS DEL RUN, PARA VERLAS EN VEZ DE RECREARLAS.
+   *
+   * `latte_check` devuelve `[]` por diseño (no hay productor de mensajes de
+   * coordinación) y no existía ninguna otra forma de que el coordinador
+   * supiera qué tareas tiene el run. En cuanto perdía el hilo —un turno nuevo,
+   * una aprobación de la que no se enteró— su única salida era
+   * `latte_task_create`, o sea duplicar el plan entero con tareas
+   * `inPlan:false` que después gatean uno por uno.
+   *
+   * `spec` va truncado: la lista es para ELEGIR cuál despachar, no para releer
+   * el plan. Y `dependsOn` viaja con ids reales, que es lo que hace falta para
+   * despachar en orden.
+   */
+  taskList(runId: string): Array<{
+    id: string; roleId: string; status: CoordinationTaskRecord['status']; inPlan: boolean;
+    dependsOn: string[]; attempts: number; assignedMemberId: string | null; spec: string;
+  }> {
+    const deps = new Map<string, string[]>();
+    for (const edge of this.deps.repo.listCoordinationTaskDeps(runId)) {
+      deps.set(edge.taskId, [...(deps.get(edge.taskId) ?? []), edge.dependsOnId]);
+    }
+    return this.deps.repo.listCoordinationTasks(runId).map((task) => ({
+      id: task.id,
+      roleId: task.roleId,
+      status: task.status,
+      inPlan: task.inPlan,
+      dependsOn: deps.get(task.id) ?? [],
+      attempts: task.attempts,
+      assignedMemberId: task.assignedMemberId,
+      spec: task.spec.length > TASK_LIST_SPEC_PREVIEW ? `${task.spec.slice(0, TASK_LIST_SPEC_PREVIEW)}…` : task.spec,
+    }));
+  }
+
+  /**
+   * Lo que el coordinador necesita saber en el instante en que su plan se
+   * aprueba: qué autoridad quedó, cuánto presupuesto hay, QUÉ TAREAS YA
+   * EXISTEN —con su id, su rol, su estado y sus dependencias—, a quién
+   * contrataron, y qué hacer ahora.
+   *
+   * En inglés, como el resto de lo que Latte le dice a un agente (el prompt de
+   * despacho y el bloque de respuestas de `withAnsweredAsks`).
+   */
+  private approvalNoticeText(run: CoordinationRunRecord, hired: Array<{ memberId: string; roleId: string }>): string {
+    const authority = this.readAuthority(run.workId);
+    const budget = this.budgetBlockForEnvelope(run.id);
+    const tasks = this.taskList(run.id);
+    const lines: string[] = [];
+    lines.push('Your plan was approved. Latte already created every task of it — you do not have to.');
+    lines.push('');
+    lines.push(`Authority: ${authority}.${authority === 'plan'
+      ? ' Tasks that belong to the approved plan dispatch straight away; anything else needs the person to approve each dispatch.'
+      : authority === 'auto'
+        ? ' Every dispatch runs without asking.'
+        : ' The person chose to approve every dispatch one by one.'}`);
+    lines.push(`Budget: ${budget.maxDispatches ?? 'unlimited'} dispatches${budget.maxConcurrent == null ? '' : `, at most ${budget.maxConcurrent} at a time`}.`);
+    lines.push('');
+    lines.push('Tasks that already exist:');
+    for (const task of tasks) {
+      const depends = task.dependsOn.length > 0 ? ` (depends on: ${task.dependsOn.join(', ')})` : '';
+      lines.push(`- ${task.id} [${task.roleId}] ${task.status}${depends}: ${firstLine(task.spec)}`);
+    }
+    if (hired.length > 0) {
+      lines.push('');
+      lines.push('Members hired for this plan:');
+      for (const hire of hired) lines.push(`- ${hire.memberId} (${hire.roleId})`);
+    }
+    lines.push('');
+    lines.push('These tasks already exist. Dispatch them with `latte_dispatch(taskId)` in dependency order (`latte_task_list` shows them, with their current status). Do NOT recreate them with `latte_task_create`: tasks created outside the approved plan need the person\'s approval for every dispatch.');
+    lines.push('The run closes itself the moment its last task reports, so dispatch what is ready and let the reports come back.');
+    return lines.join('\n');
   }
 
   /**

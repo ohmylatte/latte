@@ -113,7 +113,11 @@ describe('lo que una aprobación concede, y las salidas que la bandera no frena'
 
     expect(result).toEqual({ bridged: false, task: null, outcome: null, reason: null }); // R3: sin puente no hay despacho del cual hablar
     expect(b.repo.listCoordinationTasks(run.id)).toHaveLength(tasksBefore);
-    expect(b.hub.send).not.toHaveBeenCalled();
+    // A1: el aviso de la aprobación (un `hub.send` al coordinador con las
+    // tareas que ya existen) no es trabajo despachado. Lo que este test
+    // protege es que con la bandera abajo NO SALGA NINGÚN DESPACHO.
+    expect((b.hub.send as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .filter((c) => !String(c[1]).startsWith('Your plan was '))).toHaveLength(0);
   });
 
   // --- D13: las altas quedan anotadas ----------------------------------------

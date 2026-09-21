@@ -139,7 +139,11 @@ describe('el interruptor apagado también frena las aprobaciones (crítico 6)', 
       .rejects.toMatchObject({ code: 'FEATURE_DISABLED' });
 
     expect(b.repo.listCoordinationTasks(runId)).toHaveLength(tasksBefore);
-    expect(b.hub.send).not.toHaveBeenCalled();
+    // A1: el aviso de la aprobación (un `hub.send` al coordinador con las
+    // tareas que ya existen) no es trabajo despachado. Lo que este test
+    // protege es que con la bandera abajo NO SALGA NINGÚN DESPACHO.
+    expect((b.hub.send as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .filter((c) => !String(c[1]).startsWith('Your plan was '))).toHaveLength(0);
   });
 
   /**
@@ -157,7 +161,11 @@ describe('el interruptor apagado también frena las aprobaciones (crítico 6)', 
 
     expect(result).toEqual({ bridged: false, task: null, outcome: null, reason: null }); // R3: sin puente no hay despacho del cual hablar
     expect(b.repo.listCoordinationTasks(runId)).toHaveLength(tasksBefore);
-    expect(b.hub.send).not.toHaveBeenCalled();
+    // A1: el aviso de la aprobación (un `hub.send` al coordinador con las
+    // tareas que ya existen) no es trabajo despachado. Lo que este test
+    // protege es que con la bandera abajo NO SALGA NINGÚN DESPACHO.
+    expect((b.hub.send as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .filter((c) => !String(c[1]).startsWith('Your plan was '))).toHaveLength(0);
   });
 
   /**

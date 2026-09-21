@@ -155,6 +155,14 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'latte_task_list',
+    // A2: lo que hacía falta para no recrear el plan. La descripción dice para
+    // qué existe, porque el error que corrige es exactamente el de un agente
+    // que no sabía que las tareas ya estaban.
+    description: "Coordinator only. Lists the tasks of the active coordination run: id, role, status, whether the task belongs to the approved plan, its dependencies, attempts and assigned member. Approving a plan already creates every task of it — list them here and dispatch them with latte_dispatch instead of creating them again.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'latte_report',
     description: 'Reports the outcome of a task this member was dispatched to do.',
     inputSchema: {
