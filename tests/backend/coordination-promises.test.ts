@@ -188,8 +188,23 @@ describe('lo que se publica existe y lo que entra se valida (crítico 12)', () =
   describe('el prompt del strategist documenta el filo del cierre automático', () => {
     const source = fs.readFileSync(path.resolve(__dirname, '../../packs/marketing-core/roles/strategist.md'), 'utf8');
 
-    it('dice que todas las tareas del plan se crean antes del primer despacho', () => {
-      expect(source).toMatch(/before dispatching the first/i);
+    /**
+     * A3: la promesa CAMBIÓ, porque el motor cambió.
+     *
+     * Decía "create every task of the plan before dispatching the first one",
+     * y eso era falso desde que `commitProposal` crea toda tarea del plan al
+     * aprobar: el agente las recreaba —con `inPlan:false`, o sea un gate por
+     * despacho bajo la autoridad `plan` que la aprobación acababa de
+     * conceder— y terminaba pidiéndole a la persona que aprobara cada
+     * dispatch. El prompt tiene que decir lo que el motor hace.
+     */
+    it('dice que al aprobar las tareas YA existen, que se listan y que no se recrean', () => {
+      expect(source).toMatch(/already exist/i);
+      expect(source).toMatch(/latte_task_list/);
+      expect(source).toMatch(/latte_dispatch/);
+      expect(source).toMatch(/do not create them again/i);
+      // Y que lo que NO estaba en el plan sí necesita a la persona.
+      expect(source).toMatch(/latte_task_create/);
     });
 
     it('dice que la coordinación se cierra sola cuando reporta la última tarea, y que para seguir hay que pedir coordinar de nuevo', () => {
