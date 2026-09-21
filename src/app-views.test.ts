@@ -35,7 +35,7 @@ describe('workspace views', () => {
   it('enumerates every workspace view in one list', () => {
     // `home` is first on purpose: it is the landing of a returning user, and the
     // list order is what the render-branch guard below walks.
-    expect(listed).toEqual(['home', 'resumen', 'trabajo', 'team', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'decisions', 'resultados']);
+    expect(listed).toEqual(['home', 'resumen', 'trabajo', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'decisions', 'resultados']);
   });
 
   it('renders a branch for each of them inside <main>', () => {
@@ -69,7 +69,7 @@ describe('useCoordination wiring adds no new VIEWS entry (task 7.11)', () => {
     // Byte-for-byte the same list `app-views.test.ts` already pins above —
     // repeated here as its own assertion so a future edit that adds a
     // coordination-only view fails THIS test with a name that says why.
-    expect(listed).toEqual(['home', 'resumen', 'trabajo', 'team', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'decisions', 'resultados']);
+    expect(listed).toEqual(['home', 'resumen', 'trabajo', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'decisions', 'resultados']);
   });
 
   it('calls the hook exactly once, unconditionally, scoped to the open Work', () => {

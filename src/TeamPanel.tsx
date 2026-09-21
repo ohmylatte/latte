@@ -1,6 +1,6 @@
 import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { Check, CircleAlert, CircleCheck, FolderCheck, FolderLock, Forward, LoaderCircle, MessageSquare, MessageSquarePlus, Pause, Play, Plug, Plus, Settings2, Trash2, UserPlus, X, Zap } from 'lucide-react';
+import { Check, CircleAlert, CircleCheck, FolderCheck, FolderLock, Forward, LoaderCircle, MessageSquare, MessageSquarePlus, Pause, Play, Plug, Plus, Settings2, Trash2, UserPlus, Users, X, Zap } from 'lucide-react';
 import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationAskView, type CoordinationAuthorityMode, type CoordinationBudgetView, type CoordinationDegradedReason, type CoordinationGateView, type CoordinationHireView, type CoordinationLogEntryView, type CoordinationMemberSupport, type CoordinationMessageView, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { ChatPane, type ChatCoordinationProps } from './ChatPane';
@@ -9,8 +9,8 @@ import { canChangePermission } from './permission-ux';
 import { continuationModel, continuationOptions, type ContinuationTarget } from './provider-models';
 import { contextWeight, describeUsage, formatTokens, totalTokens } from './usage-format';
 import { Loading, roleColorVar, SteamWisp } from './brand-marks';
-import { inboxEvents, lastInboxEvent, pendingForMember, type InboxEvent } from './coordination/inbox';
-import { memberDisplayName } from './coordination/names';
+import { describeInboxEvent, lastInboxEvent, pendingForMember, pendingForWork } from './coordination/inbox';
+import { TeamView } from './TeamView';
 
 /** A runtime the user can pick for a new member instead of the primary agent. */
 export interface RuntimeChoice { key: string; label: string; runtime: ChatRuntime; accountId: string | null }
@@ -136,6 +136,15 @@ export interface TeamPanelProps {
    * existiendo, en el `title`.
    */
   coordinationSupport?: readonly CoordinationMemberSupport[];
+  /**
+   * B3.1: LOS AJUSTES DEL EQUIPO. No los dibuja el panel: viajan a `TeamView`,
+   * que es el modo Equipo de esta misma columna, y viven al pie de esa vista.
+   */
+  coordinationAuthority?: CoordinationAuthorityMode;
+  onSetCoordinationAuthority?: (mode: CoordinationAuthorityMode) => void;
+  coordinationBudget?: CoordinationBudgetView;
+  onSetCoordinationBudget?: (maxDispatches: number) => void;
+  coordinatorGrant?: string | null;
 }
 
 const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex' };
@@ -150,7 +159,19 @@ export function TeamPanel(props: TeamPanelProps) {
   const [adding, setAdding] = useState(false);
   // Member whose work is being handed over; the dialog stays tied to it.
   const [continuing, setContinuing] = useState<string | null>(null);
-  useEffect(() => { setAdding(false); setContinuing(null); }, [work?.id]);
+  /**
+   * B3.1: EL MODO DE ESTA COLUMNA.
+   *
+   * El equipo no es una pestana de CONTEXTO del Trabajo (Resumen, Evidencia,
+   * Documentos son eso: lo que permanece). Trabajar en equipo es acotado y a
+   * pedido, y necesita el mismo alto que la conversacion, no un pedazo
+   * apilado encima. Asi que es un MODO de esta misma columna: o la
+   * conversacion, o el equipo, nunca los dos peleandose el alto.
+   */
+  const [rail, setRail] = useState<'chat' | 'team'>('chat');
+  /** Que miembro se esta leyendo en el modo Equipo. `null` cae en el coordinador, y sin run en el primero. */
+  const [threadMember, setThreadMember] = useState<string | null>(null);
+  useEffect(() => { setAdding(false); setContinuing(null); setRail('chat'); setThreadMember(null); }, [work?.id]);
   const selected = team.find(m => m.id === selectedId) ?? null;
   const continuingMember = team.find(m => m.id === continuing) ?? null;
   const liveChat = selected ? chats[selected.id] ?? null : null;
@@ -162,20 +183,40 @@ export function TeamPanel(props: TeamPanelProps) {
   const firstTeam = team.length === 0 && Boolean(work);
   const showPicker = adding || firstTeam;
   const workTotal = useTeamUsageTotal(team);
+  const railPending = pendingForWork(props.coordinationGates, props.coordinationAsks, props.coordinationRun ?? null);
 
   return <div className="team">
     {/* FUERA del guard `team.length > 0`: un run `planning` es exactamente el
         momento en el que el equipo todavía no tiene un solo miembro, y ahí los
         controles del run desaparecían enteros — la persona se quedaba sin
         ninguna salida justo cuando la coordinación recién arranca. */}
-    <CoordinationRunControls run={props.coordinationRun ?? null} busy={busy} pending={props.pending}
-      onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination} />
+    <div className="team-rail-head">
+      <CoordinationRunControls run={props.coordinationRun ?? null} busy={busy} pending={props.pending}
+        onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination} />
+      {work && team.length > 0 && <div className="team-rail-modes" role="group" aria-label={t('team.rail.group')}>
+        <button type="button" className={'team-rail-chat' + (rail === 'chat' ? ' selected' : '')} aria-pressed={rail === 'chat'} onClick={() => setRail('chat')}><MessageSquare size={13} />{t('team.rail.chat')}</button>
+        {/* El contador es del TRABAJO entero: gates mas preguntas. No promete a
+            quien le toca -- eso lo dice la lista de adentro --, promete que hay algo. */}
+        <button type="button" className={'team-rail-team' + (rail === 'team' ? ' selected' : '')} aria-pressed={rail === 'team'} onClick={() => setRail('team')}><Users size={13} />{t('team.rail.team')}{railPending > 0 && <span className="team-rail-pending">{railPending}</span>}</button>
+      </div>}
+    </div>
     {work && props.handoffs.map(handoff => <div key={handoff.fileName} className="doc-banner handoff" role="status">
       <UserPlus size={14} />
       <span>{t('ui.auto.266')} <strong>{handoff.roleName}</strong> {t('handoff.wants')} <em>{handoff.request.split(/\r?\n/)[0].slice(0, 140)}</em>{handoff.known ? '' : t('handoff.unknownRole')}</span>
       {handoff.known && <button className="primary" disabled={busy} onClick={() => void props.onAcceptHandoff(handoff)}>{t('ui.auto.267')}</button>}
       <button disabled={busy} onClick={() => void props.onDismissHandoff(handoff)}>{t('ui.auto.379')}</button>
     </div>)}
+    {rail === 'team' && <TeamView work={work} team={team} roles={roles} mode={mode} busy={busy}
+      selectedMemberId={threadMember} onSelectMember={setThreadMember}
+      onOpenChat={(memberId) => { props.onSelect(memberId); setRail('chat'); }}
+      coordinationRun={props.coordinationRun} pending={props.pending}
+      coordinationLog={props.coordinationLog} coordinationMessages={props.coordinationMessages}
+      coordinationAsks={props.coordinationAsks} coordinationHires={props.coordinationHires}
+      coordinationGates={props.coordinationGates} coordinationSupport={props.coordinationSupport}
+      formatDate={props.formatDate} coordinationAuthority={props.coordinationAuthority}
+      onSetCoordinationAuthority={props.onSetCoordinationAuthority} coordinationBudget={props.coordinationBudget}
+      onSetCoordinationBudget={props.onSetCoordinationBudget} coordinatorGrant={props.coordinatorGrant} />}
+    {rail === 'chat' && <>
     {work && team.length > 0 && <>
       <div className="team-tabs" role="tablist" aria-label={t('ui.auto.268')}>
         <div className="team-tab-strip">
@@ -192,6 +233,7 @@ export function TeamPanel(props: TeamPanelProps) {
             <ModelPicker member={selected} busy={busy} onModel={props.onModel} />
             <TierPicker tier={selected.tier} busy={busy} compact onChange={tier => props.onTier(selected.id, tier)} />
           </>}
+          <button type="button" className="team-tab-thread" title={t('team.view.threadHelp')} disabled={busy} onClick={() => { setThreadMember(selected.id); setRail('team'); }}>{t('team.view.thread')}</button>
           <button className="icon-button" aria-label={t('continue.action')} title={t('continue.actionHelp')} disabled={busy || !isDesktop} onClick={() => setContinuing(selected.id)}><Forward size={13} /></button>
           {selectedLive && <button className="icon-button" aria-label={t('ui.auto.087')} title={t('ui.auto.270')} disabled={busy} onClick={() => void props.onPause(selected.id)}><Pause size={13} /></button>}
           {selectedStatus !== 'ended' && <button className="icon-button" aria-label={t('team.finish.label')} title={t('ui.auto.271')} disabled={busy} onClick={() => void props.onFinish(selected.id)}><CircleCheck size={13} /></button>}
@@ -211,6 +253,7 @@ export function TeamPanel(props: TeamPanelProps) {
     {!work && <div className="agent-idle"><div className="agent-symbol"><MessageSquare size={27} /></div><h3>{t('ui.auto.276')}<br />{t('ui.auto.277')}</h3><p className="footnote">{t('ui.auto.278')}</p></div>}
     {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} onAttachFiles={props.onAttachFiles} coordination={props.chatCoordination} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}
     {!showPicker && !selected && team.length > 0 && <p className="chat-empty">{t('ui.auto.279')}</p>}
+    </>}
   </div>;
 }
 
