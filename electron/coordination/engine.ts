@@ -353,9 +353,17 @@ export class CoordinationEngine {
    */
   private async deliverNotice(memberId: string, text: string): Promise<{ delivered: boolean; queued: boolean }> {
     if (!memberId || !text) return { delivered: false, queued: false };
-    if (this.memberIsBusy(memberId)) { this.queueNotice(memberId, text); return { delivered: false, queued: true }; }
+    // B5.5: se registra QUÉ pasó con el aviso, nunca su contenido. Un aviso
+    // lleva resúmenes y nombres de archivo; la bitácora del proceso lleva ids
+    // y estados.
+    if (this.memberIsBusy(memberId)) {
+      this.queueNotice(memberId, text);
+      this.deps.log?.(`[latte] coordination notice queued (member=${memberId} reason=busy)`);
+      return { delivered: false, queued: true };
+    }
     try {
       await this.deps.hub.send(memberId, text);
+      this.deps.log?.(`[latte] coordination notice delivered (member=${memberId})`);
       return { delivered: true, queued: false };
     } catch (error) {
       // Se encola en vez de perderse: el próximo fin de turno lo reintenta. Un
@@ -1141,6 +1149,10 @@ export class CoordinationEngine {
     if (hires.some((hire) => hire.memberId === memberId)) return;
     hires.push({ memberId, roleId, hiredAt: at });
     this.deps.repo.setMeta(HIRES_META + runId, JSON.stringify(hires));
+    // B5.5: el alta es el primer eslabón del circuito, y `agents.log` no tenía
+    // una sola línea de coordinación. El guard de arriba lo deja idempotente:
+    // un alta ya anotada no vuelve a escribir ni fila ni línea.
+    this.deps.log?.(`[latte] coordination hire (run=${runId} member=${memberId} role=${roleId})`);
   }
 
   /**
@@ -2383,6 +2395,9 @@ export class CoordinationEngine {
         this.deps.repo.updateCoordinationTask(taskId, { status: 'ready', attempts, assignedMemberId: null }, now);
       }
     }
+    // B5.5: el reporte, en `agents.log`. Sin contenido: el resumen y los
+    // archivos ya viven en la fila del despacho y en el aviso al coordinador.
+    this.deps.log?.(`[latte] coordination report (run=${task.runId} dispatch=${current?.id ?? 'none'} task=${taskId} member=${grant.memberId} outcome=${outcome})`);
     // EL punto único: toda tarea que pasa a un estado terminal sale por acá.
     this.finishRunIfComplete(task.runId, now);
     // O6: Y LA SUSPENSIÓN SE RE-EVALÚA ACÁ, no en el próximo tick.
@@ -2535,6 +2550,9 @@ export class CoordinationEngine {
     this.deps.repo.setMeta('coordination_coordinator:' + run.workId, '');
     this.pendingClose.delete(runId);
     const closed = this.deps.repo.updateCoordinationRunStatus(runId, status, now, null);
+    // B5.5: el último eslabón. Un run que cierra es el hecho que la persona
+    // más busca en el log cuando algo quedó a medias.
+    this.deps.log?.(`[latte] coordination run closed (run=${runId} work=${run.workId} status=${status})`);
     if (notice) void this.deliverNotice(coordinatorId, notice);
     return closed;
   }
