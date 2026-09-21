@@ -161,6 +161,10 @@ export const BRAND_ERROR_KEYS: Record<string, MessageKey> = {
   CONTEXT_TOO_LONG: 'error.brand.contextTooLong',
   CONTEXT_EMPTY: 'error.brand.contextEmpty',
   BRAND_ARCHIVED: 'error.brand.archived',
+  // B2.4: el CAS del editor de contexto de marca. `writeContext` ya prendia la
+  // salida (recargar o pisar), pero el aviso de arriba seguia siendo el
+  // `message` del motor, en ingles y escrito para quien lee codigo.
+  CONTEXT_STALE: 'error.brand.contextStale',
 };
 
 export const APP_ERROR_KEYS: Record<string, MessageKey> = {

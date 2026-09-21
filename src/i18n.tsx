@@ -528,6 +528,7 @@ const es = {
   'error.brand.contextTooLong': 'El contexto de marca no entra: sumando esto se pasa del largo máximo. Recortá el texto de la propuesta, o acortá el contexto antes de aprobarla.',
   'error.brand.contextEmpty': 'El contexto de marca no se puede vaciar guardando: si querés borrarlo, borralo a mano y guardá eso.',
   'error.brand.archived': 'Esa marca está archivada: restaurala antes de cambiarle nada.',
+  'error.brand.contextStale': 'El contexto de marca cambió mientras lo editabas; revisá y guardá de nuevo.',
   // O2: los de las SUBCLASES, que el escáner del mapa no veía.
   'error.coordination.budgetUnset': 'Este trabajo todavía no tiene presupuesto de despachos: escribí un tope antes de arrancar el equipo.',
   // N2 (ronda 7): LOS GENÉRICOS DE TODA LA APP, CON COPY NEUTRA.
@@ -1297,6 +1298,7 @@ const en: Record<MessageKey, string> = {
   'error.brand.contextTooLong': 'The brand context does not fit: adding this goes over the maximum length. Trim the proposal’s text, or shorten the context before approving it.',
   'error.brand.contextEmpty': 'The brand context cannot be emptied by saving: if you want it gone, clear it by hand and save that.',
   'error.brand.archived': 'That brand is archived: restore it before changing anything on it.',
+  'error.brand.contextStale': 'The brand context changed while you were editing it; review it and save again.',
   'error.coordination.budgetUnset': 'This project has no dispatch budget yet: set a cap before starting the team.',
   'error.app.featureDisabled': 'This feature is switched off in this installation.',
   'error.app.notFound': 'That is gone: it was closed or deleted while you were looking at it. Open the screen again.',
