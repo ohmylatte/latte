@@ -108,6 +108,40 @@ rl.on('line', (line) => {
       reply('Thinking slowly...');
       return; // waits for interrupt
     }
+    // El `result` que el CLI 2.1.278 manda cuando el turno se rompe: trae
+    // `subtype` y `errors`, y NO trae `result`. Latte leia solo `result`, asi
+    // que la persona veia el generico y no quedaba nada escrito en ningun lado.
+    if (/sin-result/i.test(text)) {
+      reply('Intentando...');
+      turns += 1;
+      out({
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        errors: ['boom'],
+        session_id: sessionId,
+        num_turns: turns,
+        usage: { input_tokens: 10, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      });
+      return;
+    }
+    // El aviso de limite de uso. No es un `result`: llega solo, y el turno
+    // puede terminar bien igual.
+    if (/limite-rechazado/i.test(text)) {
+      out({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1758400000, rateLimitType: 'five_hour', unifiedRateLimitFallbackAvailable: false } });
+      finish('ok', false);
+      return;
+    }
+    if (/limite-permitido/i.test(text)) {
+      out({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', resetsAt: 1758400000, rateLimitType: 'five_hour', utilization: 0.97 } });
+      finish('ok', false);
+      return;
+    }
+    if (/informativo/i.test(text)) {
+      out({ type: 'system', subtype: 'informational', message: 'el modelo cambio a sonnet', session_id: sessionId });
+      finish('ok', false);
+      return;
+    }
     if (/fail/i.test(text)) {
       finish('Simulated failure', true);
       return;

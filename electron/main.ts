@@ -3,6 +3,7 @@ import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import type { AgentEvent, ChatEvent, CoordinationEvent, InstallOutcome, UpdateState } from '../shared/contracts';
 import { createBackend, type Backend } from './bootstrap';
 import { errorMessage } from './core/errors';
+import { createFileLog } from './core/fileLog';
 import { ensureUserBinPath } from './core/linuxPath';
 import { installProcessStreamErrorGuards } from './core/processStreams';
 import {
@@ -95,6 +96,21 @@ async function start(): Promise<void> {
   }
 
   const dataDir = process.env.LATTE_DATA_DIR ?? path.join(app.getPath('userData'), 'data');
+  /**
+   * El log del backend, en disco.
+   *
+   * En la app empaquetada NO hay consola: todo lo que el backend escribia con
+   * `console.log` —incluido el detalle de un turno de Claude Code que se
+   * rompe— no lo leia nadie nunca. La persona veia una linea en la pantalla y
+   * no quedaba nada para mirar despues. Ahora las mismas lineas van tambien a
+   * `<dataDir>/logs/agents.log`, que rota a `.1` a los dos megas.
+   */
+  const fileLog = createFileLog(path.join(dataDir, 'logs', 'agents.log'));
+  const backendLog = (line: string): void => {
+    const text = line.trimEnd();
+    console.log(text);
+    fileLog(text);
+  };
   try {
     backend = await createBackend({
       dataDir,
@@ -113,7 +129,7 @@ async function start(): Promise<void> {
         return result.response === 1;
       },
       openExternal: async (url) => { if (isExternalHttp(url)) await shell.openExternal(url); },
-      log: (line) => console.log(line.trimEnd()),
+      log: backendLog,
     });
     // Persist the first automatic choice. From then on the explicit preference
     // always wins over an operating-system locale change.
