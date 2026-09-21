@@ -92,7 +92,7 @@ describe('N7: un alta destildada no se tacha con un motivo falso', () => {
       roles: [role({ id: 'copywriter', name: 'Redactor' }), role({ id: 'designer', name: 'Diseñador' })],
       onResolveGate: vi.fn(),
     });
-    fireEvent.click(screen.getByText('Editar y aprobar'));
+    fireEvent.click(screen.getByText('Editar'));
     const boxes = card(container).querySelectorAll<HTMLInputElement>('.team-card-edit-hire input');
     expect(boxes).toHaveLength(2); // la premisa
     fireEvent.click(boxes[1]!); // destilda al diseñador
@@ -151,7 +151,7 @@ describe('N7: un alta destildada no se tacha con un motivo falso', () => {
       roles: [role({ id: 'designer', name: 'Diseñador' })],
       onResolveGate: vi.fn(),
     });
-    fireEvent.click(screen.getByText('Editar y aprobar'));
+    fireEvent.click(screen.getByText('Editar'));
     const boxes = card(container).querySelectorAll<HTMLInputElement>('.team-card-edit-hire input');
     fireEvent.click(boxes[0]!); // destilda SÓLO la primera
 
@@ -169,7 +169,7 @@ describe('N8: la casilla de ilimitado del EDITOR sigue viva; las ramas muertas d
     // Con el formulario intacto, el "Aprobar" simple existe: la premisa.
     expect(screen.queryByText('Aprobar')).not.toBeNull();
 
-    fireEvent.click(screen.getByText('Editar y aprobar'));
+    fireEvent.click(screen.getByText('Editar'));
     const number = card(container).querySelector<HTMLInputElement>('.team-card-edit input[type="number"]')!;
     fireEvent.change(number, { target: { value: '' } });
     const unlimited = card(container).querySelector<HTMLInputElement>('.team-card-edit-unlimited input')!;
@@ -203,7 +203,7 @@ describe('N10: sin handler la tarjeta es de sólo lectura', () => {
     const actions = card(container).querySelector('.team-card-actions');
     expect(actions).toBeNull();
     expect(screen.queryByText('Aprobar')).toBeNull();
-    expect(screen.queryByText('Editar y aprobar')).toBeNull();
+    expect(screen.queryByText('Editar')).toBeNull();
     expect(screen.queryByText('Rechazar')).toBeNull();
     // Pero el contenido sí se lee: sólo lectura, no invisible.
     expect(card(container).textContent).toContain('Escribir 3 posts para el lanzamiento');
@@ -212,7 +212,7 @@ describe('N10: sin handler la tarjeta es de sólo lectura', () => {
   it('con handler, los tres botones vuelven', () => {
     renderView({ gates: [gateView({ proposalJson: JSON.stringify(proposal()) })], onResolveGate: vi.fn() });
     expect(screen.queryByText('Aprobar')).not.toBeNull();
-    expect(screen.queryByText('Editar y aprobar')).not.toBeNull();
+    expect(screen.queryByText('Editar')).not.toBeNull();
     expect(screen.queryByText('Rechazar')).not.toBeNull();
   });
 });

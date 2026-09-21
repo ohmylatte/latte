@@ -1124,3 +1124,28 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .coord-log{list-style:none;margin:0;padding:8px 0 0;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:4px}
 .coord-log-row{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--text-sm);color:var(--muted)}
 .coord-log-text{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* C6: LAS TARJETAS DEL CHAT. El icono hace el sustantivo; la palabra no lo repite. */
+.coord-card{display:flex;flex-direction:column;gap:10px}
+.coord-card-head{display:flex;align-items:center;gap:10px;min-width:0}
+.coord-card-title{flex:1 1 auto;min-width:0;font-weight:600;font-size:var(--text-md);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coord-card-counts{flex-shrink:0}
+.coord-card-rationale{margin:0;color:var(--muted);font-size:var(--text-sm);line-height:1.6}
+.coord-card-question{font-size:var(--text-base);line-height:1.45;margin:0;overflow-wrap:anywhere}
+.coord-card-actions{display:flex;align-items:center;gap:8px}
+.coord-card-spacer{flex:1 1 auto}
+/* El plan: numero en mono, titulo en una linea, "tras N" en gris, dueno al final. */
+.coord-plan{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.coord-plan-task{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line);min-width:0}
+.coord-plan-task:first-child{border-top:0}
+.coord-plan-n{font-family:var(--mono);font-size:var(--text-sm);color:var(--muted-soft);width:14px;flex-shrink:0}
+.coord-plan-title{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.coord-plan-after{color:var(--muted);font-size:var(--text-sm);white-space:nowrap;flex-shrink:0}
+/* El alta: una fila con su icono. */
+.coord-hires{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.coord-hire{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:var(--radius-sm);background:var(--paper);min-width:0}
+.coord-hire-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coord-hire-note{color:var(--muted);font-size:var(--text-sm);flex-shrink:0}
+/* La linea plegada de un plan ya aprobado. */
+.coord-approved{display:flex;align-items:center;gap:10px;padding:9px 12px;min-width:0}
+.coord-approved-text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coord-approved-go{flex-shrink:0}

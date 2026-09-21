@@ -56,13 +56,41 @@ function renderCards(locale: 'es-AR' | 'en-US', props: Partial<TeamCardsProps> =
 
 describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.4-7.6)', () => {
   it('does not render when the caller has not wired gate state', () => {
-    const { container } = renderCards('es-AR');
+    const { container } = renderCards('es-AR', { coordinationRun: null });
     expect(container.querySelector('.team-cards')).toBeNull();
   });
 
-  it('renders no section when wired but there is nothing pending — zero rows is never a zero', () => {
-    const { container } = renderCards('es-AR', { gates: [], openAsks: [] });
+  /**
+   * C6: SIN NADA PENDIENTE, LA LINEA DE UN PLAN QUE YA SE APROBO.
+   *
+   * Aprobar hacia desaparecer la tarjeta y no dejaba nada: la conversacion
+   * seguia como si no hubiera pasado. Sigue sin haber ninguna TARJETA --cero
+   * filas nunca es un cero-- pero si una linea, con la hora y el salto al
+   * equipo que esta trabajando por eso que se aprobo.
+   */
+  it('renders the approved line, never a card, when nothing is pending', () => {
+    const { container } = renderCards('es-AR', { gates: [], openAsks: [], formatTime: () => '17:17' });
+    expect(container.querySelector('.team-card-proposal')).toBeNull();
+    const line = container.querySelector('.coord-approved')!;
+    expect(line.textContent).toContain('Plan aprobado');
+    expect(line.querySelector('.coord-time')!.textContent).toBe('17:17');
+  });
+
+  it('sin plan aprobado todavia no hay nada que decir', () => {
+    const { container } = renderCards('es-AR', { coordinationRun: runView({ planApproved: false }), gates: [], openAsks: [] });
     expect(container.querySelector('.team-cards')).toBeNull();
+  });
+
+  it('un run cerrado no deja una linea que hable de un equipo que ya no trabaja', () => {
+    const { container } = renderCards('es-AR', { coordinationRun: runView({ status: 'done', active: false }), gates: [], openAsks: [] });
+    expect(container.querySelector('.team-cards')).toBeNull();
+  });
+
+  it('"Ver equipo" cambia el rail, y sin handler no se ofrece', () => {
+    const onShowTeam = vi.fn();
+    const { container } = renderCards('es-AR', { gates: [], openAsks: [], onShowTeam });
+    fireEvent.click(container.querySelector('.coord-approved-go')!);
+    expect(onShowTeam).toHaveBeenCalled();
   });
 
   it('renders the plan, dispatch and budget gates simultaneously, plus an open ask', () => {
@@ -144,7 +172,7 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
     // La pregunta la hizo `m1`, asi que su tarjeta vive en el chat de `m1`.
     const { container } = renderCards('es-AR', { memberId: 'm1', openAsks: [askView({ id: 'ask1' })], onAnswerAsk, onResolveGate });
     fireEvent.change(container.querySelector('.team-card-answer')!, { target: { value: 'Sí, mismo tono' } });
-    fireEvent.click(container.querySelector('.team-card-ask .team-card-actions button')!);
+    fireEvent.click(container.querySelector('.team-card-ask .coord-ask-send')!);
     expect(onAnswerAsk).toHaveBeenCalledWith('ask1', 'Sí, mismo tono');
     expect(onResolveGate).not.toHaveBeenCalled();
     expect(nativePrompt).not.toHaveBeenCalled();
@@ -167,10 +195,16 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
       });
       const card = container.querySelector('.team-card-proposal')!;
       expect(card).not.toBeNull();
-      expect(card.textContent).toContain('Redactor');
+      // C6: el dueno de la tarea es su mini-avatar, no su nombre repetido en
+      // cada renglon: en una lista de cuatro tareas el nombre del rol se
+      // escribia cuatro veces y empujaba el titulo, que es lo que hay que leer.
+      expect(card.querySelector('.coord-plan-task .coord-av')!.textContent).toBe('R');
       expect(card.textContent).toContain('Escribir 3 posts para el lanzamiento');
       expect(card.textContent).toContain('Diseñador');
-      expect(card.textContent).toContain('Necesitamos piezas visuales');
+      // C6: el motivo del alta viaja en el tooltip. La fila dice quién se suma
+      // y que no esta en el equipo, que es lo que decide si se aprueba; el
+      // parrafo del motivo empujaba los botones fuera de la vista.
+      expect(card.querySelector('.coord-hire-note')!.getAttribute('title')).toContain('Necesitamos piezas visuales');
       expect(card.textContent).toContain('El equipo actual no alcanza para el volumen del mes.');
       expect(card.textContent).toContain('8');
       const actions = card.querySelectorAll('.team-card-actions button');
@@ -263,7 +297,7 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
       const onResolveGate = vi.fn().mockRejectedValue(new Error('DEPTH_CAP'));
       const { container } = renderCards('es-AR', { gates: [proposalGate()], onResolveGate });
       const card = container.querySelector('.team-card-proposal')!;
-      fireEvent.click(screen.getByText('Editar y aprobar'));
+      fireEvent.click(screen.getByText('Editar'));
       const boxes = () => [...card.querySelectorAll('.team-card-edit-hire input[type="checkbox"]')] as HTMLInputElement[];
       expect(boxes()).toHaveLength(2); // la premisa: el editor SÍ se abrió
       fireEvent.click(boxes()[1]!); // destildo al diseñador
@@ -283,7 +317,7 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
       const onResolveGate = vi.fn().mockResolvedValue(false);
       const { container } = renderCards('es-AR', { gates: [proposalGate()], onResolveGate });
       const card = container.querySelector('.team-card-proposal')!;
-      fireEvent.click(screen.getByText('Editar y aprobar'));
+      fireEvent.click(screen.getByText('Editar'));
       fireEvent.click(card.querySelectorAll('.team-card-edit-hire input[type="checkbox"]')[1]!);
 
       fireEvent.click(screen.getByText('Confirmar edición y aprobar'));
@@ -296,7 +330,7 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
       const onResolveGate = vi.fn().mockResolvedValue(true);
       const { container } = renderCards('es-AR', { gates: [proposalGate()], onResolveGate });
       const card = container.querySelector('.team-card-proposal')!;
-      fireEvent.click(screen.getByText('Editar y aprobar'));
+      fireEvent.click(screen.getByText('Editar'));
       fireEvent.click(card.querySelectorAll('.team-card-edit-hire input[type="checkbox"]')[1]!);
 
       fireEvent.click(screen.getByText('Confirmar edición y aprobar'));
@@ -313,7 +347,7 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
 
       // Con el editor ABIERTO y el formulario intacto sigue estando: lo que lo
       // esconde es la edición, no el editor.
-      fireEvent.click(screen.getByText('Editar y aprobar'));
+      fireEvent.click(screen.getByText('Editar'));
       expect(labels()).toContain('Aprobar');
 
       // Basta destildar un alta para que desaparezca: el único camino pasa a
@@ -474,10 +508,10 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
       ],
     });
     expect(container.textContent).toContain('Budget exhausted');
-    expect(container.textContent).toContain('COORDINATION PROPOSAL');
+    expect(container.textContent).toContain('The team’s proposal');
     expect(container.textContent).toContain('cannot calculate a total');
     expect(container.textContent).toContain('There is no settings form');
-    for (const spanish of ['Presupuesto agotado', 'PROPUESTA DE COORDINACIÓN', 'no podemos calcular']) {
+    for (const spanish of ['Presupuesto agotado', 'Propuesta del equipo', 'no podemos calcular']) {
       expect(container.textContent).not.toContain(spanish);
     }
   });

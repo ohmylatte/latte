@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChevronRight } from 'lucide-react';
+import { ArrowRight, Check, ChevronRight, CircleCheck, CircleHelp, Pencil, Send, UserPlus, Users } from 'lucide-react';
 import { translate as t } from '../i18n';
 import { memberDisplayName, roleDisplayName } from './names';
+import { CoordAvatar } from './anatomy';
+import { titleOf } from './text';
+import { hourOf, minutesSince } from './time';
 import type {
   AgentRole, CoordinationAskView, CoordinationGateAggregate, CoordinationGateView,
   CoordinationProposal, CoordinationRunView, TeamMember,
@@ -52,6 +55,11 @@ export interface TeamCardsProps {
   pending?: Record<string, boolean>;
   /** Cambia la pestaña del panel de equipo: lo que hace el botón de "El equipo te espera". */
   onSelectMember?: (memberId: string) => void;
+  /** C6: la hora local de un ISO y el instante de referencia, inyectables para los tests. */
+  formatTime?: (value: string) => string;
+  now?: number;
+  /** C6: "Ver equipo" cambia el rail a Equipo. Sin handler, no se ofrece. */
+  onShowTeam?: () => void;
   /**
    * B4.3a: el encabezado plegable YA nombra la sección. Con él presente, el
    * título de adentro decía «Del equipo» por segunda vez, dos renglones
@@ -435,13 +443,39 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
     setEditing(false);
   };
 
-  return <div className="team-card team-card-proposal" data-gate-kind="proposal">
-    <div className="document-kicker">{t('coordination.proposal.kicker')}</div>
-    <h3>{t('coordination.proposal.plan')}</h3>
+  /**
+   * C6: LA PROPUESTA SE LEE COMO UNA LISTA DE TAREAS, NO COMO UN FORMULARIO.
+   *
+   * El número en mono, el título en una línea, "tras N" en gris cuando
+   * depende de otra, y el mini-avatar del dueño. Los índices del `dependsOn`
+   * son posiciones en el plan ORIGINAL: se traducen al número que la persona
+   * ve, que es el del plan recortado — decir "tras 3" apuntando a una tarea
+   * que se cayó no manda a ningún lado.
+   */
+  const keptIndexes = proposal.plan.map((_, i) => i).filter((i) => !trimmed.dropped[i]);
+  const numberOf = new Map(keptIndexes.map((i, pos) => [i, pos + 1]));
+
+  return <div className="team-card team-card-proposal coord-card" data-gate-kind="proposal">
+    <div className="coord-card-head">
+      <span className="coord-tic"><Users size={14} /></span>
+      <span className="coord-card-title">{t('coord.proposal.title')}</span>
+      <span className="coord-pill coord-card-counts">{proposal.estimatedDispatches == null
+        ? t('coord.proposal.countsNoCap', { tasks: keptIndexes.length })
+        : t('coord.proposal.counts', { tasks: keptIndexes.length, dispatches: proposal.estimatedDispatches })}</span>
+    </div>
     {/* Q6/P7: LO QUE SE APRUEBA, no lo que se propuso. */}
-    <ul className="team-card-plan-list">
-      {proposal.plan.map((task, i) => trimmed.dropped[i] ? null
-        : <li key={i}><strong>{roleDisplayName(task.roleId, roles, team)}</strong><MarkdownLine text={task.spec} className="team-card-spec" /></li>)}
+    <ul className="team-card-plan-list coord-plan">
+      {proposal.plan.map((task, i) => {
+        if (trimmed.dropped[i]) return null;
+        const after = (task.dependsOn ?? []).map((idx) => numberOf.get(idx)).filter((n): n is number => n !== undefined);
+        const owner = roleDisplayName(task.roleId, roles, team);
+        return <li key={i} className="coord-plan-task">
+          <span className="coord-plan-n">{numberOf.get(i)}</span>
+          <span className="coord-plan-title" title={task.spec}>{titleOf(task.spec)}</span>
+          {after.length > 0 && <span className="coord-plan-after">{t('coord.proposal.after', { n: after.join(', ') })}</span>}
+          <CoordAvatar name={owner} small roleId={task.roleId} />
+        </li>;
+      })}
     </ul>
     {trimmed.removed > 0 && <>
       <h3 className="team-card-plan-dropped-title">{t('coordination.proposal.droppedTitle')}</h3>
@@ -452,42 +486,41 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
       </ul>
     </>}
     {orphanDropped > 0 && <p className="team-card-orphan-note">{t('coordination.proposal.orphanRolesDropped', { count: orphanDropped })}</p>}
-    {hires.length > 0 && <>
-      <h3>{t('coordination.proposal.hires')}</h3>
+    {/* C6: el alta es una fila con su ícono: "Suma a {rol}" y, en gris, que no
+        está en el equipo. El encabezado "Contrataciones" decía en palabras lo
+        que el ícono ya dice. */}
+    {hires.length > 0 && <ul className="team-card-hire-list coord-hires">
       {/* O3/N7: el alta que no se va a contratar se ve tachada, y con el motivo
           VERDADERO: el tachado es sólo para la que la persona dejó tildada y
           se quedó sin tareas por arrastre. La destildada se marca como lo que
           es —la sacó ella— y sin tachado. La comparación es por ÍNDICE. */}
-      <ul className="team-card-hire-list">
-        {hires.map((hire, i) => {
-          const name = roleDisplayName(hire.roleId, roles, team);
-          const reason = <span>{t('coordination.proposal.hireReason', { reason: hire.why })}</span>;
-          if (!included[i]) {
-            return <li key={i} className="team-card-hire-unticked">
-              <strong>{name}</strong>{reason}
-              <small>{t('coordination.proposal.hireUntickedLabel')}</small>
-            </li>;
-          }
-          if (hiresToSendIndexes.has(i)) return <li key={i}><strong>{name}</strong>{reason}</li>;
-          return <li key={i} className="team-card-hire-dropped">
-            <s><strong>{name}</strong>{reason}</s>
-            <small>{t('coordination.proposal.hireDroppedLabel')}</small>
+      {hires.map((hire, i) => {
+        const name = roleDisplayName(hire.roleId, roles, team);
+        const row = <><UserPlus size={13} className="coord-ic-idle" />
+          <span className="coord-hire-name">{t('coord.proposal.hire', { role: name })}</span>
+          <span className="coord-hire-note" title={hire.why}>{t('coord.proposal.hireNote')}</span></>;
+        if (!included[i]) {
+          return <li key={i} className="team-card-hire-unticked coord-hire">
+            {row}<small>{t('coordination.proposal.hireUntickedLabel')}</small>
           </li>;
-        })}
-      </ul>
-    </>}
+        }
+        if (hiresToSendIndexes.has(i)) return <li key={i} className="coord-hire">{row}</li>;
+        return <li key={i} className="team-card-hire-dropped coord-hire">
+          <s>{row}</s><small>{t('coordination.proposal.hireDroppedLabel')}</small>
+        </li>;
+      })}
+    </ul>}
     {/* O3: los avisos viven FUERA de la edición: valen igual por el camino del
         "Aprobar" simple. */}
     {trimmed.removed > orphanDropped && <p className="team-card-edit-dropped">{t('coordination.proposal.editDropsTasks', { count: trimmed.removed - orphanDropped })}</p>}
     {hiresWithoutTasks > 0 && <p className="team-card-edit-dropped team-card-edit-hire-dropped">{t('coordination.proposal.editDropsHires', { count: hiresWithoutTasks })}</p>}
     {/* O12: el plan 100 % huérfano nombra su única salida real. */}
     {orphanDropped === proposal.plan.length && <p className="team-card-edit-dropped team-card-empty-plan">{t('coordination.proposal.nobodyCanDoIt')}</p>}
-    <h3>{t('coordination.proposal.budget')}</h3>
-    <p>{proposal.estimatedDispatches == null
-      ? t('coordination.budget.unset')
-      : t('coordination.budget.limited', { count: proposal.estimatedDispatches })}</p>
-    <h3>{t('coordination.proposal.rationale')}</h3>
-    <p>{proposal.rationale}</p>
+    {/* C6: el presupuesto ya lo dice la pastilla del encabezado; repetirlo bajo
+        un título era el mismo número dos veces. El motivo se queda —es lo
+        único de la tarjeta que la persona no puede deducir de la lista— pero
+        sin un encabezado que anuncie que abajo hay un motivo. */}
+    {proposal.rationale.trim() !== '' && <p className="coord-card-rationale">{proposal.rationale}</p>}
     {gate.aggregate && <p className="team-card-aggregate">{describeAggregate(proposal.estimatedDispatches, gate.aggregate)}</p>}
     <p className="team-card-note">{t('coordination.proposal.noSettingsNote')}</p>
     {editing && <div className="team-card-edit">
@@ -514,10 +547,16 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
     </div>}
     {/* N10/M4: sin handler no hay botones, y se dice. */}
     {!onResolveGate && <ReadOnlyGateNote />}
-    {onResolveGate && <div className="team-card-actions">
-      {formPristine && <button className="primary" disabled={busy || trimmed.plan.length === 0} onClick={approvePlain}>{t('coordination.gate.approve')}</button>}
-      <button disabled={busy} onClick={() => setEditing(true)}>{t('coordination.gate.editApprove')}</button>
-      <button disabled={busy} onClick={() => onResolveGate(gate.id, 'reject')}>{t('coordination.gate.reject')}</button>
+    {/* C6: un verbo por botón, siempre con ícono. "Editar" abre el MISMO flujo
+        de "Editar y aprobar" de siempre —el recorte de tareas y altas— y por
+        eso el botón de confirmar adentro conserva su nombre entero: ahí sí
+        aprobar es lo que pasa al apretarlo. "Rechazar" va a la derecha,
+        fantasma: es la salida, no una alternativa al mismo nivel. */}
+    {onResolveGate && <div className="team-card-actions coord-card-actions">
+      {formPristine && <button className="primary coord-btn-primary" disabled={busy || trimmed.plan.length === 0} onClick={approvePlain}><Check size={14} />{t('coord.proposal.approve')}</button>}
+      <button disabled={busy} onClick={() => setEditing(true)}><Pencil size={13} />{t('coord.proposal.edit')}</button>
+      <span className="coord-card-spacer" />
+      <button className="coord-btn-ghost" disabled={busy} onClick={() => onResolveGate(gate.id, 'reject')}>{t('coord.proposal.reject')}</button>
     </div>}
   </div>;
 }
@@ -528,19 +567,59 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
  * despacho: `window.prompt` no es un lugar donde nadie pueda escribir una
  * respuesta de verdad.
  */
-function AskCard({ ask, formatDate, onAnswerAsk, pending }: {
-  ask: CoordinationAskView; formatDate?: (value: string) => string; onAnswerAsk?: (askId: string, answer: string) => void; pending?: Pending;
+function AskCard({ ask, team, roles, onAnswerAsk, pending, now }: {
+  ask: CoordinationAskView; team: readonly TeamMember[]; roles: readonly AgentRole[];
+  onAnswerAsk?: (askId: string, answer: string) => void; pending?: Pending; now?: number;
 }) {
   const busy = Boolean(pending?.[`ask:${ask.id}`]);
   const [answer, setAnswer] = useState('');
-  return <div className="team-card team-card-ask" data-gate-kind="ask">
-    <h3>{t('coordination.ask.title')}</h3>
-    <p className="team-card-question">{ask.question}</p>
-    <small>{t('coordination.ask.deadline', { date: formatDate ? formatDate(ask.deadlineAt) : ask.deadlineAt })}</small>
-    <textarea className="team-card-answer" aria-label={t('coordination.ask.placeholder')} placeholder={t('coordination.ask.placeholder')} value={answer} onChange={(e) => setAnswer(e.target.value)} />
-    <div className="team-card-actions">
-      <button className="primary" disabled={busy || !answer.trim()} onClick={() => { onAnswerAsk?.(ask.id, answer.trim()); setAnswer(''); }}>{t('coordination.ask.answer')}</button>
+  const role = memberDisplayName(ask.memberId, team, null, roles);
+  /**
+   * C6: "hace {n} min" en vez de la fecha del vencimiento.
+   *
+   * Lo que la persona necesita saber de una pregunta que le llegó AL CHAT es
+   * hace cuánto la están esperando. El vencimiento vive en el modo Equipo,
+   * donde la tarjeta grande tiene lugar para decir para qué tarea es.
+   */
+  const ago = minutesSince(ask.createdAt, now ?? Date.now());
+  const send = () => { if (answer.trim()) { onAnswerAsk?.(ask.id, answer.trim()); setAnswer(''); } };
+  return <div className="team-card team-card-ask coord-card" data-gate-kind="ask">
+    <div className="coord-card-head">
+      <span className="coord-tic coord-tic-live"><CircleHelp size={14} /></span>
+      <span className="coord-card-title">{t('coord.ask.title', { role })}</span>
+      {ago != null && <time className="coord-time" dateTime={ask.createdAt}>{ago > 0 ? t('coord.ask.ago', { count: ago }) : t('coord.ask.now')}</time>}
     </div>
+    <p className="team-card-question coord-card-question">{ask.question}</p>
+    {onAnswerAsk && <div className="coord-ask-form">
+      <label className="visually-hidden" htmlFor={`team-card-answer-${ask.id}`}>{t('coord.ask.label', { name: role })}</label>
+      <input id={`team-card-answer-${ask.id}`} className="team-card-answer coord-ask-input" type="text"
+        placeholder={t('coord.ask.placeholder')} value={answer} disabled={busy}
+        onChange={(e) => setAnswer(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } }} />
+      <button className="primary coord-btn-primary coord-ask-send" disabled={busy || !answer.trim()} onClick={send}><Send size={14} />{t('coord.ask.answer')}</button>
+    </div>}
+  </div>;
+}
+
+/**
+ * C6: LA LÍNEA PLEGADA DE UN PLAN QUE YA SE APROBÓ.
+ *
+ * Aprobar hacía desaparecer la tarjeta y no dejaba nada: la conversación
+ * seguía como si no hubiera pasado. Esto es una línea —tilde verde, la frase,
+ * la hora en mono— y un solo verbo para ir a ver al equipo trabajar.
+ */
+function ApprovedLine({ run, formatTime, onShowTeam }: {
+  run: CoordinationRunView; formatTime?: (value: string) => string; onShowTeam?: () => void;
+}) {
+  const at = run.createdAt;
+  const label = formatTime ? formatTime(at) : hourOf(at);
+  return <div className="team-card coord-approved" data-gate-kind="approved">
+    <span className="coord-tic coord-tic-ok"><CircleCheck size={14} /></span>
+    <span className="coord-approved-text">{t('coord.approved.line')}</span>
+    {label && <time className="coord-time" dateTime={at}>{label}</time>}
+    {onShowTeam && <button type="button" className="coord-btn coord-btn-ghost coord-approved-go" onClick={onShowTeam}>
+      {t('coord.approved.seeTeam')}<ArrowRight size={13} />
+    </button>}
   </div>;
 }
 
@@ -554,7 +633,17 @@ export function TeamCards(props: TeamCardsProps) {
   const routing = routeTeamCards(props.memberId, props.gates, props.openAsks, props.coordinationRun);
   const roles = props.roles ?? [];
   const team = props.team ?? [];
+  const run = props.coordinationRun ?? null;
   if (routing.gates.length === 0 && routing.asks.length === 0) {
+    /**
+     * C6: el plan aprobado deja una linea en la conversacion donde se aprobo.
+     * Solo en el chat del coordinador --es su conversacion-- y solo mientras
+     * el run este vivo: un run cerrado ya no tiene equipo trabajando.
+     */
+    const approved = run?.active && run.planApproved && gateRecipient(run) === props.memberId;
+    if (approved) return <section className="team-cards team-cards-approved">
+      <ApprovedLine run={run!} formatTime={props.formatTime} onShowTeam={props.onShowTeam} />
+    </section>;
     if (routing.elsewhere === 0 || !routing.firstElsewhereMemberId) return null;
     const target = routing.firstElsewhereMemberId;
     // B2.2: el miembro que espera puede ya no estar en el equipo. La cadena de
@@ -576,7 +665,7 @@ export function TeamCards(props: TeamCardsProps) {
       if (gate.kind === 'budget') return <BudgetGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} pending={props.pending} />;
       return <PlanGateCard key={gate.id} gate={gate} onResolveGate={props.onResolveGate} pending={props.pending} />;
     })}
-    {routing.asks.map((ask) => <AskCard key={ask.id} ask={ask} formatDate={props.formatDate} onAnswerAsk={props.onAnswerAsk} pending={props.pending} />)}
+    {routing.asks.map((ask) => <AskCard key={ask.id} ask={ask} team={team} roles={roles} onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now} />)}
   </section>;
 }
 

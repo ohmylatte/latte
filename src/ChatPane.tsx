@@ -33,6 +33,10 @@ export interface ChatCoordinationProps {
   coordinationPending?: Record<string, boolean>;
   /** Cambia de pestaña dentro del Trabajo: lo que aprieta "El equipo te espera". */
   onSelectMember?: (memberId: string) => void;
+  /** C6: la hora local de un ISO, para la línea del plan aprobado y la pregunta. */
+  formatTime?: (value: string) => string;
+  /** C6: cambia el rail a Equipo: lo que aprieta "Ver equipo". */
+  onShowTeam?: () => void;
   /**
    * B3.5: la persona ya pidio ver el pendiente.
    *
@@ -188,6 +192,8 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
       onAnswerAsk={coordination.onAnswerAsk}
       pending={coordination.coordinationPending}
       onSelectMember={coordination.onSelectMember}
+      formatTime={coordination.formatTime}
+      onShowTeam={coordination.onShowTeam}
       initiallyExpanded={coordination.initiallyExpanded}
     />}
     {beforeComposer}

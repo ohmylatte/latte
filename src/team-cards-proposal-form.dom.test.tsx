@@ -67,7 +67,7 @@ describe('una propuesta re-enviada no deja estado viejo en el formulario', () =>
     const props = (p: CoordinationProposal) => ({ ...base, gates: [gate(p)], onResolveGate });
     const { container, rerender } = render(createElement(TeamCards, props(proposal({ estimatedDispatches: 8 }))));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }));
     expect(dispatchesInput(container).value).toBe('8');
 
     // El agente re-envía la propuesta: mismo gate, otro tope.
@@ -76,7 +76,7 @@ describe('una propuesta re-enviada no deja estado viejo en el formulario', () =>
     // El formulario se cerró con la propuesta vieja: no queda una edición a
     // medio hacer sobre un plan que ya no existe.
     expect(container.querySelector('.team-card-edit')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }));
     expect(dispatchesInput(container).value).toBe('3');
   });
 
@@ -84,10 +84,10 @@ describe('una propuesta re-enviada no deja estado viejo en el formulario', () =>
     const onResolveGate = vi.fn();
     const props = (p: CoordinationProposal) => ({ ...base, gates: [gate(p)], onResolveGate });
     const { rerender } = render(createElement(TeamCards, props(proposal({ estimatedDispatches: 8 }))));
-    fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }));
 
     rerender(createElement(TeamCards, props(proposal({ estimatedDispatches: 3 }))));
-    fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar edición y aprobar' }));
 
     expect(onResolveGate).toHaveBeenCalledTimes(1);
@@ -100,7 +100,7 @@ describe('una propuesta re-enviada no deja estado viejo en el formulario', () =>
     const onResolveGate = vi.fn();
     const props = () => ({ ...base, gates: [gate(proposal({ estimatedDispatches: 8 }))], onResolveGate });
     const { container, rerender } = render(createElement(TeamCards, props()));
-    fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }));
     fireEvent.change(dispatchesInput(container), { target: { value: '5' } });
 
     rerender(createElement(TeamCards, props()));
@@ -115,7 +115,7 @@ describe('la confirmación de presupuesto ilimitado no sobrevive a un cambio del
   it('tildar ilimitado, escribir un tope y volver a borrarlo deja la casilla DESTILDADA', () => {
     const onResolveGate = vi.fn();
     const { container } = render(createElement(TeamCards, { ...base, gates: [gate(unlimited())], onResolveGate }));
-    fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }));
 
     fireEvent.click(unlimitedBox(container));
     expect(unlimitedBox(container).checked).toBe(true);
@@ -129,7 +129,7 @@ describe('la confirmación de presupuesto ilimitado no sobrevive a un cambio del
   it('y confirmar ahí NO manda un `unlimitedConfirmedAt` que la persona no acaba de dar', () => {
     const onResolveGate = vi.fn();
     const { container } = render(createElement(TeamCards, { ...base, gates: [gate(unlimited())], onResolveGate }));
-    fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }));
     fireEvent.click(unlimitedBox(container));
     fireEvent.change(dispatchesInput(container), { target: { value: '7' } });
     fireEvent.change(dispatchesInput(container), { target: { value: '' } });
@@ -142,7 +142,7 @@ describe('la confirmación de presupuesto ilimitado no sobrevive a un cambio del
   it('tildar la casilla y confirmar sin tocar nada más SÍ manda la confirmación', () => {
     const onResolveGate = vi.fn();
     const { container } = render(createElement(TeamCards, { ...base, gates: [gate(unlimited())], onResolveGate }));
-    fireEvent.click(screen.getByRole('button', { name: 'Editar y aprobar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }));
     fireEvent.click(unlimitedBox(container));
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar edición y aprobar' }));
 

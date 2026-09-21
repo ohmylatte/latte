@@ -87,8 +87,16 @@ describe('B1.1: a quién le toca cada tarjeta', () => {
     expect(container.querySelector('.team-cards')).toBeNull();
   });
 
-  it('sin nada pendiente no se dibuja ninguna sección — cero filas nunca es un cero', () => {
+  /** C6: sin nada pendiente no hay TARJETA; hay la linea del plan aprobado. */
+  it('sin nada pendiente no se dibuja ninguna tarjeta — cero filas nunca es un cero', () => {
     const { container } = mount('coord', { coordinationRun: run(), gates: [], openAsks: [] });
+    expect(container.querySelector('.team-card-proposal')).toBeNull();
+    expect(container.querySelector('.team-card-ask')).toBeNull();
+    expect(container.querySelector('.coord-approved')).not.toBeNull();
+  });
+
+  it('y esa linea es solo del chat del coordinador', () => {
+    const { container } = mount('cm', { coordinationRun: run(), gates: [], openAsks: [] });
     expect(container.querySelector('.team-cards')).toBeNull();
   });
 });
@@ -157,7 +165,7 @@ describe('B1.1: las acciones inline llaman a la API', () => {
     const nativePrompt = vi.fn();
     vi.stubGlobal('prompt', nativePrompt);
     const { container } = mount('redactor', { coordinationRun: run(), openAsks: [ask()], onAnswerAsk: (...a: unknown[]) => { calls.push(a); } });
-    const answer = container.querySelector<HTMLButtonElement>('.team-card-ask .team-card-actions button')!;
+    const answer = container.querySelector<HTMLButtonElement>('.team-card-ask .coord-ask-send')!;
     expect(answer.disabled).toBe(true); // una respuesta vacía no es una respuesta
     fireEvent.change(container.querySelector('.team-card-answer')!, { target: { value: 'Sí, el mismo tono' } });
     fireEvent.click(answer);
