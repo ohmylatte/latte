@@ -28,7 +28,18 @@ import { formatMessage, type MessageKey } from './i18n';
  * un `aria-label` literal y los cuatro estados de herramienta de `labelFor` —,
  * y con el escaneo puesto encima no queda ninguno.
  */
-const FILES = ['TeamPanel.tsx', 'DecisionsView.tsx', 'ChatPane.tsx', 'coordination/TeamCards.tsx'];
+/**
+ * B2.6: y alcanza tambien a las tres pantallas que quedaron afuera.
+ *
+ * `ResumenView`, `HomeView` y `ActiveTeamsStrip` leen el MISMO estado de
+ * coordinacion que el panel y las tarjetas, y ninguna estaba en la lista. Un
+ * literal ahi adentro tiene exactamente el mismo efecto que uno en
+ * `TeamPanel`: media pantalla en castellano cuando la interfaz habla ingles.
+ */
+const FILES = [
+  'TeamPanel.tsx', 'DecisionsView.tsx', 'ChatPane.tsx', 'coordination/TeamCards.tsx',
+  'ResumenView.tsx', 'HomeView.tsx', 'ActiveTeamsStrip.tsx',
+];
 
 /** Las líneas de código, sin comentarios: un comentario en castellano es documentación, no copy. */
 function codeLines(file: string): string[] {
