@@ -52,6 +52,12 @@ export interface TeamCardsProps {
   pending?: Record<string, boolean>;
   /** Cambia la pestaña del panel de equipo: lo que hace el botón de "El equipo te espera". */
   onSelectMember?: (memberId: string) => void;
+  /**
+   * B4.3a: el encabezado plegable YA nombra la sección. Con él presente, el
+   * título de adentro decía «Del equipo» por segunda vez, dos renglones
+   * seguidos, y se comía el alto que las tarjetas necesitan para verse.
+   */
+  titled?: boolean;
 }
 
 /**
@@ -560,7 +566,7 @@ export function TeamCards(props: TeamCardsProps) {
     </section>;
   }
   return <section className="team-cards">
-    <div className="document-kicker team-cards-title">{t('coordination.cards.title')}</div>
+    {props.titled !== false && <div className="document-kicker team-cards-title">{t('coordination.cards.title')}</div>}
     {routing.gates.map((gate) => {
       // La key lleva la VERSIÓN de la propuesta, no sólo el id del gate: un
       // agente que re-envía la propuesta reusa el mismo gate, y con una key
@@ -622,6 +628,7 @@ export function TeamCardsCollapsible(props: TeamCardsProps & { initiallyExpanded
       <span className="team-cards-collapsed-text">{t('coordination.cards.collapsed', { what: describeCardsPending(routing) })}</span>
       <ChevronRight size={13} />
     </button>
-    {open && <TeamCards {...props} />}
+    {/* El encabezado de arriba ya dice de qué es esto: adentro no se repite. */}
+    {open && <TeamCards {...props} titled={false} />}
   </>;
 }

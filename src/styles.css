@@ -836,7 +836,12 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
    B1.5. Sobrio y con los mismos tokens que el resto: papel, linea, tinta.
    Las tarjetas viven arriba del campo de escribir, asi que su techo esta
    acotado -- una propuesta larga no puede comerse la conversacion entera. */
-.team-cards{display:flex;flex-direction:column;gap:10px;margin:10px 0 0;padding:12px;border:1px solid var(--line-strong);border-radius:var(--radius-md);background:var(--paper-raised);max-height:46vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--rust-soft) transparent}
+/* B4.3a: `max-height` dice hasta donde pueden crecer; `flex:0 0 auto` dice que
+   NO ceden. Sin eso, como cualquier hijo flexible de `.chat-pane`, se
+   aplastaban a nada: se veia el titulo, una barra de scroll y ninguna tarjeta.
+   El que cede el alto es el scroll de la conversacion, justo abajo. */
+.team-cards{display:flex;flex-direction:column;gap:10px;margin:10px 0 0;padding:12px;border:1px solid var(--line-strong);border-radius:var(--radius-md);background:var(--paper-raised);max-height:46vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--rust-soft) transparent;flex:0 0 auto}
+.chat-pane .chat-scroll{flex:1 1 auto;min-height:0}
 .team-cards-title{margin:0}
 .team-cards-elsewhere{flex-direction:row;align-items:center;justify-content:space-between;gap:10px;max-height:none;overflow:visible}
 .team-cards-waiting{margin:0;font-size:var(--text-sm);color:var(--rust-deep)}
@@ -913,6 +918,13 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 /* B3.3: el subtitulo de la pestana. Una linea chica bajo el nombre con el
    ultimo intercambio; lo que no entra se recorta y el texto entero vive en el
    `title`. `min-width:0` porque sin eso la linea larga estira la pestana. */
+/* B4.3b: DOS RENGLONES, y por eso nada se pisa. En una sola fila de 190px el
+   chip de estado se montaba encima del nombre. Arriba avatar, nombre y punto;
+   abajo el chip y el ultimo intercambio. `flex-start` porque una fila centrada
+   con dos renglones desalinea el avatar. */
+.team-tab{align-items:flex-start;max-width:230px}
+.team-tab-top,.team-tab-bottom{display:flex;align-items:center;gap:7px;width:100%;min-width:0}
+.team-tab-bottom{gap:6px}
 .team-tab-text{display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:0;flex:1}
 .team-tab-last{font-size:var(--text-sm);color:var(--muted);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .team-tab .team-member-state{padding:0 6px}

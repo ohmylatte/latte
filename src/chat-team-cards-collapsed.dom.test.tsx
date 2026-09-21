@@ -141,4 +141,23 @@ describe('B3.2: la línea plegada', () => {
     expect(text).not.toContain('propuesta');
     expect(text).not.toContain('El equipo');
   });
+  /**
+   * B4.3a: EL TITULO NO SE DICE DOS VECES.
+   *
+   * Con el encabezado plegable presente, la seccion desplegada repetia «Del
+   * equipo» adentro: el mismo rotulo, dos renglones seguidos, y uno de ellos
+   * comiendose el alto que las tarjetas necesitan para verse.
+   */
+  it('desplegada bajo el encabezado plegable, no repite el titulo adentro', () => {
+    const { container } = mount({ coordinationRun: run(sessionId), gates: [gate('g1', 'proposal')], onResolveGate: () => {} });
+    fireEvent.click(container.querySelector('.team-cards-collapsed')!);
+    expect(container.querySelector('[data-gate-kind="proposal"]')).not.toBeNull();
+    expect(container.querySelector('.team-cards .team-cards-title')).toBeNull();
+  });
+
+  /** Sin encabezado plegable el titulo sigue siendo lo unico que nombra la seccion. */
+  it('la linea de "esto espera en otro chat" no depende del titulo', () => {
+    const { container } = mount({ coordinationRun: run('otro-miembro'), gates: [gate('g1', 'dispatch')], onResolveGate: () => {} });
+    expect(container.querySelector('.team-cards-waiting')).not.toBeNull();
+  });
 });

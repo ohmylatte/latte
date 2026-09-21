@@ -59,6 +59,8 @@ const NEW_CLASSES = [
   'team-tab-thread', 'team-view', 'team-view-empty', 'team-view-columns', 'team-view-list',
   'team-view-thread', 'team-view-thread-title', 'team-inbox-open-chat',
   'team-cards-collapsed', 'team-cards-collapsed-text', 'team-tab-text', 'team-tab-last',
+  // B4.3: los dos renglones de la pestana, que el chip dejo de pisar.
+  'team-tab-top', 'team-tab-bottom',
   // La tira lateral y la fila de Inicio, que venían sin una sola regla.
   'active-teams-strip', 'active-teams-strip-row', 'active-teams-strip-brand',
   'active-teams-strip-work', 'active-teams-strip-status', 'active-teams-strip-budget',
@@ -135,5 +137,52 @@ describe('B1.5: el CSS del equipo', () => {
     const body = ruleBodyFor('team-cards')!;
     expect(body).toContain('max-height');
     expect(body).toContain('overflow-y:auto');
+  });
+
+  /**
+   * B4.3a: TECHO NO ES ALTURA.
+   *
+   * Desplegadas, las tarjetas quedaban APLASTADAS dentro de la columna del
+   * chat: se veía el título «Del equipo», una barra de scroll y nada más. El
+   * `max-height:46vh` decía hasta dónde pueden crecer, pero como todo hijo
+   * flexible de `.chat-pane` podían encogerse a cero — y se encogían, porque
+   * la conversación de al lado se queda con el alto. Lo que faltaba es que NO
+   * cedan: el que cede es el scroll de la conversación.
+   */
+  it('las tarjetas desplegadas no ceden alto; la conversación sí', () => {
+    expect(ruleBodyFor('team-cards')).toContain('flex:0 0 auto');
+    // La última regla del scroll es la que manda: tiene que poder achicarse.
+    const scroll = [...lines].reverse().find((l) => l.startsWith('.chat-pane .chat-scroll{'));
+    expect(scroll, 'no hay ninguna regla para el scroll de la conversación').toBeDefined();
+    expect(scroll!).toContain('flex:1 1 auto');
+    expect(scroll!).toContain('min-height:0');
+  });
+
+  /**
+   * B4.3b: LA PESTAÑA SON DOS RENGLONES, Y POR ESO NADA SE PISA.
+   *
+   * En una sola fila de 190px el chip de estado («conectado») se montaba
+   * encima del nombre («Community Manager»). Arriba el avatar, el nombre y el
+   * punto; abajo el chip y el último intercambio. `align-items:flex-start`
+   * porque una fila centrada con dos renglones desalinea el avatar.
+   */
+  it('la pestaña apila dos renglones en vez de apretar todo en una fila', () => {
+    expect(ruleBodyFor('team-tab')).toContain('align-items:flex-start');
+    const top = ruleBodyFor('team-tab-top');
+    const bottom = ruleBodyFor('team-tab-bottom');
+    expect(top, '.team-tab-top no tiene regla').not.toBeNull();
+    expect(bottom, '.team-tab-bottom no tiene regla').not.toBeNull();
+    // Los dos renglones ocupan el ancho y recortan: sin `min-width:0` un
+    // nombre largo estira la pestaña en vez de recortarse.
+    for (const body of [top!, bottom!]) {
+      expect(body).toContain('display:flex');
+      expect(body).toContain('min-width:0');
+    }
+  });
+
+  /** El chip y el último intercambio comparten renglón: los dos recortan. */
+  it('el renglón de abajo recorta en vez de empujar', () => {
+    expect(ruleBodyFor('team-tab-last')).toContain('overflow:hidden');
+    expect(ruleBodyFor('team-member-state')).toContain('flex-shrink:0');
   });
 });

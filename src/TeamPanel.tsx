@@ -495,21 +495,34 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', pendi
   // El chip pide las DOS: un run vivo y un miembro con proceso.
   const hasProcess = member.status === 'working' || member.status === 'idle';
   const coordinationState = support && runActive && hasProcess ? memberCoordinationState(support) : null;
+  /**
+   * B4.3b: DOS RENGLONES, NO UNA FILA APRETADA.
+   *
+   * El avatar, el nombre y el punto arriba; el chip de estado y el ultimo
+   * intercambio abajo. En una sola fila de 190px el chip ("conectado") se
+   * montaba encima del nombre ("Community Manager") -- no es un problema de
+   * recorte, es que no entran los dos en el mismo renglon.
+   */
+  const bottom = coordinationState || lastExchange;
   return <button role="tab" aria-selected={selected} className={'team-tab status-' + status + (attention ? ' attention' : '')} disabled={busy} onClick={onSelect} title={title}>
-    <span className="team-avatar" data-role={member.roleId} aria-hidden="true">{member.initial}</span>
     <span className="team-tab-text">
-      <span className="team-tab-name">{member.roleName}</span>
-      {lastExchange && <span className="team-tab-last" title={lastExchange}>{lastExchange}</span>}
+      <span className="team-tab-top">
+        <span className="team-avatar" data-role={member.roleId} aria-hidden="true">{member.initial}</span>
+        <span className="team-tab-name">{member.roleName}</span>
+        {status === 'working' && !attention
+          ? <SteamWisp className="team-steam" style={{ color: roleColorVar(member.roleId) }} />
+          : <i className="team-tab-dot" aria-hidden="true" />}
+        {/* B1.2: lo que ESTE miembro esta esperando de la persona. El punto de
+            atencion de al lado habla del runtime (un permiso, una pregunta del
+            CLI); esto habla de la coordinacion, y son dos cosas distintas: un
+            miembro puede tener un gate esperando con su proceso en silencio. */}
+        {pending > 0 && <span className="team-tab-pending" title={t('team.inbox.pending', { count: pending })}>{pending}</span>}
+      </span>
+      {bottom && <span className="team-tab-bottom">
+        {coordinationState && <span className={'team-member-state ' + coordinationState.className} data-state={coordinationState.state} title={coordinationState.title}>{coordinationState.label}</span>}
+        {lastExchange && <span className="team-tab-last" title={lastExchange}>{lastExchange}</span>}
+      </span>}
     </span>
-    {coordinationState && <span className={'team-member-state ' + coordinationState.className} data-state={coordinationState.state} title={coordinationState.title}>{coordinationState.label}</span>}
-    {status === 'working' && !attention
-      ? <SteamWisp className="team-steam" style={{ color: roleColorVar(member.roleId) }} />
-      : <i className="team-tab-dot" aria-hidden="true" />}
-    {/* B1.2: lo que ESTE miembro esta esperando de la persona. El punto de
-        atencion de arriba habla del runtime (un permiso, una pregunta del
-        CLI); esto habla de la coordinacion, y son dos cosas distintas: un
-        miembro puede tener un gate esperando con su proceso en silencio. */}
-    {pending > 0 && <span className="team-tab-pending" title={t('team.inbox.pending', { count: pending })}>{pending}</span>}
     <span className="visually-hidden">{statusLabel(status, attention)}</span>
   </button>;
 }

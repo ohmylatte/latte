@@ -44,7 +44,11 @@ describe('las tarjetas del equipo en el chat', () => {
     expect(kids.indexOf(cards)).toBeGreaterThan(kids.indexOf(container.querySelector('.chat-scroll')!));
     expect(kids.indexOf(cards)).toBeLessThan(kids.indexOf(container.querySelector('form.prompt-form')!));
     expect(kids.indexOf(container.querySelector('.team-cards-collapsed')!)).toBeGreaterThan(kids.indexOf(container.querySelector('.chat-scroll')!));
-    expect(cards.textContent).toContain('Del equipo');
+    // B4.3a: la sección la NOMBRA el encabezado plegable, y sólo él. El título
+    // de adentro decía lo mismo un renglón más abajo y se comía el alto que
+    // las tarjetas necesitan para verse.
+    expect(container.querySelector('.team-cards-collapsed')!.textContent).toContain('El equipo te espera');
+    expect(cards.querySelector('.team-cards-title')).toBeNull();
   });
 
   it('sin la prop de coordinación el chat queda exactamente como estaba', () => {
