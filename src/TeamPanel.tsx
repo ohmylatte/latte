@@ -143,6 +143,8 @@ export interface TeamPanelProps {
   coordinationTasks?: readonly CoordinationRunTaskView[];
   /** La hora local de un ISO, inyectable para los tests. */
   formatTime?: (value: string) => string;
+  /** C4: el instante contra el que se cuenta "vence en N min". Inyectable para los tests. */
+  now?: number;
   formatDate?: (value: string) => string;
   /**
    * B1.3: EL ESTADO DE COORDINACION POR MIEMBRO, CORTO.
@@ -272,6 +274,7 @@ export function TeamPanel(props: TeamPanelProps) {
       coordinationAsks={props.coordinationAsks} coordinationHires={props.coordinationHires}
       coordinationGates={props.coordinationGates} coordinationTasks={props.coordinationTasks}
       formatTime={props.formatTime} onNewRequest={openCoordinatorChat} coordinationSupport={props.coordinationSupport}
+      onAnswerAsk={props.chatCoordination?.onAnswerAsk} now={props.now}
       formatDate={props.formatDate} coordinationAuthority={props.coordinationAuthority}
       onSetCoordinationAuthority={props.onSetCoordinationAuthority} coordinationBudget={props.coordinationBudget}
       onSetCoordinationBudget={props.onSetCoordinationBudget} coordinatorGrant={props.coordinatorGrant} />}

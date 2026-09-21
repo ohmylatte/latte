@@ -64,6 +64,10 @@ export interface TeamViewProps {
   coordinationTasks?: readonly CoordinationRunTaskView[];
   /** La hora local de un ISO, inyectable para los tests. */
   formatTime?: (value: string) => string;
+  /** C4: contestar una pregunta abierta desde el detalle del miembro que la hizo. */
+  onAnswerAsk?: (askId: string, answer: string) => void;
+  /** C4: el instante contra el que se cuenta "vence en N min". Inyectable para los tests. */
+  now?: number;
   /** C5: empezar otro pedido cuando el run terminó — abre el chat del coordinador. */
   onNewRequest?: () => void;
   coordinationSupport?: readonly CoordinationMemberSupport[];
@@ -170,7 +174,9 @@ export function TeamView(props: TeamViewProps) {
         {selected && <MemberDetail memberId={selected} team={team} roles={roles} run={run}
           events={thread} tasks={props.coordinationTasks}
           signal={memberSignal({ ...input, team, roles, run, taskTitle }, selected)}
-          formatTime={hour} onOpenChat={props.onOpenChat} />}
+          formatTime={hour} onOpenChat={props.onOpenChat}
+          openAsks={(props.coordinationAsks ?? []).filter((ask) => ask.memberId === selected && (run == null || run.active))}
+          onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now} />}
       </div>
     </div>
     {props.mode === 'advanced' && <TeamAdvanced {...props} />}

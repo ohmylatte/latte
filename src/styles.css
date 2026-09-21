@@ -1083,3 +1083,18 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
    modelo de datos no tiene. Si el resumen no nombra un archivo, no hay ficha. */
 .coord-files{display:flex;flex-wrap:wrap;gap:6px}
 .coord-file{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--paper-raised);font-family:var(--mono);font-size:var(--text-sm);color:var(--ink-soft)}
+/* C4: EL ESTADO "TE NECESITA".
+   El rail head es un control segmentado: fondo hundido, el activo en --foam.
+   El badge del acento cuenta lo que el Trabajo entero esta esperando. */
+.team-rail-modes{background:var(--paper-deep);border-radius:var(--radius-pill);padding:3px;gap:2px}
+.team-rail-chat,.team-rail-team{border:0;background:transparent;border-radius:var(--radius-pill);color:var(--ink-soft)}
+.team-rail-chat.selected,.team-rail-team.selected{background:var(--foam);border-color:transparent;color:var(--ink);box-shadow:0 1px 2px rgb(0 0 0 / .08)}
+/* La tarjeta de la pregunta: lo unico del detalle que lleva el acento. */
+.coord-ask-card{border:1px solid var(--rust-soft);background:var(--paper-raised);border-radius:var(--radius-md);padding:16px 18px;display:flex;flex-direction:column;gap:14px;flex-shrink:0}
+.coord-ask-top{display:flex;align-items:flex-start;gap:12px;min-width:0}
+.coord-ask-text{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:5px}
+.coord-ask-question{font-size:var(--text-lg);line-height:1.4;overflow-wrap:anywhere}
+.coord-ask-due{color:var(--muted);font-size:var(--text-sm)}
+.coord-ask-form{display:flex;gap:8px;align-items:center;min-width:0}
+.coord-ask-input{flex:1 1 auto;min-width:0;height:30px}
+.coord-ask-send{flex-shrink:0}

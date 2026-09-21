@@ -1,12 +1,13 @@
 import { CircleCheck, CircleHelp, CircleX, FileText, Flag, MessageSquare, Send, UserPlus } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { translate as t } from '../i18n';
 import { CoordAvatar, CoordTime } from './anatomy';
 import type { InboxEvent } from './inbox';
 import type { MemberSignal } from './member-line';
 import { memberDisplayName } from './names';
 import { bodyOf, fileNames, titleOf } from './text';
-import type { AgentRole, CoordinationRunTaskView, CoordinationRunView, TeamMember } from '../../shared/contracts';
+import { minutesUntil } from './time';
+import type { AgentRole, CoordinationAskView, CoordinationRunTaskView, CoordinationRunView, TeamMember } from '../../shared/contracts';
 
 /**
  * C3: EL DETALLE DE UN MIEMBRO ES UNA LÍNEA DE TIEMPO.
@@ -33,8 +34,61 @@ export interface MemberDetailProps {
   formatTime?: (value: string) => string;
   /** Abre la conversación de ESTE miembro en la columna del chat. Sin handler, no se ofrece. */
   onOpenChat?: (memberId: string) => void;
-  /** C4: la tarjeta grande de la pregunta abierta, que se dibuja arriba de la línea de tiempo. */
+  /** C4: las preguntas abiertas de ESTE miembro. La tarjeta grande va arriba de la línea de tiempo. */
+  openAsks?: readonly CoordinationAskView[];
+  onAnswerAsk?: (askId: string, answer: string) => void;
+  pending?: Record<string, boolean>;
+  /** El instante contra el que se cuenta "vence en N min". Inyectable para los tests. */
+  now?: number;
+  /** Lo que el contenedor quiera meter entre el encabezado y la línea de tiempo. */
   children?: ReactNode;
+}
+
+/**
+ * C4: LA PREGUNTA QUE TE ESPERA, GRANDE Y CON SU ÚNICA ACCIÓN.
+ *
+ * Criterio 2: el acento significa "te necesita", así que esta tarjeta es lo
+ * único del detalle que lo lleva. La pregunta se lee a 17px —es lo que hay que
+ * leer— y debajo, en gris, para qué tarea es y cuánto falta para que venza.
+ * Una sola acción: la respuesta misma.
+ *
+ * Después de responder la tarjeta se va sola: `openAsks` deja de traerla, y el
+ * hecho queda en la línea de tiempo, que es donde vive lo que ya pasó.
+ */
+function AskCard({ ask, taskTitle, name, onAnswerAsk, pending, now }: {
+  ask: CoordinationAskView;
+  taskTitle: string;
+  name: string;
+  onAnswerAsk?: (askId: string, answer: string) => void;
+  pending?: Record<string, boolean>;
+  now: number;
+}) {
+  const [answer, setAnswer] = useState('');
+  const busy = Boolean(pending?.[`ask:${ask.id}`]);
+  const left = minutesUntil(ask.deadlineAt, now);
+  const due = left == null ? '' : left > 0
+    ? (taskTitle ? t('coord.ask.for', { task: taskTitle, count: left }) : t('coord.ask.due', { count: left }))
+    : (taskTitle ? t('coord.ask.forOverdue', { task: taskTitle }) : t('coord.ask.overdue'));
+  const send = () => { if (answer.trim()) { onAnswerAsk?.(ask.id, answer.trim()); setAnswer(''); } };
+  return <div className="coord-ask-card" data-ask-id={ask.id}>
+    <div className="coord-ask-top">
+      <span className="coord-tic coord-tic-live"><CircleHelp size={14} /></span>
+      <div className="coord-ask-text">
+        <div className="coord-ask-question">{ask.question}</div>
+        {due && <div className="coord-ask-due">{due}</div>}
+      </div>
+    </div>
+    {onAnswerAsk && <div className="coord-ask-form">
+      <label className="visually-hidden" htmlFor={`coord-answer-${ask.id}`}>{t('coord.ask.label', { name })}</label>
+      <input id={`coord-answer-${ask.id}`} className="coord-ask-input" type="text"
+        placeholder={t('coord.ask.placeholder')} value={answer} disabled={busy}
+        onChange={(e) => setAnswer(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } }} />
+      <button type="button" className="coord-btn coord-btn-primary coord-ask-send" disabled={busy || !answer.trim()} onClick={send}>
+        <Send size={14} />{t('coord.ask.answer')}
+      </button>
+    </div>}
+  </div>;
 }
 
 /** El ícono del hecho. Criterio 3: el ícono hace el sustantivo. */
@@ -108,6 +162,11 @@ export function MemberDetail(props: MemberDetailProps) {
         <MessageSquare size={14} />{t('coord.detail.conversation')}
       </button>}
     </div>
+    {/* C4: la pregunta abierta, arriba de todo: es lo unico del detalle que te
+        esta esperando, y por eso es lo unico que lleva el acento. */}
+    {(props.openAsks ?? []).filter((ask) => !ask.answeredAt).map((ask) => <AskCard key={ask.id} ask={ask}
+      taskTitle={titleOf(taskOf(ask.taskId ?? undefined)?.spec)} name={name}
+      onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now ?? Date.now()} />)}
     {props.children}
     <ol className="team-thread coord-timeline" aria-label={t('coord.timeline.label')}>
       {timeline.length === 0
