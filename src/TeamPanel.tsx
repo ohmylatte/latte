@@ -473,7 +473,8 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', pendi
   const status: TeamMemberStatus = live ? (state.status === 'idle' ? 'idle' : 'working') : member.status === 'ended' ? 'ended' : 'paused';
   const attention = live && (state.permissions.length > 0 || state.questions.length > 0);
   // The runtime is a technical detail the simple mode keeps out of the tooltip.
-  const title = member.roleName + (mode === 'advanced' ? ' · ' + RUNTIME_SHORT[member.runtime] : '') + ' · ' + statusLabel(status, attention);
+  // `title` es texto plano: `statusLabel` devuelve JSX y concatenarlo daba "[object Object]".
+  const title = member.roleName + (mode === 'advanced' ? ' · ' + RUNTIME_SHORT[member.runtime] : '') + ' · ' + statusText(status, attention);
   // El chip pide las DOS: un run vivo y un miembro con proceso.
   const hasProcess = member.status === 'working' || member.status === 'idle';
   const coordinationState = support && runActive && hasProcess ? memberCoordinationState(support) : null;
@@ -579,6 +580,17 @@ export function describeMemorySupport(row: CoordinationMemberSupport): string {
   if (row.memoryInjected) return t('coordination.memory.available');
   if (row.reason === 'engram_not_installed') return t('coordination.degraded.engramMissing');
   return t('coordination.memory.unavailable');
+}
+
+/** La misma frase que `statusLabel`, sin iconos: para `title` y cualquier atributo de texto. */
+function statusText(status: TeamMemberStatus, attention: boolean): string {
+  if (attention) return t('team.status.attention');
+  switch (status) {
+    case 'working': return t('ui.auto.403');
+    case 'idle': return t('ui.auto.404');
+    case 'ended': return t('ui.auto.285');
+    default: return t('team.status.paused');
+  }
 }
 
 function statusLabel(status: TeamMemberStatus, attention: boolean) {
