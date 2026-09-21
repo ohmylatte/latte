@@ -254,8 +254,11 @@ describe('CoordinationEngine — the dispatch choke point', () => {
     b.repo.insertCoordinationMessage({ id: 'cms_a', runId, toMemberId: 'mem_x', fromMemberId: null, kind: 'note', body: 'A', deliveredAt: null, createdAt: '2026-01-01T00:00:00.000Z' });
     b.repo.insertCoordinationMessage({ id: 'cms_b', runId, toMemberId: 'mem_x', fromMemberId: null, kind: 'note', body: 'B', deliveredAt: null, createdAt: '2026-01-01T00:00:01.000Z' });
     b.repo.insertMember({ id: 'mem_x', workId, roleId: 'strategist', roleName: 'Strategist', initial: 'S', runtime: 'codex', model: null, accountId: null, sessionId: '', done: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
-    expect(engine.check('mem_x').map((m) => m.body)).toEqual(['A', 'B']);
-    expect(engine.check('mem_x')).toEqual([]);
+    // M3: `check` dejó de ser una lista pelada. Devuelve el buzón Y el estado
+    // del run (las dos preguntas del miembro son la misma), pero la entrega
+    // sigue siendo FIFO y exactamente una vez.
+    expect(engine.check('mem_x').messages.map((m) => m.text)).toEqual(['A', 'B']);
+    expect(engine.check('mem_x').messages).toEqual([]);
   });
 
   it('latte_check never actually blocks: ya no publica ningun `wait` que ignorar', () => {
@@ -263,7 +266,7 @@ describe('CoordinationEngine — the dispatch choke point', () => {
     const started = Date.now();
     const result = engine.check('mem_y');
     expect(Date.now() - started).toBeLessThan(1000);
-    expect(result).toEqual([]);
+    expect(result.messages).toEqual([]);
   });
 
   // --- 3.12: ask TTL -------------------------------------------------------------

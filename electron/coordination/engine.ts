@@ -67,6 +67,28 @@ export interface CoordinationGrant {
   role: CoordinationRole;
 }
 
+/**
+ * Lo que un miembro ve cuando llama a `latte_check`: su buzón (lo que le
+ * escribieron y no leyó) y el estado del run. Los dos juntos porque las dos
+ * preguntas son la misma — "¿hay algo para mí y cómo viene la mano?" — y una
+ * herramienta que devuelve la mitad obliga a un segundo sondeo.
+ *
+ * `run: null` es el miembro sin run activo, no un run vacío.
+ */
+export interface CoordinationCheckResult {
+  run: {
+    status: CoordinationRunRecord['status'];
+    tasks: { ready: number; dispatched: number; done: number; failed: number; blocked: number; pending: number };
+  } | null;
+  messages: Array<{
+    id: string;
+    /** `null` sólo para un mensaje que escribió Latte, no un miembro. */
+    from: { memberId: string; roleId: string } | null;
+    text: string;
+    createdAt: string;
+  }>;
+}
+
 export interface CoordinationBudgetBlock {
   dispatchesUsed: number;
   maxDispatches: number | null;
@@ -298,17 +320,19 @@ export class CoordinationEngine {
    * pregunta— cuyo efecto real ya está commiteado. Que el agente no se entere
    * es malo; que la aprobación se caiga porque el agente no se enteró es peor.
    */
-  private async deliverNotice(memberId: string, text: string): Promise<void> {
-    if (!memberId || !text) return;
-    if (this.memberIsBusy(memberId)) { this.queueNotice(memberId, text); return; }
+  private async deliverNotice(memberId: string, text: string): Promise<{ delivered: boolean; queued: boolean }> {
+    if (!memberId || !text) return { delivered: false, queued: false };
+    if (this.memberIsBusy(memberId)) { this.queueNotice(memberId, text); return { delivered: false, queued: true }; }
     try {
       await this.deps.hub.send(memberId, text);
+      return { delivered: true, queued: false };
     } catch (error) {
       // Se encola en vez de perderse: el próximo fin de turno lo reintenta. Un
       // miembro que ya no existe deja su cola colgada y no molesta a nadie —
       // está acotada, y muere con el proceso.
       this.queueNotice(memberId, text);
       this.deps.log?.(`[latte] coordination notice queued after send failed (${memberId}): ${error instanceof Error ? error.message : String(error)}`);
+      return { delivered: false, queued: true };
     }
   }
 
@@ -2328,7 +2352,64 @@ export class CoordinationEngine {
     // pantalla decía "en curso" sobre un equipo que no tenía qué hacer.
     this.maybeSelfSuspendOnAsks(task.runId, now);
     this.touch(grant.workId, task.runId);
+    // M1: Y EL COORDINADOR SE ENTERA DEL REPORTE.
+    //
+    // Éste era el agujero del criterio entero: "cada uno en lo suyo, otro
+    // consolida". El motor tenía despacho (coordinador → miembro) y reporte
+    // (miembro → base), y ahí moría: el resultado quedaba en una fila que el
+    // coordinador no tenía cómo ver — `latte_check` devolvía `[]` por diseño —
+    // así que consolidaba a ciegas o, peor, rehacía el trabajo él mismo.
+    //
+    // DESPUÉS de `finishRunIfComplete`, no antes: el conteo que viaja en el
+    // aviso es el de después de este reporte, y si éste era el último, el
+    // cierre ya mandó lo suyo y los dos avisos llegan en orden.
+    //
+    // `void`: el aviso no es parte del reporte. `deliverNotice` nunca tira, y
+    // un reporte ya asentado no se deshace porque un agente no se entere.
+    void this.noticeReport(task.runId, grant.memberId, task.roleId, taskId, outcome, summary, filesJson);
     return this.deps.repo.getCoordinationTask(taskId);
+  }
+
+  /**
+   * El aviso de un reporte, redactado con lo que el coordinador necesita para
+   * consolidar sin volver a pedir nada: quién (rol Y miembro, porque puede
+   * haber dos del mismo rol), qué tarea, cómo salió, el resumen, los archivos
+   * —`none` cuando no hay, nunca una lista vacía que parezca un olvido— y
+   * cómo va el run.
+   *
+   * Nunca se avisa a sí mismo: el coordinador que hace una tarea del plan y la
+   * reporta ya sabe lo que hizo, y un turno de usuario contándoselo le
+   * arrancaría un turno entero para nada.
+   */
+  private async noticeReport(
+    runId: string, reporterId: string, roleId: string, taskId: string,
+    outcome: 'succeeded' | 'failed', summary: string, filesJson: string | null,
+  ): Promise<void> {
+    try {
+      const run = this.deps.repo.getCoordinationRun(runId);
+      const coordinatorId = this.coordinatorOf(run);
+      if (!coordinatorId || coordinatorId === reporterId) return;
+      const tasks = this.deps.repo.listCoordinationTasks(runId);
+      const count = (status: CoordinationTaskRecord['status']) => tasks.filter((t) => t.status === status).length;
+      const done = count('done');
+      const inFlight = count('dispatched') + count('running');
+      const files = (filesJson ?? '').trim();
+      await this.deliverNotice(
+        coordinatorId,
+        `«${roleId}» (${reporterId}) reported task ${taskId} as ${outcome}: ${summary}. `
+        + `Files: ${files.length > 0 ? files : 'none'}. `
+        + `Run: ${done}/${tasks.length} done, ${count('ready')} ready, ${inFlight} in flight.`,
+      );
+    } catch (error) {
+      // Redactar el aviso lee filas, y una lectura puede fallar. El reporte ya
+      // está asentado: lo único que se pierde acá es el aviso.
+      this.deps.log?.(`[latte] report notice failed (${taskId}): ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** El miembro coordinador de este run, por su columna o por el meta que `resolveGrant` lee. */
+  private coordinatorOf(run: CoordinationRunRecord): string {
+    return run.coordinatorMemberId || this.deps.repo.getMeta('coordination_coordinator:' + run.workId) || '';
   }
 
   /**
@@ -2388,9 +2469,31 @@ export class CoordinationEngine {
    */
   private closeRun(runId: string, status: 'done' | 'cancelled', now: string): CoordinationRunRecord {
     const run = this.deps.repo.getCoordinationRun(runId);
+    // M1: el final también se avisa. El coordinador recibía un reporte por
+    // tarea y después SILENCIO: sin esto no tiene cómo saber que ya no queda
+    // nada que despachar, y su única salida era seguir sondeando
+    // `latte_task_list` (o quedarse esperando para siempre).
+    //
+    // El destinatario se lee ANTES de borrar el meta del permiso, que se borra
+    // justo abajo. Un run `planning` que se cancela NO avisa acá: eso es un
+    // plan rechazado, y `resolveProposalGate` ya le manda su propio texto — dos
+    // avisos por el mismo hecho son dos turnos de usuario por el mismo hecho.
+    const coordinatorId = this.coordinatorOf(run);
+    const notice = run.status === 'planning'
+      ? null
+      : status === 'done'
+        ? (() => {
+          const tasks = this.deps.repo.listCoordinationTasks(runId);
+          const done = tasks.filter((t) => t.status === 'done').length;
+          return `Run finished: ${done} done, ${tasks.length - done} failed. Nothing left to dispatch.`
+            + ' The coordinator grant ends with the run: if more work turns out to be needed, propose it again with `latte_request_coordination`.';
+        })()
+        : 'Run cancelled by the person. Nothing else will be dispatched; stop waiting for reports.';
     this.deps.repo.setMeta('coordination_coordinator:' + run.workId, '');
     this.pendingClose.delete(runId);
-    return this.deps.repo.updateCoordinationRunStatus(runId, status, now, null);
+    const closed = this.deps.repo.updateCoordinationRunStatus(runId, status, now, null);
+    if (notice) void this.deliverNotice(coordinatorId, notice);
+    return closed;
   }
 
   /**
@@ -2919,19 +3022,153 @@ export class CoordinationEngine {
   }
 
   /**
-   * FIFO, una sola entrega, lectura sincrónica. Nadie escribe todavía en
-   * `coordination_message` (`insertCoordinationMessage` no tiene ningún
-   * llamador de producción), así que esto devuelve `[]` siempre — y el
-   * esquema publicado de `latte_check` lo dice con todas las letras en vez de
-   * prometer un buzón y una espera que no existen.
+   * M3: EL BUZÓN DEJA DE ESTAR VACÍO.
+   *
+   * Hasta hoy esto devolvía `[]` siempre y estaba bien que lo dijera: nada
+   * escribía en `coordination_message`. Con `latte_message` ya hay productor,
+   * así que `latte_check` es de verdad la lectura de un miembro: lo que le
+   * escribieron y todavía no leyó, MÁS el estado del run, que es lo que hace
+   * falta para decidir si seguís, si esperás o si ya no hay nada que hacer.
+   *
+   * FIFO y una sola entrega: leer CONSUME. La segunda llamada devuelve `[]` y
+   * eso es lo correcto — un mensaje que vuelve a aparecer en cada sondeo hace
+   * que el agente lo conteste dos veces.
    */
-  check(memberId: string): CoordinationMessageRecord[] {
-    const run = this.activeRunForMember(memberId);
-    if (!run) return [];
+  check(memberId: string, runId: string | null = null): CoordinationCheckResult {
+    // El run del GRANT primero: `resolveGrant` ya lo resolvió contra el
+    // Trabajo del miembro, y viene con `requiresRun` cumplido. Buscarlo de
+    // nuevo por la fila del miembro (`activeRunForMember`) es el camino de los
+    // llamadores directos, que no tienen grant.
+    const run = runId ? this.deps.repo.getCoordinationRun(runId) : this.activeRunForMember(memberId);
+    if (!run) return { run: null, messages: [] };
     const messages = this.deps.repo.listUndeliveredCoordinationMessages(run.id, memberId);
     const now = this.deps.clock();
     for (const m of messages) this.deps.repo.markCoordinationMessageDelivered(m.id, now);
-    return messages;
+    const tasks = this.deps.repo.listCoordinationTasks(run.id);
+    const count = (status: CoordinationTaskRecord['status']) => tasks.filter((t) => t.status === status).length;
+    return {
+      run: {
+        status: run.status,
+        tasks: {
+          ready: count('ready'), dispatched: count('dispatched') + count('running'),
+          done: count('done'), failed: count('failed'), blocked: count('blocked'), pending: count('pending'),
+        },
+      },
+      messages: messages.map((m) => ({
+        id: m.id,
+        from: m.fromMemberId ? { memberId: m.fromMemberId, roleId: this.roleIdOf(run.workId, m.fromMemberId) } : null,
+        text: m.body,
+        createdAt: m.createdAt,
+      })),
+    };
+  }
+
+  /**
+   * M2: UN MIEMBRO LE ESCRIBE A OTRO. La pieza que faltaba para que los roles
+   * sean roles: si uno necesita algo de otro, se lo PIDE en vez de inventarlo
+   * o de hacerlo él mismo.
+   *
+   * `to` acepta las tres formas que un agente tiene a mano: `"coordinator"`
+   * (que no sabe qué id tiene), un `roleId` del equipo (que es como piensa: "el
+   * diseñador") o un `memberId` concreto (el que vino en un aviso). Fuera del
+   * Trabajo no se escribe NUNCA: el aislamiento entre Marcas no se negocia por
+   * comodidad de direccionamiento.
+   *
+   * Se GUARDA y se entrega, en ese orden. La fila es la verdad —sobrevive al
+   * proceso, y es lo que la persona va a leer— y la entrega es el empujón:
+   * `deliverNotice` la encola si el destinatario está en medio de un turno, y
+   * el resultado lo dice sin mentir (`delivered` sólo si el `send` resolvió).
+   */
+  async message(grant: CoordinationGrant, to: string, text: string): Promise<{ delivered: boolean; queued: boolean; to: string }> {
+    if (grant.runId == null) throw new LatteError('NO_ACTIVE_RUN', 'This Work has no active coordination run');
+    // Defensa en profundidad: el esquema MCP publica y hace cumplir el mismo
+    // tope, y este método es público.
+    const cleanTo = requireText(to, 'Recipient', LIMITS.name);
+    const cleanText = requireText(text, 'Message', LIMITS.decision);
+    const run = this.assertRunMutable(this.deps.repo.getCoordinationRun(grant.runId));
+    const toMemberId = this.resolveMessageTarget(run, cleanTo);
+    const now = this.deps.clock();
+    this.deps.repo.insertCoordinationMessage({
+      id: newId('cms'), runId: run.id, toMemberId, fromMemberId: grant.memberId,
+      kind: 'note', body: cleanText, deliveredAt: null, createdAt: now,
+    });
+    this.touch(run.workId, run.id);
+    const outcome = await this.deliverNotice(
+      toMemberId,
+      `Message from «${this.roleIdOf(run.workId, grant.memberId)}» (${grant.memberId}): ${cleanText}`
+      + '\n\nReply with `latte_message` if they need an answer; `latte_check` shows anything else waiting for you.',
+    );
+    return { ...outcome, to: toMemberId };
+  }
+
+  /**
+   * A quién le llega. `coordinator` sale del run; un id de miembro se acepta
+   * sólo si es DE ESTE TRABAJO (si es de otro, `FORBIDDEN`, no `NOT_FOUND`: la
+   * diferencia entre "no existe" y "no es tuyo" es la que enseña el límite); y
+   * un rol se resuelve contra el equipo vivo, prefiriendo al que tiene un
+   * despacho abierto de este run — si hay dos copywriters, el que está
+   * trabajando en esto es el que te interesa.
+   */
+  private resolveMessageTarget(run: CoordinationRunRecord, to: string): string {
+    if (to === 'coordinator') {
+      const coordinatorId = this.coordinatorOf(run);
+      if (!coordinatorId) throw new NotFoundError('CoordinationMember', 'coordinator');
+      return coordinatorId;
+    }
+    const team = this.teamOf(run.workId).filter((m) => m.status !== 'ended');
+    const byId = team.find((m) => m.id === to);
+    if (byId) return byId.id;
+    // Un id que el hub no publica todavía puede ser una fila real: si es de
+    // otro Trabajo, el pedido se rechaza acá y no escribe una sola fila.
+    const member = this.deps.repo.findMember(to);
+    if (member) {
+      if (member.workId !== run.workId) {
+        throw new LatteError('FORBIDDEN', 'That member belongs to another Work. A coordination message never leaves its own Work.');
+      }
+      return member.id;
+    }
+    const sameRole = team.filter((m) => m.roleId === to);
+    if (sameRole.length > 0) {
+      const working = new Set(this.deps.repo.listCoordinationDispatches(run.id)
+        .filter((d) => d.status === 'dispatched' || d.status === 'running').map((d) => d.memberId));
+      return (sameRole.find((m) => working.has(m.id)) ?? sameRole[0]).id;
+    }
+    throw new NotFoundError('CoordinationMember', to);
+  }
+
+  /** El rol de un miembro, del equipo vivo o de su fila. Vacío cuando ya no hay ni una ni otra: nunca un rol inventado. */
+  private roleIdOf(workId: string, memberId: string): string {
+    const fromTeam = this.teamOf(workId).find((m) => m.id === memberId);
+    if (fromTeam) return fromTeam.roleId;
+    try { return this.deps.repo.findMember(memberId)?.roleId ?? ''; } catch { return ''; }
+  }
+
+  private teamOf(workId: string): Array<{ id: string; roleId: string; status: string }> {
+    try { return this.deps.hub.listTeam(workId); } catch { return []; }
+  }
+
+  /**
+   * M4: TODO el buzón de un run, para la persona. Los mensajes entre agentes
+   * son parte de lo que pasó en el Trabajo, y hasta acá no había forma de
+   * verlos: leer no consume nada (a diferencia de `check`) y los ids vienen
+   * con su rol resuelto, porque `mem_fake_1` no le dice nada a nadie.
+   */
+  listMessages(runId: string): Array<{
+    id: string; runId: string;
+    from: { memberId: string; roleId: string } | null;
+    to: { memberId: string; roleId: string };
+    text: string; readAt: string | null; createdAt: string;
+  }> {
+    const run = this.deps.repo.getCoordinationRun(runId);
+    return this.deps.repo.listCoordinationMessages(runId).map((m) => ({
+      id: m.id,
+      runId: m.runId,
+      from: m.fromMemberId ? { memberId: m.fromMemberId, roleId: this.roleIdOf(run.workId, m.fromMemberId) } : null,
+      to: { memberId: m.toMemberId, roleId: this.roleIdOf(run.workId, m.toMemberId) },
+      text: m.body,
+      readAt: m.deliveredAt,
+      createdAt: m.createdAt,
+    }));
   }
 
   ask(grant: CoordinationGrant, question: string, ttlMinutes?: number, taskId?: string): CoordinationAskRecord {
