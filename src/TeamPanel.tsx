@@ -11,6 +11,8 @@ import { contextWeight, describeUsage, formatTokens, totalTokens } from './usage
 import { Loading } from './brand-marks';
 import { pendingForMember, pendingForWork } from './coordination/inbox';
 import { CoordAvatar, CoordTime } from './coordination/anatomy';
+import { Avatar } from './coordination/Avatar';
+import { parseAvatar } from '../shared/avatar';
 import { memberSignal, type MemberDot } from './coordination/member-line';
 import { hourOf } from './coordination/time';
 import { titleOf } from './coordination/text';
@@ -739,7 +741,7 @@ function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady,
     <div className="role-picker-head"><span className="field-label">{canCancel ? t('ui.auto.290') : t('ui.auto.291')}</span>{canCancel && <button className="icon-button" aria-label={t('ui.auto.241')} onClick={onCancel}><X size={15} /></button>}</div>
     <p className="agent-explanation">{t('ui.auto.292')}</p>
     <div className="role-list" role="radiogroup" aria-label={t('team.rolePicker.group')}>
-      {roles.map(role => <button key={role.id} role="radio" aria-checked={roleId === role.id} className={'role-card' + (roleId === role.id ? ' selected' : '')} onClick={() => setRoleId(role.id)}><span className="team-avatar" data-role={role.id} aria-hidden="true">{role.initial}</span><span><strong>{role.name}</strong><small>{role.summary}</small></span>{roleId === role.id && <Check size={14} />}</button>)}
+      {roles.map(role => <button key={role.id} role="radio" aria-checked={roleId === role.id} className={'role-card' + (roleId === role.id ? ' selected' : '')} onClick={() => setRoleId(role.id)}><Avatar params={parseAvatar(role.avatar)} roleId={role.id} name={role.name} size="lg" /><span><strong>{role.name}</strong><small>{role.summary}</small></span>{roleId === role.id && <Check size={14} />}</button>)}
     </div>
     <TierPicker tier={tier} busy={busy || opening} onChange={setTier} />
     <label className="field-label" htmlFor="member-runtime">{t('ui.auto.293')}</label>

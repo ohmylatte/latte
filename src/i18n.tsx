@@ -919,6 +919,12 @@ const es = {
   'resultados.documento.empty': 'Sin documento vinculado todavía',
   'resultados.decision.empty': 'Sin decisiones aprobadas todavía',
   'resultados.empty': 'Nada por aquí todavía',
+  // --- Avatares: elegir la cara de un rol -------------------------------
+  'avatar.legend': 'Cara',
+  'avatar.hint': 'El color es el rol; la cara es la persona. Elegí una.',
+  'avatar.option': 'Cara {p0} de {p1}',
+  'avatar.chosen': 'Cara elegida',
+  'avatar.reroll': 'Otras ocho',
   ...generatedEs,
 } as const;
 
@@ -1735,6 +1741,11 @@ const en: Record<MessageKey, string> = {
   'resultados.documento.empty': 'No document linked yet',
   'resultados.decision.empty': 'No approved decisions yet',
   'resultados.empty': 'Nothing here yet',
+  'avatar.legend': 'Face',
+  'avatar.hint': 'The colour is the role; the face is the person. Pick one.',
+  'avatar.option': 'Face {p0} of {p1}',
+  'avatar.chosen': 'Chosen face',
+  'avatar.reroll': 'Another eight',
   ...generatedEn,
 };
 export const catalogs: Record<UiLocale, Record<MessageKey, string>> = { 'es-AR': es, 'en-US': en };

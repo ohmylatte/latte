@@ -1253,3 +1253,17 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 @media (prefers-reduced-motion: reduce){
   .av-face *,.av-face{animation:none!important}
 }
+
+/* --- D4: ELEGIR LA CARA. Ocho del mismo color: lo unico que se elige es quien. */
+.av-picker{border:1px solid var(--line);border-radius:var(--radius-md);background:var(--paper);padding:12px 14px 10px;margin:0 0 13px;min-width:0}
+.av-picker legend{font-size:var(--text-sm);letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);padding:0 5px}
+.av-picker[disabled]{opacity:.55}
+.av-picker-grid{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px}
+/* El boton no compite con la cara: sin borde ni fondo hasta que sea la elegida. */
+.av-pick{border:2px solid transparent;border-radius:var(--radius-pill);background:transparent;padding:2px;justify-content:center}
+.av-pick:hover:not(:disabled){background:var(--paper-deep);border-color:var(--line)}
+.av-pick.is-chosen{border-color:var(--rust);background:var(--foam)}
+.av-picker-foot{display:flex;align-items:center;gap:12px;margin-top:8px}
+.av-picker-foot .footnote{flex:1 1 auto;margin:0;min-width:0}
+.av-reroll{flex-shrink:0;font-size:var(--text-sm);padding:6px 10px}
+@media(max-width:1100px){.av-picker-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
