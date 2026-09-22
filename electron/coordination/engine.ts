@@ -2329,6 +2329,20 @@ export class CoordinationEngine {
   /** `outcome:'succeeded'` unblocks dependents; `'failed'` returns the task to `ready`, or `blocked` at the attempt cap. Idempotent on an already-`done` task. */
   async report(grant: CoordinationGrant, taskId: string, outcome: 'succeeded' | 'failed', summary: string, filesJson: string | null = null): Promise<CoordinationTaskRecord> {
     if (grant.runId == null) throw new LatteError('NO_ACTIVE_RUN', 'This Work has no active coordination run');
+    // R2: un reporte sin resumen no es un reporte.
+    //
+    // `summary` es lo ÚNICO que queda de la tarea una vez liquidada: con eso
+    // consolida el coordinador y eso lee la persona. El esquema publicado ya
+    // pone `minLength: 1`, pero el esquema mide LARGO y un resumen de puros
+    // espacios lo pasa; y además `report()` tiene otra entrada que no cruza
+    // el guardia de esquema (`acceptHandoffAsTask`). El candado va acá, antes
+    // de mirar la tarea, así que no se toca ni el despacho ni el intento: el
+    // agente puede volver a reportar, bien.
+    // El código es `VALIDATION`, no `INVALID_ARGUMENT`: ése último es del
+    // SOBRE MCP y no cruza IPC (hay un test que lo vigila), y `report()` tiene
+    // una entrada que sí cruza IPC. `ValidationError` ya tiene frase en los
+    // dos idiomas para esa puerta, y por MCP sale igual de legible.
+    if (summary.trim().length === 0) throw new ValidationError('summary must say what happened: an empty report would settle the task with nothing in it');
     const task = this.deps.repo.getCoordinationTask(taskId);
     // PRIMERO de todo: la tarea tiene que ser de ESTE run. `startDispatch` ya
     // lo chequeaba y acá faltaba, así que un miembro de la Marca B con un

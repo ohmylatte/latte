@@ -179,7 +179,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         taskId: { type: 'string', maxLength: LIMITS.name },
         outcome: { type: 'string', maxLength: LIMITS.name, enum: ['succeeded', 'failed'] },
-        summary: { type: 'string', maxLength: LIMITS.decision },
+        summary: { type: 'string', minLength: 1, maxLength: LIMITS.decision },
         files: { type: ['string', 'null'], maxLength: LIMITS.chatMessage, description: 'Relative paths of files this task produced or changed, if any.' },
       },
       required: ['taskId', 'outcome', 'summary'],

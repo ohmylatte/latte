@@ -14,7 +14,7 @@
  *
  * Es un validador MÍNIMO a propósito: exactamente las DIEZ palabras clave que
  * los esquemas publicados usan (`type`, `required`, `enum`, `minimum`,
- * `maxLength`, `maxItems`, `items`, `properties`, `additionalProperties`,
+ * `minLength`, `maxLength`, `maxItems`, `items`, `properties`, `additionalProperties`,
  * `description`) y ni una más — la lista es `SUPPORTED_SCHEMA_KEYWORDS`, acá
  * abajo, y ésta es la prosa que la acompaña. Decía "siete" y enumeraba ocho,
  * sin `maxItems` ni `description`: el docstring describía una versión del
@@ -34,7 +34,7 @@
 
 /** Las palabras clave que este validador entiende. Nada fuera de esta lista puede aparecer en un esquema publicado sin que el test estructural lo note. */
 export const SUPPORTED_SCHEMA_KEYWORDS = [
-  'type', 'required', 'enum', 'minimum', 'maxLength', 'maxItems', 'items', 'properties', 'additionalProperties', 'description',
+  'type', 'required', 'enum', 'minimum', 'minLength', 'maxLength', 'maxItems', 'items', 'properties', 'additionalProperties', 'description',
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -82,6 +82,14 @@ export function validateAgainstSchema(schema: unknown, value: unknown, path = ''
 
   if (typeof schema.minimum === 'number' && typeof value === 'number' && value < schema.minimum) {
     return `${field} must be at least ${schema.minimum}`;
+  }
+
+  // R2: el piso, no sólo el techo. `latte_report` pedía `summary` pero no
+  // pedía que dijera algo, así que `""` pasaba y liquidaba la tarea con el
+  // resultado en blanco. Un mínimo publicado es un mínimo que el agente lee
+  // en `tools/list` antes de mandar.
+  if (typeof schema.minLength === 'number' && typeof value === 'string' && value.length < schema.minLength) {
+    return `${field} must be at least ${schema.minLength} characters`;
   }
 
   if (typeof schema.maxLength === 'number' && typeof value === 'string' && value.length > schema.maxLength) {
