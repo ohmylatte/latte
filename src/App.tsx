@@ -34,6 +34,7 @@ import { useCoordination } from './useCoordination';
 import { ActiveTeamsStrip } from './ActiveTeamsStrip';
 import { MemoryNotice } from './MemoryNotice';
 import { sinceLastVisitFromActiveRuns } from './home-summary';
+import { AvatarSprite } from './coordination/Avatar';
 
 /**
  * Every workspace view, in one place.
@@ -1243,6 +1244,8 @@ export function App() {
   // and closing Settings returns to the walk with its draft re-hydrated.
   if (onboarding === 'incomplete') return <><OnboardingGate controls={isDesktop ? <WindowControls /> : null} onComplete={finishOnboarding} onSkip={skipOnboarding} initialDraft={onboardingDraft} onAdvanced={() => setSettings('agents')} /><UpdateBanner /></>;
   return <div className={'app-shell' + (railed ? ' railed' : '') + (focusChat ? ' conversation-focus' : '') + (dragging ? ' dragging' : '')} style={{ ['--agent-width' as string]: `${agentWidth}px` }}>
+    {/* La biblioteca de formas de los avatares: una vez, para toda la app. */}
+    <AvatarSprite />
     <aside className="sidebar">
       <div className="wordmark"><span className="logo-mark" aria-hidden="true" />Latte<button className="rail-toggle" aria-expanded={!railed} aria-label={railed ? t('ui.auto.029') : t('ui.auto.030')} title={railed ? t('ui.auto.029') : t('ui.auto.030')} onClick={() => setRailed(v => !v)}>{railed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button></div>
       <div className="brand-picker"><select aria-label={t('ui.auto.031')} value={brand?.id ?? ''} onChange={e => { const b = brands.find(b => b.id === e.target.value); if (b) selectBrand(b); }}>{!brands.length && <option value="">{t('ui.auto.032')}</option>}{brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select><ChevronDown size={15} /></div>

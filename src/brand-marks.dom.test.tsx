@@ -32,10 +32,15 @@ describe('brand marks', () => {
     expect(Number(coffee.getAttribute('r'))).toBeCloseTo(22.5);
   });
 
-  it('roleColorVar maps known roles to their token and falls back to default', () => {
+  it('roleColorVar keeps the fixed roles on their token, and no longer leaves the rest beige', () => {
     expect(roleColorVar('strategist')).toBe('var(--role-strategist)');
     expect(roleColorVar('reviewer')).toBe('var(--role-reviewer)');
-    expect(roleColorVar('some-unknown-role')).toBe('var(--role-default)');
+    // D2: a role outside the fixed five used to fall into --role-default and
+    // lose its identity. It now gets one of the eight, deterministically.
+    expect(roleColorVar('some-unknown-role')).not.toBe('var(--role-default)');
+    expect(roleColorVar('some-unknown-role')).toBe(roleColorVar('some-unknown-role'));
+    // Only "no role at all" is still the neutral one.
+    expect(roleColorVar(null)).toBe('var(--role-default)');
   });
 
   it('Loading announces itself and fills the cup', () => {

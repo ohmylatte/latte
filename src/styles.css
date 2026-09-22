@@ -1166,3 +1166,57 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .coord-approved{display:flex;align-items:center;gap:10px;padding:9px 12px;min-width:0}
 .coord-approved-text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .coord-approved-go{flex-shrink:0}
+
+/* --- D2: LOS AVATARES. El color es el rol, la cara es la persona. ---------- */
+/*
+   Los tonos de la cara. Cuatro pieles y cuatro pelos: la cara de alguien no se
+   arma con un beige y tres variaciones del mismo beige. Viven en la hoja y no
+   en el generador porque son TEMA, no dato: el generador decide "piel 3", la
+   hoja decide qué es "piel 3".
+*/
+:root{
+  --av-skin-1:#f1cdb0;--av-skin-2:#e8b892;--av-skin-3:#c98e63;--av-skin-4:#8d5a3b;
+  --av-hair-1:#1f1a17;--av-hair-2:#5a4030;--av-hair-3:#7a3c26;--av-hair-4:#aa4e31;
+}
+/*
+   La paleta de roles, completa. Los cinco de siempre ya estaban arriba; estos
+   tres son los que le dan color a paid-media, community-manager,
+   sales-copywriter y a cualquier rol propio, que antes caian todos en el mismo
+   beige de --role-default.
+
+   Los dos calidos salen de --stage-2 (#c47f57) y --stage-3 (#b0613c)
+   OSCURECIDOS: tal cual estaban daban 3.04:1 y 4.28:1 contra --on-accent, y la
+   inicial de reserva es texto de 12px, que necesita 4.5:1. Mismo motivo que
+   llevo a oscurecer --role-analyst y --role-default en C8.
+*/
+:root{
+  --role-terracotta:#9b6445;
+  --role-copper:#9a5433;
+  --role-forest:#293c32;
+  /* El wash: el tono claro del fondo del disco. Nunca lleva texto encima. */
+  --role-assistant-wash:#f4e6da;
+  --role-strategist-wash:#e3e9dc;
+  --role-researcher-wash:#dfe6ea;
+  --role-analyst-wash:#f1e7d3;
+  --role-reviewer-wash:#ece1e8;
+  --role-terracotta-wash:#f2e7dd;
+  --role-copper-wash:#f4e3d9;
+  --role-forest-wash:#dfe6e1;
+  --role-default-wash:#eee9df;
+}
+/* El sprite no se ve: es la biblioteca, no un dibujo. */
+.av-sprite{position:absolute;width:0;height:0;overflow:hidden}
+/*
+   El avatar llena a su huesped. Quien lo pone decide el tamano con la clase
+   (22 · 32 · 40) o con la suya propia; el SVG nunca discute el tamano.
+*/
+.av{position:relative;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:var(--radius-pill);overflow:visible;background:var(--av-color,var(--role-default));color:var(--on-accent);font-weight:600;line-height:1}
+.av-face{width:100%;height:100%;display:block;border-radius:var(--radius-pill)}
+/* Sin cara, el disco es el color del rol y encima va la inicial. */
+.av-initial{display:block}
+.av-sm{width:22px;height:22px;flex-basis:22px;font-size:var(--text-sm)}
+.av-md{width:32px;height:32px;flex-basis:32px;font-size:var(--text-sm)}
+.av-lg{width:40px;height:40px;flex-basis:40px;font-size:var(--text-base)}
+/* El punto de estado: aparte del SVG, siempre. El avatar dice quien; el punto, como esta. */
+.av-dot{position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border-radius:var(--radius-pill);border:2px solid var(--paper);background:var(--neutral-mid)}
+.av-sm .av-dot{width:8px;height:8px;border-width:1.5px}
