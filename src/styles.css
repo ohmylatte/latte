@@ -1267,3 +1267,9 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .av-picker-foot .footnote{flex:1 1 auto;margin:0;min-width:0}
 .av-reroll{flex-shrink:0;font-size:var(--text-sm);padding:6px 10px}
 @media(max-width:1100px){.av-picker-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+
+/* --- D5: la anatomia, con cara. Los tamanos no cambian con el dibujo. ------ */
+/* El avatar grande del "retomar": 54px, como antes. Lo fija el huesped, no el SVG. */
+.team-resume-av{width:54px;height:54px;flex-basis:54px;margin:0 auto 14px;font-size:var(--text-lg)}
+/* La cara no come el punto: el dot de la anatomia sigue arriba de todo. */
+.av .coord-dot{z-index:1}

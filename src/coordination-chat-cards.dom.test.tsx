@@ -95,7 +95,13 @@ describe('C6: la propuesta del equipo', () => {
     expect(tasks).toHaveLength(4);
     expect(tasks.map((task) => task.querySelector('.coord-plan-n')!.textContent)).toEqual(['1', '2', '3', '4']);
     expect(tasks[0]!.querySelector('.coord-plan-title')!.textContent).toBe('Piezas publicitarias Meta: copy por ángulo y formato');
-    expect(tasks[0]!.querySelector('.coord-av')!.textContent).toBe('PM');
+    // D5: el dueno es su CARA, no su inicial. Lo que se comprueba es que la
+    // fila diga de quien es —y lo diga a la tecnologia de asistencia, que no
+    // ve un dibujo— no que dibuje dos letras.
+    const owner = tasks[0]!.querySelector('.coord-av')!;
+    expect(owner.getAttribute('aria-label')).toBe('Paid Media');
+    expect(owner.querySelector('.av-face')).not.toBeNull();
+    expect(owner.textContent).toBe('');
   });
 
   /** Criterio: 0 numerales de Markdown en pantalla. */

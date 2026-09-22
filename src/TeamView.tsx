@@ -11,6 +11,7 @@ import { inboxEvents, pendingForMember } from './coordination/inbox';
 import { RunHeader } from './coordination/RunHeader';
 import { MemberDetail } from './coordination/MemberDetail';
 import { CoordAvatar, CoordRow } from './coordination/anatomy';
+import { avatarOfMember } from './coordination/avatar-of';
 import { EmptyTeam, RunOutput } from './coordination/TeamOutcome';
 import { memberSignal } from './coordination/member-line';
 import { hourOf } from './coordination/time';
@@ -166,6 +167,7 @@ export function TeamView(props: TeamViewProps) {
             <CoordRow
               name={member.roleName}
               roleId={member.roleId}
+              avatar={avatarOfMember(member)}
               dot={signal.dot}
               nameIcon={isCoordinator ? <Users size={12} className="coord-row-coordinator" aria-label={t('coord.member.coordinator')} /> : undefined}
               line={signal.line}

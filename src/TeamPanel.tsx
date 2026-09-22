@@ -12,6 +12,7 @@ import { Loading } from './brand-marks';
 import { pendingForMember, pendingForWork } from './coordination/inbox';
 import { CoordAvatar, CoordTime } from './coordination/anatomy';
 import { Avatar } from './coordination/Avatar';
+import { avatarOfMember } from './coordination/avatar-of';
 import { parseAvatar } from '../shared/avatar';
 import { memberSignal, type MemberDot } from './coordination/member-line';
 import { hourOf } from './coordination/time';
@@ -588,7 +589,7 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', pendi
    */
   const signal: MemberDot = attention || status === 'working' ? 'live' : dot;
   return <button role="tab" aria-selected={selected} className={'team-tab coord-row status-' + status + (attention ? ' attention' : '')} disabled={busy} onClick={onSelect} title={lastExchange ? title + ' · ' + lastExchange : title}>
-    <CoordAvatar name={member.roleName} roleId={member.roleId} dot={signal} />
+    <CoordAvatar name={member.roleName} roleId={member.roleId} avatar={avatarOfMember(member)} dot={signal} />
     <span className="team-tab-text coord-row-text">
       <span className="team-tab-top coord-row-top">
         <span className="team-tab-name coord-row-name">{member.roleName}{coordinator && <Users size={12} className="coord-row-coordinator" aria-label={t('coord.member.coordinator')} />}</span>
@@ -711,7 +712,7 @@ function ResumeCard({ member, origin, busy, isDesktop, onOpen, onRestart, onRemo
   const [opening, setOpening] = useState(false);
   const open = async () => { setOpening(true); try { await onOpen(); } finally { setOpening(false); } };
   return <div className="agent-idle team-resume">
-    <span className="team-avatar large" data-role={member.roleId} aria-hidden="true">{member.initial}</span>
+    <Avatar className="team-resume-av" size="lg" name={member.roleName} roleId={member.roleId} params={avatarOfMember(member)} />
     <h3>{member.roleName}<br /><small>{member.label}</small>{origin && <small>{t('continue.from', { role: origin.roleName })}</small>}</h3>
     <p>{member.status === 'ended' ? t('ui.auto.286') : t('ui.auto.287')}</p>
     <button className="primary" disabled={busy || opening} onClick={() => void open()}>{opening ? <Loading size={16} /> : <Play size={15} />}{opening ? t('team.opening') : member.status === 'ended' ? t('ui.auto.288') : t('ui.auto.289')}</button>

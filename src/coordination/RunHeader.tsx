@@ -1,8 +1,9 @@
 import { CircleCheck, CircleHelp, CircleX, Clock, Flag, MessageSquare, Pause, Play, Send, X } from 'lucide-react';
 import { translate as t } from '../i18n';
 import { CoordAvatar } from './anatomy';
+import { avatarOfRole } from './avatar-of';
 import { roleDisplayName } from './names';
-import { initialsOf, titleOf } from './text';
+import { titleOf } from './text';
 import { hourOf } from './time';
 import type {
   AgentRole, CoordinationAskView, CoordinationRunTaskView, CoordinationRunView, TeamMember,
@@ -158,7 +159,7 @@ export function RunHeader(props: RunHeaderProps) {
         return <li key={task.id} className={'coord-task is-' + state} data-task-state={state} title={taskLabel(state) + ' · ' + titleOf(task.spec)}>
           <TaskIcon state={state} />
           <span className="coord-task-title">{titleOf(task.spec)}</span>
-          <CoordAvatar name={owner} small roleId={task.roleId} />
+          <CoordAvatar name={owner} small roleId={task.roleId} avatar={avatarOfRole(task.roleId, roles, team)} />
           <span className="visually-hidden">{taskLabel(state)}</span>
         </li>;
       })}
@@ -166,6 +167,3 @@ export function RunHeader(props: RunHeaderProps) {
   </div>;
 }
 
-/** Las iniciales que la tira dibuja, expuestas para quien necesite el mismo avatar en otra fila. */
-export const ownerInitials = (roleId: string, roles: readonly AgentRole[], team: readonly TeamMember[]) =>
-  initialsOf(roleDisplayName(roleId, roles, team));

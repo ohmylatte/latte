@@ -85,6 +85,12 @@ export interface AvatarProps {
   seed?: string | null;
   /** El punto de estado, como elemento aparte. Sin esto no se dibuja ninguno. */
   status?: string | null;
+  /**
+   * El punto de estado ya armado, para quien tiene el suyo. La anatomia de
+   * C2 pinta `coord-dot`, con sus propias clases y su propio significado: el
+   * avatar le presta el lugar, no le impone la forma.
+   */
+  dot?: ReactNode;
   className?: string;
   /** Reemplaza la cara entera: el avatar punteado de "Sumar un rol" lleva un ícono. */
   children?: ReactNode;
@@ -98,6 +104,7 @@ export function Avatar({
   variant = DEFAULT_AVATAR_VARIANT,
   seed,
   status,
+  dot,
   className,
   children,
 }: AvatarProps) {
@@ -136,7 +143,7 @@ export function Avatar({
           </svg>
         )
         : <span className="av-initial" aria-hidden="true">{initialsOf(name)}</span>)}
-      {status ? <i className={`av-dot av-dot-${status}`} /> : null}
+      {dot ?? (status ? <i className={`av-dot av-dot-${status}`} /> : null)}
     </span>
   );
 }

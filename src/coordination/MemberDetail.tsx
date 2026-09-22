@@ -2,6 +2,7 @@ import { CircleCheck, CircleHelp, CircleX, FileText, Flag, MessageSquare, Send, 
 import { useState, type ReactNode } from 'react';
 import { translate as t } from '../i18n';
 import { CoordAvatar, CoordTime } from './anatomy';
+import { avatarOfMember } from './avatar-of';
 import type { InboxEvent } from './inbox';
 import type { MemberSignal } from './member-line';
 import { memberDisplayName } from './names';
@@ -148,7 +149,7 @@ export function MemberDetail(props: MemberDetailProps) {
 
   return <div className="coord-detail">
     <div className="coord-detail-head">
-      <CoordAvatar name={name} dot={props.signal.dot} roleId={member?.roleId} />
+      <CoordAvatar name={name} dot={props.signal.dot} roleId={member?.roleId} avatar={member ? avatarOfMember(member) : null} />
       <div className="coord-detail-title">
         <div className="coord-detail-name">{name}</div>
         <div className="coord-detail-sub">{props.signal.at

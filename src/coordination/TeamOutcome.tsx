@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { CircleCheck, CircleX, FileText, List, MessageSquare, Send, Users } from 'lucide-react';
 import { translate as t } from '../i18n';
 import { CoordAvatar } from './anatomy';
+import { avatarOfMember } from './avatar-of';
 import { memberDisplayName } from './names';
 import { fileNames, titleOf } from './text';
 import type { AgentRole, CoordinationLogEntryView, CoordinationRunView, TeamMember } from '../../shared/contracts';
@@ -102,7 +103,7 @@ export function RunOutput(props: RunOutputProps) {
           return <li key={row.id} className={'coord-output-row' + (row.failed ? ' is-failed' : '')} data-report-id={row.id}>
             {row.failed ? <CircleX size={14} className="coord-ic-bad" /> : <FileText size={14} className="coord-ic-idle" />}
             <span className="coord-output-summary">{row.summary}</span>
-            <CoordAvatar name={name} small roleId={props.team.find((m) => m.id === row.memberId)?.roleId} />
+            {(() => { const owner = props.team.find((m) => m.id === row.memberId); return <CoordAvatar name={name} small roleId={owner?.roleId} avatar={owner ? avatarOfMember(owner) : null} />; })()}
             <time className="coord-time" dateTime={row.at}>{time(row.at)}</time>
             {row.files.length > 0 && <span className="coord-files coord-output-files">
               {row.files.map((file) => <span key={file} className="coord-file"><FileText size={12} />{file}</span>)}

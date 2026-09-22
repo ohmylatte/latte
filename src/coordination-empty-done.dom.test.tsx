@@ -142,7 +142,10 @@ describe('C5: el run terminado muestra lo que el equipo dejó', () => {
     expect(container.querySelector('.coord-output-title')!.textContent).toBe('Lo que produjo el equipo');
     const row = container.querySelector('.coord-output-row')!;
     expect(row.querySelector('.coord-output-summary')!.textContent).toBe('14 piezas numeradas, en piezas-para-produccion-cm.md');
-    expect(row.querySelector('.coord-av')!.textContent).toBe('PM');
+    // D5: el dueno de la fila es su cara, con su nombre en el aria-label.
+    const owner = row.querySelector('.coord-av')!;
+    expect(owner.getAttribute('aria-label')).toBe('Paid Media');
+    expect(owner.querySelector('.av-face')).not.toBeNull();
     expect(row.querySelector('.coord-time')!.getAttribute('dateTime')).toBe('2026-09-13T17:48:00.000Z');
   });
 

@@ -5,6 +5,7 @@ import { ArrowRight, Check, ChevronRight, CircleCheck, CircleHelp, Pencil, Send,
 import { translate as t } from '../i18n';
 import { memberDisplayName, roleDisplayName } from './names';
 import { CoordAvatar } from './anatomy';
+import { avatarOfRole } from './avatar-of';
 import { titleOf } from './text';
 import { hourOf, minutesSince } from './time';
 import type {
@@ -473,7 +474,7 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
           <span className="coord-plan-n">{numberOf.get(i)}</span>
           <span className="coord-plan-title" title={task.spec}>{titleOf(task.spec)}</span>
           {after.length > 0 && <span className="coord-plan-after">{t('coord.proposal.after', { n: after.join(', ') })}</span>}
-          <CoordAvatar name={owner} small roleId={task.roleId} />
+          <CoordAvatar name={owner} small roleId={task.roleId} avatar={avatarOfRole(task.roleId, roles, team)} />
         </li>;
       })}
     </ul>

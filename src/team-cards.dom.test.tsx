@@ -198,7 +198,11 @@ describe('coordination gates (additive, autonomous-coordination Phase 7 tasks 7.
       // C6: el dueno de la tarea es su mini-avatar, no su nombre repetido en
       // cada renglon: en una lista de cuatro tareas el nombre del rol se
       // escribia cuatro veces y empujaba el titulo, que es lo que hay que leer.
-      expect(card.querySelector('.coord-plan-task .coord-av')!.textContent).toBe('R');
+      // D5: y ese mini-avatar ahora es una cara, no una inicial.
+      const owner = card.querySelector('.coord-plan-task .coord-av')!;
+      expect(owner.getAttribute('aria-label')).toBe('Redactor');
+      expect(owner.querySelector('.av-face')).not.toBeNull();
+      expect(owner.textContent).toBe('');
       expect(card.textContent).toContain('Escribir 3 posts para el lanzamiento');
       expect(card.textContent).toContain('Diseñador');
       // C6: el motivo del alta viaja en el tooltip. La fila dice quién se suma

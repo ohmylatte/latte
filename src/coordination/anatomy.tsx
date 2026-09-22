@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { initialsOf } from './text';
+import type { AvatarParams } from '../../shared/avatar';
+import { Avatar } from './Avatar';
 import type { MemberDot } from './member-line';
 
 /**
@@ -18,19 +19,34 @@ import type { MemberDot } from './member-line';
 /** El punto de estado. `none` es para el avatar de una tarea o un archivo, que no tiene estado propio. */
 export type DotState = MemberDot | 'none';
 
-export function CoordAvatar({ name, dot = 'none', small = false, roleId, children }: {
+export function CoordAvatar({ name, dot = 'none', small = false, roleId, avatar, children }: {
   name: string;
   dot?: DotState;
   /** El avatar chico: el dueño de una tarea en la tira, el autor de un archivo. */
   small?: boolean;
   roleId?: string;
-  /** Reemplaza las iniciales: el avatar punteado de "Sumar un rol" lleva un ícono. */
+  /**
+   * La cara, ya resuelta por quien sabe de quién es: `avatarOfMember` para
+   * una persona, `avatarOfRole` para un puesto. Sin esto cae a la inicial,
+   * que es lo que ve un fixture viejo y lo que veía todo esto hasta ayer.
+   */
+  avatar?: AvatarParams | null;
+  /** Reemplaza la cara: el avatar punteado de "Sumar un rol" lleva un ícono. */
   children?: ReactNode;
 }) {
-  return <span className={'coord-av' + (small ? ' coord-av-s' : '')} data-role={roleId} aria-hidden="true">
-    {children ?? initialsOf(name)}
-    {dot !== 'none' && <i className={'coord-dot coord-dot-' + dot} />}
-  </span>;
+  /*
+   * La ANATOMÍA no se mueve: el punto sigue siendo `coord-dot`, con sus
+   * clases y su significado, y sigue estando afuera del SVG. Lo único que
+   * cambió adentro es que donde había una inicial ahora hay una cara.
+   */
+  return <Avatar
+    className={'coord-av' + (small ? ' coord-av-s' : '')}
+    size={small ? 'sm' : 'md'}
+    name={name}
+    roleId={roleId}
+    params={children ? null : avatar}
+    dot={dot !== 'none' ? <i className={'coord-dot coord-dot-' + dot} /> : undefined}
+  >{children}</Avatar>;
 }
 
 /** La hora, en monoespaciada y a la derecha. `''` no dibuja nada: una fila sin hora no lleva una columna vacía. */
@@ -44,6 +60,8 @@ export interface CoordRowProps {
   name: string;
   dot?: DotState;
   roleId?: string;
+  /** La cara de quien es esta fila. Ver `CoordAvatar`. */
+  avatar?: AvatarParams | null;
   /** Un ícono chico al lado del nombre: el coordinador lleva `Users`. */
   nameIcon?: ReactNode;
   /** Qué hace ahora, en una línea. */
@@ -73,7 +91,7 @@ export function CoordRow(props: CoordRowProps) {
     onClick={props.onClick}
     title={props.title ?? props.line}
   >
-    <CoordAvatar name={props.name} dot={props.dot ?? 'none'} roleId={props.roleId} />
+    <CoordAvatar name={props.name} dot={props.dot ?? 'none'} roleId={props.roleId} avatar={props.avatar} />
     <span className="coord-row-text">
       <span className="coord-row-top">
         <span className="coord-row-name">{props.name}{props.nameIcon}</span>
