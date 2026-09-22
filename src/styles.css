@@ -1220,3 +1220,36 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 /* El punto de estado: aparte del SVG, siempre. El avatar dice quien; el punto, como esta. */
 .av-dot{position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border-radius:var(--radius-pill);border:2px solid var(--paper);background:var(--neutral-mid)}
 .av-sm .av-dot{width:8px;height:8px;border-width:1.5px}
+
+/* --- D2: LA VIDA. Una cosa a la vez, y nada si pediste que nada se mueva. --- */
+/*
+   Tres reglas y tres keyframes. El ritmo no esta aca: cada cara trae el suyo
+   (--av-blink, --av-blink-delay, --av-move, --av-move-delay) desde su semilla,
+   asi un equipo no parpadea al unisono. Aca solo esta QUE se mueve.
+
+   El parpadeo y el micro-movimiento nunca coinciden: el movimiento arranca a
+   mitad del ciclo del parpadeo y dura el doble. Una cara que parpadea y sonrie
+   al mismo tiempo no parece viva, parece rota.
+*/
+.av-alive .av-eye{animation:av-blink var(--av-blink,5s) var(--av-blink-delay,0s) infinite}
+.av-alive.av-move-gaze .av-eyes{animation:av-gaze var(--av-move,10s) var(--av-move-delay,0s) infinite}
+.av-alive.av-move-smile .av-mouth{animation:av-smile var(--av-move,10s) var(--av-move-delay,0s) infinite}
+.av-alive.av-move-brow .av-brows{animation:av-brow var(--av-move,10s) var(--av-move-delay,0s) infinite}
+/* El parpadeo dura ~120ms sobre un ciclo de 4 a 7s: es un instante, no un guino. */
+@keyframes av-blink{0%,96%,100%{ry:1.7px}98%{ry:.18px}}
+/* La mirada se va un pixel y vuelve. Un pixel: mas es un personaje, no una persona. */
+@keyframes av-gaze{0%,42%,58%,100%{transform:translateX(0)}47%,53%{transform:translateX(1px)}}
+/* La sonrisa se abre apenas. La boca crece desde su centro, nunca desde el borde. */
+@keyframes av-smile{0%,40%,62%,100%{transform:scale(1)}50%{transform:scale(1.14,1.35)}}
+/* La ceja sube un pixel: la cara entera cambia de animo con eso. */
+@keyframes av-brow{0%,44%,60%,100%{transform:translateY(0)}50%{transform:translateY(-1px)}}
+.av-face .av-mouth{transform-origin:32px 34px}
+.av-face .av-eyes,.av-face .av-brows{transform-origin:32px 28px}
+/*
+   El candado. El componente ya deja de poner la clase cuando el navegador dice
+   que se pidio menos movimiento, pero la hoja lo dice igual: si mañana alguien
+   pinta una animacion nueva y se olvida del componente, esto la apaga.
+*/
+@media (prefers-reduced-motion: reduce){
+  .av-face *,.av-face{animation:none!important}
+}

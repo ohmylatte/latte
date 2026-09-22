@@ -38,21 +38,29 @@ describe('avatarFromSeed', () => {
   it('semillas distintas dan caras distintas la mayoría de las veces', () => {
     const seen = new Set<string>();
     for (let i = 0; i < 100; i += 1) seen.add(serializeAvatar(avatarFromSeed(`rol-${i}`)));
-    // 384 combinaciones y 100 semillas: por el cumpleaños se esperan unas 88
-    // distintas. Menos de 70 querría decir que el hash está colapsando.
-    expect(seen.size).toBeGreaterThan(70);
+    // Con mas de mil combinaciones y 100 semillas casi no hay repetidas; menos
+    // de 85 distintas querria decir que el hash esta colapsando.
+    expect(seen.size).toBeGreaterThan(85);
   });
 
   it('reparte razonablemente: sobre 1000 semillas ningún peinado pasa del 30%', () => {
     const hairs = new Map<string, number>();
+    const accessories = new Map<string, number>();
     const skins = new Map<number, number>();
     for (let i = 0; i < 1000; i += 1) {
       const params = avatarFromSeed(`member-${i}-${i * 7}`);
       hairs.set(params.hair, (hairs.get(params.hair) ?? 0) + 1);
+      accessories.set(params.accessory, (accessories.get(params.accessory) ?? 0) + 1);
       skins.set(params.skin, (skins.get(params.skin) ?? 0) + 1);
     }
     expect(hairs.size).toBe(AVATAR_HAIRS.length);
     for (const count of hairs.values()) expect(count).toBeLessThanOrEqual(300);
+    // Y "ninguno" sigue existiendo: una cara sin accesorio es una cara valida,
+    // no un error. Con trece opciones le toca cerca del 8%.
+    const bare = accessories.get('none') ?? 0;
+    expect(bare).toBeGreaterThan(20);
+    expect(accessories.size).toBe(AVATAR_ACCESSORIES.length);
+    for (const count of accessories.values()) expect(count).toBeLessThanOrEqual(300);
     // Ningún tono de piel puede quedar ausente ni acaparar: el sistema
     // representa a cuatro, no a uno con tres de adorno.
     expect(skins.size).toBe(4);
@@ -101,7 +109,7 @@ describe('serializeAvatar / parseAvatar', () => {
   });
 
   it('lee las elecciones del tablero para los roles del pack', () => {
-    for (const value of ['bun.2.1.glasses', 'curly.1.3.none', 'short.4.1.glasses', 'long.2.2.earring', 'beanie.3.1.none', 'curly.4.1.earring', 'short.2.2.none']) {
+    for (const value of ['bun.2.1.glasses-thick', 'curly.1.3.glasses-round', 'short.4.1.glasses', 'long.2.2.earring', 'beanie.3.1.none', 'curly.4.1.beret', 'short.2.2.lanyard']) {
       expect(serializeAvatar(parseAvatar(value)!)).toBe(value);
     }
   });
@@ -110,12 +118,26 @@ describe('serializeAvatar / parseAvatar', () => {
     expect(parseAvatar('  BOB.2.4.Phones  ')).toEqual({ hair: 'bob', skin: 2, hairColor: 4, accessory: 'phones' });
   });
 
+  /**
+   * La forma serializada va a crecer cuando el estilo de dibujo pida campos
+   * propios. Una version vieja tiene que poder abrir un avatar escrito por una
+   * nueva: se queda con el nucleo y descarta lo que no entiende. Rechazarlo
+   * seria borrarle la cara a alguien por volver atras una version.
+   */
+  it('ignora los segmentos de mas en vez de rechazarlos', () => {
+    const core = { hair: 'bob' as const, skin: 2 as const, hairColor: 4 as const, accessory: 'phones' as const };
+    expect(parseAvatar('bob.2.4.phones.grano')).toEqual(core);
+    expect(parseAvatar('bob.2.4.phones.grano.trama.7')).toEqual(core);
+    // Pero el nucleo sigue siendo obligatorio: de menos no se inventa nada.
+    expect(parseAvatar('bob.2.4')).toBeNull();
+  });
+
   it('cualquier basura es null, nunca una excepción', () => {
     const garbage: unknown[] = [
       null, undefined, 42, {}, [], true,
-      '', '   ', 'bob', 'bob.2.4', 'bob.2.4.phones.extra',
+      '', '   ', 'bob', 'bob.2.4',
       'mohawk.2.4.phones', 'bob.0.4.phones', 'bob.5.4.phones', 'bob.2.9.phones',
-      'bob.2.4.sombrero', 'bob.x.4.phones', '....', 'bob..4.phones',
+      'bob.2.4.sombrero', 'bob.x.4.phones', '....', 'bob..4.phones', 'bob.2.4.glasses-cuadrados',
       'bob.2.4.phones\u0000', '<script>.2.4.none',
     ];
     for (const value of garbage) expect(parseAvatar(value)).toBeNull();

@@ -10,14 +10,47 @@
  */
 
 export const AVATAR_HAIRS = ['short', 'bob', 'curly', 'bun', 'long', 'beanie'] as const;
-export const AVATAR_ACCESSORIES = ['none', 'glasses', 'phones', 'earring'] as const;
+/**
+ * Los accesorios, que son clichés del oficio a propósito: un equipo de
+ * marketing se reconoce por sus anteojos de marco grueso, su boina, su
+ * credencial de evento y sus auriculares. Doce y "ninguno".
+ *
+ * El criterio para entrar a esta lista es UNO: leerse a 22 píxeles. Un
+ * accesorio que a ese tamaño es una mancha gris no cuenta como accesorio,
+ * cuenta como suciedad, y por eso no hay lentes de sol ni estampados.
+ */
+export const AVATAR_ACCESSORIES = [
+  'none',
+  'glasses',        // anteojos finos
+  'glasses-thick',  // marco grueso: el cliché del director de arte
+  'glasses-round',  // redondos
+  'phones',         // auriculares
+  'earring',        // aro
+  'lanyard',        // credencial de evento
+  'scarf',          // bufanda
+  'headband',       // vincha
+  'beret',          // boina
+  'cap',            // gorra
+  'beard',          // barba corta
+  'moustache',      // bigote
+] as const;
 
 export type AvatarHair = (typeof AVATAR_HAIRS)[number];
 export type AvatarAccessory = (typeof AVATAR_ACCESSORIES)[number];
 /** 1..4: índice de los tokens `--av-skin-N` / `--av-hair-N`. */
 export type AvatarTone = 1 | 2 | 3 | 4;
 
-/** Las cuatro decisiones que hacen una cara. 6 × 4 × 4 × 4 = 384 combinaciones. */
+/**
+ * Las cuatro decisiones que hacen una cara. 6 × 4 × 4 × 13 = 1.248
+ * combinaciones: mas que suficiente para que nadie se cruce con su gemelo.
+ *
+ * ABIERTA A PROPOSITO. El estilo de dibujo va a crecer —grano, trama, tinta,
+ * vapor— y va a querer sus propios campos. Los que estan acá son el NUCLEO: lo
+ * que toda cara tiene, mire como mire. Un campo nuevo se agrega opcional, la
+ * forma serializada le suma un segmento al final y `parseAvatar` sigue leyendo
+ * lo viejo sin enterarse; por eso el parser ignora los segmentos que no
+ * conoce en vez de rechazarlos.
+ */
 export interface AvatarParams {
   hair: AvatarHair;
   skin: AvatarTone;
@@ -83,7 +116,7 @@ export function avatarFromSeed(seed: string): AvatarParams {
  * que se autogeneró al crear el rol queda como primera opción.
  *
  * Camina semillas derivadas (`seed#1`, `seed#2`, …) descartando repetidas.
- * Con 384 combinaciones y `n` chico la caminata termina enseguida; el tope de
+ * Con mas de mil combinaciones y `n` chico la caminata termina enseguida; el tope de
  * intentos existe para que nunca pueda colgarse, no porque se espere llegar.
  */
 export function avatarVariants(seed: string, n = 8): AvatarParams[] {
@@ -113,7 +146,10 @@ export function serializeAvatar(params: AvatarParams): string {
 export function parseAvatar(value: unknown): AvatarParams | null {
   if (typeof value !== 'string') return null;
   const parts = value.trim().toLowerCase().split('.');
-  if (parts.length !== 4) return null;
+  // Cuatro segmentos o MAS. Los de mas son de una version que sabe algo que
+  // esta no: se ignoran, y la cara se dibuja con el nucleo. Lo contrario
+  // —rechazar— le borraria el avatar a alguien por abrir una version anterior.
+  if (parts.length < 4) return null;
   const [hair, skin, hairColor, accessory] = parts;
   if (!isHair(hair) || !isAccessory(accessory)) return null;
   const skinTone = toTone(skin);

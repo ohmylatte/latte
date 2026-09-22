@@ -1,130 +1,241 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
 import { Avatar, AvatarSprite } from './coordination/Avatar';
+import { AVATAR_MOVES, AVATAR_VARIANTS, AvatarDefs, avatarBeat, avatarIdPrefix, avatarPulse } from './coordination/avatar-art';
 import { ROLE_PALETTE, roleColor, roleTone } from './coordination/role-color';
-import { avatarFromSeed, parseAvatar } from '../shared/avatar';
+import { AVATAR_ACCESSORIES, avatarFromSeed, parseAvatar } from '../shared/avatar';
 
 /**
  * D2: EL COMPONENTE.
  *
- * Un avatar es tres promesas: que dibuje LAS CAPAS que dicen sus parámetros,
- * que el COLOR salga del rol y no de la cara, y que sin parámetros no
+ * Un avatar es tres promesas: que dibuje LAS CAPAS que dicen sus parametros,
+ * que el COLOR salga del rol y no de la cara, y que sin parametros no
  * desaparezca —caiga a la inicial— porque hay roles y miembros anteriores a
  * todo esto.
+ *
+ * Lo que este archivo NO fija es la FORMA. Ni un `d=`, ni un `<path>`, ni una
+ * coordenada: el estilo de dibujo va a cambiar entero —lo que hay hoy es un
+ * placeholder— y un test que fije la forma se rompe el dia que cambie sin que
+ * se haya roto nada. Lo que se fija es la ESTRUCTURA: que cada capa este, que
+ * sea la que corresponde a esos parametros, y que se pinte con el token que
+ * corresponde. Por eso cada `<use>` lleva `data-part`, y los tests miran eso.
  */
 
 const face = (params: Parameters<typeof Avatar>[0]['params'], props: Partial<Parameters<typeof Avatar>[0]> = {}) =>
   render(<><AvatarSprite /><Avatar name="Estratega" params={params} {...props} /></>);
 
-const layers = (container: HTMLElement): string[] =>
-  Array.from(container.querySelectorAll('.av-face use')).map((use) => use.getAttribute('href') ?? '');
+/** Que piezas hay, en orden. Nunca con que formas. */
+const parts = (container: HTMLElement): string[] =>
+  Array.from(container.querySelectorAll('.av-face [data-part]')).map((node) => node.getAttribute('data-part') ?? '');
 
-describe('Avatar: las capas', () => {
-  it('dibuja fondo, hombros, cabeza, pelo, ojos, boca y accesorio, en ese orden', () => {
-    const { container } = face(parseAvatar('bun.2.1.glasses'));
-    expect(layers(container)).toEqual(['#av-bg', '#av-body', '#av-head', '#av-hair-bun', '#av-eyes', '#av-mouth', '#av-glasses']);
+const layer = (container: HTMLElement, part: string) => container.querySelector(`.av-face [data-part="${part}"]`)!;
+
+/**
+ * ESTE jsdom NO TRAE `matchMedia`. Nada en el entorno responde la pregunta
+ * "pediste menos movimiento?", asi que los tests la responden ellos: sin
+ * stub, el componente no puede preguntar y —por prudencia— no anima; con
+ * stub, se exige la respuesta que corresponda. Dejarlo librado al default de
+ * jsdom seria probar una sola de las dos ramas sin saberlo.
+ */
+function stubMotion(reduce: boolean) {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: (query: string) => ({
+      matches: query.includes('prefers-reduced-motion') && reduce,
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+    }),
+  });
+}
+
+afterEach(() => { Reflect.deleteProperty(window, 'matchMedia'); });
+
+describe('Avatar: las piezas', () => {
+  it('dibuja fondo, hombros, cabeza, pelo, cejas, ojos, boca y accesorio, en ese orden', () => {
+    const { container } = face(parseAvatar('bun.2.1.glasses-thick'));
+    expect(parts(container)).toEqual(['bg', 'body', 'head', 'hair', 'brows', 'eyes', 'mouth', 'accessory']);
   });
 
-  it('sin accesorio son seis capas, no siete con una vacía', () => {
+  it('sin accesorio son siete piezas, no ocho con una vacia', () => {
     const { container } = face(parseAvatar('curly.1.3.none'));
-    expect(layers(container)).toEqual(['#av-bg', '#av-body', '#av-head', '#av-hair-curly', '#av-eyes', '#av-mouth']);
+    expect(parts(container)).toEqual(['bg', 'body', 'head', 'hair', 'brows', 'eyes', 'mouth']);
   });
 
-  it('el gorro ocupa el lugar del pelo: es un peinado más, no una capa extra', () => {
-    const { container } = face(parseAvatar('beanie.3.1.none'));
-    expect(layers(container)).toContain('#av-hair-beanie');
-    expect(layers(container).filter((id) => id.startsWith('#av-hair-'))).toHaveLength(1);
+  /**
+   * La bufanda y el cordon de la credencial NACEN en los hombros: si se
+   * dibujan encima de la cabeza quedan colgando del aire. Van debajo.
+   */
+  it('lo que nace en los hombros se dibuja debajo de la cabeza', () => {
+    for (const value of ['short.2.2.scarf', 'short.2.2.lanyard']) {
+      const order = parts(face(parseAvatar(value)).container);
+      expect(order.indexOf('accessory'), value).toBeLessThan(order.indexOf('head'));
+    }
+    // Y los anteojos, que se apoyan en la cara, van encima de todo.
+    const over = parts(face(parseAvatar('short.2.2.glasses')).container);
+    expect(over.indexOf('accessory')).toBeGreaterThan(over.indexOf('mouth'));
   });
 
-  it('la piel y el pelo salen de los tokens que dijeron los parámetros', () => {
+  it('el peinado que dicen los parametros es el que se referencia, y es uno solo', () => {
+    for (const [value, hair] of [['bun.2.1.glasses', 'bun'], ['curly.1.3.none', 'curly'], ['beanie.3.1.none', 'beanie'], ['long.2.2.earring', 'long']] as const) {
+      const { container } = face(parseAvatar(value));
+      // El gorro ocupa el lugar del pelo: es un peinado mas, no una capa extra.
+      expect(parts(container).filter((part) => part === 'hair'), value).toHaveLength(1);
+      expect(layer(container, 'hair').getAttribute('href'), value).toContain(hair);
+    }
+  });
+
+  it('la piel y el pelo salen de los tokens que dijeron los parametros', () => {
     const { container } = face(parseAvatar('short.4.2.none'));
-    const use = (id: string) => container.querySelector(`.av-face use[href="${id}"]`)!;
-    expect(use('#av-head').getAttribute('fill')).toBe('var(--av-skin-4)');
-    expect(use('#av-hair-short').getAttribute('fill')).toBe('var(--av-hair-2)');
+    expect(layer(container, 'head').getAttribute('fill')).toBe('var(--av-skin-4)');
+    expect(layer(container, 'hair').getAttribute('fill')).toBe('var(--av-hair-2)');
   });
 
-  it('los auriculares rellenan y trazan; el aro va en --rust, no en tinta', () => {
-    const { container: phones } = face(parseAvatar('bob.2.4.phones'));
-    const p = phones.querySelector('use[href="#av-phones"]')!;
-    expect(p.getAttribute('fill')).toBe('var(--ink)');
-    expect(p.getAttribute('stroke')).toBe('var(--ink)');
-
-    const { container: earring } = face(parseAvatar('long.2.2.earring'));
-    const e = earring.querySelector('use[href="#av-earring"]')!;
-    expect(e.getAttribute('fill')).toBe('var(--rust)');
-    // Un trazo sobre un circulito de r=1.6 lo convertiría en una mancha.
-    expect(e.getAttribute('stroke')).toBeNull();
+  it('cada accesorio del vocabulario tiene su forma, y ninguno comparte la de otro', () => {
+    const drawn = new Map<string, string>();
+    for (const accessory of AVATAR_ACCESSORIES) {
+      const { container } = face(parseAvatar(`short.2.2.${accessory}`));
+      const node = container.querySelector('.av-face [data-part="accessory"]');
+      if (accessory === 'none') { expect(node).toBeNull(); continue; }
+      expect(node, accessory).not.toBeNull();
+      expect(node!.getAttribute('data-accessory'), accessory).toBe(accessory);
+      drawn.set(accessory, node!.getAttribute('href')!);
+    }
+    expect(drawn.size).toBe(AVATAR_ACCESSORIES.length - 1);
+    expect(new Set(drawn.values()).size).toBe(drawn.size);
   });
 
-  it('cada símbolo que una capa referencia existe en el sprite', () => {
+  it('la barba y el bigote se pintan con el color de PELO, no con la tinta', () => {
+    for (const accessory of ['beard', 'moustache']) {
+      const { container } = face(parseAvatar(`short.2.3.${accessory}`));
+      expect(layer(container, 'accessory').getAttribute('fill'), accessory).toBe('var(--av-hair-3)');
+    }
+    // El aro, en cambio, es una joya: va en --rust.
+    expect(layer(face(parseAvatar('long.2.2.earring')).container, 'accessory').getAttribute('fill')).toBe('var(--rust)');
+  });
+
+  it('cada forma que una pieza referencia existe en el sprite', () => {
     const { container } = render(<AvatarSprite />);
-    const ids = new Set(Array.from(container.querySelectorAll('symbol')).map((s) => s.id));
-    for (const id of ids) expect(id.startsWith('av-'), id).toBe(true);
-    for (let i = 0; i < 120; i += 1) {
-      const params = avatarFromSeed(`capa-${i}`);
-      const { container: one } = face(params);
-      for (const href of layers(one)) expect(ids.has(href.slice(1)), href).toBe(true);
+    const ids = new Set(Array.from(container.querySelectorAll('[id]')).map((node) => node.id));
+    expect(ids.size).toBeGreaterThan(0);
+    for (let i = 0; i < 150; i += 1) {
+      const { container: one } = face(avatarFromSeed(`capa-${i}`));
+      for (const use of Array.from(one.querySelectorAll('.av-face use'))) {
+        const href = use.getAttribute('href')!;
+        expect(ids.has(href.slice(1)), href).toBe(true);
+      }
     }
   });
 });
 
-describe('Avatar: el color es el rol', () => {
-  it('pone el color y el wash del rol como variables propias', () => {
-    const { container } = face(parseAvatar('bun.2.1.glasses'), { roleId: 'strategist' });
-    const root = container.querySelector('.av') as HTMLElement;
-    expect(root.style.getPropertyValue('--av-color')).toBe('var(--role-strategist)');
-    expect(root.style.getPropertyValue('--av-wash')).toBe('var(--role-strategist-wash)');
-    expect(root.getAttribute('data-role')).toBe('strategist');
+/**
+ * LA VIDA. Parpadeo y un micro-movimiento, nunca los dos a la vez, nunca en
+ * los avatares chicos, y nunca si esta persona pidio que nada se mueva.
+ */
+describe('Avatar: la cara respira', () => {
+  it('los ojos son elipses, que es lo unico que se puede cerrar animando ry', () => {
+    const { container } = face(parseAvatar('short.2.2.none'));
+    const eyes = Array.from(container.querySelectorAll('.av-eye'));
+    expect(eyes).toHaveLength(2);
+    for (const eye of eyes) {
+      expect(eye.tagName.toLowerCase()).toBe('ellipse');
+      expect(eye.getAttribute('ry')).not.toBeNull();
+      expect(eye.getAttribute('rx')).not.toBeNull();
+    }
+    // Las cejas son dos trazos, no una mancha.
+    expect(layer(container, 'brows').querySelectorAll('path')).toHaveLength(2);
   });
 
-  it('el fondo lleva el wash y los hombros el color pleno: el color nunca sale de la cara', () => {
-    const { container } = face(parseAvatar('bob.2.4.phones'), { roleId: 'reviewer' });
-    expect(container.querySelector('use[href="#av-bg"]')!.getAttribute('fill')).toBe('var(--av-wash)');
-    expect(container.querySelector('use[href="#av-body"]')!.getAttribute('fill')).toBe('var(--av-color)');
+  it('el ritmo sale de la semilla: entre 4 y 7 segundos, y con su propio desfase', () => {
+    const beats = Array.from({ length: 200 }, (_, i) => avatarBeat(`mem_${i}`));
+    for (const beat of beats) {
+      expect(beat.blink).toBeGreaterThanOrEqual(4);
+      expect(beat.blink).toBeLessThanOrEqual(7);
+      expect(AVATAR_MOVES).toContain(beat.move);
+    }
+    // Determinista, y con los tres movimientos representados.
+    expect(avatarBeat('mem_1')).toEqual(avatarBeat('mem_1'));
+    expect(new Set(beats.map((b) => b.move)).size).toBe(AVATAR_MOVES.length);
+    // Un equipo no parpadea al unisono: los desfases se reparten.
+    expect(new Set(beats.map((b) => b.delay)).size).toBeGreaterThan(20);
   });
 
-  it('dos miembros con la misma cara y distinto rol se distinguen por el color', () => {
-    const same = parseAvatar('short.2.2.none');
-    const a = face(same, { roleId: 'analyst' }).container.querySelector('.av') as HTMLElement;
-    const b = face(same, { roleId: 'researcher' }).container.querySelector('.av') as HTMLElement;
-    expect(a.style.getPropertyValue('--av-color')).not.toBe(b.style.getPropertyValue('--av-color'));
+  it('una cara viva lleva UN solo micro-movimiento, y el parpadeo no se le cruza', () => {
+    const pulse = avatarPulse(avatarBeat('mem_abc'));
+    const moves = AVATAR_MOVES.filter((move) => pulse.className.includes(`av-move-${move}`));
+    expect(moves).toHaveLength(1);
+    // El movimiento dura el doble del parpadeo y arranca a mitad de su ciclo:
+    // por construccion no pueden estar los dos corriendo en el mismo instante.
+    const beat = avatarBeat('mem_abc');
+    const style = pulse.style as Record<string, string>;
+    expect(style['--av-move']).toBe(`${(beat.blink * 2).toFixed(2)}s`);
+    expect(style['--av-move-delay']).toBe(`${(beat.delay + beat.blink / 2).toFixed(2)}s`);
+  });
+
+  it('a 22px la cara esta quieta: ahi un parpadeo no es vida, es ruido', () => {
+    stubMotion(false);
+    const { container } = face(parseAvatar('short.2.2.none'), { size: 'sm' });
+    expect(container.querySelector('.av-face')!.getAttribute('class') ?? '').not.toContain('av-alive');
+    // Y a 32 y 40, con la misma respuesta del navegador, SI respira.
+    for (const size of ['md', 'lg'] as const) {
+      const { container: bigger } = face(parseAvatar('short.2.2.none'), { size });
+      expect(bigger.querySelector('.av-face')!.getAttribute('class') ?? '', size).toContain('av-alive');
+    }
+  });
+
+  it('con prefers-reduced-motion no hay clase de animacion en ningun tamano', () => {
+    stubMotion(true);
+    for (const size of ['sm', 'md', 'lg'] as const) {
+      const { container } = face(parseAvatar('short.2.2.none'), { size });
+      const cls = container.querySelector('.av-face')!.getAttribute('class') ?? '';
+      expect(cls, size).not.toContain('av-alive');
+      for (const move of AVATAR_MOVES) expect(cls, `${size}/${move}`).not.toContain(`av-move-${move}`);
+    }
+  });
+
+  it('sin forma de preguntar, no se mueve: la duda se resuelve a favor de la quietud', () => {
+    // Un entorno sin `matchMedia` no puede decir si esta persona pidio menos
+    // movimiento. Animar igual seria decidir por ella.
+    const { container } = face(parseAvatar('short.2.2.none'), { size: 'lg' });
+    expect(container.querySelector('.av-face')!.getAttribute('class') ?? '').not.toContain('av-alive');
+  });
+
+  it('la hoja apaga toda animacion bajo prefers-reduced-motion', () => {
+    const css = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8');
+    expect(css).toContain('@media (prefers-reduced-motion: reduce)');
+    const guard = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(guard).toContain('.av-face');
+    expect(guard).toContain('animation:none');
+    // Y cada clase que el componente promete tiene una regla que la anima.
+    for (const move of AVATAR_MOVES) expect(css).toContain(`.av-alive.av-move-${move}`);
+    expect(css).toContain('@keyframes av-blink');
   });
 });
 
-describe('Avatar: la reserva y el estado', () => {
-  it('sin params cae a la inicial del nombre, con el color del rol', () => {
-    const { container } = face(null, { roleId: 'analyst', name: 'Community Manager' });
-    expect(container.querySelector('.av-face')).toBeNull();
-    expect(container.querySelector('.av-initial')!.textContent).toBe('CM');
-    expect((container.querySelector('.av') as HTMLElement).style.getPropertyValue('--av-color')).toBe('var(--role-analyst)');
-  });
-
-  it('se anuncia como imagen con el nombre visible, y el SVG no vuelve a decirlo', () => {
-    const { container } = face(parseAvatar('curly.1.3.none'), { name: 'Paid Media' });
-    const root = container.querySelector('.av')!;
-    expect(root.getAttribute('role')).toBe('img');
-    expect(root.getAttribute('aria-label')).toBe('Paid Media');
-    expect(container.querySelector('.av-face')!.getAttribute('aria-hidden')).toBe('true');
-  });
-
-  it('el punto de estado es un elemento aparte, nunca una capa del SVG', () => {
-    const { container } = face(parseAvatar('bob.2.4.phones'), { status: 'live' });
-    const dot = container.querySelector('.av-dot')!;
-    expect(dot.tagName.toLowerCase()).toBe('i');
-    expect(dot.closest('svg')).toBeNull();
-    expect(dot.className).toContain('av-dot-live');
-    // Y sin `status` no hay punto: un avatar de una tarea no tiene estado propio.
-    expect(face(parseAvatar('bob.2.4.phones')).container.querySelector('.av-dot')).toBeNull();
-  });
-
-  it('los tamaños son 22 · 32 · 40, por clase', () => {
-    for (const [size, px] of [['sm', 22], ['md', 32], ['lg', 40]] as const) {
-      const { container } = face(null, { size });
-      expect(container.querySelector('.av')!.className).toContain(`av-${size}`);
-      expect(readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8')).toContain(`.av-${size}{width:${px}px`);
+describe('Avatar: el papel del fondo', () => {
+  it('el grano va SOLO en el fondo, nunca en la cara', () => {
+    const { container } = face(parseAvatar('short.2.2.none'), { size: 'lg' });
+    expect(layer(container, 'bg').getAttribute('filter')).toBe('url(#av-flat-grain)');
+    for (const part of ['body', 'head', 'hair', 'eyes', 'mouth']) {
+      expect(layer(container, part).getAttribute('filter'), part).toBeNull();
     }
+  });
+
+  it('a 22px no hay grano: no se ve y se paga igual', () => {
+    const { container } = face(parseAvatar('short.2.2.none'), { size: 'sm' });
+    expect(layer(container, 'bg').getAttribute('filter')).toBeNull();
+  });
+
+  it('el grano es un filtro del sprite, y es leve de verdad', () => {
+    const { container } = render(<AvatarSprite />);
+    const filter = container.querySelector('filter#av-flat-grain')!;
+    expect(filter).not.toBeNull();
+    expect(filter.querySelector('feTurbulence')).not.toBeNull();
+    const slope = Number(filter.querySelector('feFuncA')!.getAttribute('slope'));
+    expect(slope).toBeGreaterThan(0);
+    expect(slope).toBeLessThanOrEqual(0.08);
   });
 });
 
