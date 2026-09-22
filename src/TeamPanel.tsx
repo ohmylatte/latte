@@ -302,6 +302,23 @@ export function TeamPanel(props: TeamPanelProps) {
       formatDate={props.formatDate} coordinationAuthority={props.coordinationAuthority}
       onSetCoordinationAuthority={props.onSetCoordinationAuthority} coordinationBudget={props.coordinationBudget}
       onSetCoordinationBudget={props.onSetCoordinationBudget} coordinatorGrant={props.coordinatorGrant} />}
+    {/*
+      EL DIALOGO DE SUMAR UN ROL VIVE ACA, FUERA DEL MODO CONVERSACION.
+
+      Estaba adentro de `rail === chat`, asi que en el modo Equipo la fila
+      "Sumar un rol" prendia `adding` y no dibujaba NADA: el boton existia,
+      se podia clickear, y no pasaba nada. Un boton que no abre nada es peor
+      que un boton que no esta.
+
+      Es un modal: va sobre la pantalla que haya, no dentro de una de las
+      dos. Y se abre donde estas -- sumar un rol desde el modo Equipo te
+      deja en el modo Equipo, que es de donde lo pediste.
+    */}
+    {adding && !firstTeam && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setAdding(false); }}>
+      <section role="dialog" aria-modal="true" aria-labelledby="add-member-title" className="modal">
+        <div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="add-member-title">{t('ui.auto.275')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setAdding(false)}><X size={20} /></button></div>
+        <div className="modal-body"><RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={false} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} /></div>
+      </section></div>}
     {rail === 'chat' && <>
     {work && team.length > 0 && <>
       <div className="team-tabs" role="tablist" aria-label={t('ui.auto.268')}>
@@ -332,11 +349,6 @@ export function TeamPanel(props: TeamPanelProps) {
       {selected && <MemberUsage member={selected} />}
     </>}
     {firstTeam && <RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={team.length > 0} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} />}
-    {adding && !firstTeam && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setAdding(false); }}>
-      <section role="dialog" aria-modal="true" aria-labelledby="add-member-title" className="modal">
-        <div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="add-member-title">{t('ui.auto.275')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setAdding(false)}><X size={20} /></button></div>
-        <div className="modal-body"><RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={false} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} /></div>
-      </section></div>}
     {continuingMember && <ContinueDialog source={continuingMember} roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryReady={props.primaryReady} primaryRuntime={props.primaryRuntime} primaryAccountId={props.primaryAccountId} primaryModel={props.primaryModel} checking={props.checking} busy={busy} isDesktop={isDesktop} onClose={() => setContinuing(null)} onProviders={props.onProviders} onRecheck={props.onRecheck} onContinue={async (roleId, options, text) => { await props.onContinue(continuingMember.id, roleId, options, text); setContinuing(null); }} />}
     {!work && <div className="agent-idle"><div className="agent-symbol"><MessageSquare size={27} /></div><h3>{t('ui.auto.276')}<br />{t('ui.auto.277')}</h3><p className="footnote">{t('ui.auto.278')}</p></div>}
     {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} onAttachFiles={props.onAttachFiles} coordination={props.chatCoordination && { ...props.chatCoordination, formatTime: props.formatTime, onShowTeam: () => setRail('team') }} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}

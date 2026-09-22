@@ -268,8 +268,8 @@ describe('Avatar: el anillo es el rol', () => {
     const { container } = face(parseAvatar('beanie.3.1.none'));
     const portrait = container.querySelector('.av-portrait')!;
     expect(portrait).not.toBeNull();
-    // 16/13: el radio que pidio quedarse sin cuerpo.
-    expect(portrait.getAttribute('transform')).toBe('translate(32 32) scale(1.2308) translate(-32 -28)');
+    // 1.45 es el TECHO, no un gusto: a 1.50 la boina se corta.
+    expect(portrait.getAttribute('transform')).toBe('translate(32 32) scale(1.45) translate(-32 -28)');
     // Y TODA la cara va adentro: ni un peinado ni un gorro queda suelto.
     for (const part of ['head', 'hair', 'brows', 'eyes', 'mouth']) {
       expect(layer(container, part).closest('.av-portrait'), part).not.toBeNull();
@@ -285,14 +285,15 @@ describe('Avatar: el anillo es el rol', () => {
    * del disco. El gorro y el pelo largo son los que mas riesgo tienen.
    */
   it('ninguna forma se sale del disco despues del re-encuadre', () => {
+    const ZOOM = 1.45;
     const { container } = render(<AvatarSprite />);
-    const far = (x: number, y: number) => Math.hypot((32 + (x - 32) * 1.2308) - 32, (32 + (y - 28) * 1.2308) - 32);
+    const far = (x: number, y: number) => Math.hypot((32 + (x - 32) * ZOOM) - 32, (32 + (y - 28) * ZOOM) - 32);
     const offenders: string[] = [];
     for (const symbol of Array.from(container.querySelectorAll('symbol'))) {
       if (symbol.id.endsWith('-bg')) continue;
       let worst = 0;
       for (const circle of Array.from(symbol.querySelectorAll('circle'))) {
-        worst = Math.max(worst, far(Number(circle.getAttribute('cx')), Number(circle.getAttribute('cy'))) + Number(circle.getAttribute('r')) * 1.2308);
+        worst = Math.max(worst, far(Number(circle.getAttribute('cx')), Number(circle.getAttribute('cy'))) + Number(circle.getAttribute('r')) * ZOOM);
       }
       for (const rect of Array.from(symbol.querySelectorAll('rect'))) {
         const x = Number(rect.getAttribute('x')), y = Number(rect.getAttribute('y'));

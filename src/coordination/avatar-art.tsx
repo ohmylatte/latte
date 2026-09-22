@@ -123,13 +123,18 @@ const HAIR_COLOURED = new Set(['beard', 'moustache']);
  * Las formas siguen dibujadas en la grilla de siempre —cabeza en (32, 28)
  * con r=13— porque estan afinadas ahi y volver a calcular quince paths a
  * mano es como se rompe un dibujo. Lo que cambia es el ENCUADRE: se lleva
- * el centro de la cara al centro del disco y se agranda 16/13, que es
- * exactamente el radio que pidio quedarse sin cuerpo.
+ * el centro de la cara al centro del disco y se agranda.
+ *
+ * El 1.45 no es un gusto, es el techo: con la cabeza en r=13, el simbolo
+ * que primero toca el borde es la boina, que a 1.45 llega a 30.4 de 32 y a
+ * 1.50 se corta. Hay un test que recorre la geometria de CADA symbol y
+ * falla si alguno se pasa, asi que subir este numero sin tocar los dibujos
+ * no compila en verde: avisa cual se sale y por cuanto.
  *
  * Se lee de derecha a izquierda: llevo (32,28) al origen, escalo, y lo
  * devuelvo a (32,32).
  */
-const PORTRAIT = 'translate(32 32) scale(1.2308) translate(-32 -28)';
+const PORTRAIT = 'translate(32 32) scale(1.45) translate(-32 -28)';
 
 export interface AvatarArtProps {
   params: AvatarParams;
@@ -265,20 +270,22 @@ function FlatSymbols() {
       <symbol id={`${p}earring`} viewBox="0 0 64 64"><circle cx="19.5" cy="33" r="1.8" /></symbol>
 
       {/*
-        La credencial y la bufanda colgaban de unos hombros que ya no estan.
-        Redibujadas para el retrato: nacen detras de la cabeza y quedan
-        dentro del disco. Las coordenadas son las de SIEMPRE porque pasan por
-        el mismo re-encuadre que la cara; el limite util es y=52, que despues
-        del transform cae en y=61, tres pixeles adentro del borde.
+        La credencial y la bufanda cuelgan, y con mas zoom son las primeras
+        que se caen del disco: todo lo que baja del menton se aleja del
+        centro el doble de rapido que lo que crece a los costados.
+
+        Subidas y acortadas para el encuadre de 1.45. El limite util sobre el
+        eje es y=49.4 en la grilla de origen; con el ancho que tienen, ambas
+        cierran cerca de 30 de 32.
       */}
       <symbol id={`${p}lanyard`} viewBox="0 0 64 64">
-        <path d="M24 38.5l6 7.5M40 38.5l-6 7.5" fill="none" strokeWidth="1.6" strokeLinecap="round" />
-        <rect x="28.4" y="44.8" width="7.2" height="7.4" rx="1.1" strokeWidth="1.2" />
-        <path d="M30.2 47.4h3.6" fill="none" strokeWidth="1" strokeLinecap="round" />
+        <path d="M25.5 36l5.4 6M38.5 36l-5.4 6" fill="none" strokeWidth="1.5" strokeLinecap="round" />
+        <rect x="28.8" y="41.6" width="6.4" height="6.4" rx="1" strokeWidth="1.1" />
+        <path d="M30.4 44h3.2" fill="none" strokeWidth="1" strokeLinecap="round" />
       </symbol>
       <symbol id={`${p}scarf`} viewBox="0 0 64 64">
-        <path d="M21.6 38.4q10.4 6.4 20.8 0v4.6q-10.4 6.4-20.8 0z" />
-        <path d="M37.4 42h4l-.8 8h-3.6z" />
+        <path d="M22.5 40.4q9.5 5.2 19 0v4.2q-9.5 5.2-19 0z" />
+        <path d="M36.6 44h3.4l-.6 3.5h-3.1z" />
       </symbol>
       {/* La vincha: una banda sobre la frente, de sien a sien. */}
       <symbol id={`${p}headband`} viewBox="0 0 64 64"><path d="M19.6 23.4q12.4-7.6 24.8 0l-1.3 3.2q-11.1-6.6-22.2 0z" /></symbol>

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fireEvent } from '@testing-library/react';
 import { render } from '@testing-library/react';
 import { CoordAvatar, CoordRow } from './coordination/anatomy';
 import { AvatarSprite } from './coordination/Avatar';
@@ -223,5 +224,71 @@ describe('D7: el avatar es un circulo de tamano fijo, con cara o sin ella', () =
       return !selector.includes(':not(.av)') && /flex:\s*1/.test(line);
     });
     expect(offenders).toEqual([]);
+  });
+});
+
+/**
+ * D8: "SUMAR UN ROL" TIENE QUE ABRIR EL DIALOGO.
+ *
+ * En el modo Equipo la fila-boton prendia `adding`... y no dibujaba nada,
+ * porque el dialogo vivia adentro de la rama `rail === 'chat'`. El boton
+ * existia, se podia clickear, y no pasaba NADA. Un boton que no abre nada es
+ * peor que un boton que no esta: te hace dudar de vos, no del programa.
+ *
+ * El dialogo es un modal: va sobre la pantalla que haya, no dentro de una de
+ * las dos.
+ */
+describe('D8: sumar un rol abre el mismo dialogo desde los dos lados', () => {
+  const roles: AgentRole[] = [
+    { id: 'strategist', name: 'Strategist', initial: 'S', summary: 'Decide', builtin: false, tier: 'deep', avatar: 'bun.2.1.glasses-thick' },
+    { id: 'assistant', name: 'Asistente', initial: 'A', summary: 'Arranca', builtin: true, tier: 'balanced', avatar: 'short.2.2.lanyard' },
+  ];
+  // Con equipo: sin miembros el picker es la pantalla vacia, no un dialogo.
+  const seated = member({ id: 'm1', roleId: 'assistant', roleName: 'Asistente' });
+
+  const panel = () => render(<TeamPanel
+    work={{ id: 'w1', brandId: 'b1', title: 'Trabajo', brief: '', folder: null, updatedAt: '' }}
+    team={[seated]} chats={{}} selectedId={null} roles={roles}
+    primaryLabel="OpenCode" primaryDetail="Listo" primaryReady checking={false}
+    primaryRuntime="opencode" primaryAccountId={null} primaryModel={null}
+    choices={[]} busy={false} isDesktop
+    onSelect={() => {}} onAdd={async () => {}} onOpen={async () => {}} onPause={async () => {}}
+    onFinish={async () => {}} onRestart={async () => {}} onContinue={async () => {}}
+    handoffs={[]} onAcceptHandoff={async () => {}} onDismissHandoff={async () => {}}
+    onRemove={async () => {}} onProviders={() => {}} onRecheck={() => {}} onModel={() => {}} onTier={() => {}}
+    onError={() => {}} onAttachFiles={async () => []} untracked={[]} onAdoptFile={() => {}}
+    permissions="ask" permissionBusy={false} onPermissions={() => {}}
+    mode="simple"
+  />);
+
+  const dialog = (c: HTMLElement) => c.querySelector('[role="dialog"][aria-labelledby="add-member-title"]');
+
+  it('en el modo Equipo, la fila abre el picker de roles', () => {
+    const { container } = panel();
+    fireEvent.click(container.querySelector('.team-rail-team')!);
+    expect(container.querySelector('.coord-add')).not.toBeNull();
+    expect(dialog(container)).toBeNull();
+
+    fireEvent.click(container.querySelector('.coord-add')!);
+
+    const open = dialog(container)!;
+    expect(open, 'la fila "Sumar un rol" no abrio nada').not.toBeNull();
+    // Y es EL picker: las mismas tarjetas de rol, con su avatar.
+    const cards = Array.from(open.querySelectorAll('.role-card'));
+    expect(cards.map((c) => c.querySelector('.av')!.getAttribute('aria-label'))).toEqual(['Strategist', 'Asistente']);
+  });
+
+  it('sigue en el modo Equipo al abrirlo: te deja donde lo pediste', () => {
+    const { container } = panel();
+    fireEvent.click(container.querySelector('.team-rail-team')!);
+    fireEvent.click(container.querySelector('.coord-add')!);
+    expect(container.querySelector('.team-view')).not.toBeNull();
+  });
+
+  it('el boton de la cabecera abre exactamente el mismo dialogo', () => {
+    const { container } = panel();
+    // El rail arranca en conversacion: aca esta el boton de la cabecera.
+    fireEvent.click(container.querySelector('.team-tab-add')!);
+    expect(dialog(container)).not.toBeNull();
   });
 });
