@@ -106,7 +106,7 @@ import { WORK_FILES } from '../core/paths';
 import { EngramClient, memoryProjectFor } from '../memory/engram';
 import { AccountStore } from '../agents/accounts';
 import { isAccountRuntime, isChatRuntime, type AgentHub, type MemberContext } from '../agents/hub';
-import { CoordinationEngine } from '../coordination/engine';
+import { CoordinationEngine, coordinationRequestMetaKey } from '../coordination/engine';
 import { mergeCoordinationBudget, readStoredCoordinationBudget, requireCoordinationBudget } from '../coordination/budget';
 import type { CoordinationInjectionPlanner } from '../coordination/injection';
 import type { McpCatalog } from '../agents/mcp';
@@ -1706,6 +1706,10 @@ export class LatteService implements BackendApi {
       budgetInvalid: budgetRead.kind === 'invalid',
       planApproved: run.planApprovedAt != null,
       suspendReason: run.suspendReason,
+      // R3: la MISMA fila `meta` que escribe la aprobación. Un run sin pedido
+      // (empezado por `startRun`, o anterior a 1.2.0) da `null`, y la pantalla
+      // cae al nombre del Trabajo.
+      request: this.deps.repo.getMeta(coordinationRequestMetaKey(run.id)),
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
       // El mismo conjunto que el índice único parcial y que la tira global:

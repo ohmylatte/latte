@@ -84,6 +84,57 @@ describe('latte_request_coordination: the sentence becomes a gate', () => {
     });
   });
 
+  // --- R3: el pedido sobrevive a la aprobación --------------------------------
+  //
+  // El encabezado del run mostraba `work.title` -- el nombre del Trabajo, que
+  // puede ser "Campaña Q4" mientras el pedido fue otra cosa -- porque el texto
+  // que el coordinador mandó en `latte_request_coordination` no quedaba en
+  // ningún lado legible: vivía adentro del JSON de la propuesta, y la
+  // propuesta se consume al aprobar. Se guarda al aprobar, en la MISMA mesa de
+  // `meta` donde ya viven las altas del run, así que no hace falta migrar nada.
+
+  describe('el pedido queda guardado al aprobar', () => {
+    it('la aprobación guarda el pedido y la vista del run lo publica', async () => {
+      const run = await engine.requestCoordination(proposerGrant(), proposal());
+      expect((await b.service.getCoordinationRun(workId))!.request).toBeNull(); // todavía no se aprobó
+
+      await b.service.resolveCoordinationGate(`proposal:${run.id}`, 'approve');
+
+      const view = (await b.service.getCoordinationRun(workId))!;
+      expect(view.request).toBe('El pedido fue coordinar al equipo y preparar el contenido del mes.');
+    });
+
+    it('un pedido largo se recorta a 100 caracteres: es un título, no el pedido entero', async () => {
+      const long = 'Necesito que el equipo prepare el plan de contenidos del trimestre, con calendario, piezas y presupuesto cerrado antes del viernes';
+      const run = await engine.requestCoordination(proposerGrant(), { ...proposal(), rationale: long });
+
+      await b.service.resolveCoordinationGate(`proposal:${run.id}`, 'approve');
+
+      const view = (await b.service.getCoordinationRun(workId))!;
+      expect(view.request!.length).toBeLessThanOrEqual(100);
+      expect(view.request!.endsWith('…')).toBe(true);
+      expect(long.startsWith(view.request!.slice(0, -1))).toBe(true); // recortado, no reescrito
+    });
+
+    it('sólo la primera línea: un `rationale` de tres párrafos no es un título', async () => {
+      const run = await engine.requestCoordination(proposerGrant(), {
+        ...proposal(),
+        rationale: ['Armar el contenido del mes', '', 'Y después revisarlo con el equipo entero.'].join('\n'),
+      });
+
+      await b.service.resolveCoordinationGate(`proposal:${run.id}`, 'approve');
+
+      expect((await b.service.getCoordinationRun(workId))!.request).toBe('Armar el contenido del mes');
+    });
+
+    it('un run empezado sin propuesta no inventa un pedido: queda en null y la pantalla cae al nombre del Trabajo', async () => {
+      await b.service.setCoordinationBudget(workId, { maxDispatches: 5 });
+      const run = await engine.startRun(workId, null);
+      expect(run.status).toBe('running');
+      expect((await b.service.getCoordinationRun(workId))!.request).toBeNull();
+    });
+  });
+
   // --- 6.6: a proposal cannot dispatch ----------------------------------------
 
   describe('a proposal cannot dispatch', () => {

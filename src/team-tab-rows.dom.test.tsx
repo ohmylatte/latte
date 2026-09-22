@@ -37,7 +37,7 @@ const member: TeamMember = {
 const run: CoordinationRunView = {
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'cm',
   budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
-  suspendReason: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
+  suspendReason: null, request: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
   tasksDone: 0, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0,
 };
 const support: CoordinationMemberSupport = {

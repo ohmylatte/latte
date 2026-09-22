@@ -756,6 +756,16 @@ export interface CoordinationRunView {
    * pantalla tiene que poder mostrarlo en vez de tumbarse.
    */
   suspendReason: string | null;
+  /**
+   * R3: EL PEDIDO, en un título de a lo sumo 100 caracteres, tal como quedó
+   * guardado al aprobar la propuesta.
+   *
+   * `null` cuando este run no nació de un pedido (`startRun`) o es anterior a
+   * 1.2.0. La pantalla cae entonces al nombre del Trabajo, que es lo que
+   * mostraba SIEMPRE hasta ahora: el nombre del Trabajo puede ser "Campaña
+   * Q4" mientras el pedido fue otra cosa.
+   */
+  request: string | null;
   createdAt: string;
   updatedAt: string;
   /**

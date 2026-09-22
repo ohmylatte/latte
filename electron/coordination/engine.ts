@@ -47,6 +47,37 @@ import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, I
 const APPROVED_ROLES_META = 'coordination_approved_roles:';
 /** Las altas de ESTE run, en meta (como `decisionAuthority`): sin subir de versión de esquema. */
 const HIRES_META = 'coordination_hires:';
+/**
+ * R3: EL PEDIDO, GUARDADO AL APROBAR.
+ *
+ * El encabezado del run mostraba el nombre del Trabajo porque el texto del
+ * pedido no sobrevivía a la aprobación: vivía adentro del JSON de la
+ * propuesta y la propuesta se consume. Va en la MISMA mesa de `meta` donde ya
+ * viven las altas del run (`HIRES_META`), así que no hace falta migrar el
+ * esquema para algo que es un título.
+ */
+const REQUEST_META = 'coordination_request:';
+/** Un título, no el pedido entero: entra en una línea de encabezado. */
+export const COORDINATION_REQUEST_MAX = 100;
+
+export function coordinationRequestMetaKey(runId: string): string {
+  return REQUEST_META + runId;
+}
+
+/**
+ * El pedido en una línea: el `rationale` de la propuesta (que es lo que el
+ * coordinador escribió al pedir) y, si viniera vacío, el `spec` de la primera
+ * tarea. Devuelve `''` cuando no hay de dónde sacarlo — y entonces no se
+ * guarda nada, porque un pedido inventado es peor que ninguno.
+ */
+export function coordinationRequestTitle(proposal: Pick<CoordinationProposal, 'rationale' | 'plan'>): string {
+  const source = [proposal.rationale, proposal.plan?.[0]?.spec].find((text) => typeof text === 'string' && text.trim() !== '') ?? '';
+  const line = firstLine(source);
+  if (line.length <= COORDINATION_REQUEST_MAX) return line;
+  // El recorte deja lugar para el puntito: el tope es del texto que se
+  // guarda, no del texto antes de adornarlo.
+  return line.slice(0, COORDINATION_REQUEST_MAX - 1).trimEnd() + '…';
+}
 
 export type CoordinationRole = 'coordinator' | 'worker';
 
@@ -830,6 +861,11 @@ export class CoordinationEngine {
         hired.push({ memberId: session.id, roleId: hire.roleId });
       }
       const committed = this.commitProposal(run.id, proposal, budget, hired);
+      // R3: recién acá, con la aprobación ya commiteada. Guardarlo al proponer
+      // dejaría el pedido de una propuesta rechazada colgado de un run que
+      // nunca existió como equipo.
+      const requestTitle = coordinationRequestTitle(proposal);
+      if (requestTitle !== '') this.deps.repo.setMeta(coordinationRequestMetaKey(run.id), requestTitle);
       // A1: Y EL COORDINADOR SE ENTERA, fuera de la transacción.
       //
       // Éste era el agujero medido en uso real: la persona aprobaba y el

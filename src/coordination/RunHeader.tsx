@@ -26,7 +26,15 @@ import type {
 
 export interface RunHeaderProps {
   run: CoordinationRunView;
-  /** El título del pedido, ya resuelto por quien tiene el Trabajo a mano. */
+  /**
+   * El nombre del Trabajo, que es el RESPALDO del encabezado.
+   *
+   * R3: desde 1.2.0 el run guarda el pedido con el que nació (`run.request`) y
+   * el encabezado lo prefiere. Esto queda para el run que no nació de un
+   * pedido (`startRun`) o que es anterior: el nombre del Trabajo puede ser
+   * "Campaña Q4" mientras el pedido fue "armar el calendario de octubre", y
+   * hasta ahora era SIEMPRE lo que se leía acá.
+   */
   title: string;
   /** El nombre visible del coordinador, nunca su id. `''` calla el subtítulo. */
   coordinatorName: string;
@@ -116,7 +124,7 @@ export function RunHeader(props: RunHeaderProps) {
           paso con su pedido. */}
       {finished && <span className={'coord-tic coord-tic-lg ' + (cancelled ? 'coord-tic-bad' : 'coord-tic-ok')} data-run-status={run.status}>{cancelled ? <CircleX size={16} /> : <Flag size={16} />}</span>}
       <div className="coord-head-title">
-        <div className="coord-head-name">{props.title}</div>
+        <div className="coord-head-name">{run.request ?? props.title}</div>
         <div className="coord-head-sub">{finished
           ? (cancelled ? t('coord.cancelled.at', { time: time(run.updatedAt) }) : t('coord.done.at', { time: time(run.updatedAt) }))
           : props.coordinatorName
