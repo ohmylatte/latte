@@ -270,22 +270,35 @@ function FlatSymbols() {
       <symbol id={`${p}earring`} viewBox="0 0 64 64"><circle cx="19.5" cy="33" r="1.8" /></symbol>
 
       {/*
-        La credencial y la bufanda cuelgan, y con mas zoom son las primeras
-        que se caen del disco: todo lo que baja del menton se aleja del
-        centro el doble de rapido que lo que crece a los costados.
+        LO QUE CUELGA, MEDIDO EN PIXELES DE VERDAD.
 
-        Subidas y acortadas para el encuadre de 1.45. El limite util sobre el
-        eje es y=49.4 en la grilla de origen; con el ancho que tienen, ambas
-        cierran cerca de 30 de 32.
+        A 32 px de pantalla el viewBox de 64 da medio pixel por unidad, y con
+        el zoom de 1.45 una unidad del dibujo mide 0.725 px REALES. Esa es la
+        vara, no el archivo abierto al 800%.
+
+        La credencial era un cuadrado de 6.4 unidades: 4.6 x 4.6 px. Un
+        cuadradito claro pegado al menton no se lee como credencial, se lee
+        como un diente. Y su linea de texto daba 0.8 px de grosor, o sea
+        medio pixel prendido: eso era la grieta del diente.
+
+        Ahora es apaisada (8.0 x 3.8 px), separada del menton, SIN linea
+        interior —lo que no llega a un pixel no informa, ensucia— y con las
+        dos tiras en V, que es lo que de verdad dice "credencial".
+
+        La bufanda igual: la banda (13.8 x 3.0 px) siempre se leyo, la punta
+        era una mota de 2.5 px. Banda mas gruesa y punta mas grande.
+
+        Todo lo que baja del menton se aleja del centro el doble de rapido
+        que lo que crece a los costados, asi que estas dos son las que rozan
+        el borde: el test de geometria las tiene cortas.
       */}
       <symbol id={`${p}lanyard`} viewBox="0 0 64 64">
-        <path d="M25.5 36l5.4 6M38.5 36l-5.4 6" fill="none" strokeWidth="1.5" strokeLinecap="round" />
-        <rect x="28.8" y="41.6" width="6.4" height="6.4" rx="1" strokeWidth="1.1" />
-        <path d="M30.4 44h3.2" fill="none" strokeWidth="1" strokeLinecap="round" />
+        <path d="M26.6 37.4l2.8 4.8M37.4 37.4l-2.8 4.8" fill="none" strokeWidth="1.7" strokeLinecap="round" />
+        <rect x="26.5" y="42.8" width="11" height="5.4" rx="1.1" strokeWidth="1.2" />
       </symbol>
       <symbol id={`${p}scarf`} viewBox="0 0 64 64">
-        <path d="M22.5 40.4q9.5 5.2 19 0v4.2q-9.5 5.2-19 0z" />
-        <path d="M36.6 44h3.4l-.6 3.5h-3.1z" />
+        <path d="M22.5 39.6q9.5 5.4 19 0v6.2q-9.5 5.4-19 0z" />
+        <path d="M35 44.6h4.5l-.7 6.2h-4z" />
       </symbol>
       {/* La vincha: una banda sobre la frente, de sien a sien. */}
       <symbol id={`${p}headband`} viewBox="0 0 64 64"><path d="M19.6 23.4q12.4-7.6 24.8 0l-1.3 3.2q-11.1-6.6-22.2 0z" /></symbol>
