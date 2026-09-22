@@ -20,6 +20,7 @@ import type {
 import { rmSync as fsRmSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
 import type { CoordinationInjectionPlanner } from '../coordination/injection';
+import type { ConnectionInjectionPlanner } from '../connections/injection';
 import { NotFoundError, UnavailableError, ValidationError } from '../core/errors';
 import { newId } from '../core/ids';
 import type { ChatManager } from '../opencode/chatManager';
@@ -165,10 +166,24 @@ export class AgentHub {
     this.clock = deps.clock ?? (() => new Date().toISOString());
   }
 
+  /**
+   * El planificador de Conexiones MCP (brief de conexiones, G4). Se ata igual
+   * que el de coordinación y por el mismo motivo: necesita el gateway, que
+   * necesita el repositorio, que se construye alrededor de este hub. `null`
+   * —el default y la realidad de casi todos los tests— significa que ningún
+   * miembro recibe conexiones, byte por byte como antes de esta rebanada.
+   */
+  private connectionInjection: ConnectionInjectionPlanner | null = null;
+
   /** Wires the coordination injection planner in after construction (see the field's own comment for why). */
   attachCoordinationInjection(planner: CoordinationInjectionPlanner, onInjectionConfirmed?: (workId: string) => void): void {
     this.injection = planner;
     this.onInjectionConfirmed = onInjectionConfirmed ?? null;
+  }
+
+  /** Ídem para las Conexiones MCP. */
+  attachConnectionInjection(planner: ConnectionInjectionPlanner): void {
+    this.connectionInjection = planner;
   }
 
   /**
@@ -396,6 +411,7 @@ export class AgentHub {
       // Nothing to resume yet: do not leave a member that never opened --
       // including whatever coordination token/ledger slot `open()` already claimed.
       this.injection?.release(record.id);
+      this.connectionInjection?.release(record.id);
       this.deps.repo.deleteMember(record.id);
       throw error;
     }
@@ -414,6 +430,7 @@ export class AgentHub {
       // claimed coordination token/ledger slot behind for a member that
       // never actually started.
       this.injection?.release(record.id);
+      this.connectionInjection?.release(record.id);
       throw error;
     }
   }
@@ -491,8 +508,10 @@ export class AgentHub {
       // queda comido para toda otra Marca. `addMember`/`openMember` ya
       // compensan asi; este camino se lo habia salteado.
       this.injection?.release(memberId);
+      this.connectionInjection?.release(memberId);
       try { await this.open(this.deps.repo.getMember(memberId), reopen); } catch {
         this.injection?.release(memberId);
+        this.connectionInjection?.release(memberId);
       }
       throw error;
     }
@@ -530,8 +549,10 @@ export class AgentHub {
       // reclamo del intento fallido antes de reabrir, y otra vez si el
       // reintento tampoco arranca.
       this.injection?.release(memberId);
+      this.connectionInjection?.release(memberId);
       try { await this.open(this.deps.repo.getMember(memberId), reopen); } catch {
         this.injection?.release(memberId);
+        this.connectionInjection?.release(memberId);
       }
       throw error;
     }
@@ -588,6 +609,7 @@ export class AgentHub {
     this.sessions.delete(memberId);
     this.openedOutcome.delete(memberId);
     this.injection?.release(memberId);
+    this.connectionInjection?.release(memberId);
     for (const adapter of this.adapters()) {
       if (adapter.owns(memberId)) {
         adapter.stop(memberId);
@@ -605,13 +627,22 @@ export class AgentHub {
     // correctly on the first spawn or genuinely absent -- never patched in
     // after the fact. `undefined` (no planner attached, the pre-Phase-6
     // default) means this call is byte-identical to before this slice.
-    const mcpServers = this.injection ? (await this.injection.assign({
+    const coordinationServers = this.injection ? (await this.injection.assign({
       memberId: record.id,
       workId: context.workId,
       brandId: context.brandId,
       runtime: record.runtime,
       accountId: record.accountId,
     })).servers : undefined;
+    // Las Conexiones MCP viajan en el MISMO array, antes del spawn, por lo
+    // mismo que las de coordinación: un `--mcp-config` se lee una sola vez, al
+    // arrancar, así que lo que no esté acá no entra después.
+    const connectionServers = this.connectionInjection
+      ? await this.connectionInjection.assign({ memberId: record.id, brandId: context.brandId })
+      : [];
+    const mcpServers = coordinationServers || connectionServers.length > 0
+      ? [...(coordinationServers ?? []), ...connectionServers]
+      : undefined;
     // PRIMER punto de control (D8): el reclamo ya está tomado pero todavía no
     // se pagó ningún spawn. Si la persona cerró en el medio, se suelta acá y no
     // se levanta un proceso de un miembro que ya no está.
@@ -792,6 +823,7 @@ export class AgentHub {
     // `removeMember` (which calls this first) and the model/tier restart
     // path all funnel through -- one release site covers all of them.
     this.injection?.release(chatId);
+    this.connectionInjection?.release(chatId);
     for (const adapter of this.adapters()) {
       if (adapter.owns(chatId)) {
         adapter.stop(chatId);
@@ -804,6 +836,7 @@ export class AgentHub {
     this.sessions.clear();
     this.openedOutcome.clear();
     this.injection?.releaseAll();
+    this.connectionInjection?.releaseAll();
     for (const adapter of this.adapters()) adapter.shutdown();
   }
 
