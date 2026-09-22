@@ -9,7 +9,7 @@ import { sweepStrayCodexServers } from './agents/codex/staleServers';
 import { AgentHub } from './agents/hub';
 import { McpCatalog } from './agents/mcp';
 import { ProfileStore } from './agents/profiles';
-import { RoleCatalog } from './agents/roles';
+import { ROLE_AVATAR_KEY, RoleCatalog } from './agents/roles';
 import { TranscriptStore } from './agents/transcripts';
 import { CoordinationInjectionPlanner } from './coordination/injection';
 import { CoordinationMcpServer } from './coordination/mcpServer';
@@ -296,7 +296,9 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
   });
   const packsDir = options.packsDir ?? path.resolve(__dirname, '..', 'packs');
   const pack = loadInstructionPack(packsDir, 'marketing-core');
-  const roles = new RoleCatalog(pack, new ProfileStore(path.join(paths.root, 'agents')));
+  // La cara elegida a mano para un rol incluido vive en `meta`, que es
+  // clave/valor y no pide migracion: por eso esto no sube el esquema.
+  const roles = new RoleCatalog(pack, new ProfileStore(path.join(paths.root, 'agents')), (roleId) => repo.getMeta(ROLE_AVATAR_KEY(roleId)));
   const hub: AgentHub = new AgentHub({ opencode: chat, claude, codex, accounts, repo, detector, terminal, runner, roles, transcripts, promptDir: path.join(paths.root, 'prompts'), loginCwd: paths.root, env });
 
   const mcp = new McpCatalog({

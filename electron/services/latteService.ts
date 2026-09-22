@@ -110,7 +110,8 @@ import { CoordinationEngine } from '../coordination/engine';
 import { mergeCoordinationBudget, readStoredCoordinationBudget, requireCoordinationBudget } from '../coordination/budget';
 import type { CoordinationInjectionPlanner } from '../coordination/injection';
 import type { McpCatalog } from '../agents/mcp';
-import { RoleCatalog } from '../agents/roles';
+import { ROLE_AVATAR_KEY, RoleCatalog } from '../agents/roles';
+import { parseAvatar, serializeAvatar } from '../../shared/avatar';
 import { isEffortTier } from '../agents/tiers';
 import type { ChatManager } from '../opencode/chatManager';
 import { RuntimeDetector } from '../runtime/detect';
@@ -2119,6 +2120,36 @@ export class LatteService implements BackendApi {
   async listProfiles(): Promise<AgentProfile[]> { return this.deps.hub.listProfiles(); }
 
   async saveProfile(input: ProfileInput, expectedFingerprint: string | null): Promise<AgentProfile> { return this.deps.hub.saveProfile(input, expectedFingerprint); }
+
+  /**
+   * Elegir la cara de un rol INCLUIDO sin tocar el pack.
+   *
+   * Los roles del pack son archivos del programa: no se editan desde la
+   * app, y no deberian. Pero la cara no es comportamiento, es identidad, y
+   * esa la elige quien usa Latte. El override vive en la instalacion, gana
+   * sobre el frontmatter y sobrevive a una actualizacion.
+   *
+   * `null` NO guarda un vacio: borra la clave. "Nunca elegi" y "elegi y me
+   * arrepenti" terminan en el mismo lugar, que es la cara que trae el pack.
+   *
+   * Devuelve los roles ya actualizados para que quien llama no tenga que
+   * pedirlos de nuevo y adivinar si ya estaba escrito.
+   */
+  async setRoleAvatar(roleId: string, avatar: string | null): Promise<AgentRole[]> {
+    if (!RoleCatalog.isValidId(roleId)) throw new ValidationError('Rol invalido');
+    if (!this.deps.hub.listRoles().some((role) => role.id === roleId)) throw new NotFoundError('Role', roleId);
+    const key = ROLE_AVATAR_KEY(roleId);
+    if (avatar === null) {
+      this.deps.repo.deleteMeta(key);
+    } else {
+      const parsed = parseAvatar(avatar);
+      if (!parsed) throw new ValidationError('Avatar invalido');
+      // Se guarda NORMALIZADO: lo que entra por IPC puede venir con espacios
+      // o mayusculas, y en disco tiene que haber una sola forma de cada cara.
+      this.deps.repo.setMeta(key, serializeAvatar(parsed));
+    }
+    return this.deps.hub.listRoles();
+  }
 
   async listRoles(): Promise<AgentRole[]> {
     return this.deps.hub.listRoles();

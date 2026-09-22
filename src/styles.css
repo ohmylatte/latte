@@ -1257,7 +1257,12 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 /* --- D4: ELEGIR LA CARA. Ocho del mismo color: lo unico que se elige es quien. */
 .av-picker{border:1px solid var(--line);border-radius:var(--radius-md);background:var(--paper);padding:12px 14px 10px;margin:0 0 13px;min-width:0}
 .av-picker legend{font-size:var(--text-sm);letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);padding:0 5px}
-.av-picker[disabled]{opacity:.55}
+.av-picker[disabled]{opacity:.72}
+/* Un picker apagado al .55 eran ocho fantasmas rosados sin rasgos: la tinta
+   de los ojos y la boca desaparecia antes que el color de la piel. A .72 se
+   siguen leyendo las caras, que es lo minimo que se le pide a algo que se
+   muestra. Hoy solo queda apagado mientras se guarda o si el perfil esta
+   roto: elegir la cara de un rol incluido ya NO esta deshabilitado. */
 .av-picker-grid{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px}
 /* El boton no compite con la cara: sin borde ni fondo hasta que sea la elegida. */
 .av-pick{border:2px solid transparent;border-radius:var(--radius-pill);background:transparent;padding:2px;justify-content:center}

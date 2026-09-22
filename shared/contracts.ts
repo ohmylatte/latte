@@ -1358,6 +1358,15 @@ export interface LatteAPI {
   listRoles(): Promise<AgentRole[]>;
   listProfiles(): Promise<AgentProfile[]>;
   saveProfile(input: ProfileInput, expectedFingerprint: string | null): Promise<AgentProfile>;
+  /**
+   * La cara de un rol INCLUIDO, elegida a mano en esta instalacion.
+   *
+   * Gana sobre la del pack, asi que actualizar Latte no la pisa. `null`
+   * borra la eleccion y devuelve la que trae el pack. Un perfil propio no
+   * usa esto: el suyo viaja en `ProfileInput.avatar` y se guarda en disco
+   * junto al resto del perfil.
+   */
+  setRoleAvatar(roleId: string, avatar: string | null): Promise<AgentRole[]>;
   listTeam(workId: string): Promise<TeamMember[]>;
   /** Creates a member for the role (primary agent unless overridden) and opens its conversation. */
   addTeamMember(workId: string, roleId: string, options?: TeamMemberOptions | null): Promise<ChatSession>;

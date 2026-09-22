@@ -123,6 +123,7 @@ const METHODS = [
   'listRoles',
   'listProfiles',
   'saveProfile',
+  'setRoleAvatar',
   'listTeam',
   'addTeamMember',
   'openTeamMember',

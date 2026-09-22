@@ -172,3 +172,86 @@ describe('ninguna cara repetida en un equipo', () => {
     expect(b.hub.getMember(first.id).avatar).toBe(avatarOf(first.id));
   });
 });
+
+/**
+ * D9: LA CARA DE UN ROL INCLUIDO SE PUEDE ELEGIR, SIN TOCAR EL PACK.
+ *
+ * Los roles del pack son archivos del programa: no se editan desde la app. Pero
+ * la cara no es comportamiento, es identidad, y esa la elige quien usa Latte.
+ * El override vive en `meta` —clave/valor, sin migracion, por eso el esquema no
+ * sube— y GANA sobre el frontmatter, asi que actualizar Latte no lo pisa.
+ */
+describe('el avatar de un rol incluido se puede sobreescribir', () => {
+  let b: TestBackend;
+  let fake: FakeOpenCode;
+
+  beforeEach(async () => {
+    fake = await startFakeOpenCode();
+    b = await makeBackend({
+      chatEndpoint: fake.endpoint,
+      runner: fakeRunner((file, args) => (file === 'where.exe' || file === 'which' ? { code: 0, stdout: `C:\\bin\\${args[0]}.exe\n` } : { code: 0, stdout: '1.0.0\n' })),
+    });
+  });
+
+  afterEach(async () => { b.cleanup(); await fake.close(); });
+
+  const avatarOfRole = async (roleId: string) => (await b.service.listRoles()).find((r) => r.id === roleId)?.avatar;
+
+  it('el override gana sobre el frontmatter del pack, y vuelve al borrarlo', async () => {
+    expect(await avatarOfRole('strategist')).toBe('bun.2.1.glasses-thick');
+
+    const roles = await b.service.setRoleAvatar('strategist', 'curly.3.2.beret');
+    // Devuelve los roles ya actualizados: quien llama no tiene que volver a pedirlos.
+    expect(roles.find((r) => r.id === 'strategist')?.avatar).toBe('curly.3.2.beret');
+    expect(await avatarOfRole('strategist')).toBe('curly.3.2.beret');
+    // Y tambien en la lista de perfiles, que es donde se elige.
+    expect((await b.service.listProfiles()).find((p) => p.id === 'strategist')?.avatar).toBe('curly.3.2.beret');
+
+    // null no guarda un vacio: BORRA. "Nunca elegi" y "me arrepenti" terminan
+    // en el mismo lugar, que es la cara que trae el pack.
+    await b.service.setRoleAvatar('strategist', null);
+    expect(await avatarOfRole('strategist')).toBe('bun.2.1.glasses-thick');
+  });
+
+  it('el asistente, que no sale del pack, tambien se puede cambiar', async () => {
+    expect(await avatarOfRole('assistant')).toBe('short.2.2.lanyard');
+    await b.service.setRoleAvatar('assistant', 'long.1.4.headband');
+    expect(await avatarOfRole('assistant')).toBe('long.1.4.headband');
+  });
+
+  it('se guarda normalizado: una sola forma de cada cara en disco', async () => {
+    await b.service.setRoleAvatar('reviewer', '  CURLY.3.2.Beret ');
+    expect(await avatarOfRole('reviewer')).toBe('curly.3.2.beret');
+  });
+
+  it('un miembro hereda el override, no el frontmatter', async () => {
+    const brand = await b.service.createBrand('Casa Oliva');
+    const work = await b.service.createWork(brand.id, 'Lanzamiento');
+
+    await b.service.setRoleAvatar('reviewer', 'bob.1.4.scarf');
+    const first = await b.service.addTeamMember(work.id, 'reviewer');
+    expect((await b.service.listTeam(work.id)).find((m) => m.id === first.id)?.avatar).toBe('bob.1.4.scarf');
+
+    // Y la regla de "ninguna cara repetida" sigue valiendo sobre el override.
+    const second = await b.service.addTeamMember(work.id, 'reviewer');
+    const team = await b.service.listTeam(work.id);
+    expect(team.find((m) => m.id === second.id)?.avatar).not.toBe('bob.1.4.scarf');
+    expect(new Set(team.map((m) => m.avatar)).size).toBe(team.length);
+  });
+
+  it('rechaza un rol que no existe y una cara ilegible, sin dejar nada escrito', async () => {
+    await expect(b.service.setRoleAvatar('no-existe', 'bob.2.4.phones')).rejects.toThrow();
+    await expect(b.service.setRoleAvatar('../escape', 'bob.2.4.phones')).rejects.toThrow();
+    await expect(b.service.setRoleAvatar('strategist', 'no-es-una-cara')).rejects.toThrow();
+    // Nada de eso movio la cara del pack.
+    expect(await avatarOfRole('strategist')).toBe('bun.2.1.glasses-thick');
+  });
+
+  /** El override es del disco, no de la sesion: sobrevive a reabrir la app. */
+  it('sobrevive a una lectura nueva del catalogo', async () => {
+    await b.service.setRoleAvatar('analyst', 'bun.4.1.cap');
+    expect(b.repo.getMeta('role-avatar:analyst')).toBe('bun.4.1.cap');
+    expect(new RoleCatalog(loadInstructionPack(PACKS), undefined, (id) => b.repo.getMeta(`role-avatar:${id}`))
+      .list().find((r) => r.id === 'analyst')?.avatar).toBe('bun.4.1.cap');
+  });
+});

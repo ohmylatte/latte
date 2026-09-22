@@ -67,6 +67,8 @@ const shippedRoles:AgentRole[] = [
  {id:'sales-copywriter',name:'Sales Copywriter',initial:'C',summary:'Convertí briefs en copy de venta listo para usar, con una promesa defendible, prueba real y un CTA claro.',builtin:false,tier:'balanced',avatar:'curly.4.1.beret'},
  {id:'reviewer',name:'Reviewer',initial:'V',summary:'Revisa entregables contra el brief.',builtin:false,tier:'light',avatar:'long.2.2.earring'},
 ];
+/** La cara elegida a mano para un rol incluido. En el escritorio esto vive en `meta`. */
+const roleAvatars=new Map<string,string>();
 const builtinProfiles:AgentProfile[]=shippedRoles.map(r=>({...r,soul:r.summary,skills:'',source:'builtin',directory:null,fingerprint:'builtin-'+r.id}));
 function validateProfile(input:ProfileInput) {
  if(!/^[a-z][a-z0-9-]{0,47}$/.test(input.id)||/^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(input.id))throw new Error('Identificador inválido');
@@ -331,7 +333,10 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   listAccountModels: async () => ({ source: 'suggested' as const, models: [], detail: 'Esta vista previa no puede consultar los modelos de tu cuenta.' }),
   // The team roster is real only on desktop; the preview shows the roles so the concept is visible.
   listRoles: async()=> (await browserAPI.listProfiles()).map(({id,name,initial,summary,builtin,tier,avatar})=>({id,name,initial,summary,builtin,tier,avatar})),
-  listProfiles:async()=>[...builtinProfiles,...normalized().profiles],
+  listProfiles:async()=>[...builtinProfiles,...normalized().profiles].map(p=>({...p,avatar:roleAvatars.get(p.id)??p.avatar})),
+  // La vista previa guarda el override en memoria: no hay `meta` en el navegador,
+  // pero el gesto tiene que existir igual para que la pantalla se pueda probar.
+  setRoleAvatar:async(roleId,avatar)=>{const parsed=parseAvatar(avatar);if(avatar===null)roleAvatars.delete(roleId);else if(parsed)roleAvatars.set(roleId,serializeAvatar(parsed));else throw new Error('Avatar invalido');return browserAPI.listRoles();},
   saveProfile:async(input,expectedFingerprint)=>mutate(s=>{validateProfile(input);if(shippedRoles.some(r=>r.id===input.id))throw new Error('Los perfiles incluidos son de solo lectura');const existing=s.profiles.find(p=>p.id===input.id);if(expectedFingerprint===null?Boolean(existing):!existing||existing.fingerprint!==expectedFingerprint)throw new Error('El perfil cambió o ya existe. Tu borrador sigue intacto; recargá antes de reintentar.');const p:AgentProfile={...input,avatar:parseAvatar(input.avatar)===null?serializeAvatar(avatarFromSeed(input.id)):serializeAvatar(parseAvatar(input.avatar)!),builtin:false,tier:'balanced',source:'custom',directory:null,fingerprint:id()};s.profiles=s.profiles.filter(p=>p.id!==input.id);s.profiles.push(p);return p;}),
   listTeam: async () => [], addTeamMember: unavailable, openTeamMember: unavailable, pauseTeamMember: unavailable, finishTeamMember: unavailable, restartTeamMember: unavailable, removeTeamMember: unavailable, setTeamMemberModel: unavailable, setTeamMemberTier: unavailable, draftContinuation: unavailable,
   // The web preview is always whatever ohmylatte.app is serving: there is
