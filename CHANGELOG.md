@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.2.0 — 2026-09-22
+
+El equipo deja de ser un montón de conversaciones sueltas. Pedís en el chat, aprobás una vez, y el equipo se organiza solo: despacha, se reporta y consolida. También estrena cara propia por rol y memoria de marca por defecto.
+
+### El equipo se coordina solo
+
+- **Pedís en el chat y aprobás una vez.** Le contás lo que querés a cualquier miembro; si hace falta un equipo, propone un plan con las tareas, quién las haría y cuántos despachos estima. Vos aprobás (o rechazás, o editás) UNA vez, y a partir de ahí el equipo trabaja: despacha las tareas, cada miembro reporta lo suyo y el coordinador consolida el resultado.
+- **Las preguntas vuelven al chat.** Si un miembro necesita algo tuyo para seguir, la pregunta aparece donde ya estás mirando, no en una bandeja aparte.
+- **Modo Equipo**: una línea de tiempo por miembro, con lo que cada uno recibió, hizo y devolvió.
+- **Bitácora en `agents.log`**, dentro de la carpeta del trabajo: lo que pasó queda escrito en texto plano, legible sin abrir Latte.
+- **Viene prendida**, con un interruptor en Ajustes → Avanzado para apagarla si preferís un equipo de conversaciones sueltas.
+- **Un presupuesto de despachos**, por trabajo y opcionalmente para toda la instalación: no hay «ilimitado» implícito, siempre lo elegís vos.
+
+### Cada rol tiene su cara
+
+- **Avatares propios**: el color sale del rol, la cara de una semilla, y hay doce accesorios. Al crear o editar un rol elegís entre ocho caras, también en los roles que Latte ya trae.
+
+### Memoria
+
+- **La memoria de marca viene puesta** (engram): lo aprendido de una marca viaja entre trabajos sin que haya que cablear nada.
+- **Migración v11 → v12 con backup**: se hace sola al abrir, y deja una copia antes de tocar nada.
+
+### Correcciones
+
+- **Los adjuntos ya no se mandan solos.** Adjuntar un archivo enviaba el mensaje sin que lo pidieras.
+- **Los errores de Claude Code y Codex se ven de verdad.** Cuando un runtime fallaba, la pantalla mostraba una frase genérica en vez de lo que el agente realmente dijo.
+
+### Conocido
+
+- El avatar de un rol todavía no se puede exportar como PNG.
+- Los archivos que produce una tarea se leen del texto del reporte: si el reporte no los nombra, Latte no los lista.
+
 ## 1.1.0 — 2026-09-17
 
 Primera versión de la familia 1.x. Es una release de correcciones: nada nuevo que aprender, varias cosas que dejan de estar mal. La mayoría se encontró revisando el producto antes de publicarlo, no después de que alguien se tropezara.
