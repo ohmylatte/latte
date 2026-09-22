@@ -26,7 +26,7 @@ import type { CoordinationAskView, CoordinationGateView, CoordinationRunView, Te
 
 const work: Work = { id: 'w1', brandId: 'b1', title: 'Lanzamiento', brief: '', folder: null, updatedAt: '' };
 const member = (id: string, roleName: string): TeamMember => ({
-  id, workId: 'w1', roleId: id, roleName, initial: roleName[0]!, runtime: 'claude', model: null, accountId: null,
+  id, workId: 'w1', roleId: id, roleName, initial: roleName[0]!, avatar: null, runtime: 'claude', model: null, accountId: null,
   label: 'Claude', status: 'idle', tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 });
 const team = [member('coord', 'Coordinador'), member('cm', 'CM')];
@@ -68,11 +68,18 @@ describe('B3.1: el toggle de la columna', () => {
     expect(container.querySelector('.team-tab-strip')).not.toBeNull();
   });
 
-  it('vive en la cabecera, junto a los controles del run', () => {
+  /**
+   * C7: la cabecera del rail se queda SOLO con el control segmentado. Las dos
+   * lineas de contadores del run se fueron al encabezado del pedido, en el
+   * modo Equipo: eran el deposito de texto compitiendo por el alto con lo
+   * unico que la columna del chat tiene que hacer.
+   */
+  it('la cabecera lleva el control segmentado, y ningun contador del run', () => {
     const { container } = mount({ coordinationRun: run() });
     const head = container.querySelector('.team-rail-head')!;
-    expect(head.querySelector('.team-coordination-controls')).not.toBeNull();
     expect(head.querySelector('.team-rail-modes')).not.toBeNull();
+    expect(head.querySelector('.team-coordination-controls')).toBeNull();
+    expect(container.querySelector('.coord-head')).toBeNull();
   });
 
   it('el modo Equipo REEMPLAZA la conversación: nunca los dos a la vez', () => {
@@ -113,13 +120,19 @@ describe('B3.1: el toggle de la columna', () => {
     expect(container.querySelector('.team-inbox-row.is-selected')!.getAttribute('data-member-id')).toBe('cm');
   });
 
-  it('"Abrir chat" desde el modo Equipo vuelve a la conversación de ESE miembro', () => {
-    const onSelect = vi.fn();
-    const { container } = mount({ coordinationRun: run(), onSelect });
+  /**
+   * C2: EL "ABRIR CHAT" REPETIDO POR FILA SE FUE.
+   *
+   * Criterio 4: la fila ES la acción. Tocarla abre a ESE miembro en el panel
+   * de al lado; el verbo que llevaba cada fila --tres veces la misma palabra
+   * en una lista de tres-- ya no está.
+   */
+  it('la fila del modo Equipo elige al miembro, sin un verbo repetido al costado', () => {
+    const { container } = mount({ coordinationRun: run() });
     toTeam(container);
-    fireEvent.click(container.querySelector('[data-member-id="cm"] .team-inbox-open-chat')!);
-    expect(onSelect).toHaveBeenCalledWith('cm');
-    expect(container.querySelector('.team-view')).toBeNull();
+    expect(container.querySelector('.team-inbox-open-chat')).toBeNull();
+    fireEvent.click(container.querySelector('[data-member-id="cm"] .coord-row')!);
+    expect(container.querySelector('.team-inbox-row.is-selected')!.getAttribute('data-member-id')).toBe('cm');
   });
 
   it('el mismo toggle en inglés, sin nada en castellano', () => {

@@ -3,7 +3,7 @@ import { api } from './browser-api';
 import { shouldRefreshWork } from './coordination-event-routing';
 import type {
   CoordinationActiveRunSummary, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
-  CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationMessageView, CoordinationRunView, CoordinatorGrant,
+  CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport, CoordinationMessageView, CoordinationRunTaskView, CoordinationRunView, CoordinatorGrant,
 } from '../shared/contracts';
 
 export { shouldRefreshWork } from './coordination-event-routing';
@@ -28,6 +28,13 @@ export interface CoordinationState {
   messages: CoordinationMessageView[];
   /** Las contrataciones del run, para la bitacora. Antes esa prop no la llenaba nadie. */
   hires: CoordinationHireView[];
+  /**
+   * C1: las tareas del run, para la tira del encabezado. Se refresca con el
+   * MISMO ritmo que la bitacora: el encabezado y la lista de miembros cuentan
+   * el mismo pedido, y dos ritmos distintos harian que se contradijeran entre
+   * un refresco y el siguiente.
+   */
+  tasks: CoordinationRunTaskView[];
   support: CoordinationMemberSupport[];
   /** Las `latte_ask` abiertas del run: una superficie propia, nunca un gate de aprobar/rechazar. */
   openAsks: CoordinationAskView[];
@@ -152,6 +159,7 @@ export function useCoordination(
   const [log, setLog] = useState<CoordinationLogEntryView[]>([]);
   const [messages, setMessages] = useState<CoordinationMessageView[]>([]);
   const [hires, setHires] = useState<CoordinationHireView[]>([]);
+  const [tasks, setTasks] = useState<CoordinationRunTaskView[]>([]);
   const [support, setSupport] = useState<CoordinationMemberSupport[]>([]);
   const [openAsks, setOpenAsks] = useState<CoordinationAskView[]>([]);
   const [activeRuns, setActiveRuns] = useState<CoordinationActiveRunSummary[]>([]);
@@ -208,7 +216,7 @@ export function useCoordination(
       if (!fresh()) return;
       setRun(current);
       // Sin run no hay nada más que esperar: eso ya es una respuesta completa.
-      if (!current) { setGates([]); setLog([]); setHires([]); setOpenAsks([]); loaded(); return; }
+      if (!current) { setGates([]); setLog([]); setHires([]); setTasks([]); setOpenAsks([]); loaded(); return; }
       // `allSettled`: un error de una de las cuatro no puede dejar la visita
       // colgada para siempre — cada `.catch` de abajo ya degrada a su default
       // seguro, y la pantalla igual terminó de cargar.
@@ -216,9 +224,10 @@ export function useCoordination(
         api.listCoordinationGates(current.id).then((v) => { if (fresh()) setGates(v); }).catch((e) => { report(e); if (fresh()) setGates([]); }),
         api.listCoordinationLog(current.id).then((v) => { if (fresh()) setLog(v); }).catch((e) => { report(e); if (fresh()) setLog([]); }),
         api.listCoordinationHires(current.id).then((v) => { if (fresh()) setHires(v); }).catch((e) => { report(e); if (fresh()) setHires([]); }),
+        api.listCoordinationTasks(current.id).then((v) => { if (fresh()) setTasks(v); }).catch((e) => { report(e); if (fresh()) setTasks([]); }),
         api.listOpenCoordinationAsks(current.id).then((v) => { if (fresh()) setOpenAsks(v); }).catch((e) => { report(e); if (fresh()) setOpenAsks([]); }),
       ]).then(loaded);
-    }).catch((e) => { report(e); if (fresh()) { setRun(null); setGates([]); setLog([]); setHires([]); setOpenAsks([]); loaded(); } });
+    }).catch((e) => { report(e); if (fresh()) { setRun(null); setGates([]); setLog([]); setHires([]); setTasks([]); setOpenAsks([]); loaded(); } });
   };
 
   // The global strip: fetched once, regardless of whether a Work is open.
@@ -230,7 +239,7 @@ export function useCoordination(
     if (!workId) {
       generation.current += 1; // toda respuesta en vuelo queda huérfana
       setAuthority('manual'); setBudget({ state: 'unset' }); setCoordinatorGrant(null);
-      setRun(null); setGates([]); setLog([]); setHires([]); setSupport([]); setOpenAsks([]); setMessages([]);
+      setRun(null); setGates([]); setLog([]); setHires([]); setTasks([]); setSupport([]); setOpenAsks([]); setMessages([]);
       return;
     }
     refreshWork(workId);
@@ -306,7 +315,7 @@ export function useCoordination(
   };
 
   return {
-    authority, budget, coordinatorGrant, run, gates, log, messages, hires, support, openAsks, activeRuns, pending,
+    authority, budget, coordinatorGrant, run, gates, log, messages, hires, tasks, support, openAsks, activeRuns, pending,
     // Comparado contra el `workId` de ESTE render: el `true` del Trabajo
     // anterior no puede sobrevivir a la navegación ni un solo render.
     workLoaded: workId != null && loadedWorkId === workId,

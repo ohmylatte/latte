@@ -106,9 +106,8 @@ export function ApprovalStamp({ size = 34, className }: { size?: number; classNa
   );
 }
 
-const ROLE_COLORS = new Set(['assistant', 'strategist', 'researcher', 'analyst', 'reviewer']);
-
-/** The role colour token for a role id, falling back to the default role. */
-export function roleColorVar(roleId: string): string {
-  return ROLE_COLORS.has(roleId) ? `var(--role-${roleId})` : 'var(--role-default)';
-}
+/**
+ * El color de un rol, para quien ya importaba esto desde acá. La decisión vive
+ * en `coordination/role-color`: una sola paleta, un solo lugar donde elegir.
+ */
+export { roleColor, roleColorVar } from './coordination/role-color';

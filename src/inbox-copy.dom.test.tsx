@@ -26,7 +26,7 @@ const setLocale = (locale: 'es-AR' | 'en-US') => { ui.locale = locale; };
  */
 
 const member = (id: string, roleName: string, roleId = id): TeamMember => ({
-  id, workId: 'w1', roleId, roleName, initial: roleName[0]!, runtime: 'claude', model: null, accountId: null,
+  id, workId: 'w1', roleId, roleName, initial: roleName[0]!, avatar: null, runtime: 'claude', model: null, accountId: null,
   label: 'Claude', status: 'idle', tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 });
 const team = [member('cm', 'CM'), member('paid', 'Paid Media')];

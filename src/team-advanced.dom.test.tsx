@@ -29,7 +29,7 @@ const work = (patch: Partial<Work> = {}): Work => ({
   folder: null, updatedAt: '2026-09-01T00:00:00.000Z', ...patch,
 });
 const member = (patch: Partial<TeamMember> = {}): TeamMember => ({
-  id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', runtime: 'opencode', model: null,
+  id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', avatar: null, runtime: 'opencode', model: null,
   accountId: null, label: 'OpenCode', status: 'idle', tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '', ...patch,
 });
 const support = (patch: Partial<CoordinationMemberSupport> = {}): CoordinationMemberSupport => ({

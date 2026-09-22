@@ -1,16 +1,21 @@
 import { useState } from 'react';
 import { translate as t } from './i18n';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, UserPlus, Users } from 'lucide-react';
 import type {
   AgentRole, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
   CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport,
-  CoordinationMessageView, CoordinationRunView, TeamMember, Work,
+  CoordinationMessageView, CoordinationRunTaskView, CoordinationRunView, TeamMember, Work,
 } from '../shared/contracts';
-import {
-  CoordinationRunControls, describeCoordinationSupport, describeMemorySupport,
-  memberCoordinationState, type LatteMode,
-} from './TeamPanel';
-import { describeInboxEvent, inboxEvents, lastInboxEvent, pendingForMember } from './coordination/inbox';
+import { describeCoordinationSupport, describeMemorySupport, memberCoordinationState, type LatteMode } from './TeamPanel';
+import { inboxEvents, pendingForMember } from './coordination/inbox';
+import { RunHeader } from './coordination/RunHeader';
+import { MemberDetail } from './coordination/MemberDetail';
+import { CoordAvatar, CoordRow } from './coordination/anatomy';
+import { avatarOfMember } from './coordination/avatar-of';
+import { EmptyTeam, RunOutput } from './coordination/TeamOutcome';
+import { memberSignal } from './coordination/member-line';
+import { hourOf } from './coordination/time';
+import { titleOf } from './coordination/text';
 import { memberDisplayName } from './coordination/names';
 
 /**
@@ -57,6 +62,18 @@ export interface TeamViewProps {
   coordinationAsks?: readonly CoordinationAskView[];
   coordinationHires?: readonly CoordinationHireView[];
   coordinationGates?: readonly CoordinationGateView[];
+  /** C1: las tareas del run, para la tira del encabezado. */
+  coordinationTasks?: readonly CoordinationRunTaskView[];
+  /** La hora local de un ISO, inyectable para los tests. */
+  formatTime?: (value: string) => string;
+  /** C4: contestar una pregunta abierta desde el detalle del miembro que la hizo. */
+  onAnswerAsk?: (askId: string, answer: string) => void;
+  /** C4: el instante contra el que se cuenta "vence en N min". Inyectable para los tests. */
+  now?: number;
+  /** C5: empezar otro pedido, o pedir el primero: abre el chat del coordinador. */
+  onNewRequest?: () => void;
+  /** C5: abre el flujo de alta que ya existe. Sin handler, la fila no se ofrece. */
+  onAddMember?: () => void;
   coordinationSupport?: readonly CoordinationMemberSupport[];
   formatDate?: (value: string) => string;
   /** B3.1: la configuración del equipo, que bajó del panel a esta vista. */
@@ -95,9 +112,24 @@ export function TeamView(props: TeamViewProps) {
     hires: props.coordinationHires,
   };
   const selected = selectedThreadMember(team, props.selectedMemberId, run);
-  const when = (at: string) => (props.formatDate ? props.formatDate(at) : at);
+  const hour = (at: string) => (props.formatTime ? props.formatTime(at) : hourOf(at));
+  /**
+   * C2: el titulo de una tarea sale del PLAN, no del prompt del despacho.
+   * El prompt es lo que el coordinador le escribio al miembro; el titulo es
+   * lo que la persona pidio. Sin tareas cableadas, la fila cae en el prompt,
+   * que es lo que ya habia.
+   */
+  const taskTitle = (taskId: string) => titleOf((props.coordinationTasks ?? []).find((task) => task.id === taskId)?.spec);
   const thread = selected ? inboxEvents(input, selected) : [];
-  const openName = selected ? memberDisplayName(selected, team, null, roles) : '';
+  const coordinatorName = run?.coordinatorMemberId
+    ? memberDisplayName(run.coordinatorMemberId, team, null, roles)
+    : (props.coordinatorGrant ? memberDisplayName(props.coordinatorGrant, team, null, roles) : '');
+  /**
+   * C5: el vacio manda MIENTRAS la persona no haya abierto a nadie. Abrir un
+   * miembro es una decision suya, y taparsela con la pantalla de bienvenida
+   * seria decidir por ella.
+   */
+  const openedMember = Boolean(props.selectedMemberId && team.some((m) => m.id === props.selectedMemberId));
 
   if (!work || team.length === 0) {
     return <div className="team-view team-view-empty">
@@ -109,45 +141,70 @@ export function TeamView(props: TeamViewProps) {
   }
 
   return <div className="team-view">
-    <CoordinationRunControls run={run} busy={props.busy} pending={props.pending}
-      onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination} />
+    {/* C1: EL ENCABEZADO DEL PEDIDO, NO DOS LÍNEAS DE CONTADORES.
+        Sin `run` no se dibuja nada de esto: un Trabajo sin equipo trabajando
+        no tiene un pedido del que informar avance. */}
+    {run && <RunHeader run={run} title={props.work?.title || t('coord.run.untitled')}
+      coordinatorName={run.coordinatorMemberId ? memberDisplayName(run.coordinatorMemberId, team, null, roles) : ''}
+      tasks={props.coordinationTasks} asks={props.coordinationAsks} team={team} roles={roles}
+      busy={props.busy} pending={props.pending} formatTime={props.formatTime}
+      onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination}
+      onNewRequest={props.onNewRequest} />}
     <div className="team-view-columns">
-      <ul className="team-inbox team-view-list">
+      {/* C2: LA MISMA ANATOMÍA QUE TODA FILA DEL PRODUCTO.
+          Avatar con punto · nombre · qué hace ahora · cuándo. La fila ES la
+          acción (criterio 4): un `<button>` entero, sin un "Abrir chat"
+          repetido al costado de cada nombre. El chip con la palabra
+          ("conectado", "arrancando") se fue: el estado es el punto
+          (criterio 5), y lo que el runtime confirmó o no sigue dicho —
+          entero, con su frase larga— al pie, en modo avanzado. */}
+      <ul className="team-inbox team-view-list" aria-label={t('coord.list.label')}>
         {team.map((member) => {
-          const last = lastInboxEvent(input, member.id);
+          const signal = memberSignal({ ...input, team, roles, run, taskTitle }, member.id);
           const waiting = pendingForMember(member.id, props.coordinationGates, props.coordinationAsks, run);
-          const support = props.coordinationSupport?.find((s) => s.memberId === member.id) ?? null;
-          // B3.3: el chip de coordinación habla de un PROCESO. Con el run
-          // cerrado, o con el miembro en pausa, no hay proceso del que hablar:
-          // "arrancando" ahí es una promesa de que algo va a pasar cuando ya
-          // no va a pasar nada. Exactamente lo que mostraba la captura.
-          const alive = Boolean(run?.active) && (member.status === 'working' || member.status === 'idle');
-          const state = support && alive ? memberCoordinationState(support) : null;
+          const isCoordinator = run?.coordinatorMemberId === member.id;
           return <li key={member.id} className={'team-inbox-row' + (member.id === selected ? ' is-selected' : '')} data-member-id={member.id}>
-            <div className="team-inbox-head">
-              <button type="button" className="team-inbox-name" aria-pressed={member.id === selected} onClick={() => props.onSelectMember(member.id)}>{member.roleName}</button>
-              {state && <span className={'team-member-state ' + state.className} data-state={state.state} title={state.title}>{state.label}</span>}
-              {waiting > 0 && <span className="team-inbox-pending">{t('team.inbox.pending', { count: waiting })}</span>}
-              {props.onOpenChat && <button type="button" className="team-inbox-open-chat" onClick={() => props.onOpenChat!(member.id)}>{t('team.view.openChat')}</button>}
-            </div>
-            <p className="team-inbox-line">
-              {last
-                ? <><span className="team-inbox-text">{describeInboxEvent(last, team, roles)}</span><time dateTime={last.at}>{when(last.at)}</time></>
-                : <span className="team-inbox-text">{t('team.inbox.nothing')}</span>}
-            </p>
+            <CoordRow
+              name={member.roleName}
+              roleId={member.roleId}
+              avatar={avatarOfMember(member)}
+              dot={signal.dot}
+              nameIcon={isCoordinator ? <Users size={12} className="coord-row-coordinator" aria-label={t('coord.member.coordinator')} /> : undefined}
+              line={signal.line}
+              urgent={signal.urgent}
+              at={signal.at}
+              time={signal.at ? hour(signal.at) : ''}
+              badge={waiting}
+              selected={member.id === selected}
+              onClick={() => props.onSelectMember(member.id)}
+            />
           </li>;
         })}
+        {/* C5: SUMAR UN ROL ES UNA FILA MÁS, con la misma anatomía y el avatar
+            punteado. Abre el flujo de alta que ya existe; sin handler no se
+            ofrece un botón que no abre nada. */}
+        {props.onAddMember && <li className="team-inbox-row coord-add-row">
+          <button type="button" className="coord-row coord-add" onClick={props.onAddMember}>
+            <CoordAvatar name="" dot="none"><UserPlus size={14} /></CoordAvatar>
+            <span className="coord-row-text"><span className="coord-row-name">{t('coord.empty.addRole')}</span></span>
+          </button>
+        </li>}
       </ul>
+      {/* C3: EL DETALLE DE UN MIEMBRO ES UNA LÍNEA DE TIEMPO, NO UNA LISTA DE
+          RENGLONES IGUALES. El ícono hace el sustantivo, la palabra agrega lo
+          específico, y lo último va arriba.
+
+          C5: y el panel derecho cambia con el estado del pedido. Sin run es el
+          vacío con propósito; con el run terminado, lo que el equipo dejó. */}
       <div className="team-view-thread">
-        <div className="document-kicker team-view-thread-title">{openName}</div>
-        <ol className="team-thread">
-          {thread.length === 0
-            ? <li className="team-thread-empty">{t('team.inbox.threadEmpty')}</li>
-            : thread.map((event) => <li key={event.id} className="team-thread-row" data-kind={event.kind}>
-                <span className="team-thread-text">{describeInboxEvent(event, team, roles)}</span>
-                <time dateTime={event.at}>{when(event.at)}</time>
-              </li>)}
-        </ol>
+        {!run && !openedMember && <EmptyTeam coordinatorName={coordinatorName} onAsk={props.onNewRequest} />}
+        {run && !run.active && <RunOutput run={run} log={props.coordinationLog} team={team} roles={roles} formatTime={hour} />}
+        {(run?.active || openedMember) && selected && <MemberDetail memberId={selected} team={team} roles={roles} run={run}
+          events={thread} tasks={props.coordinationTasks}
+          signal={memberSignal({ ...input, team, roles, run, taskTitle }, selected)}
+          formatTime={hour} onOpenChat={props.onOpenChat}
+          openAsks={(props.coordinationAsks ?? []).filter((ask) => ask.memberId === selected && (run == null || run.active))}
+          onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now} />}
       </div>
     </div>
     {props.mode === 'advanced' && <TeamAdvanced {...props} />}
@@ -195,8 +252,19 @@ function SupportRow({ row, team }: { row: CoordinationMemberSupport; team: reado
   // no está la cadena termina en la frase. El id queda en `data-member-id`,
   // que es para depurar, no para leer.
   const name = memberDisplayName(row.memberId, team);
+  /**
+   * C2: LA VERSIÓN DE UNA PALABRA SE MUDÓ ACÁ.
+   *
+   * Vivía al lado del nombre en la pestaña del chat y en la fila del modo
+   * Equipo, donde es una FRASE adentro de una pastilla —lo que el criterio 5
+   * prohíbe— repitiendo en palabras lo que el punto ya dice. Acá no compite
+   * con nada: éste es el panel técnico, plegado, en modo avanzado, y la
+   * palabra corta es lo que hace escaneable una lista de miembros.
+   */
+  const state = memberCoordinationState(row);
   return <li className="team-support-row" data-member-id={row.memberId}>
     <strong>{name}</strong>
+    <span className={'team-member-state ' + state.className} data-state={state.state} title={state.title}>{state.label}</span>
     <p className="team-support-coordination">{describeCoordinationSupport(row)}</p>
     <p className="team-support-memory">{describeMemorySupport(row)}</p>
   </li>;

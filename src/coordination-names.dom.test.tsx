@@ -40,11 +40,11 @@ import type {
 const GONE = 'mem_9f3a11c4';
 
 const member = (id: string, roleName: string, roleId = id): TeamMember => ({
-  id, workId: 'w1', roleId, roleName, initial: roleName[0]!, runtime: 'claude', model: null, accountId: null,
+  id, workId: 'w1', roleId, roleName, initial: roleName[0]!, avatar: null, runtime: 'claude', model: null, accountId: null,
   label: 'Claude', status: 'idle', tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 });
 const team = [member('coord', 'Coordinador'), member('cm', 'CM')];
-const roles: AgentRole[] = [{ id: 'paid', name: 'Paid Media', initial: 'P', summary: '', builtin: true, tier: 'balanced' }];
+const roles: AgentRole[] = [{ id: 'paid', name: 'Paid Media', initial: 'P', summary: '', builtin: true, tier: 'balanced', avatar: null }];
 
 describe('el helper: una sola resolución para todas las superficies', () => {
   it('devuelve el rol del miembro cuando el miembro sigue en el equipo', () => {
@@ -126,14 +126,14 @@ describe('superficie: el buzón y el hilo del panel del equipo', () => {
 
   it('resuelve al otro extremo por su rol cuando ya no está en el equipo', () => {
     const { container } = mountPanel({ coordinationRun: run(), coordinationMessages: [message()], roles });
-    const line = container.querySelector('[data-member-id="cm"] .team-inbox-line')!;
+    const line = container.querySelector('[data-member-id="cm"] .coord-row-line')!;
     expect(line.textContent).toContain('Paid Media');
     expect(line.textContent).not.toContain('mem_');
   });
 
   it('y si no queda ni el rol, lo dice con palabras', () => {
     const { container } = mountPanel({ coordinationRun: run(), coordinationMessages: [message({ from: { memberId: GONE, roleId: 'borrado' } })] });
-    expect(container.querySelector('[data-member-id="cm"] .team-inbox-line')!.textContent).toContain('miembro que ya no está');
+    expect(container.querySelector('[data-member-id="cm"] .coord-row-line')!.textContent).toContain('miembro que ya no está');
     expect(container.querySelector('.team-inbox')!.textContent).not.toContain('mem_');
   });
 });

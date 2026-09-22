@@ -150,7 +150,7 @@
 .role-picker .agent-explanation{margin:10px 0 14px}
 .role-list{display:flex;flex-direction:column;gap:6px;margin-bottom:16px}
 .role-card{display:flex;align-items:center;gap:11px;text-align:left;padding:9px 11px;border-radius:var(--radius-md);background:var(--paper);font-size:12px}
-.role-card>span:not(.team-avatar){flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.role-card>span:not(.team-avatar):not(.av){flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
 .role-card strong{font-weight:550}
 .role-card small{font-size:10.5px;line-height:1.5;color:var(--muted)}
 .role-card.selected{border-color:var(--rust);background:var(--paper)}
@@ -290,9 +290,12 @@ html,body,#root{height:100%;overflow:hidden}
   --role-assistant:#aa4e31; /* --rust: la marca, para el punto de partida */
   --role-strategist:#5c6b4a;
   --role-researcher:#4a6272;
-  --role-analyst:#9a7233;
+  /* C8: oscurecido de #9a7233 (4.10:1) para llegar a AA contra --on-accent: */
+  --role-analyst:#8f6a2f;
   --role-reviewer:#7a4f6b;
-  --role-default:#8a7f70;
+  /* C8: idem, de #8a7f70 (3.70:1). Las iniciales son 12px: no son texto
+     grande, asi que no les alcanza con 3:1. */
+  --role-default:#787060;
 }
 .team-avatar{background:var(--role-default)}
 .team-avatar[data-role=assistant]{background:var(--role-assistant)}
@@ -308,7 +311,7 @@ html,body,#root{height:100%;overflow:hidden}
 .team-member.selected:has(.team-avatar[data-role=researcher]){border-left-color:var(--role-researcher)}
 .team-member.selected:has(.team-avatar[data-role=analyst]){border-left-color:var(--role-analyst)}
 .team-member.selected:has(.team-avatar[data-role=reviewer]){border-left-color:var(--role-reviewer)}
-.role-card.selected .team-avatar{box-shadow:0 0 0 3px var(--foam),0 0 0 4px currentColor}
+.role-card.selected .team-avatar,.role-card.selected .av{box-shadow:0 0 0 3px var(--foam),0 0 0 4px currentColor}
 .role-dot{height:8px;width:8px;border-radius:50%;display:inline-block;margin-right:7px;background:var(--role-default);flex-shrink:0}
 .role-dot[data-role=assistant]{background:var(--role-assistant)}
 .role-dot[data-role=strategist]{background:var(--role-strategist)}
@@ -971,7 +974,9 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .team-view-columns{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,auto) minmax(0,1fr);gap:10px;flex:1;min-height:0;min-width:0}
 .team-view-list{margin:0;overflow-y:auto;min-width:0;min-height:0;max-height:34vh;padding-right:4px;scrollbar-width:thin}
 .team-view-list .team-inbox-row{padding:7px 6px;border-radius:var(--radius-sm)}
-.team-view-list .team-inbox-row.is-selected{background:var(--paper-raised);border-left:2px solid var(--rust);padding-left:8px}
+/* C8: la seleccion la pinta el boton de adentro --fondo --foam y borde --line
+   en los cuatro lados--, no un borde de acento a la izquierda: el acento
+   significa vivo, no "estas parado aca". */
 .team-inbox-open-chat{margin-left:auto;border:0;padding:2px 4px;font-size:var(--text-sm);color:var(--rust);flex-shrink:0}
 .team-view-thread{display:flex;flex-direction:column;min-width:0;min-height:0;overflow-y:auto;border-top:1px solid var(--line);padding-top:8px;scrollbar-width:thin}
 .team-view-thread-title{margin:0 0 8px}
@@ -995,3 +1000,303 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .active-teams-strip-row[data-live="false"]{opacity:.6}
 /* La misma regla en Inicio, para la fila de un equipo que ya termino. */
 .home-row-finished{opacity:.75}
+
+/* --- C1..C6: LA GRAMATICA DE LA COORDINACION ---------------------------------
+   Un solo acento (--rust) significa vivo / te necesita / accion principal;
+   listo es --green-ok; fallo es --danger; todo lo demas es gris. Nada de hex
+   sueltos: cada color de este bloque sale de un token. El piso tipografico es
+   --text-sm; --text-xs no existe. */
+/* C8: EL COLOR DEL AVATAR ES IDENTIDAD, NO ESTADO.
+   Reconocer al miembro de un vistazo es lo que hace escaneable una lista de
+   tres o cuatro filas iguales. Sale de los MISMOS tokens --role-* que ya
+   pintaban .team-avatar: un segundo sistema de color seria dos identidades
+   para la misma persona. El estado sigue siendo el punto, y sigue siendo uno. */
+.coord-av{width:30px;height:30px;flex:0 0 30px;border-radius:var(--radius-pill);background:var(--role-default);color:var(--on-accent);font-weight:600;font-size:var(--text-sm);display:flex;align-items:center;justify-content:center;position:relative}
+.coord-av[data-role=assistant]{background:var(--role-assistant)}
+.coord-av[data-role=strategist]{background:var(--role-strategist)}
+.coord-av[data-role=researcher]{background:var(--role-researcher)}
+.coord-av[data-role=analyst]{background:var(--role-analyst)}
+.coord-av[data-role=reviewer]{background:var(--role-reviewer)}
+.coord-av-s{width:20px;height:20px;flex-basis:20px;font-size:var(--text-sm)}
+.coord-dot{width:8px;height:8px;flex:0 0 8px;border-radius:var(--radius-pill);background:var(--neutral-mid);display:inline-block}
+.coord-av .coord-dot{position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border:2px solid var(--paper)}
+.coord-dot-live{background:var(--rust);box-shadow:0 0 0 3px var(--rust-wash)}
+.coord-dot-ok{background:var(--green-ok)}
+.coord-dot-failed{background:var(--danger)}
+.coord-dot-idle{background:var(--neutral-mid)}
+.coord-time{font-family:var(--mono);font-size:var(--text-sm);color:var(--muted-soft);flex:0 0 auto}
+.coord-badge{min-width:18px;height:18px;padding:0 5px;border-radius:var(--radius-pill);background:var(--rust);color:var(--on-accent);font-size:var(--text-sm);font-weight:600;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+/* Criterio 4: LA FILA ES LA ACCION. Un boton entero, sin un verbo repetido al costado. */
+.coord-row{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;padding:9px 10px;border-radius:var(--radius-sm);border:1px solid transparent;background:transparent;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.coord-row:hover{background:var(--paper-raised)}
+.coord-row.is-selected{background:var(--foam);border-color:var(--line)}
+.coord-row-text{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.coord-row-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.coord-row-name{display:flex;align-items:center;gap:5px;font-weight:600;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coord-row-line{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.coord-row-line.is-urgent{color:var(--rust)}
+.coord-row-line.is-failed{color:var(--danger)}
+/* C1: el encabezado del pedido. UNA linea, y debajo la tira de tareas. */
+.coord-head{display:flex;flex-direction:column;gap:10px;flex-shrink:0;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:4px}
+.coord-head-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;min-width:0}
+.coord-head-title{flex:1 1 200px;min-width:0;display:flex;flex-direction:column;gap:1px}
+.coord-head-name{font-family:var(--serif);font-size:var(--text-xl);line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.coord-head-sub{color:var(--muted);font-size:var(--text-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.coord-head-actions{display:flex;gap:6px;flex-shrink:0}
+.coord-progress{display:flex;flex-direction:column;gap:5px;width:200px;flex-shrink:0}
+.coord-progress-line{display:flex;justify-content:space-between;gap:8px;font-size:var(--text-sm)}
+.coord-progress-done{font-weight:550;color:var(--ink)}
+.coord-progress-rest{color:var(--muted)}
+.coord-bar{height:6px;border-radius:var(--radius-pill);background:var(--line);display:flex;overflow:hidden}
+.coord-bar-done{background:var(--green-ok)}
+.coord-bar-live{background:var(--rust)}
+.coord-bar-failed{background:var(--danger)}
+.coord-pill{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:var(--radius-pill);background:var(--paper-deep);color:var(--ink-soft);font-size:var(--text-sm);font-weight:500;white-space:nowrap;flex-shrink:0}
+.coord-pill-dispatches{font-variant-numeric:tabular-nums}
+.coord-pill-live{background:var(--rust-wash);color:var(--rust)}
+.coord-btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:var(--radius-sm);border:1px solid var(--line-strong);background:var(--paper-raised);color:var(--ink);font:inherit;font-size:var(--text-sm);font-weight:500;cursor:pointer;white-space:nowrap}
+.coord-btn-primary{background:var(--rust);border-color:var(--rust);color:var(--on-accent)}
+.coord-btn-ghost{border-color:transparent;background:transparent;color:var(--ink-soft)}
+.coord-icon-btn{width:30px;padding:0;justify-content:center}
+/* La tira de tareas: una ficha por tarea, el icono hace el sustantivo. */
+.coord-tasks{list-style:none;margin:0;padding:0;display:flex;gap:8px;overflow-x:auto;scrollbar-width:thin;min-width:0}
+.coord-task{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--paper-raised);min-width:0;flex:1 1 0;font-size:var(--text-sm)}
+.coord-task-title{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.coord-task.is-done .coord-task-title,.coord-task.is-live .coord-task-title,.coord-task.is-asking .coord-task-title{color:var(--ink)}
+.coord-task.is-live,.coord-task.is-asking{border-color:var(--rust-soft)}
+.coord-task.is-failed{border-color:var(--danger)}
+.coord-ic-ok{color:var(--green-ok);flex-shrink:0}
+.coord-ic-bad{color:var(--danger);flex-shrink:0}
+.coord-ic-live{color:var(--rust);flex-shrink:0}
+.coord-ic-idle{color:var(--muted-soft);flex-shrink:0}
+/* C3: el circulo-icono de la linea de tiempo. */
+.coord-tic{width:28px;height:28px;flex:0 0 28px;border-radius:var(--radius-pill);background:var(--paper-deep);color:var(--ink-soft);display:flex;align-items:center;justify-content:center}
+.coord-tic-ok{background:var(--green-wash);color:var(--green-ok)}
+.coord-tic-live{background:var(--rust-wash);color:var(--rust)}
+.coord-tic-bad{background:var(--danger-wash);color:var(--danger)}
+.coord-tic-lg{width:34px;height:34px;flex-basis:34px}
+/* C2: el coordinador lleva un icono chico al lado del nombre. Es un adjetivo,
+   no una pastilla: no ocupa renglon ni repite en palabras lo que el punto dice. */
+.coord-row-coordinator{color:var(--muted-soft);flex-shrink:0}
+/* C3: el detalle del miembro, una linea de tiempo descendente. */
+.coord-detail{display:flex;flex-direction:column;gap:14px;min-width:0;min-height:0;flex:1}
+.coord-detail-head{display:flex;align-items:center;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--line);flex-shrink:0}
+.coord-detail-title{flex:1 1 auto;min-width:0}
+.coord-detail-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.coord-detail-sub{color:var(--muted);font-size:var(--text-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.coord-detail-chat{flex-shrink:0}
+.coord-timeline{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:18px;min-width:0}
+.coord-timeline-empty{color:var(--muted);padding:8px 0}
+.coord-event{display:flex;gap:12px;align-items:flex-start;min-width:0}
+.coord-event-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px}
+.coord-event-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;min-width:0}
+.coord-event-title{font-weight:550;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coord-event-card{border:1px solid var(--line);background:var(--paper-raised);border-radius:var(--radius-sm);padding:10px 12px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.coord-event-task{font-weight:500;min-width:0;overflow-wrap:anywhere}
+.coord-event-spec{color:var(--muted);font-size:var(--text-sm);overflow-wrap:anywhere}
+.coord-event-text{margin:0;overflow-wrap:anywhere}
+.coord-event-muted{color:var(--muted);font-size:var(--text-sm)}
+/* La ficha de archivo: sale del TEXTO del reporte, no de una lista que el
+   modelo de datos no tiene. Si el resumen no nombra un archivo, no hay ficha. */
+.coord-files{display:flex;flex-wrap:wrap;gap:6px}
+.coord-file{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--paper-raised);font-family:var(--mono);font-size:var(--text-sm);color:var(--ink-soft)}
+/* C4: EL ESTADO "TE NECESITA".
+   El rail head es un control segmentado: fondo hundido, el activo en --foam.
+   El badge del acento cuenta lo que el Trabajo entero esta esperando. */
+.team-rail-modes{background:var(--paper-deep);border-radius:var(--radius-pill);padding:3px;gap:2px}
+.team-rail-chat,.team-rail-team{border:0;background:transparent;border-radius:var(--radius-pill);color:var(--ink-soft)}
+.team-rail-chat.selected,.team-rail-team.selected{background:var(--foam);border-color:transparent;color:var(--ink);box-shadow:0 1px 2px rgb(0 0 0 / .08)}
+/* La tarjeta de la pregunta: lo unico del detalle que lleva el acento. */
+.coord-ask-card{border:1px solid var(--rust-soft);background:var(--paper-raised);border-radius:var(--radius-md);padding:16px 18px;display:flex;flex-direction:column;gap:14px;flex-shrink:0}
+.coord-ask-top{display:flex;align-items:flex-start;gap:12px;min-width:0}
+.coord-ask-text{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:5px}
+.coord-ask-question{font-size:var(--text-lg);line-height:1.4;overflow-wrap:anywhere}
+.coord-ask-due{color:var(--muted);font-size:var(--text-sm)}
+.coord-ask-form{display:flex;gap:8px;align-items:center;min-width:0}
+.coord-ask-input{flex:1 1 auto;min-width:0;height:30px}
+.coord-ask-send{flex-shrink:0}
+/* C5: el vacio con proposito. O muestra algo entero, o dice que hacer. */
+.coord-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:30px 24px;min-width:0}
+.coord-empty-icon{color:var(--muted-soft);stroke-width:1.1}
+.coord-empty-title{font-family:var(--serif);font-size:var(--text-2xl);line-height:1.2;margin:0;max-width:420px}
+.coord-empty-body{color:var(--muted);font-size:var(--text-md);line-height:1.6;margin:0;max-width:460px}
+/* El ejemplo se ve como un ejemplo: punteado e italica, nunca como un campo. */
+.coord-empty-example{margin:0;font-style:italic;color:var(--muted);border:1px dashed var(--line-strong);border-radius:var(--radius-pill);padding:6px 14px;font-size:var(--text-sm)}
+.coord-empty-action{margin-top:4px}
+/* La fila de "Sumar un rol": la misma anatomia, con el avatar punteado. */
+.coord-add-row .coord-av{background:transparent;border:1px dashed var(--line-strong);color:var(--muted)}
+.coord-add{color:var(--muted)}
+/* C5: lo que el equipo produjo. Resumenes, porque resumenes es lo que hay. */
+.coord-output{display:flex;flex-direction:column;gap:12px;min-width:0;flex:1}
+.coord-output-head{display:flex;align-items:center;gap:12px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.coord-output-title{flex:1 1 auto;min-width:0;font-family:var(--serif);font-size:var(--text-2xl);line-height:1.2}
+.coord-output-log{flex-shrink:0}
+.coord-output-empty{margin:0;color:var(--muted)}
+.coord-output-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.coord-output-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 6px;border-radius:var(--radius-sm);min-width:0}
+.coord-output-row:hover{background:var(--paper-raised)}
+.coord-output-row.is-failed .coord-output-summary{color:var(--danger)}
+.coord-output-summary{flex:1 1 220px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.coord-output-files{flex-basis:100%;padding-left:24px}
+.coord-log{list-style:none;margin:0;padding:8px 0 0;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:4px}
+.coord-log-row{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--text-sm);color:var(--muted)}
+.coord-log-text{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* C6: LAS TARJETAS DEL CHAT. El icono hace el sustantivo; la palabra no lo repite. */
+.coord-card{display:flex;flex-direction:column;gap:10px}
+.coord-card-head{display:flex;align-items:center;gap:10px;min-width:0}
+.coord-card-title{flex:1 1 auto;min-width:0;font-weight:600;font-size:var(--text-md);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coord-card-counts{flex-shrink:0}
+.coord-card-rationale{margin:0;color:var(--muted);font-size:var(--text-sm);line-height:1.6}
+.coord-card-question{font-size:var(--text-base);line-height:1.45;margin:0;overflow-wrap:anywhere}
+.coord-card-actions{display:flex;align-items:center;gap:8px}
+.coord-card-spacer{flex:1 1 auto}
+/* El plan: numero en mono, titulo en una linea, "tras N" en gris, dueno al final. */
+.coord-plan{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.coord-plan-task{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line);min-width:0}
+.coord-plan-task:first-child{border-top:0}
+.coord-plan-n{font-family:var(--mono);font-size:var(--text-sm);color:var(--muted-soft);width:14px;flex-shrink:0}
+.coord-plan-title{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.coord-plan-after{color:var(--muted);font-size:var(--text-sm);white-space:nowrap;flex-shrink:0}
+/* El alta: una fila con su icono. */
+.coord-hires{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.coord-hire{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:var(--radius-sm);background:var(--paper);min-width:0}
+.coord-hire-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coord-hire-note{color:var(--muted);font-size:var(--text-sm);flex-shrink:0}
+/* La linea plegada de un plan ya aprobado. */
+.coord-approved{display:flex;align-items:center;gap:10px;padding:9px 12px;min-width:0}
+.coord-approved-text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coord-approved-go{flex-shrink:0}
+
+/* --- D2: LOS AVATARES. El color es el rol, la cara es la persona. ---------- */
+/*
+   Los tonos de la cara. Cuatro pieles y cuatro pelos: la cara de alguien no se
+   arma con un beige y tres variaciones del mismo beige. Viven en la hoja y no
+   en el generador porque son TEMA, no dato: el generador decide "piel 3", la
+   hoja decide qué es "piel 3".
+*/
+:root{
+  --av-skin-1:#f1cdb0;--av-skin-2:#e8b892;--av-skin-3:#c98e63;--av-skin-4:#8d5a3b;
+  --av-hair-1:#1f1a17;--av-hair-2:#5a4030;--av-hair-3:#7a3c26;--av-hair-4:#aa4e31;
+}
+/*
+   La paleta de roles, completa. Los cinco de siempre ya estaban arriba; estos
+   tres son los que le dan color a paid-media, community-manager,
+   sales-copywriter y a cualquier rol propio, que antes caian todos en el mismo
+   beige de --role-default.
+
+   Los dos calidos salen de --stage-2 (#c47f57) y --stage-3 (#b0613c)
+   OSCURECIDOS: tal cual estaban daban 3.04:1 y 4.28:1 contra --on-accent, y la
+   inicial de reserva es texto de 12px, que necesita 4.5:1. Mismo motivo que
+   llevo a oscurecer --role-analyst y --role-default en C8.
+*/
+:root{
+  --role-terracotta:#9b6445;
+  --role-copper:#9a5433;
+  --role-forest:#293c32;
+  /* El wash: el tono claro del fondo del disco. Nunca lleva texto encima. */
+  --role-assistant-wash:#f4e6da;
+  --role-strategist-wash:#e3e9dc;
+  --role-researcher-wash:#dfe6ea;
+  --role-analyst-wash:#f1e7d3;
+  --role-reviewer-wash:#ece1e8;
+  --role-terracotta-wash:#f2e7dd;
+  --role-copper-wash:#f4e3d9;
+  --role-forest-wash:#dfe6e1;
+  --role-default-wash:#eee9df;
+}
+/* El sprite no se ve: es la biblioteca, no un dibujo. */
+.av-sprite{position:absolute;width:0;height:0;overflow:hidden}
+/*
+   El avatar llena a su huesped. Quien lo pone decide el tamano con la clase
+   (22 · 32 · 40) o con la suya propia; el SVG nunca discute el tamano.
+*/
+.av{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;aspect-ratio:1;border-radius:var(--radius-pill);overflow:visible;background:var(--av-color,var(--role-default));color:var(--on-accent);font-weight:600;line-height:1}
+.av-face{width:100%;height:100%;display:block;border-radius:var(--radius-pill)}
+/* Sin cara, el disco es el color del rol y encima va la inicial. */
+.av-initial{display:block}
+.av-sm{width:22px;height:22px;flex:0 0 22px;font-size:var(--text-sm)}
+.av-md{width:32px;height:32px;flex:0 0 32px;font-size:var(--text-sm)}
+.av-lg{width:40px;height:40px;flex:0 0 40px;font-size:var(--text-base)}
+/* El punto de estado: aparte del SVG, siempre. El avatar dice quien; el punto, como esta. */
+.av-dot{position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border-radius:var(--radius-pill);border:2px solid var(--paper);background:var(--neutral-mid)}
+.av-sm .av-dot{width:8px;height:8px;border-width:1.5px}
+
+/* --- D2: LA VIDA. Una cosa a la vez, y nada si pediste que nada se mueva. --- */
+/*
+   Tres reglas y tres keyframes. El ritmo no esta aca: cada cara trae el suyo
+   (--av-blink, --av-blink-delay, --av-move, --av-move-delay) desde su semilla,
+   asi un equipo no parpadea al unisono. Aca solo esta QUE se mueve.
+
+   El parpadeo y el micro-movimiento nunca coinciden: el movimiento arranca a
+   mitad del ciclo del parpadeo y dura el doble. Una cara que parpadea y sonrie
+   al mismo tiempo no parece viva, parece rota.
+*/
+.av-alive .av-eye{animation:av-blink var(--av-blink,5s) var(--av-blink-delay,0s) infinite}
+.av-alive.av-move-gaze .av-eyes{animation:av-gaze var(--av-move,10s) var(--av-move-delay,0s) infinite}
+.av-alive.av-move-smile .av-mouth{animation:av-smile var(--av-move,10s) var(--av-move-delay,0s) infinite}
+.av-alive.av-move-brow .av-brows{animation:av-brow var(--av-move,10s) var(--av-move-delay,0s) infinite}
+/* El parpadeo dura ~120ms sobre un ciclo de 4 a 7s: es un instante, no un guino. */
+@keyframes av-blink{0%,96%,100%{ry:1.7px}98%{ry:.18px}}
+/* La mirada se va un pixel y vuelve. Un pixel: mas es un personaje, no una persona. */
+@keyframes av-gaze{0%,42%,58%,100%{transform:translateX(0)}47%,53%{transform:translateX(1px)}}
+/* La sonrisa se abre apenas. La boca crece desde su centro, nunca desde el borde. */
+@keyframes av-smile{0%,40%,62%,100%{transform:scale(1)}50%{transform:scale(1.14,1.35)}}
+/* La ceja sube un pixel: la cara entera cambia de animo con eso. */
+@keyframes av-brow{0%,44%,60%,100%{transform:translateY(0)}50%{transform:translateY(-1px)}}
+.av-face .av-mouth{transform-origin:32px 34px}
+.av-face .av-eyes,.av-face .av-brows{transform-origin:32px 28px}
+/*
+   El candado. El componente ya deja de poner la clase cuando el navegador dice
+   que se pidio menos movimiento, pero la hoja lo dice igual: si mañana alguien
+   pinta una animacion nueva y se olvida del componente, esto la apaga.
+*/
+@media (prefers-reduced-motion: reduce){
+  .av-face *,.av-face{animation:none!important}
+}
+
+/* --- D4: ELEGIR LA CARA. Ocho del mismo color: lo unico que se elige es quien. */
+.av-picker{border:1px solid var(--line);border-radius:var(--radius-md);background:var(--paper);padding:12px 14px 10px;margin:0 0 13px;min-width:0}
+.av-picker legend{font-size:var(--text-sm);letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);padding:0 5px}
+.av-picker[disabled]{opacity:.72}
+/* Un picker apagado al .55 eran ocho fantasmas rosados sin rasgos: la tinta
+   de los ojos y la boca desaparecia antes que el color de la piel. A .72 se
+   siguen leyendo las caras, que es lo minimo que se le pide a algo que se
+   muestra. Hoy solo queda apagado mientras se guarda o si el perfil esta
+   roto: elegir la cara de un rol incluido ya NO esta deshabilitado. */
+.av-picker-grid{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px}
+/* El boton no compite con la cara: sin borde ni fondo hasta que sea la elegida. */
+.av-pick{border:2px solid transparent;border-radius:var(--radius-pill);background:transparent;padding:2px;justify-content:center}
+.av-pick:hover:not(:disabled){background:var(--paper-deep);border-color:var(--line)}
+.av-pick.is-chosen{border-color:var(--rust);background:var(--foam)}
+.av-picker-foot{display:flex;align-items:center;gap:12px;margin-top:8px}
+.av-picker-foot .footnote{flex:1 1 auto;margin:0;min-width:0}
+.av-reroll{flex-shrink:0;font-size:var(--text-sm);padding:6px 10px}
+@media(max-width:1100px){.av-picker-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+
+/* --- D5: la anatomia, con cara. Los tamanos no cambian con el dibujo. ------ */
+/* El avatar grande del "retomar": 54px, como antes. Lo fija el huesped, no el SVG. */
+.team-resume-av{width:54px;height:54px;flex:0 0 54px;margin:0 auto 14px;font-size:var(--text-lg)}
+/* La cara no come el punto: el dot de la anatomia sigue arriba de todo. */
+.av .coord-dot{z-index:1}
+
+/* --- D7: el avatar es un circulo, con cara o sin ella. --------------------- */
+/*
+   El fallback se ESTIRABA. `.role-card>span:not(.team-avatar)` le daba flex:1
+   —o sea flex:1 1 0%— y le ganaba en especificidad a `.av-lg`, asi que el
+   avatar sin cara salia como una pildora ancha con la inicial adentro. Un rol
+   llega sin `avatar` cada vez que el lado Electron todavia no se reinicio, que
+   es justo cuando menos se quiere ver algo roto.
+
+   La regla de arriba ahora excluye `.av`, cada tamano declara el `flex`
+   completo y la base fija `aspect-ratio:1`. Tres candados para lo mismo,
+   porque el que falla es siempre el contenedor de al lado, que no conocemos.
+*/
+.av,.av-face{border-radius:var(--radius-pill)}
+.av-initial{flex:0 0 auto;line-height:1;user-select:none}
+/*
+   La pestana del miembro llevaba un avatar de 20px; la anatomia no tiene ese
+   tamano, y el chico (22) es el que le corresponde a una tira compacta. El de
+   32 la hacia crecer casi el doble de alto. Nada lo estira ni lo recorta.
+*/
+.team-tab .av{flex:0 0 22px}
+.team-tab{align-items:center}

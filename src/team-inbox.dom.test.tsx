@@ -22,9 +22,9 @@ vi.mock('./i18n', async (importOriginal) => {
 });
 
 const { createElement } = await import('react');
-const { render } = await import('@testing-library/react');
+const { fireEvent, render } = await import('@testing-library/react');
 const { TeamPanel } = await import('./TeamPanel');
-const { inboxEvents, lastInboxEvent, pendingForMember } = await import('./coordination/inbox');
+const { inboxEvents, lastInboxEvent, pendingForMember, settledKind } = await import('./coordination/inbox');
 import type { TeamPanelProps } from './TeamPanel';
 import { EMPTY_USAGE } from '../shared/contracts';
 import type {
@@ -34,7 +34,7 @@ import type {
 
 const work: Work = { id: 'w1', brandId: 'b1', title: 'Lanzamiento', brief: '', folder: null, updatedAt: '' };
 const member = (id: string, roleName: string): TeamMember => ({
-  id, workId: 'w1', roleId: id, roleName, initial: roleName[0]!, runtime: 'claude', model: null, accountId: null,
+  id, workId: 'w1', roleId: id, roleName, initial: roleName[0]!, avatar: null, runtime: 'claude', model: null, accountId: null,
   label: 'Claude', status: 'idle', tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 });
 const team = [member('coord', 'Coordinador'), member('cm', 'CM'), member('paid', 'Paid Media')];
@@ -182,17 +182,44 @@ describe('B3.1: el buzón ya NO vive en la columna del chat', () => {
     expect(container.querySelectorAll('.team-tab-pending')[0]!.textContent).toBe('1');
   });
 
-  it('el estado del run sigue viviendo compacto en la cabecera del panel', () => {
+  /** C7: el estado del run vive en el encabezado del pedido, en el modo Equipo. */
+  it('el estado del run vive en el encabezado del pedido', () => {
     const { container } = mount({ ...wired, coordinationRun: run({ status: 'suspended' }) });
-    const controls = container.querySelector('.team-coordination-controls')!;
-    expect(controls.querySelector('.team-coordination-counts')!.textContent).toContain('3');
-    expect(controls.querySelector('.team-coordination-budget')!.textContent).toContain('10');
+    expect(container.querySelector('.team-coordination-controls')).toBeNull();
+    fireEvent.click(container.querySelector('.team-rail-team')!);
+    const head = container.querySelector('.coord-head')!;
+    expect(head.querySelector('.coord-progress-done')!.textContent).toContain('3');
+    expect(head.querySelector('.coord-pill-dispatches')!.textContent).toContain('10');
   });
 
   it('un presupuesto ILEGIBLE no se dibuja como un número', () => {
     const { container } = mount({ ...wired, coordinationRun: run({ budgetInvalid: true, budget: null }) });
-    const budget = container.querySelector('.team-coordination-budget')!.textContent ?? '';
-    expect(budget.toLowerCase()).toContain('no se pudo leer');
+    fireEvent.click(container.querySelector('.team-rail-team')!);
+    const budget = container.querySelector('.coord-pill-dispatches')!.textContent ?? '';
+    expect(budget.toLowerCase()).toContain('ilegible');
     expect(budget).not.toContain('∞');
+    expect(budget).not.toMatch(/d/);
+  });
+});
+
+describe('C3 (b): un despacho cerrado sin reportar no es un reporte', () => {
+  it('sólo `reported` produce un reporte', () => {
+    expect(settledKind('reported', 'succeeded')).toBe('reported');
+  });
+
+  it('un fracaso es un fracaso, por su estado o por su resultado', () => {
+    expect(settledKind('failed', null)).toBe('dispatchFailed');
+    expect(settledKind('reported', 'failed')).toBe('dispatchFailed');
+  });
+
+  /**
+   * EL BUG, EXACTO: `rejected` (la persona rechazó el gate) y `cancelled` (el
+   * barrido de arranque liquida lo que quedó en vuelo) tienen `settled_at`
+   * puesto y `summary` en NULL. La pantalla decía "reportó", pelado.
+   */
+  it('lo que se cerró sin reportar tiene su propio hecho', () => {
+    expect(settledKind('rejected', null)).toBe('dispatchClosed');
+    expect(settledKind('cancelled', null)).toBe('dispatchClosed');
+    expect(settledKind('cancelled', 'role_not_approved')).toBe('dispatchClosed');
   });
 });

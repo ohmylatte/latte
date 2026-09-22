@@ -31,7 +31,7 @@ const state = vi.hoisted(() => ({
 }));
 
 const member = (id: string, roleName: string): TeamMember => ({
-  id, workId: state.workId, roleId: 'paid-media', roleName, initial: 'P',
+  id, workId: state.workId, roleId: 'paid-media', roleName, initial: 'P', avatar: null,
   runtime: 'codex', model: null, accountId: null, label: 'Codex', status: 'working', tier: 'balanced',
   usage: EMPTY_USAGE, continuedFrom: null,
   createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',

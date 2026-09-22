@@ -16,9 +16,9 @@ import { EMPTY_USAGE, type AgentRole, type ChatRuntime, type ChatSession, type C
  */
 
 const work: Work = { id: 'w1', brandId: 'b1', title: 'Trabajo', brief: '', folder: null, updatedAt: '' };
-const roles: AgentRole[] = [{ id: 'strategist', name: 'Strategist', initial: 'S', summary: 'Strategist', builtin: false, tier: 'deep' }];
+const roles: AgentRole[] = [{ id: 'strategist', name: 'Strategist', initial: 'S', summary: 'Strategist', builtin: false, tier: 'deep', avatar: null }];
 const member: TeamMember = {
-  id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E',
+  id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', avatar: null,
   runtime: 'opencode', model: null, accountId: null, label: 'OpenCode', status: 'working',
   tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 };
@@ -47,8 +47,20 @@ function panelProps(team: TeamMember[], mode: LatteMode = 'simple') {
   };
 }
 
-const mount = (patch: Record<string, unknown> = {}, team: TeamMember[] = [member]) =>
-  render(<I18nProvider><TeamPanel {...panelProps(team)} {...patch} /></I18nProvider>);
+/**
+ * C7: EL ESTADO DEL RUN VIVE EN EL MODO EQUIPO.
+ *
+ * Las dos lineas de contadores arriba de la conversacion se fueron: eran el
+ * deposito de texto que el rediseno saca. Todo lo que este archivo vigila
+ * --que de un run vivo SIEMPRE se pueda salir-- sigue valiendo, un segmento
+ * mas alla.
+ */
+const mount = (patch: Record<string, unknown> = {}, team: TeamMember[] = [member]) => {
+  const view = render(<I18nProvider><TeamPanel {...panelProps(team)} {...patch} formatTime={(v: string) => v} /></I18nProvider>);
+  const toTeam = view.container.querySelector('.team-rail-team');
+  if (toTeam) fireEvent.click(toTeam);
+  return view;
+};
 
 /**
  * B1.4: COMO TERMINO ESTE EQUIPO SE DICE DONDE ESTAN SUS CONTROLES.
@@ -59,24 +71,27 @@ const mount = (patch: Record<string, unknown> = {}, team: TeamMember[] = [member
  * no son fracasos de nadie--, y las tres cuentas viajan separadas por eso
  * mismo.
  */
-describe('un run terminado, en la cabecera del equipo', () => {
-  it('dice como termino, con las tres cuentas separadas', () => {
+describe('un run terminado, en el encabezado del pedido', () => {
+  it('dice como termino, y las listas y las fallidas siguen separadas', () => {
     const { container } = mount({ coordinationRun: run({ status: 'done', active: false, tasksDone: 4, tasksFailed: 1, tasksInFlight: 0, tasksPending: 0 }) });
-    const status = container.querySelector('.team-coordination-status')!;
-    expect(status).not.toBeNull();
-    expect(status.className).toContain('team-finished-coordination');
-    expect(status.getAttribute('data-run-status')).toBe('done');
-    const counts = container.querySelector('.team-coordination-counts')!.textContent ?? '';
-    expect(counts).toContain('4');
-    expect(counts).toContain('1');
+    const mark = container.querySelector('.coord-tic-lg')!;
+    expect(mark.getAttribute('data-run-status')).toBe('done');
+    expect(mark.className).toContain('coord-tic-ok');
+    expect(container.querySelector('.coord-head-sub')!.textContent).toContain('Terminado a las');
+    expect(container.querySelector('.coord-progress-done')!.textContent).toBe('4 de 5 listas');
+    expect(container.querySelector('.coord-progress-rest')!.textContent).toBe('1 fallidas');
   });
 
   it('un run cancelado lo dice con sus propias palabras, no con las del terminado', () => {
     const { container } = mount({ coordinationRun: run({ status: 'cancelled', active: false, tasksDone: 1, tasksFailed: 0, tasksInFlight: 0, tasksPending: 2 }) });
-    const status = container.querySelector('.team-coordination-status')!;
-    expect(status.getAttribute('data-run-status')).toBe('cancelled');
-    expect(status.textContent?.toLowerCase()).toContain('cancel');
-    expect(container.querySelector('.team-coordination-counts')!.textContent).toContain('2');
+    const mark = container.querySelector('.coord-tic-lg')!;
+    expect(mark.getAttribute('data-run-status')).toBe('cancelled');
+    expect(mark.className).not.toContain('coord-tic-ok');
+    const sub = container.querySelector('.coord-head-sub')!.textContent ?? '';
+    expect(sub.toLowerCase()).toContain('cancelado');
+    expect(sub).not.toContain('Terminado');
+    // Lo que quedo sin terminar sigue contandose: 1 de 3.
+    expect(container.querySelector('.coord-progress-done')!.textContent).toBe('1 de 3 listas');
   });
 });
 
@@ -113,11 +128,17 @@ describe('siempre hay una salida de un run activo', () => {
     expect(planning.container.querySelector('.team-resume-coordination')).toBeNull();
   });
 
-  it('un run `planning` dice que está planificando: un equipo sin despachos no es un equipo roto', () => {
-    const { container } = mount({ coordinationRun: run({ status: 'planning' }) });
-    const label = container.querySelector('.team-coordination-status');
-    expect(label).not.toBeNull();
-    expect(label!.textContent?.toLowerCase()).toContain('planific');
+  /**
+   * C7: un equipo sin despachos no es un equipo roto, y tampoco necesita una
+   * palabra en una pastilla para decirlo (criterio 5). Un run que todavia
+   * planifica no tiene ni una tarea en la tira: eso ES el estado. Lo que si
+   * tiene, y es lo que este archivo vigila, es su salida.
+   */
+  it('un run `planning` no dibuja ninguna tarea, y conserva su salida', () => {
+    const { container } = mount({ coordinationRun: run({ status: 'planning' }), onCancelCoordination: () => {} });
+    expect(container.querySelector('.coord-head')).not.toBeNull();
+    expect(container.querySelector('.coord-tasks')).toBeNull();
+    expect(container.querySelector('.team-cancel-coordination')).not.toBeNull();
   });
 
   it('con el equipo VACÍO y un run corriendo, Pausar y Cancelar siguen ahí', () => {
@@ -132,6 +153,7 @@ describe('siempre hay una salida de un run activo', () => {
 
   it('sin run cableado no se renderiza ningún control de coordinación', () => {
     const { container } = mount();
+    expect(container.querySelector('.coord-head')).toBeNull();
     expect(container.querySelector('.team-coordination-controls')).toBeNull();
     expect(container.querySelector('.team-cancel-coordination')).toBeNull();
   });

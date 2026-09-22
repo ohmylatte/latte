@@ -506,9 +506,9 @@ export interface ChatUsage {
 export const EMPTY_USAGE: ChatUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0, costUsd: null, contextTokens: null };
 
 /** A preset personality a team member opens with. Shipped by the discipline pack; `assistant` is the neutral default. `tier` is the effort it opens with unless the human picks another. */
-export interface AgentRole { id: string; name: string; initial: string; summary: string; builtin: boolean; tier: EffortTier }
+export interface AgentRole { id: string; name: string; initial: string; summary: string; builtin: boolean; tier: EffortTier; /** El avatar del rol, serializado (`bob.2.4.phones`). Nunca es null en lo que sale del hub: un rol sin eleccion lo deriva de su propio id. */ avatar: string | null }
 export interface AgentProfile extends AgentRole { soul: string; skills: string; source: 'builtin' | 'custom'; directory: string | null; fingerprint: string; /** Invalid disk entries are visible but must not be edited or cloned. */ error?: string }
-export interface ProfileInput { id: string; name: string; initial: string; summary: string; soul: string; skills: string }
+export interface ProfileInput { id: string; name: string; initial: string; summary: string; soul: string; skills: string; /** El avatar elegido, serializado. `null` = lo deriva del id. */ avatar?: string | null }
 /** working = answering now · idle = open and waiting · paused = closed, resumable · ended = finished by the user (can be reopened). */
 export type TeamMemberStatus = 'working' | 'idle' | 'paused' | 'ended';
 /** A role opened inside a work: its own conversation, runtime, account and status. Persisted and resumable. */
@@ -518,6 +518,13 @@ export interface TeamMember {
   roleId: string;
   roleName: string;
   initial: string;
+  /**
+   * La cara de este miembro, serializada. Es la del rol, salvo cuando el
+   * equipo ya tiene otro miembro del mismo rol: el segundo y los que sigan
+   * derivan la suya de su propio id y conservan el color. Ninguna cara
+   * repetida en un equipo.
+   */
+  avatar: string | null;
   runtime: ChatRuntime;
   model: string | null;
   accountId: string | null;
@@ -971,6 +978,34 @@ export interface CoordinationTaskView {
   resultSummary: string | null;
 }
 
+/**
+ * C1: UNA TAREA DEL RUN, COMO LA TIRA DEL ENCABEZADO LA NECESITA.
+ *
+ * Es el MISMO shape que `CoordinationEngine.taskList` le devuelve a un agente
+ * por `latte_task_list`, no una segunda lectura escrita al lado: dos formas de
+ * contestar "qué tareas tiene este run" es exactamente cómo la pantalla y el
+ * motor terminan diciendo cosas distintas del mismo plan.
+ *
+ * Aparte de `CoordinationTaskView` a propósito: esa es la tarea DESPUÉS de
+ * liquidar su despacho (`settleCoordinationDispatch`) y trae `resultSummary`,
+ * que acá no hace falta y que el motor no propaga en `taskList`. Un campo que
+ * siempre llega vacío es una promesa que la pantalla no puede cumplir.
+ */
+export interface CoordinationRunTaskView {
+  id: string;
+  roleId: string;
+  /** Recortado a 200 caracteres por el motor, igual que para un agente. */
+  spec: string;
+  status: CoordinationTaskStatus;
+  /** Si la tarea es parte del plan aprobado o nació después, de un despacho. */
+  inPlan: boolean;
+  /** Los ids de las tareas que tienen que terminar antes que ésta. */
+  dependsOn: string[];
+  attempts: number;
+  /** El miembro que la tiene, o `null` cuando todavía no se despachó a nadie. */
+  assignedMemberId: string | null;
+}
+
 export interface CoordinationAskView {
   id: string;
   runId: string;
@@ -1323,6 +1358,15 @@ export interface LatteAPI {
   listRoles(): Promise<AgentRole[]>;
   listProfiles(): Promise<AgentProfile[]>;
   saveProfile(input: ProfileInput, expectedFingerprint: string | null): Promise<AgentProfile>;
+  /**
+   * La cara de un rol INCLUIDO, elegida a mano en esta instalacion.
+   *
+   * Gana sobre la del pack, asi que actualizar Latte no la pisa. `null`
+   * borra la eleccion y devuelve la que trae el pack. Un perfil propio no
+   * usa esto: el suyo viaja en `ProfileInput.avatar` y se guarda en disco
+   * junto al resto del perfil.
+   */
+  setRoleAvatar(roleId: string, avatar: string | null): Promise<AgentRole[]>;
   listTeam(workId: string): Promise<TeamMember[]>;
   /** Creates a member for the role (primary agent unless overridden) and opens its conversation. */
   addTeamMember(workId: string, roleId: string, options?: TeamMemberOptions | null): Promise<ChatSession>;
@@ -1500,6 +1544,20 @@ export interface LatteAPI {
    * falls over because one stored value went bad.
    */
   listCoordinationHires(runId: string): Promise<CoordinationHireView[]>;
+  /**
+   * C1: LAS TAREAS DEL RUN, PARA LA TIRA DEL ENCABEZADO.
+   *
+   * La bitácora cuenta DESPACHOS, que no es lo mismo: una tarea que todavía no
+   * salió no tiene ni una fila ahí, y la tira del mockup la dibuja igual — con
+   * su reloj gris — porque lo que la persona quiere ver de un pedido es el
+   * pedido ENTERO, no sólo la parte que ya se movió.
+   *
+   * No se inventa una lectura nueva: es exactamente lo que el motor ya le
+   * contesta a un agente en `latte_task_list` (`CoordinationEngine.taskList`),
+   * con el mismo recorte de `spec`. Lista vacía cuando el run no tiene
+   * tareas: "todavía no hay plan" no es un error.
+   */
+  listCoordinationTasks(runId: string): Promise<CoordinationRunTaskView[]>;
   /**
    * Lo que los miembros se escribieron entre sí (`latte_message`) en el run
    * activo del Trabajo, o en el último terminado si no hay ninguno vivo — el

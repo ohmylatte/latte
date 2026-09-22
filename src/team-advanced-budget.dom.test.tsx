@@ -25,7 +25,7 @@ import type { CoordinationRunView, TeamMember, Work } from '../shared/contracts'
 
 const work: Work = { id: 'w1', brandId: 'b1', title: 'Lanzamiento', brief: '', folder: null, updatedAt: '' };
 const member: TeamMember = {
-  id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', runtime: 'claude', model: null,
+  id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', avatar: null, runtime: 'claude', model: null,
   accountId: null, label: 'Claude', status: 'idle', tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 };
 const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => ({

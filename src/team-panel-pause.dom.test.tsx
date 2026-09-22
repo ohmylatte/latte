@@ -13,9 +13,9 @@ import { EMPTY_USAGE, type AgentRole, type ChatRuntime, type ChatSession, type C
  */
 
 const work: Work = { id: 'w1', brandId: 'b1', title: 'Trabajo', brief: '', folder: null, updatedAt: '' };
-const roles: AgentRole[] = [{ id: 'strategist', name: 'Strategist', initial: 'S', summary: 'Strategist', builtin: false, tier: 'deep' }];
+const roles: AgentRole[] = [{ id: 'strategist', name: 'Strategist', initial: 'S', summary: 'Strategist', builtin: false, tier: 'deep', avatar: null }];
 const member: TeamMember = {
-  id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E',
+  id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', avatar: null,
   runtime: 'opencode', model: null, accountId: null, label: 'OpenCode', status: 'working',
   tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 };
@@ -43,7 +43,13 @@ function panelProps(mode: LatteMode = 'simple') {
   };
 }
 
-const mount = (patch: Record<string, unknown> = {}) => render(<I18nProvider><TeamPanel {...panelProps()} {...patch} /></I18nProvider>);
+/** C7: los controles del run viven en el modo Equipo: el mount entra ahi. */
+const mount = (patch: Record<string, unknown> = {}) => {
+  const view = render(<I18nProvider><TeamPanel {...panelProps()} {...patch} formatTime={(v: string) => v} /></I18nProvider>);
+  const toTeam = view.container.querySelector('.team-rail-team');
+  if (toTeam) fireEvent.click(toTeam);
+  return view;
+};
 
 describe('"Pausar equipo" (additive, autonomous-coordination Phase 7 task 7.7)', () => {
   it('does not render when the caller has not wired coordination state', () => {
@@ -61,12 +67,19 @@ describe('"Pausar equipo" (additive, autonomous-coordination Phase 7 task 7.7)',
     expect(container.querySelector('.team-pause-coordination')).toBeNull();
   });
 
-  it('renders "Pausar equipo" for a running coordination run and calls onPauseCoordination with the run id', () => {
+  /**
+   * C7: el boton pasa a ser SOLO ICONO, y por eso se nombra dos veces --en el
+   * `aria-label` y en el `title`. Un verbo escrito al lado de un icono que ya
+   * lo dice es la palabra que el presupuesto no paga.
+   */
+  it('un run corriendo ofrece Pausar, solo icono y nombrado, y llama con el id del run', () => {
     const onPauseCoordination = vi.fn();
     const { container } = mount({ coordinationRun: run({ id: 'run-xyz', status: 'running' }), onPauseCoordination });
     const button = container.querySelector('.team-pause-coordination') as HTMLButtonElement;
     expect(button).not.toBeNull();
-    expect(button.textContent).toContain('Pausar equipo');
+    expect(button.textContent).toBe('');
+    expect(button.getAttribute('aria-label')).toBe('Pausar equipo');
+    expect(button.getAttribute('title')).toBe('Pausar equipo');
     fireEvent.click(button);
     expect(onPauseCoordination).toHaveBeenCalledWith('run-xyz');
   });
@@ -81,28 +94,30 @@ describe('"Pausar equipo" (additive, autonomous-coordination Phase 7 task 7.7)',
     expect(container.querySelector('.team-pause-coordination')).toBeNull();
     expect(container.querySelector('.team-resume-coordination')).toBeNull();
     expect(container.querySelector('.team-cancel-coordination')).toBeNull();
-    const finished = container.querySelector('.team-finished-coordination');
-    expect(finished).not.toBeNull();
-    expect(finished!.textContent).toContain('Terminado');
+    expect(container.querySelector('.coord-head-sub')!.textContent).toContain('Terminado a las');
   });
 
   it('un run CANCELADO se dice cancelado, no terminado', () => {
     const { container } = mount({ coordinationRun: run({ status: 'cancelled', active: false }), onCancelCoordination: vi.fn() });
     expect(container.querySelector('.team-cancel-coordination')).toBeNull();
-    expect(container.querySelector('.team-finished-coordination')!.textContent).toContain('Cancelado');
+    const sub = container.querySelector('.coord-head-sub')!.textContent ?? '';
+    expect(sub).toContain('Cancelado a las');
+    expect(sub).not.toContain('Terminado');
   });
 
   // Un run SUSPENDIDO sigue vivo: reanudar y cancelar tienen que estar.
   it('un run suspendido sigue siendo un run vivo: conserva sus acciones y no se anuncia terminado', () => {
     const { container } = mount({ coordinationRun: run({ status: 'suspended' }), onResumeCoordination: vi.fn(), onCancelCoordination: vi.fn() });
     expect(container.querySelector('.team-resume-coordination')).not.toBeNull();
-    expect(container.querySelector('.team-finished-coordination')).toBeNull();
+    expect(container.querySelector('.coord-head-sub')!.textContent).not.toContain('Terminado');
   });
 
-  it('renders the same control in English, with nothing left in Spanish', async () => {
+  it('el mismo control en inglés, sin nada en castellano', async () => {
     localStorage.setItem('latte-ui-locale', 'en-US');
     const { container } = render(<I18nProvider><TeamPanel {...panelProps()} coordinationRun={run()} /></I18nProvider>);
-    await waitFor(() => expect(container.querySelector('.team-pause-coordination')?.textContent).toContain('Pause team'));
+    fireEvent.click(container.querySelector('.team-rail-team')!);
+    await waitFor(() => expect(container.querySelector('.team-pause-coordination')?.getAttribute('aria-label')).toBe('Pause the team'));
+    expect(container.textContent).not.toContain('Pausar');
     localStorage.removeItem('latte-ui-locale');
   });
 });

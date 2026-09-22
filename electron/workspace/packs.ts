@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { asEffortTier } from '../agents/tiers';
+import { parseAvatar } from '../../shared/avatar';
 import type { InstructionPack, PackRole, PackSkill } from './instructions';
 
 interface PackManifest {
@@ -48,7 +49,7 @@ export function loadInstructionPack(packsDir: string, id = 'marketing-core'): In
 
 /**
  * Roles live in packs/<id>/roles/<roleId>.md: a small front matter block
- * (name, initial, summary, and an optional tier) followed by the
+ * (name, initial, summary, and an optional avatar and tier) followed by the
  * instructions. A broken role file is skipped; it never takes the whole pack
  * down.
  */
@@ -124,6 +125,9 @@ export function parseRole(id: string, raw: string): PackRole | null {
     name,
     initial: (meta.initial || name).slice(0, 1).toUpperCase(),
     summary: (meta.summary ?? '').slice(0, 200),
+    // Optional, and tolerant: a pack written before avatars existed, or one
+    // with a typo, gets the face its id deserves instead of no role at all.
+    avatar: parseAvatar(meta.avatar) === null ? null : meta.avatar!.trim().toLowerCase(),
     // Optional, and never a reason to drop a role: a pack written before tiers
     // existed, or one with a typo in the value, opens at the default effort.
     tier: asEffortTier(meta.tier),

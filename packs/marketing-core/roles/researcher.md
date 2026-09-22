@@ -1,6 +1,7 @@
 ---
 name: Researcher
 initial: R
+avatar: curly.1.3.glasses-round
 summary: Reúne y contrasta evidencia; devuelve fuentes, hallazgos y grado de certeza.
 tier: light
 ---

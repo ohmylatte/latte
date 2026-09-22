@@ -33,11 +33,11 @@ vi.mock('./browser-api', async (importOriginal) => {
 const work: Work = { id: 'w1', brandId: 'b1', title: 'Trabajo', brief: '', folder: null, updatedAt: '' };
 // `assistant` is deliberately NOT first: the recommendation must not be `roles[0]`.
 const roles: AgentRole[] = [
-  { id: 'strategist', name: 'Strategist', initial: 'S', summary: 'Strategist', builtin: false, tier: 'deep' },
-  { id: 'assistant', name: 'Asistente', initial: 'A', summary: 'Asistente', builtin: true, tier: 'balanced' },
+  { id: 'strategist', name: 'Strategist', initial: 'S', summary: 'Strategist', builtin: false, tier: 'deep', avatar: null },
+  { id: 'assistant', name: 'Asistente', initial: 'A', summary: 'Asistente', builtin: true, tier: 'balanced', avatar: null },
 ];
 const member: TeamMember = {
-  id: 'm1', workId: 'w1', roleId: 'assistant', roleName: 'Asistente', initial: 'A',
+  id: 'm1', workId: 'w1', roleId: 'assistant', roleName: 'Asistente', initial: 'A', avatar: null,
   runtime: 'opencode', model: null, accountId: null, label: 'OpenCode', status: 'working',
   tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 };

@@ -1,7 +1,7 @@
 import { translate as t } from '../i18n';
 import { memberDisplayName } from './names';
 import type {
-  AgentRole, CoordinationAskView, CoordinationGateView, CoordinationHireView,
+  AgentRole, CoordinationAskView, CoordinationDispatchStatus, CoordinationGateView, CoordinationHireView,
   CoordinationLogEntryView, CoordinationMessageView, CoordinationRunView, TeamMember,
 } from '../../shared/contracts';
 
@@ -29,6 +29,12 @@ export type InboxEventKind =
   | 'reported'
   /** Su despacho terminó mal. `failed` y `reported` son dos hechos distintos. */
   | 'dispatchFailed'
+  /**
+   * Su despacho se cerró SIN reporte: la persona rechazó su gate, o el barrido
+   * de arranque lo liquidó. Ni reportó ni falló — se cerró, y eso es todo lo
+   * que se puede afirmar.
+   */
+  | 'dispatchClosed'
   /** Le mandó un `latte_message` a otro miembro. */
   | 'sent'
   /** Otro miembro le mandó un `latte_message`. */
@@ -58,6 +64,44 @@ export interface InboxEvent {
    * sin esto la única salida era escupir el id.
    */
   otherRoleId?: string;
+  /**
+   * C3: la TAREA del despacho, cuando el hecho viene de uno. La linea de
+   * tiempo dice "Despacho de X" con el titulo de la tarea y su spec debajo, y
+   * ese titulo sale del plan --no del prompt, que es lo que el coordinador le
+   * escribio al miembro y puede empezar con cualquier cosa.
+   */
+  taskId?: string;
+  /**
+   * C3: el texto ENTERO del hecho, sin recortar a su primera linea. `text` es
+   * el renglon del buzon; esto es lo que la linea de tiempo puede leer con
+   * lugar. Nunca es mas de lo que el motor mando: un `summaryPreview` ya viene
+   * cortado a 120 caracteres del backend, y eso no se disimula.
+   */
+  detail?: string;
+}
+
+/**
+ * C3 BUG (b): "REPORTÓ" SIN RESUMEN ERA UN REPORTE QUE NUNCA EXISTIÓ.
+ *
+ * Esto decidía el hecho con `settledAt != null` y `outcome === 'failed'`,
+ * ignorando el `status` que la fila ya trae. Un despacho `rejected` (la
+ * persona rechazó su gate) o `cancelled` (el barrido de arranque cierra lo que
+ * quedó en vuelo tras un cierre de la app) tiene `settled_at` puesto y
+ * `summary` en NULL: la pantalla decía "reportó", pelado, sobre una tarea que
+ * NADIE reportó. No faltaba el resumen — sobraba el evento.
+ *
+ * Ahora el `status` manda, que es el campo que dice qué pasó, y un despacho
+ * cerrado sin reportar tiene su propio hecho en vez de disfrazarse de reporte.
+ */
+export function settledKind(
+  status: CoordinationDispatchStatus,
+  outcome: string | null,
+): Extract<InboxEventKind, 'reported' | 'dispatchFailed' | 'dispatchClosed'> {
+  if (status === 'failed' || outcome === 'failed') return 'dispatchFailed';
+  if (status === 'reported') return 'reported';
+  // `rejected`, `cancelled` y cualquier estado que el motor cierre sin pasar
+  // por `report()`: se cerró, y eso es todo lo que se puede afirmar.
+  return 'dispatchClosed';
 }
 
 export interface InboxInput {
@@ -87,30 +131,32 @@ export function inboxEvents(input: InboxInput, memberId: string): InboxEvent[] {
   for (const entry of input.log ?? []) {
     if (entry.kind === 'run_done' || entry.kind === 'run_cancelled') continue;
     if (entry.memberId !== memberId) continue;
-    out.push({ id: `${entry.id}:dispatched`, memberId, kind: 'dispatched', at: entry.createdAt, text: firstLine(entry.promptPreview) });
+    out.push({ id: `${entry.id}:dispatched`, memberId, kind: 'dispatched', at: entry.createdAt, text: firstLine(entry.promptPreview), detail: entry.promptPreview ?? '', taskId: entry.taskId });
     if (entry.settledAt) {
       out.push({
         id: `${entry.id}:settled`,
         memberId,
-        kind: entry.outcome === 'failed' ? 'dispatchFailed' : 'reported',
+        kind: settledKind(entry.status, entry.outcome),
         at: entry.settledAt,
         text: firstLine(entry.summaryPreview),
+        detail: entry.summaryPreview ?? '',
+        taskId: entry.taskId,
       });
     }
   }
   for (const message of input.messages ?? []) {
     if (message.from?.memberId === memberId) {
-      out.push({ id: `${message.id}:sent`, memberId, kind: 'sent', at: message.createdAt, text: firstLine(message.text), otherMemberId: message.to.memberId, otherRoleId: message.to.roleId });
+      out.push({ id: `${message.id}:sent`, memberId, kind: 'sent', at: message.createdAt, text: firstLine(message.text), detail: message.text, otherMemberId: message.to.memberId, otherRoleId: message.to.roleId });
     } else if (message.to.memberId === memberId) {
       // `from: null` es un mensaje que escribió Latte, no un miembro: llega
       // igual, y su remitente queda sin nombrar en vez de inventado.
-      out.push({ id: `${message.id}:received`, memberId, kind: 'received', at: message.createdAt, text: firstLine(message.text), otherMemberId: message.from?.memberId, otherRoleId: message.from?.roleId });
+      out.push({ id: `${message.id}:received`, memberId, kind: 'received', at: message.createdAt, text: firstLine(message.text), detail: message.text, otherMemberId: message.from?.memberId, otherRoleId: message.from?.roleId });
     }
   }
   for (const ask of input.asks ?? []) {
     if (ask.memberId !== memberId) continue;
-    out.push({ id: `${ask.id}:ask`, memberId, kind: 'ask', at: ask.createdAt, text: firstLine(ask.question) });
-    if (ask.answeredAt && ask.answer) out.push({ id: `${ask.id}:answer`, memberId, kind: 'answer', at: ask.answeredAt, text: firstLine(ask.answer) });
+    out.push({ id: `${ask.id}:ask`, memberId, kind: 'ask', at: ask.createdAt, text: firstLine(ask.question), detail: ask.question });
+    if (ask.answeredAt && ask.answer) out.push({ id: `${ask.id}:answer`, memberId, kind: 'answer', at: ask.answeredAt, text: firstLine(ask.answer), detail: ask.answer });
   }
   for (const hire of input.hires ?? []) {
     if (hire.memberId !== memberId) continue;
@@ -152,6 +198,7 @@ export function describeInboxEvent(event: InboxEvent, team: readonly TeamMember[
     case 'dispatched': return text ? t('team.inbox.dispatched', { text }) : t('team.inbox.dispatchedBare');
     case 'reported': return text ? t('team.inbox.reported', { text }) : t('team.inbox.reportedBare');
     case 'dispatchFailed': return text ? t('team.inbox.dispatchFailed', { text }) : t('team.inbox.dispatchFailedBare');
+    case 'dispatchClosed': return t('team.inbox.dispatchClosed');
     case 'sent': return text ? t('team.inbox.sent', { role: other, text }) : t('team.inbox.sentBare', { role: other });
     case 'received': return text ? t('team.inbox.received', { role: other, text }) : t('team.inbox.receivedBare', { role: other });
     case 'ask': return text ? t('team.inbox.ask', { text }) : t('team.inbox.askBare');

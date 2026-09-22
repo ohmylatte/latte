@@ -39,6 +39,7 @@ import type {
   CoordinationEvent,
   CoordinationGateView,
   CoordinationHireView,
+  CoordinationRunTaskView,
   CoordinationMessageView,
   CoordinationLogEntryView,
   CoordinationMemberSupport,
@@ -99,6 +100,7 @@ import nodePath from 'node:path';
 import { createHash } from 'node:crypto';
 import { writeFileAtomic } from '../core/atomicFile';
 import { LatteError, NotFoundError, UnavailableError, ValidationError } from '../core/errors';
+import { stripLeadingHeading } from '../../shared/markdown';
 import { isValidId, newId, nowIso, slugify } from '../core/ids';
 import { WORK_FILES } from '../core/paths';
 import { EngramClient, memoryProjectFor } from '../memory/engram';
@@ -108,7 +110,8 @@ import { CoordinationEngine } from '../coordination/engine';
 import { mergeCoordinationBudget, readStoredCoordinationBudget, requireCoordinationBudget } from '../coordination/budget';
 import type { CoordinationInjectionPlanner } from '../coordination/injection';
 import type { McpCatalog } from '../agents/mcp';
-import { RoleCatalog } from '../agents/roles';
+import { ROLE_AVATAR_KEY, RoleCatalog } from '../agents/roles';
+import { parseAvatar, serializeAvatar } from '../../shared/avatar';
 import { isEffortTier } from '../agents/tiers';
 import type { ChatManager } from '../opencode/chatManager';
 import { RuntimeDetector } from '../runtime/detect';
@@ -1813,6 +1816,18 @@ export class LatteService implements BackendApi {
   }
 
   /**
+   * C1: las tareas del run, sin una segunda lectura.
+   *
+   * `taskList` es la MISMA función que contesta `latte_task_list` para un
+   * agente: mismo filtro por run, mismo orden (`seq`), mismo recorte del
+   * `spec`. Escribir acá una consulta propia sería abrir la puerta a que la
+   * tira del encabezado y el motor cuenten dos planes distintos.
+   */
+  async listCoordinationTasks(runId: string): Promise<CoordinationRunTaskView[]> {
+    return this.coordination.taskList(requireId(runId, 'runId'));
+  }
+
+  /**
    * M4: lo que los miembros se dijeron ENTRE ELLOS.
    *
    * Mismo criterio que `getCoordinationRun`: el run vivo, y si no hay, el
@@ -1861,7 +1876,12 @@ export class LatteService implements BackendApi {
     const pending = await this.listHandoffs(id);
     const handoff = pending.find((h) => h.fileName === fileName);
     if (!handoff) throw new ValidationError('Ese pedido ya no está en la carpeta');
-    const result = await this.coordination.bridgeHandoffToTask(id, handoff.roleId, handoff.request);
+    // C3 BUG (a): la tarea NACE limpia. El cuerpo del traspaso lo escribe un
+    // agente y empieza con un encabezado de Markdown; ese cuerpo se vuelve el
+    // spec de la tarea, el spec se vuelve el prompt del despacho y su recorte
+    // terminaba en pantalla como "despachó: # Piezas exactas...". Se saca la
+    // SINTAXIS de la primera linea, nunca su contenido.
+    const result = await this.coordination.bridgeHandoffToTask(id, handoff.roleId, stripLeadingHeading(handoff.request));
     if (!result.bridged) return { bridged: false, task: null, outcome: null, reason: null };
     await this.dismissHandoff(id, fileName).catch(() => undefined);
     // R3/Q1: el pedido se consumió igual — la tarea existe — pero el despacho
@@ -2100,6 +2120,36 @@ export class LatteService implements BackendApi {
   async listProfiles(): Promise<AgentProfile[]> { return this.deps.hub.listProfiles(); }
 
   async saveProfile(input: ProfileInput, expectedFingerprint: string | null): Promise<AgentProfile> { return this.deps.hub.saveProfile(input, expectedFingerprint); }
+
+  /**
+   * Elegir la cara de un rol INCLUIDO sin tocar el pack.
+   *
+   * Los roles del pack son archivos del programa: no se editan desde la
+   * app, y no deberian. Pero la cara no es comportamiento, es identidad, y
+   * esa la elige quien usa Latte. El override vive en la instalacion, gana
+   * sobre el frontmatter y sobrevive a una actualizacion.
+   *
+   * `null` NO guarda un vacio: borra la clave. "Nunca elegi" y "elegi y me
+   * arrepenti" terminan en el mismo lugar, que es la cara que trae el pack.
+   *
+   * Devuelve los roles ya actualizados para que quien llama no tenga que
+   * pedirlos de nuevo y adivinar si ya estaba escrito.
+   */
+  async setRoleAvatar(roleId: string, avatar: string | null): Promise<AgentRole[]> {
+    if (!RoleCatalog.isValidId(roleId)) throw new ValidationError('Rol invalido');
+    if (!this.deps.hub.listRoles().some((role) => role.id === roleId)) throw new NotFoundError('Role', roleId);
+    const key = ROLE_AVATAR_KEY(roleId);
+    if (avatar === null) {
+      this.deps.repo.deleteMeta(key);
+    } else {
+      const parsed = parseAvatar(avatar);
+      if (!parsed) throw new ValidationError('Avatar invalido');
+      // Se guarda NORMALIZADO: lo que entra por IPC puede venir con espacios
+      // o mayusculas, y en disco tiene que haber una sola forma de cada cara.
+      this.deps.repo.setMeta(key, serializeAvatar(parsed));
+    }
+    return this.deps.hub.listRoles();
+  }
 
   async listRoles(): Promise<AgentRole[]> {
     return this.deps.hub.listRoles();

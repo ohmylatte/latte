@@ -23,7 +23,7 @@ vi.mock('./i18n', async (importOriginal) => {
 });
 
 const { createElement } = await import('react');
-const { render } = await import('@testing-library/react');
+const { cleanup, fireEvent, render } = await import('@testing-library/react');
 const { TeamPanel } = await import('./TeamPanel');
 import type { TeamPanelProps } from './TeamPanel';
 import { EMPTY_USAGE } from '../shared/contracts';
@@ -33,7 +33,7 @@ import type {
 
 const work: Work = { id: 'w1', brandId: 'b1', title: 'Lanzamiento', brief: '', folder: null, updatedAt: '' };
 const member = (id: string, roleName: string, status: TeamMemberStatus = 'idle'): TeamMember => ({
-  id, workId: 'w1', roleId: id, roleName, initial: roleName[0]!, runtime: 'claude', model: null, accountId: null,
+  id, workId: 'w1', roleId: id, roleName, initial: roleName[0]!, avatar: null, runtime: 'claude', model: null, accountId: null,
   label: 'Claude', status, tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 });
 const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => ({
@@ -68,76 +68,86 @@ const mount = (props: Partial<TeamPanelProps> = {}, locale: 'es-AR' | 'en-US' = 
   return render(createElement(TeamPanel, { ...base, formatDate: (v: string) => v, ...props }));
 };
 
-describe('B3.3: el subtítulo de la pestaña', () => {
-  it('bajo el nombre va el último intercambio de ese miembro', () => {
+describe('C2: la pestaña de miembro tiene la MISMA anatomía que la lista', () => {
+  it('avatar con punto, nombre, una línea y la hora a la derecha', () => {
+    const { container } = mount({ coordinationRun: run(), coordinationLog: [dispatchRow()], formatTime: (v: string) => v });
+    const tab = container.querySelector('.team-tab')!;
+    expect(tab.querySelector('.coord-av')).not.toBeNull();
+    expect(tab.querySelector('.coord-av .coord-dot')).not.toBeNull();
+    expect(tab.querySelector('.team-tab-name')!.textContent).toBe('CM');
+    expect(tab.querySelector('.team-tab-last')!.textContent).toContain('Reportó');
+    expect(tab.querySelector('.coord-time')!.getAttribute('dateTime')).toBe('2026-09-01T11:00:00.000Z');
+  });
+
+  it('bajo el nombre va lo que ese miembro hace ahora, en UNA línea', () => {
     const { container } = mount({ coordinationRun: run(), coordinationLog: [dispatchRow()] });
     const line = container.querySelector('.team-tab .team-tab-last')!;
-    expect(line).not.toBeNull();
-    expect(line.textContent).toContain('Quedaron los 3 posts');
+    // La linea nombra la TAREA, no el resumen: el resumen entero vive en la
+    // linea de tiempo del miembro, que es donde hay lugar para leerlo.
+    expect(line.textContent).toBe('Reportó · Escribir 3 posts');
   });
 
-  it('el texto entero viaja en el `title`: recortar no es callar', () => {
+  /** Recortar no es callar: la linea entera viaja en el `title` de la pestaña. */
+  it('la línea entera viaja en el `title`', () => {
     const { container } = mount({ coordinationRun: run(), coordinationLog: [dispatchRow()] });
-    const line = container.querySelector('.team-tab .team-tab-last') as HTMLElement;
-    expect(line.title).toContain('uno por canal');
+    const tab = container.querySelector('.team-tab') as HTMLElement;
+    expect(tab.title).toContain('Reportó · Escribir 3 posts');
   });
 
-  it('sin un solo hecho no se dibuja un renglón vacío', () => {
+  it('sin un solo hecho dice que no hay novedades, en vez de dejar el renglón vacío', () => {
     const { container } = mount({ coordinationRun: run() });
-    expect(container.querySelector('.team-tab-last')).toBeNull();
+    expect(container.querySelector('.team-tab-last')!.textContent).toBe('Sin novedades');
   });
 
-  it('el nombre del rol sigue estando: el subtítulo no lo reemplaza', () => {
-    const { container } = mount({ coordinationRun: run(), coordinationLog: [dispatchRow()] });
-    expect(container.querySelector('.team-tab-name')!.textContent).toBe('CM');
+  /** El punto es el estado: trabajando en el acento, reportó y ocioso en verde. */
+  it('el punto dice el estado sin una sola palabra', () => {
+    const working = mount({ coordinationRun: run(), coordinationLog: [dispatchRow({ status: 'running', outcome: null, summaryPreview: null, settledAt: null })] });
+    expect(working.container.querySelector('.team-tab .coord-dot-live')).not.toBeNull();
+    cleanup();
+    const reported = mount({ coordinationRun: run(), coordinationLog: [dispatchRow()] });
+    expect(reported.container.querySelector('.team-tab .coord-dot-ok')).not.toBeNull();
+  });
+
+  /** El coordinador lleva su ícono, igual que en la lista del modo Equipo. */
+  it('el coordinador se nombra con un ícono', () => {
+    const { container } = mount({ coordinationRun: run() });
+    expect(container.querySelector('.team-tab .coord-row-coordinator')).not.toBeNull();
   });
 });
 
-describe('B3.3: el chip de coordinación se calla cuando no hay proceso', () => {
+/**
+ * C2: EL CHIP DE COORDINACIÓN SE FUE DE LA PESTAÑA.
+ *
+ * "conectado", "arrancando", "sin confirmar" son FRASES adentro de una
+ * pastilla — exactamente lo que el criterio 5 prohíbe — y encima repetían en
+ * palabras lo que el punto ya dice. Lo que el runtime confirmó o no no se
+ * pierde: sigue dicho entero, con su frase larga, al pie del modo Equipo en
+ * modo avanzado (`describeCoordinationSupport`), que es donde hay lugar para
+ * decirlo sin taparle la conversación a nadie.
+ */
+describe('C2: el chip de coordinación no vive más en la pestaña', () => {
   const wired = (patch: Partial<TeamPanelProps>) => mount({ coordinationSupport: [support()], ...patch });
   const chip = (c: HTMLElement) => c.querySelector('.team-tab .team-member-state');
 
-  it('con el run vivo y el miembro con proceso, se muestra', () => {
-    const { container } = wired({ coordinationRun: run() });
-    expect(chip(container)!.getAttribute('data-state')).toBe('starting');
+  it('con el run vivo y el miembro con proceso, tampoco: el punto ya lo dice', () => {
+    const { container } = wired({ coordinationRun: run(), coordinationLog: [dispatchRow({ status: 'running', outcome: null, summaryPreview: null, settledAt: null })] });
+    expect(chip(container)).toBeNull();
+    expect(container.textContent).not.toContain('arrancando');
+    expect(container.querySelector('.team-tab .coord-dot-live')).not.toBeNull();
   });
 
-  /**
-   * EL HALLAZGO, EXACTO: la captura mostraba los tres miembros con
-   * "arrancando" y el run `cancelled`. Nadie estaba arrancando nada.
-   */
-  it('con el run CANCELADO no se muestra: nadie está arrancando nada', () => {
+  it('con el run cancelado no se muestra nada: nadie está arrancando nada', () => {
     const { container } = wired({ coordinationRun: run({ status: 'cancelled', active: false }) });
     expect(chip(container)).toBeNull();
+    expect(container.textContent).not.toContain('arrancando');
   });
 
-  it('con el run TERMINADO tampoco', () => {
-    const { container } = wired({ coordinationRun: run({ status: 'done', active: false }) });
-    expect(chip(container)).toBeNull();
-  });
-
-  it('sin run tampoco: un chip de coordinación sin coordinación no dice nada', () => {
-    const { container } = wired({});
-    expect(chip(container)).toBeNull();
-  });
-
-  it('un miembro EN PAUSA no tiene proceso del que hablar', () => {
-    const { container } = wired({ coordinationRun: run(), team: [member('cm', 'CM', 'paused')] });
-    expect(chip(container)).toBeNull();
-  });
-
-  it('un miembro TERMINADO tampoco', () => {
-    const { container } = wired({ coordinationRun: run(), team: [member('cm', 'CM', 'ended')] });
-    expect(chip(container)).toBeNull();
-  });
-
-  it('un miembro trabajando sí', () => {
-    const { container } = wired({ coordinationRun: run(), team: [member('cm', 'CM', 'working')] });
-    expect(chip(container)).not.toBeNull();
-  });
-
-  it('sin `coordinationSupport` no se inventa un estado, aunque el run esté vivo', () => {
-    const { container } = mount({ coordinationRun: run() });
-    expect(chip(container)).toBeNull();
+  /** Y la frase larga sigue existiendo, al pie y en modo avanzado. */
+  it('lo que el runtime confirmó sigue dicho, entero, en lo avanzado del modo Equipo', () => {
+    const { container } = wired({ coordinationRun: run(), mode: 'advanced' });
+    fireEvent.click(container.querySelector('.team-rail-team')!);
+    const advanced = container.querySelector('.team-advanced')!;
+    expect(advanced.querySelector('.team-support-coordination')!.textContent).toBeTruthy();
+    expect(advanced.querySelector('.team-support-memory')!.textContent).toBeTruthy();
   });
 });

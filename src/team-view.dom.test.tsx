@@ -22,18 +22,18 @@ vi.mock('./i18n', async (importOriginal) => {
 });
 
 const { createElement } = await import('react');
-const { fireEvent, render } = await import('@testing-library/react');
+const { cleanup, fireEvent, render } = await import('@testing-library/react');
 const { TeamView } = await import('./TeamView');
 import type { TeamViewProps } from './TeamView';
 import { EMPTY_USAGE } from '../shared/contracts';
 import type {
   CoordinationAskView, CoordinationGateView, CoordinationHireView, CoordinationLogEntryView,
-  CoordinationMessageView, CoordinationRunView, TeamMember, Work,
+  CoordinationMessageView, CoordinationRunTaskView, CoordinationRunView, TeamMember, Work,
 } from '../shared/contracts';
 
 const work: Work = { id: 'w1', brandId: 'b1', title: 'Lanzamiento', brief: '', folder: null, updatedAt: '' };
 const member = (id: string, roleName: string, patch: Partial<TeamMember> = {}): TeamMember => ({
-  id, workId: 'w1', roleId: id, roleName, initial: roleName[0]!, runtime: 'claude', model: null, accountId: null,
+  id, workId: 'w1', roleId: id, roleName, initial: roleName[0]!, avatar: null, runtime: 'claude', model: null, accountId: null,
   label: 'Claude', status: 'idle', tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '', ...patch,
 });
 const team = [member('coord', 'Coordinador'), member('cm', 'CM'), member('paid', 'Paid Media')];
@@ -63,6 +63,17 @@ const hire = (patch: Partial<CoordinationHireView> = {}): CoordinationHireView =
 });
 const gate: CoordinationGateView = { id: 'g1', kind: 'dispatch', runId: 'run1', createdAt: '' };
 
+/** C1: las cuatro tareas del pedido real, con el `#` de Markdown que el motor deja entrar. */
+const task = (id: string, roleId: string, spec: string, status: CoordinationRunTaskView['status']): CoordinationRunTaskView =>
+  ({ id, roleId, spec, status, inPlan: true, dependsOn: [], attempts: 0, assignedMemberId: null });
+const tasks: CoordinationRunTaskView[] = [
+  task('t1', 'paid', 'Piezas publicitarias Meta', 'done'),
+  task('t2', 'cm', '# Producir 14 piezas Feed y Story', 'running'),
+  task('t3', 'cm', 'Calendario de la semana 1', 'ready'),
+  // La pregunta abierta de Paid Media apunta a esta tarea: su ficha lo dice.
+  task('t4', 'paid', 'Campañas A y B en Meta Ads', 'dispatched'),
+];
+
 const base: TeamViewProps = {
   work, team, roles: [], mode: 'simple', busy: false,
   selectedMemberId: null, onSelectMember: () => {},
@@ -82,39 +93,90 @@ const mount = (props: Partial<TeamViewProps> = {}, locale: 'es-AR' | 'en-US' = '
   return render(createElement(TeamView, { ...base, formatDate: (v: string) => v, ...props }));
 };
 
-describe('B3.1: la lista de miembros', () => {
-  it('una línea por miembro con su último intercambio y su hora', () => {
+/**
+ * C2: LA MISMA ANATOMÍA EN TODA FILA.
+ *
+ * Estado (avatar con punto) · nombre · qué hace ahora · cuándo. Y la fila ES
+ * la acción: un `<button>` entero, sin un "Abrir chat" repetido al costado de
+ * cada nombre. El chip con la palabra ("conectado", "arrancando") se fue: una
+ * frase adentro de una pastilla es justo lo que el criterio 5 prohíbe.
+ */
+describe('C2: la lista de miembros', () => {
+  const line = (container: HTMLElement, id: string) => container.querySelector(`[data-member-id="${id}"] .coord-row-line`)!;
+
+  it('una línea por miembro, con su punto, su nombre y su hora', () => {
     const { container } = mount(wired);
     const rows = [...container.querySelectorAll('.team-inbox-row')];
     expect(rows.map((r) => r.getAttribute('data-member-id'))).toEqual(['coord', 'cm', 'paid']);
-    const cm = container.querySelector('[data-member-id="cm"] .team-inbox-line')!;
-    expect(cm.textContent).toContain('← Paid Media');
-    expect(cm.textContent).toContain('Necesito el copy');
-    expect(cm.querySelector('time')!.getAttribute('dateTime')).toBe('2026-09-01T12:00:00.000Z');
+    const cm = container.querySelector('[data-member-id="cm"]')!;
+    expect(cm.querySelector('.coord-row-name')!.textContent).toBe('CM');
+    expect(cm.querySelector('.coord-av')).not.toBeNull();
+    // Lo ultimo que le paso a CM es el mensaje de Paid Media, no su reporte.
+    expect(cm.querySelector('.coord-row-line')!.textContent).toBe('Le escribió Paid Media');
+    expect(cm.querySelector('.coord-time')!.getAttribute('dateTime')).toBe('2026-09-01T12:00:00.000Z');
+  });
+
+  /** Criterio 4: cada fila es un botón. Ningún verbo repetido al costado. */
+  it('la fila entera es la acción, y "Abrir chat" no existe', () => {
+    const onSelectMember = vi.fn();
+    const { container } = mount({ ...wired, onSelectMember, onOpenChat: () => {} });
+    const rows = [...container.querySelectorAll('.team-inbox-row')];
+    for (const row of rows) expect(row.querySelector('button.coord-row')).not.toBeNull();
+    expect(container.querySelector('.team-inbox-open-chat')).toBeNull();
+    expect([...container.querySelectorAll('.team-view-list button')].map((b) => b.textContent)).not.toContain('Abrir chat');
+    fireEvent.click(container.querySelector('[data-member-id="paid"] .coord-row')!);
+    expect(onSelectMember).toHaveBeenCalledWith('paid');
+  });
+
+  /** El coordinador lleva su ícono al lado del nombre; nadie más. */
+  it('el coordinador se nombra con un ícono, no con una pastilla', () => {
+    const { container } = mount(wired);
+    expect(container.querySelector('[data-member-id="coord"] .coord-row-coordinator')).not.toBeNull();
+    expect(container.querySelector('[data-member-id="cm"] .coord-row-coordinator')).toBeNull();
+    expect(container.querySelector('.team-member-state')).toBeNull();
+  });
+
+  /** El que reportó y está ocioso se lee verde; el que tiene un despacho en vuelo, en el acento. */
+  it('el punto dice el estado: reportó en verde, en vuelo en el acento', () => {
+    const { container } = mount({
+      ...wired,
+      coordinationMessages: [],
+      coordinationAsks: [],
+      coordinationLog: [dispatchRow(), dispatchRow({ id: 'd2', taskId: 't4', memberId: 'paid', status: 'running', outcome: null, summaryPreview: null, settledAt: null })],
+    });
+    expect(container.querySelector('[data-member-id="cm"] .coord-dot-ok')).not.toBeNull();
+    expect(container.querySelector('[data-member-id="paid"] .coord-dot-live')).not.toBeNull();
+    expect(line(container, 'cm').textContent).toContain('Reportó');
+  });
+
+  /** El coordinador no tiene despacho propio: lo suyo es esperar los ajenos, y se nombra a quién. */
+  it('el coordinador dice a quién espera', () => {
+    const { container } = mount({
+      ...wired,
+      coordinationAsks: [],
+      coordinationLog: [dispatchRow({ status: 'running', outcome: null, summaryPreview: null, settledAt: null })],
+    });
+    expect(line(container, 'coord').textContent).toBe('Espera el reporte de CM');
+  });
+
+  /** Criterio 2: una pregunta abierta es lo único que se lee en el acento. */
+  it('una pregunta abierta pone la línea en el acento y un badge en vez de la hora', () => {
+    const { container } = mount(wired);
+    const paid = container.querySelector('[data-member-id="paid"]')!;
+    expect(paid.querySelector('.coord-row-line.is-urgent')!.textContent).toContain('presupuesto diario');
+    expect(paid.querySelector('.coord-badge')!.textContent).toBe('1');
+    expect(paid.querySelector('.coord-time')).toBeNull();
   });
 
   it('un miembro sin un solo hecho lo dice, en vez de dejar el renglón vacío', () => {
-    const { container } = mount(wired);
-    expect(container.querySelector('[data-member-id="coord"] .team-inbox-line')!.textContent).toBe('Sin novedades');
-  });
-
-  /**
-   * B3.1: y sin NINGUNA fuente cableada la lista sigue estando.
-   *
-   * Es el cambio de casa respecto de B1: el buzón era una sección encima de la
-   * conversación y ahí callarse era lo correcto. Acá la lista ES la navegación
-   * de la vista; esconderla dejaría la pantalla del equipo en blanco. Lo que no
-   * se inventa sigue sin inventarse: cada miembro dice que no tiene novedades.
-   */
-  it('sin ninguna fuente cableada la lista sigue estando, sin inventar un renglón', () => {
     const { container } = mount({ coordinationRun: run() });
     expect(container.querySelectorAll('.team-inbox-row')).toHaveLength(3);
-    expect(container.querySelector('.team-inbox-line')!.textContent).toBe('Sin novedades');
+    expect(line(container, 'cm').textContent).toBe('Sin novedades');
   });
 
   it('el contador de pendientes del miembro sale del MISMO ruteo que las tarjetas', () => {
     const { container } = mount(wired);
-    const badge = (id: string) => container.querySelector(`[data-member-id="${id}"] .team-inbox-pending`);
+    const badge = (id: string) => container.querySelector(`[data-member-id="${id}"] .coord-badge`);
     expect(badge('coord')).not.toBeNull(); // su gate
     expect(badge('paid')).not.toBeNull();  // su pregunta
     expect(badge('cm')).toBeNull();
@@ -135,41 +197,165 @@ describe('B3.1: el hilo del miembro seleccionado', () => {
   it('elegir un miembro avisa hacia afuera: la selección la manda quien la guarda', () => {
     const onSelectMember = vi.fn();
     const { container } = mount({ ...wired, onSelectMember });
-    fireEvent.click(container.querySelector('[data-member-id="paid"] .team-inbox-name')!);
+    fireEvent.click(container.querySelector('[data-member-id="paid"] .coord-row')!);
     expect(onSelectMember).toHaveBeenCalledWith('paid');
   });
 
-  it('el hilo es el del seleccionado, cronológico, y sólo hay uno', () => {
+  /** C3: DESCENDENTE. Lo último arriba: un equipo que trabaja se lee por lo que acaba de pasar. */
+  it('la línea de tiempo es la del seleccionado, lo último arriba, y sólo hay una', () => {
     const { container } = mount({ ...wired, selectedMemberId: 'paid' });
-    const kinds = [...container.querySelectorAll('.team-thread-row')].map((r) => r.getAttribute('data-kind'));
-    expect(kinds).toEqual(['hired', 'sent', 'ask']);
-    expect(container.querySelectorAll('.team-thread')).toHaveLength(1);
+    const kinds = [...container.querySelectorAll('.coord-event')].map((r) => r.getAttribute('data-kind'));
+    expect(kinds).toEqual(['ask', 'sent', 'hired']);
+    expect(container.querySelectorAll('.coord-timeline')).toHaveLength(1);
   });
 
-  it('un miembro sin un solo hecho tiene un hilo que lo dice', () => {
+  it('un miembro sin un solo hecho tiene una línea de tiempo que lo dice', () => {
     const { container } = mount({ ...wired, selectedMemberId: 'coord' });
-    expect(container.querySelector('.team-thread-empty')).not.toBeNull();
+    expect(container.querySelector('.coord-timeline-empty')).not.toBeNull();
+  });
+});
+
+/**
+ * C3: EL DETALLE DE UN MIEMBRO ES UNA LÍNEA DE TIEMPO.
+ *
+ * Y es donde se cierran los dos bugs que la captura del dueño mostraba: el
+ * numeral de Markdown filtrándose al título del despacho, y un "reportó"
+ * pelado sobre un despacho que nadie reportó.
+ */
+describe('C3: el detalle del miembro', () => {
+  it('el encabezado dice quién es, qué hace y desde cuándo', () => {
+    const { container } = mount({ ...wired, selectedMemberId: 'cm', formatTime: (v: string) => v });
+    const head = container.querySelector('.coord-detail-head')!;
+    expect(head.querySelector('.coord-detail-name')!.textContent).toBe('CM');
+    expect(head.querySelector('.coord-av')).not.toBeNull();
+    expect(head.querySelector('.coord-detail-sub')!.textContent).toContain('Le escribió Paid Media');
   });
 
-  it('"Abrir chat" lleva a la conversación de ESE miembro', () => {
+  it('"Conversación" abre el chat de ESE miembro, y sin handler no se ofrece', () => {
     const onOpenChat = vi.fn();
-    const { container } = mount({ ...wired, onOpenChat });
-    fireEvent.click(container.querySelector('[data-member-id="cm"] .team-inbox-open-chat')!);
+    const wiredChat = mount({ ...wired, selectedMemberId: 'cm', onOpenChat });
+    fireEvent.click(wiredChat.container.querySelector('.coord-detail-chat')!);
     expect(onOpenChat).toHaveBeenCalledWith('cm');
+    cleanup();
+    const { container } = mount({ ...wired, selectedMemberId: 'cm' });
+    expect(container.querySelector('.coord-detail-chat')).toBeNull();
   });
 
-  it('sin handler no se ofrece un "Abrir chat" que no abre nada', () => {
-    const { container } = mount(wired);
-    expect(container.querySelector('.team-inbox-open-chat')).toBeNull();
+  /** Criterio 3: el ícono hace el sustantivo; la palabra sólo agrega lo específico. */
+  it('cada hecho entra por su círculo-ícono y su título corto', () => {
+    const { container } = mount({ ...wired, selectedMemberId: 'cm', coordinationTasks: tasks });
+    const events = [...container.querySelectorAll('.coord-event')];
+    for (const event of events) expect(event.querySelector('.coord-tic')).not.toBeNull();
+    const titles = events.map((e) => e.querySelector('.coord-event-title')!.textContent);
+    expect(titles).toContain('Despacho de Coordinador');
+    expect(titles).toContain('CM reportó');
+  });
+
+  /**
+   * C3 BUG (a): el numeral de Markdown del traspaso puenteado a tarea se
+   * filtraba al título: "despachó: # Piezas exactas…". Se limpia en el puente
+   * Y en el render, para que una tarea vieja se siga leyendo bien.
+   */
+  it('ningún título empieza con un numeral de Markdown', () => {
+    const { container } = mount({
+      ...wired, selectedMemberId: 'cm', coordinationTasks: tasks,
+      coordinationLog: [dispatchRow({ taskId: 't2', promptPreview: '# Producir 14 piezas Feed y Story\nCon las piezas que reportó Paid Media.' })],
+    });
+    const task = container.querySelector('.coord-event-task')!;
+    expect(task.textContent).toBe('Producir 14 piezas Feed y Story');
+    expect(container.querySelector('.coord-timeline')!.textContent).not.toContain('#');
+  });
+
+  /** El spec de la tarea acompaña al título, en gris. */
+  it('el despacho muestra el título de la tarea y su spec', () => {
+    const { container } = mount({
+      ...wired, selectedMemberId: 'cm',
+      coordinationLog: [dispatchRow({ promptPreview: 'Producir 14 piezas\nExportar como angulo1-feed-v1.png.' })],
+    });
+    expect(container.querySelector('.coord-event-task')!.textContent).toBe('Producir 14 piezas');
+    expect(container.querySelector('.coord-event-spec')!.textContent).toContain('Exportar como');
+  });
+
+  /**
+   * C3 BUG (b): el evento de reporte MUESTRA su resumen. Y un despacho que se
+   * cerró sin reportar deja de disfrazarse de reporte.
+   */
+  it('el reporte muestra su resumen', () => {
+    const { container } = mount({ ...wired, selectedMemberId: 'cm' });
+    const reported = container.querySelector('.coord-event[data-kind="reported"]')!;
+    expect(reported.querySelector('.coord-event-text')!.textContent).toBe('Quedaron los 3 posts');
+  });
+
+  it('un despacho cerrado sin reportar NO dice que reportó', () => {
+    const { container } = mount({
+      ...wired, selectedMemberId: 'cm',
+      coordinationLog: [dispatchRow({ status: 'cancelled', outcome: null, summaryPreview: null })],
+    });
+    expect(container.querySelector('.coord-event[data-kind="reported"]')).toBeNull();
+    const closed = container.querySelector('.coord-event[data-kind="dispatchClosed"]')!;
+    expect(closed).not.toBeNull();
+    expect(closed.querySelector('.coord-event-title')!.textContent).toBe('El despacho se cerró sin reporte');
+  });
+
+  /**
+   * Las fichas de archivo salen del TEXTO del reporte. No hay ninguna lista de
+   * archivos producidos en el modelo de datos, y no se inventa una: si el
+   * resumen nombra un archivo, eso es un hecho del texto.
+   */
+  it('si el resumen nombra archivos, cada uno tiene su ficha', () => {
+    const { container } = mount({
+      ...wired, selectedMemberId: 'cm',
+      coordinationLog: [dispatchRow({ summaryPreview: '14 piezas listas en piezas-para-produccion-cm.md y angulo1-feed-v1.png' })],
+    });
+    const files = [...container.querySelectorAll('.coord-file')].map((f) => f.textContent);
+    expect(files).toEqual(['piezas-para-produccion-cm.md', 'angulo1-feed-v1.png']);
+  });
+
+  it('si no nombra ninguno, no se inventa una ficha', () => {
+    const { container } = mount({ ...wired, selectedMemberId: 'cm' });
+    expect(container.querySelector('.coord-file')).toBeNull();
   });
 });
 
 describe('B3.1: el run, arriba y con sus salidas', () => {
-  it('el estado del run vive compacto arriba, con sus tres cuentas y su presupuesto', () => {
+  /**
+   * C1: EL ENCABEZADO DEL PEDIDO, NO DOS LÍNEAS DE CONTADORES.
+   *
+   * Lo que había eran siete números repartidos en dos frases con "·". Lo que
+   * hay es el título del pedido, quién lo coordina, UNA barra y el presupuesto
+   * en una pastilla.
+   */
+  it('el encabezado dice el pedido, el avance y el presupuesto', () => {
     const { container } = mount({ ...wired, coordinationRun: run({ status: 'suspended' }) });
-    const controls = container.querySelector('.team-coordination-controls')!;
-    expect(controls.querySelector('.team-coordination-counts')!.textContent).toContain('3');
-    expect(controls.querySelector('.team-coordination-budget')!.textContent).toContain('10');
+    const head = container.querySelector('.coord-head')!;
+    expect(head.querySelector('.coord-head-name')!.textContent).toBe('Lanzamiento');
+    expect(head.querySelector('.coord-head-sub')!.textContent).toContain('Coordinador');
+    // 3 listas + 1 fallida + 0 en vuelo + 2 sin empezar = 6 tareas.
+    expect(head.querySelector('.coord-progress-done')!.textContent).toContain('6');
+    expect(head.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow')).toBe('3');
+    expect(head.querySelector('.coord-pill-dispatches')!.textContent).toContain('10');
+    expect(container.querySelector('.team-coordination-counts')).toBeNull();
+  });
+
+  /** C1: la tira de tareas es el pedido ENTERO, también lo que todavía no salió. */
+  it('la tira dibuja una ficha por tarea, con su estado y su dueño', () => {
+    const { container } = mount({ ...wired, coordinationTasks: tasks, coordinationAsks: [ask({ taskId: 't4' })] });
+    const chips = [...container.querySelectorAll('.coord-task')];
+    expect(chips.map((c) => c.getAttribute('data-task-state'))).toEqual(['done', 'live', 'pending', 'asking']);
+    expect(chips[0]!.querySelector('.coord-task-title')!.textContent).toBe('Piezas publicitarias Meta');
+    // Criterio 3: el numeral de Markdown del spec no llega a la pantalla.
+    expect(chips[1]!.querySelector('.coord-task-title')!.textContent).toBe('Producir 14 piezas Feed y Story');
+    expect(container.querySelector('.coord-tasks')!.textContent).not.toContain('#');
+  });
+
+  it('sin tareas no se dibuja una tira vacía', () => {
+    const { container } = mount(wired);
+    expect(container.querySelector('.coord-tasks')).toBeNull();
+  });
+
+  it('sin run no hay encabezado: un Trabajo sin equipo no tiene un pedido del que informar', () => {
+    const { container } = mount({ ...wired, coordinationRun: null });
+    expect(container.querySelector('.coord-head')).toBeNull();
   });
 
   it('Pausar y Cancelar son los verbos reales del run', () => {
@@ -210,8 +396,7 @@ describe('B3.1: el mismo equipo en inglés', () => {
   it('sin nada en castellano', () => {
     const { container } = mount({ ...wired, onOpenChat: () => {} }, 'en-US');
     const text = container.textContent ?? '';
-    expect(text).toContain('Nothing new');
-    expect(text).not.toContain('Sin novedades');
     expect(text).not.toContain('Abrir chat');
+    expect(text).not.toContain('Espera el reporte');
   });
 });

@@ -36,7 +36,7 @@ const decision = (patch: Partial<Decision> = {}): Decision => ({
   clientRequestId: null, fingerprint: 'fp', createdAt: '2026-09-01T00:00:00.000Z', decidedAt: null, ...patch,
 });
 const member = (patch: Partial<TeamMember> = {}): TeamMember => ({
-  id: 'm1', workId: 'w1', roleId: 'r1', roleName: 'Estratega', initial: 'E',
+  id: 'm1', workId: 'w1', roleId: 'r1', roleName: 'Estratega', initial: 'E', avatar: null,
   runtime: 'opencode', model: null, accountId: null, label: 'OpenCode', status: 'idle',
   tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '', ...patch,
 });

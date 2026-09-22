@@ -120,10 +120,12 @@ describe('B3.2: la línea plegada', () => {
     expect(container.querySelector('[data-gate-kind="dispatch"]')).not.toBeNull();
   });
 
-  it('sin pendientes para este miembro y sin nada en otro lado, no se renderiza NADA', () => {
+  /** C6: sin pendientes no hay linea PLEGABLE; hay la linea del plan aprobado. */
+  it('sin pendientes para este miembro no hay nada que plegar', () => {
     const { container } = mount({ coordinationRun: run(sessionId), gates: [], openAsks: [], onResolveGate: () => {} });
     expect(container.querySelector('.team-cards-collapsed')).toBeNull();
-    expect(container.querySelector('.team-cards')).toBeNull();
+    expect(container.querySelector('.team-card-proposal')).toBeNull();
+    expect(container.querySelector('.coord-approved')).not.toBeNull();
   });
 
   it('lo que espera en OTRO chat sigue siendo una sola línea, sin tarjeta y sin plegado', () => {

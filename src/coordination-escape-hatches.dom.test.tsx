@@ -164,7 +164,7 @@ const cardsProps = { memberId: 'm1', coordinationRun: run(), team: [], roles: []
 /** Lo minimo para montar el panel del equipo fuera de un describe. */
 const teamPanelProps = {
   work: { id: 'w1', brandId: 'b1', title: 'Trabajo', brief: '', outcome: '', resultPath: null, folder: '', createdAt: '', updatedAt: '' },
-  team: [{ id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', runtime: 'claude' as const, model: null, accountId: null, label: 'Claude', status: 'idle' as const, tier: 'balanced' as const, usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '' }],
+  team: [{ id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', avatar: null, runtime: 'claude' as const, model: null, accountId: null, label: 'Claude', status: 'idle' as const, tier: 'balanced' as const, usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '' }],
   chats: {}, selectedId: null, roles: [], primaryLabel: '', primaryDetail: '', primaryReady: true,
   checking: false, primaryRuntime: 'claude' as const, primaryAccountId: null, primaryModel: null, choices: [],
   busy: false, isDesktop: true, mode: 'simple' as const,
@@ -239,20 +239,25 @@ describe('TeamPanel: un equipo pausado se puede reanudar o cancelar (juicio #2)'
     permissions: 'ask' as const, permissionBusy: false, onPermissions: () => undefined,
   };
 
-  const mount = (extra: Record<string, unknown>) =>
-    render(<I18nProvider><TeamPanel {...teamProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
+  /** C7: las salidas del run viven en el modo Equipo: el mount entra ahi. */
+  const mount = (extra: Record<string, unknown>) => {
+    const view = render(<I18nProvider><TeamPanel {...teamProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
+    const toTeam = view.container.querySelector('.team-rail-team');
+    if (toTeam) fireEvent.click(toTeam);
+    return view;
+  };
 
   it('mientras corre sólo ofrece pausar', () => {
     // Un equipo (aunque vacío de miembros no renderiza la barra), así que se
     // monta con un miembro para que la barra de pestañas exista.
-    const team = [{ id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', runtime: 'claude' as const, model: null, accountId: null, label: 'Claude', status: 'idle' as const, tier: 'balanced' as const, usage: { inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0, costUsd: null, contextTokens: null, contextLimit: null }, continuedFrom: null, createdAt: '', updatedAt: '' }];
+    const team = [{ id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', avatar: null, runtime: 'claude' as const, model: null, accountId: null, label: 'Claude', status: 'idle' as const, tier: 'balanced' as const, usage: { inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0, costUsd: null, contextTokens: null, contextLimit: null }, continuedFrom: null, createdAt: '', updatedAt: '' }];
     const { container } = mount({ team, coordinationRun: run(), onPauseCoordination: vi.fn(), onResumeCoordination: vi.fn(), onCancelCoordination: vi.fn() });
     expect(container.querySelector('.team-pause-coordination')).not.toBeNull();
     expect(container.querySelector('.team-resume-coordination')).toBeNull();
   });
 
   it('pausado ofrece reanudar Y cancelar: el botón de pausa no puede ser una trampa de ida', () => {
-    const team = [{ id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', runtime: 'claude' as const, model: null, accountId: null, label: 'Claude', status: 'idle' as const, tier: 'balanced' as const, usage: { inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0, costUsd: null, contextTokens: null, contextLimit: null }, continuedFrom: null, createdAt: '', updatedAt: '' }];
+    const team = [{ id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', avatar: null, runtime: 'claude' as const, model: null, accountId: null, label: 'Claude', status: 'idle' as const, tier: 'balanced' as const, usage: { inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0, costUsd: null, contextTokens: null, contextLimit: null }, continuedFrom: null, createdAt: '', updatedAt: '' }];
     const onResumeCoordination = vi.fn();
     const onCancelCoordination = vi.fn();
     const { container } = mount({
@@ -358,7 +363,7 @@ describe('TeamCards: el gate de propuesta no confunde el estado del formulario c
 describe('TeamPanel: los controles de pausar/reanudar/cancelar honran `pending` (ítem 14)', () => {
   const teamProps = {
     work: { id: 'w1', brandId: 'b1', title: 'Trabajo', brief: '', outcome: '', resultPath: null, folder: '', createdAt: '', updatedAt: '' },
-    team: [{ id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', runtime: 'claude' as const, model: null, accountId: null, label: 'Claude', status: 'idle' as const, tier: 'balanced' as const, usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '' }],
+    team: [{ id: 'm1', workId: 'w1', roleId: 'strategist', roleName: 'Estratega', initial: 'E', avatar: null, runtime: 'claude' as const, model: null, accountId: null, label: 'Claude', status: 'idle' as const, tier: 'balanced' as const, usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '' }],
     chats: {}, selectedId: null, roles: [], primaryLabel: '', primaryDetail: '', primaryReady: true,
     checking: false, primaryRuntime: 'claude' as const, primaryAccountId: null, primaryModel: null, choices: [],
     busy: false, isDesktop: true, mode: 'advanced' as const,
@@ -370,8 +375,13 @@ describe('TeamPanel: los controles de pausar/reanudar/cancelar honran `pending` 
     onAttachFiles: async () => [], untracked: [], onAdoptFile: () => undefined,
     permissions: 'ask' as const, permissionBusy: false, onPermissions: () => undefined,
   };
-  const mount = (extra: Record<string, unknown>) =>
-    render(<I18nProvider><TeamPanel {...teamProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
+  /** C7: las salidas del run viven en el modo Equipo: el mount entra ahi. */
+  const mount = (extra: Record<string, unknown>) => {
+    const view = render(<I18nProvider><TeamPanel {...teamProps} {...(extra as Record<string, unknown>)} /></I18nProvider>);
+    const toTeam = view.container.querySelector('.team-rail-team');
+    if (toTeam) fireEvent.click(toTeam);
+    return view;
+  };
 
   it('con `pending["run:run1"]` en true, "Pausar equipo" queda deshabilitado aunque `busy` sea false', () => {
     const { container } = mount({ coordinationRun: run(), onPauseCoordination: vi.fn(), pending: { 'run:run1': true } });

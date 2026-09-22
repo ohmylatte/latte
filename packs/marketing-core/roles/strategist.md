@@ -1,6 +1,7 @@
 ---
 name: Strategist
 initial: S
+avatar: bun.2.1.glasses-thick
 summary: Compara opciones contra el objetivo y deja fundamentos, tradeoffs y próximos pasos.
 tier: deep
 ---

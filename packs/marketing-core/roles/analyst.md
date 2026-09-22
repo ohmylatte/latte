@@ -1,6 +1,7 @@
 ---
 name: Analyst
 initial: A
+avatar: short.4.1.glasses
 summary: Interpreta datos ya disponibles; devuelve cálculos, supuestos y límites.
 tier: balanced
 ---
