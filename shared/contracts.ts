@@ -292,6 +292,21 @@ export interface Connection {
   updatedAt: string;
 }
 
+/**
+ * Un servidor http del registro del CLI que todavía no es una Conexión de
+ * Latte. La importación es de UNA VEZ (decisión C): después manda Latte, y el
+ * registro queda de sólo lectura.
+ */
+export interface ImportableConnection {
+  runtime: ChatRuntime;
+  name: string;
+  url: string;
+  /** El alcance que Latte sugiere para este servidor. Siempre editable. */
+  suggestedScope: ConnectionScope;
+  /** Ya existe una conexión con esa URL o ese nombre: importarla otra vez no haría nada. */
+  alreadyImported: boolean;
+}
+
 /** Lo que pide la pantalla "Agregar conexión": nombre, URL y alcance. El resto lo descubre Latte. */
 export interface ConnectionInput {
   name: string;
@@ -1493,16 +1508,29 @@ export interface LatteAPI {
   listAgentRuntimes(): Promise<AgentRuntimeInfo[]>;
   /** MCP servers each runtime has configured, with the real connection state it reports. */
   /** Omit the runtime for all three; pass one to get just that one, which lands sooner. */
-  listMcpServers(runtime?: ChatRuntime | null): Promise<McpRuntimeTools[]>;
-  addMcpServer(runtime: 'claude' | 'codex', input: McpServerInput): Promise<void>;
-  removeMcpServer(runtime: 'claude' | 'codex', name: string): Promise<void>;
-  /** Codex MCP OAuth through `mcpServer/oauth/login`. The URL is opened in the system browser. */
-  loginMcpServer(runtime: 'codex', name: string): Promise<AccountLoginStart>;
   /**
-   * Interactive `claude` in this work's folder with the account's CLAUDE_CONFIG_DIR,
-   * so `/mcp` login tokens land where Latte's headless runs look.
+   * El registro del CLI, DE SÓLO LECTURA desde la decisión C del brief de
+   * conexiones: Latte es dueña de las credenciales, así que ya no se puede
+   * agregar un servidor desde acá ni completar su OAuth con una terminal
+   * embebida. Lo que hay se lee, se importa una vez como Conexión, y se puede
+   * quitar para terminar la mudanza.
    */
-  authenticateClaudeMcp(workId: string, accountId: string | null): Promise<AccountLoginStart>;
+  listMcpServers(runtime?: ChatRuntime | null): Promise<McpRuntimeTools[]>;
+  removeMcpServer(runtime: 'claude' | 'codex', name: string): Promise<void>;
+
+  // --- Conexiones MCP (el gateway local es dueño de las credenciales) -------
+  /** Las de esta marca más las globales, marcadas como heredadas. `null` = sólo las globales (Ajustes). */
+  listConnections(brandId: string | null): Promise<Connection[]>;
+  /** Crea la conexión y abre el login. Si el login falla, no queda ninguna fila a medias. */
+  connectConnection(input: ConnectionInput): Promise<Connection>;
+  /** Volver a entrar a una que ya existe: el botón de una conexión vencida. */
+  reconnectConnection(connectionId: string): Promise<Connection>;
+  /** Se lleva las credenciales (y las revoca si el servidor publica cómo) y deja la fila. */
+  disconnectConnection(connectionId: string): Promise<Connection>;
+  deleteConnection(connectionId: string): Promise<void>;
+  /** Los servidores http del registro del CLI que todavía no son Conexiones. */
+  listImportableConnections(): Promise<ImportableConnection[]>;
+
   addAgentAccount(runtime: 'claude' | 'codex', label: string): Promise<AgentAccount>;
   removeAgentAccount(runtime: 'claude' | 'codex', accountId: string): Promise<void>;
   /** Starts the runtime's own login (browser OAuth). Claude runs inside an embedded terminal session; Codex returns a URL. */

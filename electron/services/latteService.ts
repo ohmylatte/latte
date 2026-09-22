@@ -109,6 +109,8 @@ import { isAccountRuntime, isChatRuntime, type AgentHub, type MemberContext } fr
 import { CoordinationEngine, coordinationRequestMetaKey } from '../coordination/engine';
 import { mergeCoordinationBudget, readStoredCoordinationBudget, requireCoordinationBudget } from '../coordination/budget';
 import type { CoordinationInjectionPlanner } from '../coordination/injection';
+import type { Connection, ConnectionInput, ImportableConnection } from '../../shared/contracts';
+import type { ConnectionsService } from '../connections/service';
 import type { McpCatalog } from '../agents/mcp';
 import { ROLE_AVATAR_KEY, RoleCatalog } from '../agents/roles';
 import { parseAvatar, serializeAvatar } from '../../shared/avatar';
@@ -398,6 +400,19 @@ export class LatteService implements BackendApi {
    */
   attachCoordinationInjection(planner: CoordinationInjectionPlanner): void {
     this.deps.injection = planner;
+  }
+
+  /**
+   * El servicio de Conexiones MCP. Se ata después de construir por el mismo
+   * motivo: necesita el gateway, que necesita el repositorio, que se arma
+   * alrededor de este servicio. `null` —la previsualización del navegador y
+   * casi todos los tests— significa que la lista viene vacía y todo lo demás
+   * dice que no está disponible, que es la verdad.
+   */
+  private connections: ConnectionsService | null = null;
+
+  attachConnections(service: ConnectionsService): void {
+    this.connections = service;
   }
 
   /**
@@ -2457,39 +2472,67 @@ export class LatteService implements BackendApi {
     return [await this.deps.mcp.listOne(runtime)];
   }
 
-  async addMcpServer(runtime: 'claude' | 'codex', input: McpServerInput): Promise<void> {
-    if (!isAccountRuntime(runtime)) throw new TypeError('Unknown runtime');
-    if (!this.deps.mcp) throw new UnavailableError('MCP requiere la aplicación de escritorio');
-    if (typeof input !== 'object' || input === null) throw new TypeError('Invalid input');
-    const transport = input.transport === 'http' ? 'http' : 'stdio';
-    const name = requireLabel(input.name, 'Server name', 64);
-    const command = transport === 'stdio' ? requireLabel(input.command, 'Command', 400) : '';
-    const url = transport === 'http' ? requireLabel(input.url, 'URL', 500) : '';
-    if (transport === 'http' && !/^https?:\/\//.test(url)) throw new TypeError('La URL tiene que empezar con http:// o https://');
-    const args = Array.isArray(input.args) ? input.args.slice(0, 30).map((a) => requireText(String(a), 'Argument', 300)) : [];
-    const envPairs = Array.isArray(input.env) ? input.env.slice(0, 20).map((a) => requireText(String(a), 'Variable', 400)) : [];
-    await this.deps.mcp.add(runtime, { name, transport, command, args, url, env: envPairs });
-  }
-
+  /**
+   * Quitar SÍ sigue: es lo que termina la mudanza del registro del CLI a las
+   * Conexiones de Latte. Agregar, en cambio, se fue con la decisión C -- ver
+   * `LatteAPI.listMcpServers` -- y con él se fue el botón "Autenticar", que
+   * abría una terminal embebida para que la persona escribiera `/mcp` a mano
+   * (decisión D). Ese era el único camino que podía terminar un OAuth; ahora lo
+   * termina el módulo OAuth del main, sin terminal y sin que el token quede en
+   * el perfil de un CLI.
+   */
   async removeMcpServer(runtime: 'claude' | 'codex', name: string): Promise<void> {
     if (!isAccountRuntime(runtime)) throw new TypeError('Unknown runtime');
     if (!this.deps.mcp) throw new UnavailableError('MCP requiere la aplicación de escritorio');
     await this.deps.mcp.remove(runtime, requireLabel(name, 'Server name', 64));
   }
 
-  async loginMcpServer(runtime: 'codex', name: string): Promise<AccountLoginStart> {
-    if (runtime !== 'codex') throw new TypeError('Unknown runtime');
-    if (!this.deps.mcp) throw new UnavailableError('MCP requiere la aplicación de escritorio');
-    const start = await this.deps.mcp.loginCodex(requireLabel(name, 'Server name', 64));
-    if (start.mode === 'browser' && /^https?:\/\//.test(start.url)) await this.deps.openExternal?.(start.url);
-    return start;
+  // Conexiones MCP: Latte es dueña de las credenciales ------------------------
+  //
+  // Todo delega en `ConnectionsService`, que es donde vive la regla. Acá sólo
+  // se valida la frontera (lo que llega del renderer llega de afuera) y se
+  // traduce "no hay escritorio" a un error honesto.
+
+  async listConnections(brandId: string | null): Promise<Connection[]> {
+    if (!this.connections) return [];
+    if (brandId !== null && brandId !== undefined) this.deps.repo.getBrand(requireId(brandId, 'brandId'));
+    return this.connections.list(brandId ?? null);
   }
 
-  async authenticateClaudeMcp(workId: string, accountId: string | null): Promise<AccountLoginStart> {
-    if (!this.deps.mcp) throw new UnavailableError('MCP requiere la aplicación de escritorio');
-    const work = this.deps.repo.getWork(requireId(workId, 'workId'));
-    if (accountId !== null && !AccountStore.isValidId(accountId)) throw new TypeError('Invalid account id');
-    return this.deps.mcp.authenticateClaude(this.deps.files.workDir(work.brandId, work.id), accountId);
+  async connectConnection(input: ConnectionInput): Promise<Connection> {
+    const connections = this.requireConnections();
+    if (typeof input !== 'object' || input === null) throw new TypeError('Invalid input');
+    if (input.scope === 'brand') this.deps.repo.getBrand(requireId(input.brandId ?? '', 'brandId'));
+    return connections.connect({
+      name: requireText(String(input.name ?? ''), 'Connection name', 64),
+      label: input.label === undefined ? undefined : requireText(String(input.label), 'Label', 80),
+      url: requireLabel(input.url, 'URL', 500),
+      scope: input.scope,
+      brandId: input.scope === 'brand' ? (input.brandId ?? null) : null,
+      clientId: input.clientId ? requireText(String(input.clientId), 'Client id', 200) : null,
+    });
+  }
+
+  async reconnectConnection(connectionId: string): Promise<Connection> {
+    return this.requireConnections().reconnect(requireId(connectionId, 'connectionId'));
+  }
+
+  async disconnectConnection(connectionId: string): Promise<Connection> {
+    return this.requireConnections().disconnect(requireId(connectionId, 'connectionId'));
+  }
+
+  async deleteConnection(connectionId: string): Promise<void> {
+    await this.requireConnections().remove(requireId(connectionId, 'connectionId'));
+  }
+
+  async listImportableConnections(): Promise<ImportableConnection[]> {
+    if (!this.connections) return [];
+    return this.connections.listImportable();
+  }
+
+  private requireConnections(): ConnectionsService {
+    if (!this.connections) throw new UnavailableError('Las conexiones necesitan la aplicación de escritorio.');
+    return this.connections;
   }
 
   async addAgentAccount(runtime: 'claude' | 'codex', label: string): Promise<AgentAccount> {

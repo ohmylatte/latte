@@ -37,10 +37,21 @@ describe('IPC surface', () => {
     expect(API_ARITY.restoreBrand).toBe(1);
     expect(API_ARITY.listArchivedBrands).toBe(0);
     expect(API_ARITY.listBrands).toBe(0);
-    expect(API_METHODS).toContain('loginMcpServer');
-    expect(API_METHODS).toContain('authenticateClaudeMcp');
-    expect(API_ARITY.loginMcpServer).toBe(2);
-    expect(API_ARITY.authenticateClaudeMcp).toBe(2);
+    // Decision C y D del brief de conexiones: el registro del CLI quedo de
+    // SOLO LECTURA (no se puede agregar) y el boton "Autenticar", que abria
+    // una terminal embebida para escribir `/mcp` a mano, se dio de baja. Las
+    // credenciales las tiene Latte, y el login lo hace su modulo OAuth.
+    expect(API_METHODS).not.toContain('addMcpServer');
+    expect(API_METHODS).not.toContain('loginMcpServer');
+    expect(API_METHODS).not.toContain('authenticateClaudeMcp');
+    expect(API_METHODS).toContain('listMcpServers');
+    expect(API_METHODS).toContain('removeMcpServer');
+    for (const method of ['listConnections', 'connectConnection', 'reconnectConnection', 'disconnectConnection', 'deleteConnection', 'listImportableConnections'] as const) {
+      expect(API_METHODS).toContain(method);
+    }
+    expect(API_ARITY.listConnections).toBe(1);
+    expect(API_ARITY.connectConnection).toBe(1);
+    expect(API_ARITY.listImportableConnections).toBe(0);
     expect(API_METHODS).toContain('getBrand');
     expect(API_ARITY.getBrand).toBe(1);
     expect(API_METHODS).toContain('listBrandContextProposals');

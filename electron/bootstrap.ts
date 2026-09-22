@@ -15,6 +15,16 @@ import { CoordinationInjectionPlanner } from './coordination/injection';
 import { CoordinationMcpServer } from './coordination/mcpServer';
 import { createHttpListen } from './coordination/mcpTransport';
 import { CoordinationTokenRegistry } from './coordination/tokens';
+import { ConnectionGateway } from './connections/gateway';
+import { createGatewayListen } from './connections/gatewayTransport';
+import { GatewayTokenRegistry } from './connections/gatewayTokens';
+import { ConnectionInjectionPlanner } from './connections/injection';
+import { ConnectionsService } from './connections/service';
+import { runConnectionLogin } from './connections/login';
+import { createLoginWindowOpener } from './connections/loginWindow';
+import { electronSecretBox } from './storage/secretBox';
+import type { SecretBox } from './storage/secretBox';
+import type { LoginOutcome, LoginRequest } from './connections/login';
 import { featureEnabled } from './core/features';
 import { LattePaths } from './core/paths';
 import type { TaskkillExecFile } from './core/processTree';
@@ -73,6 +83,20 @@ export interface BackendOptions {
   taskkillImpl?: TaskkillExecFile;
   /** Q7: los tests inyectan su propio timer del barrido periódico de coordinación y disparan el tick a mano, en vez de esperar treinta segundos reales. */
   sweepTimer?: (tick: () => void, everyMs: number) => () => void;
+  /**
+   * La caja de secretos de las Conexiones MCP. Los tests inyectan una de
+   * juguete: la real es `safeStorage` de Electron, que en un runner de vitest
+   * no existe, y sin este puerto todo test que abriera un backend se quedaría
+   * sin poder guardar una conexión por un motivo que no tiene nada que ver con
+   * lo que está probando.
+   */
+  secretBox?: SecretBox;
+  /**
+   * El login OAuth completo. Inyectado para que NINGÚN test abra una ventana ni
+   * toque una cuenta real: el servidor de juguete de `tests/fakes/toyOAuth.ts`
+   * entra por acá.
+   */
+  connectionLogin?: (request: LoginRequest) => Promise<LoginOutcome>;
 }
 
 export interface Backend {
@@ -105,6 +129,15 @@ export interface Backend {
   coordinationMcpServer: CoordinationMcpServer;
   /** El registro de tokens de ESE servidor: sin él no se puede mintear un bearer que `handleMcpRequest` acepte. */
   coordinationTokens: CoordinationTokenRegistry;
+  /**
+   * El gateway MCP de las Conexiones y su registro de bearers. Expuestos por lo
+   * mismo que los de coordinación: un test tiene que poder entrar por el camino
+   * de producción (un bearer emitido por ESTE registro contra ESTE gateway) en
+   * vez de armarse uno de costado que no comparte el estado en memoria.
+   */
+  connectionGateway: ConnectionGateway;
+  connectionTokens: GatewayTokenRegistry;
+  connections: ConnectionsService;
   info: { dataDir: string; dbFile: string; engine: string; engineReason: string; seeded: boolean; pack: string | null };
 }
 
@@ -391,6 +424,52 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
   hub.attachCoordinationInjection(injectionPlanner, (workId) => service.refreshInstructionsAfterInjection(workId));
   service.attachCoordinationInjection(injectionPlanner);
 
+  // Conexiones MCP (brief `docs/briefs/2026-09-23-conexiones-mcp-arquitectura.md`).
+  // El mismo patrón de atado tardío, y por el mismo motivo: el gateway lee el
+  // repositorio, el planificador necesita el gateway, y el hub necesita el
+  // planificador. `secretBox` se resuelve una sola vez acá; si este sistema no
+  // puede cifrar, la caja lo dice y ninguna conexión se guarda -- nunca en
+  // claro (riesgo 1 de la sección 5).
+  const secretBox = options.secretBox ?? electronSecretBox();
+  const connectionTokens = new GatewayTokenRegistry();
+  const connectionGateway = new ConnectionGateway({
+    connections: {
+      get: (id) => repo.connections.get(id),
+      readTokens: (id) => repo.connections.readTokens(id, secretBox),
+      saveTokens: (id, tokens) => repo.connections.saveTokens(id, tokens, secretBox, new Date().toISOString()),
+      setState: (id, state, detail) => repo.connections.setState(id, state, detail, new Date().toISOString()),
+    },
+    tokens: connectionTokens,
+    listen: createGatewayListen(options.log),
+    log: options.log,
+    // El gateway se entera antes que nadie de que una sesión venció. Por ahora
+    // queda registrado; el aviso en el chat con el botón de volver a entrar es
+    // la rebanada siguiente (G6).
+    onExpired: (connection, detail) => options.log?.(`[conexiones] vencida: ${connection.id} ${connection.name} alcance=${connection.scope} motivo=${detail}`),
+  });
+  const connectionInjection = new ConnectionInjectionPlanner({
+    repo: {
+      resolveForBrand: (brandId) => repo.connections.resolveForBrand(brandId),
+      hasTokens: (id) => repo.connections.hasTokens(id),
+    },
+    tokens: connectionTokens,
+    gateway: connectionGateway,
+    log: options.log,
+    audit: (event) => options.log?.(`[conexiones] inyectada: ${event.connectionId} ${event.name} alcance=${event.scope} estado=${event.state} miembro=${event.memberId}`),
+  });
+  hub.attachConnectionInjection(connectionInjection);
+  const connections = new ConnectionsService({
+    connections: repo.connections,
+    secretBox,
+    gateway: connectionGateway,
+    tokens: connectionTokens,
+    login: options.connectionLogin ?? ((request) => runConnectionLogin(request, { openLoginWindow: createLoginWindowOpener(options.log), log: options.log })),
+    listCliServers: () => service.listMcpServers(null),
+    log: options.log,
+    audit: (line) => options.log?.(line),
+  });
+  service.attachConnections(connections);
+
   const seeded = options.seedDemo === false ? false : seedDemoIfEmpty(repo, files, pack);
 
   // El hermano de `sweepStrayCodexServers`, pero del lado de la base: los
@@ -424,6 +503,9 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     accounts,
     coordinationMcpServer,
     coordinationTokens,
+    connectionGateway,
+    connectionTokens,
+    connections,
     info: { dataDir: paths.root, dbFile: paths.dbFile, engine: driver.kind, engineReason: reason, seeded, pack: pack ? `${pack.id}@${pack.version}` : null },
   };
 }

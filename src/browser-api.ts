@@ -327,7 +327,12 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   windowControl: () => {},
   onWindowState: () => () => {},
   listProviders: async () => [], connectProviderKey: unavailable, disconnectProvider: unavailable, startProviderOAuth: unavailable, completeProviderOAuth: unavailable,
-  listMcpServers: async () => [], addMcpServer: unavailable, removeMcpServer: unavailable, loginMcpServer: unavailable, authenticateClaudeMcp: unavailable,
+  listMcpServers: async () => [], removeMcpServer: unavailable,
+  // Las Conexiones MCP necesitan el gateway local, que vive en el proceso
+  // principal: en la previsualización del navegador la lista está vacía y todo
+  // lo demás dice honestamente que no está disponible.
+  listConnections: async () => [], connectConnection: unavailable, reconnectConnection: unavailable,
+  disconnectConnection: unavailable, deleteConnection: unavailable, listImportableConnections: async () => [],
   getPrimaryAgent: async () => null, setPrimaryAgent: unavailable, listAgentRuntimes: async () => [], addAgentAccount: unavailable, removeAgentAccount: unavailable, startAccountLogin: unavailable, logoutAccount: unavailable,
   // No CLI to ask in a browser tab: no catalog, and no pretending there is one.
   listAccountModels: async () => ({ source: 'suggested' as const, models: [], detail: 'Esta vista previa no puede consultar los modelos de tu cuenta.' }),
