@@ -171,6 +171,21 @@ export const BRAND_ERROR_KEYS: Record<string, MessageKey> = {
   CONTEXT_STALE: 'error.brand.contextStale',
 };
 
+/**
+ * Los errores de una Conexión MCP. Familia propia por lo mismo que la de
+ * marca: cada uno de estos códigos existe porque hay un paso DISTINTO que dar
+ * —traer un id de cliente, volver a abrir la ventana, corregir la URL—, y la
+ * frase genérica de `UNAVAILABLE` no le dice a nadie cuál.
+ */
+export const CONNECTION_ERROR_KEYS: Record<string, MessageKey> = {
+  CONNECTION_CLIENT_ID_REQUIRED: 'error.connection.clientIdRequired',
+  CONNECTION_LOGIN_CANCELLED: 'error.connection.loginCancelled',
+  CONNECTION_LOGIN_TIMEOUT: 'error.connection.loginTimeout',
+  CONNECTION_DISCOVERY_FAILED: 'error.connection.discoveryFailed',
+  CONNECTION_STATE_MISMATCH: 'error.connection.stateMismatch',
+  CONNECTION_TOKEN_REFUSED: 'error.connection.tokenRefused',
+};
+
 export const APP_ERROR_KEYS: Record<string, MessageKey> = {
   FEATURE_DISABLED: 'error.app.featureDisabled',
   NOT_FOUND: 'error.app.notFound',
@@ -203,7 +218,7 @@ export const displayError = (e: unknown) => {
   // IPC, o sea de afuera; un mapa que se consulta con lo que viene de afuera
   // se consulta preguntando si la clave es SUYA.
   const lookup = (map: Record<string, MessageKey>): MessageKey | undefined => (Object.hasOwn(map, code) ? map[code] : undefined);
-  const key = lookup(COORDINATION_ERROR_KEYS) ?? lookup(BRAND_ERROR_KEYS) ?? lookup(APP_ERROR_KEYS);
+  const key = lookup(COORDINATION_ERROR_KEYS) ?? lookup(BRAND_ERROR_KEYS) ?? lookup(CONNECTION_ERROR_KEYS) ?? lookup(APP_ERROR_KEYS);
   if (key) return t(key);
   return e instanceof Error ? e.message : String(e);
 };

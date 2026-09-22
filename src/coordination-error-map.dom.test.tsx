@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { APP_ERROR_KEYS, BRAND_ERROR_KEYS, COORDINATION_ERROR_KEYS } from './App';
+import { APP_ERROR_KEYS, BRAND_ERROR_KEYS, CONNECTION_ERROR_KEYS, COORDINATION_ERROR_KEYS } from './App';
 import { catalogs } from './i18n';
 
 /**
@@ -164,7 +164,7 @@ const NOT_FOR_THE_PERSON: Record<string, string> = {
 };
 
 /** Las tres mitades juntas: lo que `displayError` puede traducir, venga de donde venga. */
-const TRANSLATED = { ...COORDINATION_ERROR_KEYS, ...BRAND_ERROR_KEYS, ...APP_ERROR_KEYS };
+const TRANSLATED = { ...COORDINATION_ERROR_KEYS, ...BRAND_ERROR_KEYS, ...CONNECTION_ERROR_KEYS, ...APP_ERROR_KEYS };
 
 /**
  * El nombre de la función o el método que ENCIERRA una posición. Es el
@@ -436,9 +436,31 @@ describe('N2: cada mapa cubre su alcance, verificado contra `electron/**`', () =
   });
 
   it('ningún código está en dos mapas a la vez', () => {
-    const both = Object.keys(COORDINATION_ERROR_KEYS).filter((code) => code in APP_ERROR_KEYS || code in BRAND_ERROR_KEYS);
+    const both = Object.keys(COORDINATION_ERROR_KEYS).filter((code) => code in APP_ERROR_KEYS || code in BRAND_ERROR_KEYS || code in CONNECTION_ERROR_KEYS);
     expect(both).toEqual([]);
-    expect(Object.keys(BRAND_ERROR_KEYS).filter((code) => code in APP_ERROR_KEYS)).toEqual([]);
+    expect(Object.keys(BRAND_ERROR_KEYS).filter((code) => code in APP_ERROR_KEYS || code in CONNECTION_ERROR_KEYS)).toEqual([]);
+    expect(Object.keys(CONNECTION_ERROR_KEYS).filter((code) => code in APP_ERROR_KEYS)).toEqual([]);
+  });
+
+  /**
+   * Conexiones MCP: familia propia, por la misma razón que la de marca. Cada
+   * código de acá corresponde a un paso DISTINTO que la persona tiene que dar,
+   * y ninguno sale de un camino de coordinación.
+   */
+  it('los errores de conexión tienen código propio, se tiran de verdad, y ninguno sale de la coordinación', () => {
+    const codes = Object.keys(CONNECTION_ERROR_KEYS);
+    expect(codes).toEqual(expect.arrayContaining([
+      'CONNECTION_CLIENT_ID_REQUIRED', 'CONNECTION_LOGIN_CANCELLED', 'CONNECTION_LOGIN_TIMEOUT',
+      'CONNECTION_DISCOVERY_FAILED', 'CONNECTION_STATE_MISMATCH', 'CONNECTION_TOKEN_REFUSED',
+    ]));
+    for (const code of codes) {
+      const where = allSites.filter((s) => s.code === code);
+      expect(where.length, `${code} no se tira en ningún lado`).toBeGreaterThan(0);
+      for (const site of where) {
+        expect(site.file.startsWith('electron/connections/'), `${code} @ ${site.file}`).toBe(true);
+        expect(inCoordinationScope(site.file, site.context), `${code} @ ${site.file}#${site.context}`).toBe(false);
+      }
+    }
   });
 
   /**
