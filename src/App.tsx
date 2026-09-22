@@ -179,6 +179,10 @@ export const APP_ERROR_KEYS: Record<string, MessageKey> = {
   // El código de todo `ValidationError`, que sí cruza IPC por cualquier
   // camino: un nombre de marca vacío no es un problema de coordinación.
   VALIDATION: 'error.app.validation',
+  // El sistema no ofrece dónde cifrar un secreto (`safeStorage` en falso), así
+  // que una Conexión MCP no se guarda. La persona tiene que enterarse de POR
+  // QUÉ: si no, parece que el botón no hizo nada.
+  SECRET_STORE_UNAVAILABLE: 'error.app.secretStoreUnavailable',
 };
 
 /**

@@ -9,6 +9,7 @@ import { addUsage, parseUsage, serializeUsage } from '../core/usage';
 import type { SqlDriver, SqlRow } from './driver';
 import { BrandingRepository } from './brandingRepository';
 import { BRANDING_SCHEMA_SQL } from './brandingSchema';
+import { ConnectionsRepository } from './connectionsRepository';
 import { SCHEMA_SQL, SCHEMA_VERSION } from './schema';
 // The fingerprint is the SAME value the Contexto view and the CAS check use, so
 // it is imported instead of re-implemented: one algorithm, one history.
@@ -462,9 +463,12 @@ export function briefDocumentId(workId: string): string {
  */
 export class LatteRepository {
   readonly branding: BrandingRepository;
+  /** Las Conexiones MCP y sus secretos (esquema 13, brief de conexiones 4.3). */
+  readonly connections: ConnectionsRepository;
 
   constructor(private readonly db: SqlDriver) {
     this.branding = new BrandingRepository(db);
+    this.connections = new ConnectionsRepository(db);
   }
 
   /**
