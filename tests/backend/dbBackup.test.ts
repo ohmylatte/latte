@@ -35,7 +35,7 @@ describe('Updating the app must not put the data at risk', () => {
   it('copies the database before schema 8 is migrated to the current version', () => {
     fs.writeFileSync(dbFile, 'datos-schema-8');
     const backup = prepareForMigration(dbFile, '8', SCHEMA_VERSION, { now: () => new Date('2026-09-14T12:00:00Z') });
-    expect(SCHEMA_VERSION).toBe('12');
+    expect(SCHEMA_VERSION).toBe('13');
     expect(backup).toBe(path.join(dir, 'backups', 'latte-v8-20260914T120000.db'));
     expect(fs.readFileSync(backup!, 'utf8')).toBe('datos-schema-8');
     expect(fs.readFileSync(dbFile, 'utf8')).toBe('datos-schema-8');

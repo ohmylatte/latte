@@ -7,10 +7,11 @@ import { ProvidersView } from './ProvidersView';
 import { ProfilesView } from './ProfilesView';
 import { SkillsView } from './SkillsView';
 import { ToolsView } from './ToolsView';
+import { ConnectionsView } from './ConnectionsView';
 import { useI18n } from './i18n';
 import type { LatteMode } from './TeamPanel';
 
-export type SettingsSection = 'agents' | 'profiles' | 'skills' | 'tools' | 'workspace' | 'language' | 'advanced';
+export type SettingsSection = 'agents' | 'profiles' | 'skills' | 'connections' | 'tools' | 'workspace' | 'language' | 'advanced';
 
 /**
  * Settings is its own screen, not a document view: no work breadcrumb, no
@@ -57,6 +58,7 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       <button className={section === 'agents' ? 'selected' : ''} onClick={() => navigate('agents')}><Plug size={16} />{t('settings.agents')}</button>
       <button className={section === 'profiles' ? 'selected' : ''} onClick={() => navigate('profiles')}><Info size={16} />{t('settings.profiles')}</button>
       <button className={section === t('ui.auto.390') ? 'selected' : ''} onClick={() => navigate('skills')}><Sparkles size={16} />{t('settings.skills')}</button>
+      <button className={section === 'connections' ? 'selected' : ''} onClick={() => navigate('connections')}><Plug size={16} />{t('settings.connections')}</button>
       <button className={section === 'tools' ? 'selected' : ''} onClick={() => navigate('tools')}><Wrench size={16} />{t('settings.tools')}</button>
       <button className={section === 'workspace' ? 'selected' : ''} onClick={() => navigate('workspace')}><HardDrive size={16} />{t('settings.workspace')}</button>
       <button className={section === 'language' ? 'selected' : ''} onClick={() => navigate('language')}><Info size={16} />{t('settings.language')}</button>
@@ -72,6 +74,8 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       </section>}
       {section === 'profiles' && <ProfilesView onChanged={onChanged} onError={onError} onNotice={onNotice} onDirtyChange={setProfileDirty} />}
       {section === t('ui.auto.390') && <SkillsView onNotice={onNotice} onError={onError} />}
+      {/* Las globales: valen para todas las marcas, así que se agregan acá. Las de una marca viven en la pantalla de esa marca. */}
+      {section === 'connections' && <ConnectionsView brandId={null} onNotice={onNotice} onError={onError} />}
       {section === 'tools' && <ToolsView onNotice={onNotice} onError={onError} workId={workId} />}
       {section === 'workspace' && <WorkspaceSection onError={onError} onReopenOnboarding={onReopenOnboarding} />}
       {section === 'language' && <LanguageSection />}

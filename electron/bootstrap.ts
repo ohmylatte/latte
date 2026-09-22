@@ -1,4 +1,5 @@
 import path from 'node:path';
+import os from 'node:os';
 import type { AgentEvent, ChatEvent, CoordinationEvent, DecisionProposalInput } from '../shared/contracts';
 import { extractFencedBlocks } from './core/fenced';
 import { brandContextProtocolBlocks } from './workspace/brandContextProtocol';
@@ -15,6 +16,17 @@ import { CoordinationInjectionPlanner } from './coordination/injection';
 import { CoordinationMcpServer } from './coordination/mcpServer';
 import { createHttpListen } from './coordination/mcpTransport';
 import { CoordinationTokenRegistry } from './coordination/tokens';
+import { ConnectionGateway } from './connections/gateway';
+import { createGatewayListen } from './connections/gatewayTransport';
+import { GatewayTokenRegistry } from './connections/gatewayTokens';
+import { ConnectionInjectionPlanner } from './connections/injection';
+import { ConnectionsService } from './connections/service';
+import { runConnectionLogin } from './connections/login';
+import { createLoginWindowOpener } from './connections/loginWindow';
+import { electronSecretBox } from './storage/secretBox';
+import { clearNeedsAuthEntries } from './agents/needsAuthCache';
+import type { SecretBox } from './storage/secretBox';
+import type { LoginOutcome, LoginRequest } from './connections/login';
 import { featureEnabled } from './core/features';
 import { LattePaths } from './core/paths';
 import type { TaskkillExecFile } from './core/processTree';
@@ -73,6 +85,20 @@ export interface BackendOptions {
   taskkillImpl?: TaskkillExecFile;
   /** Q7: los tests inyectan su propio timer del barrido periódico de coordinación y disparan el tick a mano, en vez de esperar treinta segundos reales. */
   sweepTimer?: (tick: () => void, everyMs: number) => () => void;
+  /**
+   * La caja de secretos de las Conexiones MCP. Los tests inyectan una de
+   * juguete: la real es `safeStorage` de Electron, que en un runner de vitest
+   * no existe, y sin este puerto todo test que abriera un backend se quedaría
+   * sin poder guardar una conexión por un motivo que no tiene nada que ver con
+   * lo que está probando.
+   */
+  secretBox?: SecretBox;
+  /**
+   * El login OAuth completo. Inyectado para que NINGÚN test abra una ventana ni
+   * toque una cuenta real: el servidor de juguete de `tests/fakes/toyOAuth.ts`
+   * entra por acá.
+   */
+  connectionLogin?: (request: LoginRequest) => Promise<LoginOutcome>;
 }
 
 export interface Backend {
@@ -105,6 +131,15 @@ export interface Backend {
   coordinationMcpServer: CoordinationMcpServer;
   /** El registro de tokens de ESE servidor: sin él no se puede mintear un bearer que `handleMcpRequest` acepte. */
   coordinationTokens: CoordinationTokenRegistry;
+  /**
+   * El gateway MCP de las Conexiones y su registro de bearers. Expuestos por lo
+   * mismo que los de coordinación: un test tiene que poder entrar por el camino
+   * de producción (un bearer emitido por ESTE registro contra ESTE gateway) en
+   * vez de armarse uno de costado que no comparte el estado en memoria.
+   */
+  connectionGateway: ConnectionGateway;
+  connectionTokens: GatewayTokenRegistry;
+  connections: ConnectionsService;
   info: { dataDir: string; dbFile: string; engine: string; engineReason: string; seeded: boolean; pack: string | null };
 }
 
@@ -305,6 +340,12 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     runner,
     detector,
     accountEnv: (runtime, accountId) => accounts.envFor(runtime, accountId),
+    // 1.5 del brief de conexiones: se lee el perfil del agente PRIMARIO, que
+    // es donde los runs de Latte tienen sus credenciales, y no el `system`.
+    primaryAccountId: (runtime) => {
+      const primary = hub.getPrimary();
+      return primary && primary.runtime === runtime ? primary.accountId : null;
+    },
     env,
     codex: {
       listMcpStatus: (accountId) => codex.listMcpStatus(accountId),
@@ -391,6 +432,86 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
   hub.attachCoordinationInjection(injectionPlanner, (workId) => service.refreshInstructionsAfterInjection(workId));
   service.attachCoordinationInjection(injectionPlanner);
 
+  // Conexiones MCP (brief `docs/briefs/2026-09-23-conexiones-mcp-arquitectura.md`).
+  // El mismo patrón de atado tardío, y por el mismo motivo: el gateway lee el
+  // repositorio, el planificador necesita el gateway, y el hub necesita el
+  // planificador. `secretBox` se resuelve una sola vez acá; si este sistema no
+  // puede cifrar, la caja lo dice y ninguna conexión se guarda -- nunca en
+  // claro (riesgo 1 de la sección 5).
+  const secretBox = options.secretBox ?? electronSecretBox();
+  const connectionTokens = new GatewayTokenRegistry();
+  const connectionGateway = new ConnectionGateway({
+    connections: {
+      get: (id) => repo.connections.get(id),
+      readTokens: (id) => repo.connections.readTokens(id, secretBox),
+      saveTokens: (id, tokens) => repo.connections.saveTokens(id, tokens, secretBox, new Date().toISOString()),
+      setState: (id, state, detail) => repo.connections.setState(id, state, detail, new Date().toISOString()),
+    },
+    tokens: connectionTokens,
+    listen: createGatewayListen(options.log),
+    log: options.log,
+    // El gateway se entera antes que nadie. Dos cosas, en este orden: queda
+    // escrito en `agents.log` -- id, servidor, alcance y estado, SIN contenido
+    // ni un solo token -- y el equipo interrumpe con una tarjeta en el chat de
+    // cada miembro que de verdad lleva esa conexión.
+    //
+    // No es un toast: el runtime, ante un token que no sirve, reporta `failed`
+    // y no `needs-auth` (medido en 1.6 del brief), así que sin este aviso nadie
+    // se entera y el trabajo se arruina en silencio.
+    onExpired: (connection, detail) => {
+      options.log?.(`[conexiones] vencida: ${connection.id} ${connection.name} alcance=${connection.scope}${connection.brandId ? `:${connection.brandId}` : ''} estado=expired motivo=${detail}`);
+      for (const memberId of connectionInjection.membersUsing(connection.id)) {
+        emitChat({ chatId: memberId, type: 'connection-expired', connectionId: connection.id, label: connection.label || connection.name, detail });
+      }
+    },
+  });
+  // Declarado con `let` y asignado abajo: `onExpired` lo LEE tarde (cuando una
+  // sesión vence), nunca durante la construcción, así que el ciclo gateway ->
+  // planificador -> gateway se rompe sin una capa de indirección de más.
+  const connectionInjection = new ConnectionInjectionPlanner({
+    repo: {
+      resolveForBrand: (brandId) => repo.connections.resolveForBrand(brandId),
+      hasTokens: (id) => repo.connections.hasTokens(id),
+    },
+    tokens: connectionTokens,
+    gateway: connectionGateway,
+    log: options.log,
+    audit: (event) => options.log?.(`[conexiones] inyectada: ${event.connectionId} ${event.name} alcance=${event.scope} estado=${event.state} miembro=${event.memberId}`),
+  });
+  hub.attachConnectionInjection(connectionInjection);
+  const connections = new ConnectionsService({
+    connections: repo.connections,
+    secretBox,
+    gateway: connectionGateway,
+    tokens: connectionTokens,
+    login: options.connectionLogin ?? ((request) => runConnectionLogin(request, { openLoginWindow: createLoginWindowOpener(options.log), log: options.log })),
+    listCliServers: () => service.listMcpServers(null),
+    // 1.4 del brief: la caché de needs-auth de Claude Code, en el perfil de la
+    // cuenta que los runs usan de verdad -- no en el `system`, que sería el
+    // mismo error de perfil que 1.5.
+    forgetCliNeedsAuth: (names) => {
+      const primary = hub.getPrimary();
+      // `envFor` devuelve `{}` para la cuenta del sistema: ahí el perfil es el
+      // de siempre (`~/.claude`), que es justamente donde están las tres
+      // entradas medidas en 1.4.
+      const dir = accounts.envFor('claude', primary?.runtime === 'claude' ? primary.accountId : null).CLAUDE_CONFIG_DIR
+        ?? env.CLAUDE_CONFIG_DIR
+        ?? path.join(os.homedir(), '.claude');
+      clearNeedsAuthEntries(dir, names, options.log);
+    },
+    log: options.log,
+    audit: (line) => options.log?.(line),
+    // Volver a entrar saca la tarjeta del chat de quien la tenía. El gateway
+    // sigue sirviendo sin reiniciar a nadie: por eso el aviso se puede retirar
+    // en vez de pedir que se cierre el chat.
+    onRestored: (connection) => {
+      for (const memberId of connectionInjection.membersUsing(connection.id)) {
+        emitChat({ chatId: memberId, type: 'connection-restored', connectionId: connection.id });
+      }
+    },
+  });
+  service.attachConnections(connections);
+
   const seeded = options.seedDemo === false ? false : seedDemoIfEmpty(repo, files, pack);
 
   // El hermano de `sweepStrayCodexServers`, pero del lado de la base: los
@@ -424,6 +545,9 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     accounts,
     coordinationMcpServer,
     coordinationTokens,
+    connectionGateway,
+    connectionTokens,
+    connections,
     info: { dataDir: paths.root, dbFile: paths.dbFile, engine: driver.kind, engineReason: reason, seeded, pack: pack ? `${pack.id}@${pack.version}` : null },
   };
 }

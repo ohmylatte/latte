@@ -19,6 +19,7 @@ import { UpdateBanner } from './UpdateBanner';
 import { ALL_BRAND_SCOPE, inKnowledgeScope, selectWorkBrief, workBrief, workTitles, type KnowledgeScope } from './brand-knowledge';
 import { KnowledgeScopeFilter } from './KnowledgeScope';
 import { ContextView } from './ContextView';
+import { ConnectionsView } from './ConnectionsView';
 import { HomeView } from './HomeView';
 import { ResumenView } from './ResumenView';
 import { TrabajoView } from './TrabajoView';
@@ -171,6 +172,21 @@ export const BRAND_ERROR_KEYS: Record<string, MessageKey> = {
   CONTEXT_STALE: 'error.brand.contextStale',
 };
 
+/**
+ * Los errores de una Conexión MCP. Familia propia por lo mismo que la de
+ * marca: cada uno de estos códigos existe porque hay un paso DISTINTO que dar
+ * —traer un id de cliente, volver a abrir la ventana, corregir la URL—, y la
+ * frase genérica de `UNAVAILABLE` no le dice a nadie cuál.
+ */
+export const CONNECTION_ERROR_KEYS: Record<string, MessageKey> = {
+  CONNECTION_CLIENT_ID_REQUIRED: 'error.connection.clientIdRequired',
+  CONNECTION_LOGIN_CANCELLED: 'error.connection.loginCancelled',
+  CONNECTION_LOGIN_TIMEOUT: 'error.connection.loginTimeout',
+  CONNECTION_DISCOVERY_FAILED: 'error.connection.discoveryFailed',
+  CONNECTION_STATE_MISMATCH: 'error.connection.stateMismatch',
+  CONNECTION_TOKEN_REFUSED: 'error.connection.tokenRefused',
+};
+
 export const APP_ERROR_KEYS: Record<string, MessageKey> = {
   FEATURE_DISABLED: 'error.app.featureDisabled',
   NOT_FOUND: 'error.app.notFound',
@@ -179,6 +195,10 @@ export const APP_ERROR_KEYS: Record<string, MessageKey> = {
   // El código de todo `ValidationError`, que sí cruza IPC por cualquier
   // camino: un nombre de marca vacío no es un problema de coordinación.
   VALIDATION: 'error.app.validation',
+  // El sistema no ofrece dónde cifrar un secreto (`safeStorage` en falso), así
+  // que una Conexión MCP no se guarda. La persona tiene que enterarse de POR
+  // QUÉ: si no, parece que el botón no hizo nada.
+  SECRET_STORE_UNAVAILABLE: 'error.app.secretStoreUnavailable',
 };
 
 /**
@@ -199,7 +219,7 @@ export const displayError = (e: unknown) => {
   // IPC, o sea de afuera; un mapa que se consulta con lo que viene de afuera
   // se consulta preguntando si la clave es SUYA.
   const lookup = (map: Record<string, MessageKey>): MessageKey | undefined => (Object.hasOwn(map, code) ? map[code] : undefined);
-  const key = lookup(COORDINATION_ERROR_KEYS) ?? lookup(BRAND_ERROR_KEYS) ?? lookup(APP_ERROR_KEYS);
+  const key = lookup(COORDINATION_ERROR_KEYS) ?? lookup(BRAND_ERROR_KEYS) ?? lookup(CONNECTION_ERROR_KEYS) ?? lookup(APP_ERROR_KEYS);
   if (key) return t(key);
   return e instanceof Error ? e.message : String(e);
 };
@@ -1274,6 +1294,10 @@ export function App() {
       {view === 'evidencia' && <EvidenciaView work={work} workId={work?.id ?? ''} documents={documents} decisions={decisions} untracked={untracked} states={homeStates} checking={homeChecking} formatDate={date} onTrack={trackFile} onImported={() => loadKnowledge(work?.brandId ?? '', work?.id)} busy={busy} />}
       {view === 'resultados' && <ResultadosView work={work} decisions={decisions} formatDate={date} />}
       {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={(next) => { if (next === 'brief') setLayout('review'); setView(next); }} work={work} brandName={brand?.name ?? ''} documents={visibleDocuments} selectedId={selectedDocId} onSelect={id => brand && setSelectedDoc(prev => ({ ...prev, [brand.id]: id }))} onDocumentsChanged={async () => { if (brand) await loadKnowledge(brand.id, work?.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} currentWorkId={work?.id ?? null} workTitles={titlesByWork} showWorkDelta={showWorkDelta} />}
+      {/* Marca -> Conexiones: las de esta marca, mas las globales heredadas.
+          Vive debajo del contexto porque es la misma pantalla de marca, y no
+          adentro de `ContextView`, que es presentacional y no habla con nadie. */}
+      {view === 'context' && brand && <ConnectionsView brandId={brand.id} brandName={brand.name} onNotice={setNotice} onError={setError} />}
       {view === 'context' && brand && <ContextView
         brand={brand}
         proposals={contextProposals}

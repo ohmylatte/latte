@@ -38,8 +38,8 @@ describe.each(ENGINES)('coordination schema (v12) on %s', (engine) => {
   });
 
   it('bumps schema to 12 and creates all 7 coordination tables', () => {
-    expect(SCHEMA_VERSION).toBe('12');
-    expect(repo.getMeta('schema_version')).toBe('12');
+    expect(SCHEMA_VERSION).toBe('13');
+    expect(repo.getMeta('schema_version')).toBe('13');
     for (const table of COORDINATION_TABLES) {
       expect(driver.get(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, [table])?.name).toBe(table);
     }
@@ -48,7 +48,7 @@ describe.each(ENGINES)('coordination schema (v12) on %s', (engine) => {
   it('is idempotent: migrating an already-migrated database does not throw and does not duplicate rows', () => {
     expect(() => repo.migrate()).not.toThrow();
     expect(() => repo.migrate()).not.toThrow();
-    expect(repo.getMeta('schema_version')).toBe('12');
+    expect(repo.getMeta('schema_version')).toBe('13');
     // No ALTER is needed for v12: every coordination column ships in the initial
     // CREATE TABLE, so a second migrate() must not have grown any column list.
     const runColumns = driver.all<{ name: string }>("SELECT name FROM pragma_table_info('coordination_run')").map((c) => c.name);

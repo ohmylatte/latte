@@ -59,7 +59,15 @@ export interface AdapterStartInput {
 export type AdapterMcpServer =
   | {
     kind: 'http';
-    name: 'latte_coordination';
+    /**
+     * `latte_coordination`, o `latte_conn_<slug>` por cada Conexión MCP que le
+     * toca a este miembro (brief de conexiones, 4.3: "el nombre del servidor
+     * namespaceado por conexión"). Dejó de ser un literal cuando el gateway de
+     * conexiones empezó a inyectar varios servidores http en un mismo miembro;
+     * el nombre se filtra al de la tool (`mcp__latte_conn_theagentcy__eco`),
+     * así que es parte del contrato que ve el modelo.
+     */
+    name: string;
     /** Streamable HTTP, always 127.0.0.1 plus a random port. */
     url: string;
     /** Opaque bearer, scoped to this member's grant. MUST be kept off argv (a spawned process's command line is visible to every other process on the machine). */

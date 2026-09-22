@@ -1,8 +1,23 @@
 import { createHash } from 'node:crypto';
 import type { AdapterMcpServer } from '../types';
 
-/** Codex reads the token only from this env var name; Phase 5 has exactly one http server type (`latte_coordination`), so one fixed name is enough. A second per-member-token server type would need its own. */
+/** Codex reads the coordination token only from this env var name. Se mantiene fijo para `latte_coordination`: es el nombre que ya viaja en procesos vivos y en los tests de la fase 5. */
 export const CODEX_COORD_TOKEN_ENV = 'LATTE_COORD_TOKEN';
+
+/**
+ * El nombre de la variable de entorno de la que Codex lee el bearer de UN
+ * servidor http. Hasta las Conexiones MCP había exactamente uno
+ * (`latte_coordination`) y un nombre fijo alcanzaba; ahora un miembro puede
+ * llevar varias conexiones a la vez, y dos servidores que compartieran nombre
+ * de variable se pisarían el token en silencio — el peor fallo posible, porque
+ * el que perdiera se conectaría con la credencial del otro.
+ *
+ * Determinista y derivado del nombre del servidor, que ya es único por miembro.
+ */
+export function codexTokenEnvVar(serverName: string): string {
+  if (serverName === 'latte_coordination') return CODEX_COORD_TOKEN_ENV;
+  return `LATTE_MCP_TOKEN_${serverName.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+}
 
 /**
  * Identifies whether two `AdapterMcpServer[]` describe the SAME Codex
@@ -64,7 +79,7 @@ export function codexMcpConfigOverrides(servers: AdapterMcpServer[]): string[] {
   for (const server of servers) {
     if (server.kind === 'http') {
       args.push('-c', `mcp_servers.${server.name}.url=${server.url}`);
-      args.push('-c', `mcp_servers.${server.name}.bearer_token_env_var=${CODEX_COORD_TOKEN_ENV}`);
+      args.push('-c', `mcp_servers.${server.name}.bearer_token_env_var=${codexTokenEnvVar(server.name)}`);
     } else {
       args.push('-c', `mcp_servers.${server.name}.command=${server.command}`);
       args.push('-c', `mcp_servers.${server.name}.args=${JSON.stringify(server.args)}`);
@@ -86,6 +101,12 @@ export function codexMcpConfigOverrides(servers: AdapterMcpServer[]): string[] {
  * different env than the `codex app-server` process's own.
  */
 export function codexMcpConfigEnv(servers: AdapterMcpServer[]): Record<string, string> {
-  const http = servers.find((s): s is Extract<AdapterMcpServer, { kind: 'http' }> => s.kind === 'http');
-  return http ? { [CODEX_COORD_TOKEN_ENV]: http.token } : {};
+  const env: Record<string, string> = {};
+  // TODOS los http, no el primero: un miembro puede llevar `latte_coordination`
+  // y varias Conexiones MCP a la vez, y cada una tiene su bearer. Buscar sólo
+  // uno dejaba a las demás sin token y el runtime las reportaba como `failed`.
+  for (const server of servers) {
+    if (server.kind === 'http') env[codexTokenEnvVar(server.name)] = server.token;
+  }
+  return env;
 }

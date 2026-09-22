@@ -238,6 +238,87 @@ export interface McpServerInput {
   env: string[];
 }
 
+// --- Conexiones: las cuentas que Latte tiene con un servidor MCP --------------
+//
+// Brief `docs/briefs/2026-09-23-conexiones-mcp-arquitectura.md`. A diferencia
+// de `McpServer` (que Latte sólo LEE del registro del CLI, de sólo lectura
+// desde la decisión C), una Conexión es de Latte: ella hace el OAuth, ella
+// guarda los tokens cifrados y ella le da a cada miembro un bearer propio
+// contra su gateway local. El proveedor nunca le habla directo a un runtime.
+
+/**
+ * Global = todas las marcas (Meta Ads, una cuenta pro de Canva). Brand = una
+ * sola (theagentcy, Gmail). Se ELIGE al conectar, no se deduce (decisión A);
+ * para el mismo servidor la de marca gana sobre la global.
+ */
+export type ConnectionScope = 'global' | 'brand';
+
+/**
+ * `expired` es el estado que justifica todo el gateway: el proveedor devolvió
+ * 401 y no hubo refresh posible, así que la persona tiene que volver a entrar.
+ * `error` es cualquier otra cosa que impide usarla; `disconnected` es "existe
+ * pero todavía nadie se logueó".
+ */
+export type ConnectionState = 'connected' | 'expired' | 'error' | 'disconnected';
+
+export type ConnectionAuthKind = 'oauth' | 'header' | 'none';
+
+export interface Connection {
+  id: string;
+  /** Slug estable. Namespacea el servidor MCP que ve el miembro, así dos conexiones al mismo servidor no se pisan. */
+  name: string;
+  /** El nombre que lee la persona. */
+  label: string;
+  url: string;
+  transport: 'http';
+  authKind: ConnectionAuthKind;
+  /** Sólo para los servidores que no hacen registro dinámico de cliente; cuando existe, el módulo OAuth se saltea el DCR. */
+  clientId: string | null;
+  /** Lo que el servidor dice de la cuenta (mail, cuenta publicitaria). Nunca un secreto. */
+  identity: string | null;
+  scope: ConnectionScope;
+  /** Obligatorio cuando `scope` es `brand`, siempre null cuando es `global`. */
+  brandId: string | null;
+  state: ConnectionState;
+  /** Por qué está vencida o en error. Vacío cuando no hay nada que explicar. */
+  stateDetail: string;
+  /**
+   * Derivado, nunca una columna: true cuando esta fila es una conexión GLOBAL
+   * vista desde la pantalla de una marca. La marca la usa pero no la puede
+   * quitar desde ahí.
+   */
+  inherited: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Un servidor http del registro del CLI que todavía no es una Conexión de
+ * Latte. La importación es de UNA VEZ (decisión C): después manda Latte, y el
+ * registro queda de sólo lectura.
+ */
+export interface ImportableConnection {
+  runtime: ChatRuntime;
+  name: string;
+  url: string;
+  /** El alcance que Latte sugiere para este servidor. Siempre editable. */
+  suggestedScope: ConnectionScope;
+  /** Ya existe una conexión con esa URL o ese nombre: importarla otra vez no haría nada. */
+  alreadyImported: boolean;
+}
+
+/** Lo que pide la pantalla "Agregar conexión": nombre, URL y alcance. El resto lo descubre Latte. */
+export interface ConnectionInput {
+  name: string;
+  label?: string;
+  url: string;
+  scope: ConnectionScope;
+  /** Obligatorio si `scope` es `brand`. */
+  brandId?: string | null;
+  /** Para un servidor sin registro dinámico. */
+  clientId?: string | null;
+}
+
 /** A Markdown file in the work folder that is not a tracked document yet. */
 /**
  * Everything in the work folder that is NOT a tracked document: the client's
@@ -616,6 +697,18 @@ export type ChatEvent =
    * by Latte, so the UI never sums anything itself.
    */
   | { chatId: string; type: 'usage'; turn: ChatUsage; total: ChatUsage }
+  /**
+   * Una Conexión MCP venció A MITAD DE RUN y el gateway no la pudo renovar.
+   *
+   * Es un evento de chat y no un toast a propósito (brief de conexiones, 4.3):
+   * el runtime, ante un token que no sirve, reporta `failed` y NO `needs-auth`
+   * (medido en 1.6), así que sin esto nadie le avisa a nadie y el trabajo se
+   * arruina en silencio. El equipo interrumpe con la pregunta, en el chat
+   * donde la persona está mirando, con el botón de volver a entrar.
+   */
+  | { chatId: string; type: 'connection-expired'; connectionId: string; label: string; detail: string }
+  /** Volvió a entrar: la tarjeta se va sola y el gateway sigue sirviendo sin reiniciar a nadie. */
+  | { chatId: string; type: 'connection-restored'; connectionId: string }
   | { chatId: string; type: 'closed'; reason: string };
 export type PermissionReply = 'once' | 'always' | 'reject';
 export interface ChatRuntimeStatus { available: boolean; detail: string; version: string | null; models: string[]; defaultModel: string | null }
@@ -1427,16 +1520,29 @@ export interface LatteAPI {
   listAgentRuntimes(): Promise<AgentRuntimeInfo[]>;
   /** MCP servers each runtime has configured, with the real connection state it reports. */
   /** Omit the runtime for all three; pass one to get just that one, which lands sooner. */
-  listMcpServers(runtime?: ChatRuntime | null): Promise<McpRuntimeTools[]>;
-  addMcpServer(runtime: 'claude' | 'codex', input: McpServerInput): Promise<void>;
-  removeMcpServer(runtime: 'claude' | 'codex', name: string): Promise<void>;
-  /** Codex MCP OAuth through `mcpServer/oauth/login`. The URL is opened in the system browser. */
-  loginMcpServer(runtime: 'codex', name: string): Promise<AccountLoginStart>;
   /**
-   * Interactive `claude` in this work's folder with the account's CLAUDE_CONFIG_DIR,
-   * so `/mcp` login tokens land where Latte's headless runs look.
+   * El registro del CLI, DE SÓLO LECTURA desde la decisión C del brief de
+   * conexiones: Latte es dueña de las credenciales, así que ya no se puede
+   * agregar un servidor desde acá ni completar su OAuth con una terminal
+   * embebida. Lo que hay se lee, se importa una vez como Conexión, y se puede
+   * quitar para terminar la mudanza.
    */
-  authenticateClaudeMcp(workId: string, accountId: string | null): Promise<AccountLoginStart>;
+  listMcpServers(runtime?: ChatRuntime | null): Promise<McpRuntimeTools[]>;
+  removeMcpServer(runtime: 'claude' | 'codex', name: string): Promise<void>;
+
+  // --- Conexiones MCP (el gateway local es dueño de las credenciales) -------
+  /** Las de esta marca más las globales, marcadas como heredadas. `null` = sólo las globales (Ajustes). */
+  listConnections(brandId: string | null): Promise<Connection[]>;
+  /** Crea la conexión y abre el login. Si el login falla, no queda ninguna fila a medias. */
+  connectConnection(input: ConnectionInput): Promise<Connection>;
+  /** Volver a entrar a una que ya existe: el botón de una conexión vencida. */
+  reconnectConnection(connectionId: string): Promise<Connection>;
+  /** Se lleva las credenciales (y las revoca si el servidor publica cómo) y deja la fila. */
+  disconnectConnection(connectionId: string): Promise<Connection>;
+  deleteConnection(connectionId: string): Promise<void>;
+  /** Los servidores http del registro del CLI que todavía no son Conexiones. */
+  listImportableConnections(): Promise<ImportableConnection[]>;
+
   addAgentAccount(runtime: 'claude' | 'codex', label: string): Promise<AgentAccount>;
   removeAgentAccount(runtime: 'claude' | 'codex', accountId: string): Promise<void>;
   /** Starts the runtime's own login (browser OAuth). Claude runs inside an embedded terminal session; Codex returns a URL. */

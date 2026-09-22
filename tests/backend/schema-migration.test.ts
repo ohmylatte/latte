@@ -114,7 +114,7 @@ describe.each(ENGINES)('schema 7 → 8 migration on %s', (engine) => {
     const repo = new LatteRepository(driver);
     repo.migrate();
     expect(repo.getMeta('schema_version')).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe('12');
+    expect(SCHEMA_VERSION).toBe('13');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='generations'")?.name).toBe('generations');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_kit_versions'")?.name).toBe('brand_kit_versions');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='learned_skills'")?.name).toBe('learned_skills');
@@ -154,8 +154,8 @@ describe.each(ENGINES)('schema 8 → 9 migration on %s', (engine) => {
 
     const repo = new LatteRepository(driver);
     repo.migrate();
-    expect(repo.getMeta('schema_version')).toBe('12');
-    expect(SCHEMA_VERSION).toBe('12');
+    expect(repo.getMeta('schema_version')).toBe('13');
+    expect(SCHEMA_VERSION).toBe('13');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_archives'")?.name).toBe('brand_archives');
     expect(repo.getBrand('brd_1')).toMatchObject({ name: 'Casa', context: 'tono', archivedAt: null });
     expect(repo.listBrands().map((b) => b.id)).toEqual(['brd_1']);
@@ -193,8 +193,8 @@ describe.each(ENGINES)('schema 9 → 10 migration on %s', (engine) => {
 
     const repo = new LatteRepository(driver);
     repo.migrate();
-    expect(repo.getMeta('schema_version')).toBe('12');
-    expect(SCHEMA_VERSION).toBe('12');
+    expect(repo.getMeta('schema_version')).toBe('13');
+    expect(SCHEMA_VERSION).toBe('13');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_context_proposals'")?.name).toBe('brand_context_proposals');
     expect(driver.all<{ name: string }>('PRAGMA table_info(brand_context_proposals)').map((c) => c.name)).toEqual(expect.arrayContaining(['source_member_id', 'source_role_id', 'source_runtime', 'base_fingerprint']));
     expect(repo.getBrand('brd_1')).toMatchObject({ name: 'Casa', context: 'tono' });
@@ -238,8 +238,8 @@ describe.each(ENGINES)('schema 10 → 11 migration on %s', (engine) => {
 
     const repo = new LatteRepository(driver);
     repo.migrate();
-    expect(repo.getMeta('schema_version')).toBe('12');
-    expect(SCHEMA_VERSION).toBe('12');
+    expect(repo.getMeta('schema_version')).toBe('13');
+    expect(SCHEMA_VERSION).toBe('13');
     expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='brand_context_revisions'")?.name).toBe('brand_context_revisions');
     expect(driver.all<{ name: string }>('PRAGMA table_info(brand_context_revisions)').map((c) => c.name)).toEqual(
       expect.arrayContaining(['id', 'brand_id', 'source', 'origin', 'content', 'fingerprint', 'created_at']),
@@ -299,10 +299,69 @@ describe.each(ENGINES)('schema 10 → 11 migration on %s', (engine) => {
     // The ALTER is pragma-gated: running it again would throw, so a v10 file
     // that already has the columns has to migrate cleanly.
     expect(() => repo.migrate()).not.toThrow();
-    expect(repo.getMeta('schema_version')).toBe('12');
+    expect(repo.getMeta('schema_version')).toBe('13');
     expect(repo.listBrandContextProposals('brd_1')).toEqual([
       expect.objectContaining({ id: 'bcp_superseded', decidedReason: 'superseded', supersededBy: 'bcp_newer' }),
     ]);
+    repo.close();
+    driver = undefined;
+  });
+});
+
+/**
+ * Esquema 12 → 13: las Conexiones MCP (brief
+ * `docs/briefs/2026-09-23-conexiones-mcp-arquitectura.md`, 4.3). Aditivo puro,
+ * sin un solo ALTER, así que lo que hay que probar es que un archivo v12 CON
+ * DATOS se respalda, sube a 13 con las dos tablas nuevas y no pierde nada — y
+ * que volver a migrarlo es idempotente.
+ */
+describe.each(ENGINES)('schema 12 → 13 migration on %s', (engine) => {
+  let dir: string;
+  let driver: SqlDriver | undefined;
+  afterEach(() => {
+    try { driver?.close(); } catch { /* closed */ }
+    if (dir) removeDir(dir);
+  });
+
+  it('respalda el archivo v12, crea connections y connection_tokens, y no toca lo que ya había', async () => {
+    dir = makeTempDir(`latte-mig12-${engine.replace(/[^a-z]/g, '')}-`);
+    const file = path.join(dir, 'latte.db');
+    const opened = await openDriver(file, engine);
+    driver = opened.driver;
+    driver.exec(UPSTREAM_V7);
+    driver.run('INSERT INTO meta(key, value) VALUES (?, ?)', ['schema_version', '12']);
+    driver.run('INSERT INTO brands(id, name, context, created_at) VALUES (?, ?, ?, ?)', [
+      'brd_1', 'Casa', 'tono', '2026-01-01T00:00:00.000Z',
+    ]);
+    driver.run('INSERT INTO works(id, brand_id, title, brief, dir, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [
+      'wrk_1', 'brd_1', 'Uno', '# Viejo', null, '2026-01-02T00:00:00.000Z',
+    ]);
+
+    const backup = prepareForMigration(file, '12', SCHEMA_VERSION, { now: () => new Date('2026-09-23T12:00:00.000Z') });
+    expect(backup).toBe(path.join(dir, 'backups', 'latte-v12-20260923T120000.db'));
+    expect(fs.existsSync(backup!)).toBe(true);
+
+    const repo = new LatteRepository(driver);
+    repo.migrate();
+    expect(repo.getMeta('schema_version')).toBe('13');
+    expect(SCHEMA_VERSION).toBe('13');
+    expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='connections'")?.name).toBe('connections');
+    expect(driver.get("SELECT name FROM sqlite_master WHERE type='table' AND name='connection_tokens'")?.name).toBe('connection_tokens');
+    // Lo que ya estaba sigue estando: la migración es aditiva de verdad.
+    expect(repo.getBrand('brd_1')).toMatchObject({ name: 'Casa', context: 'tono' });
+    expect(repo.getWork('wrk_1').title).toBe('Uno');
+    expect(repo.connections.list(null)).toEqual([]);
+
+    // Y es idempotente: correrla de nuevo sobre la base ya migrada, con una
+    // conexión adentro, no tira ni borra nada.
+    repo.connections.insert({
+      id: 'con_1', name: 'theagentcy', label: 'The Agentcy', url: 'https://theagentcy.app/api/mcp',
+      transport: 'http', authKind: 'oauth', clientId: null, identity: null, scope: 'global', brandId: null,
+      state: 'disconnected', stateDetail: '', memberOverride: null,
+      createdAt: '2026-09-23T12:00:00.000Z', updatedAt: '2026-09-23T12:00:00.000Z',
+    });
+    expect(() => repo.migrate()).not.toThrow();
+    expect(repo.connections.list(null).map((c) => c.id)).toEqual(['con_1']);
     repo.close();
     driver = undefined;
   });

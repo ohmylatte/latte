@@ -1301,3 +1301,39 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 */
 .team-tab .av{flex:0 0 22px}
 .team-tab{align-items:center}
+
+/* --- Conexiones MCP -------------------------------------------------------- */
+/*
+   La fila tiene la anatomia del equipo y no una propia: punto de estado,
+   nombre, UNA linea y la hora. Reusa `.provider-card`, que ya resuelve el
+   borde, el fondo y el espaciado -- una tarjeta nueva con las mismas medidas
+   seria una segunda verdad que se despega de la primera al primer cambio.
+
+   El detalle del error va en esa MISMA linea. Una fila que crece cuando algo
+   falla mueve la lista justo cuando hay que leerla.
+*/
+.connections-view .provider-list{display:flex;flex-direction:column;gap:8px;margin:14px 0}
+.connection-card small{display:block;color:var(--muted);font-size:var(--text-sm);margin-top:4px;overflow-wrap:anywhere}
+.connection-card>div{min-width:0;flex:1}
+.connection-dot{display:grid;place-items:center;flex-shrink:0;color:var(--muted-soft)}
+.connection-dot.connected{color:var(--green-ok)}
+.connection-dot.expired{color:var(--rust)}
+.connection-dot.error{color:var(--danger)}
+.connection-when{color:var(--muted-soft);font-size:var(--text-sm);flex-shrink:0;white-space:nowrap}
+/* Una global vista desde una marca: se usa, no se toca. El gris lo dice antes
+   que cualquier texto, y el `tag` la nombra para quien no lea el color. */
+.connection-card.inherited{background:var(--paper-deep);color:var(--muted)}
+.connection-card.inherited strong{font-weight:400}
+.connection-card.expired{border-color:var(--rust-soft);background:var(--rust-wash)}
+.connection-card.error{border-color:var(--rust-soft)}
+.connections-subhead{font-size:var(--text-base);font-weight:550;margin:26px 0 0;letter-spacing:-.2px}
+.connections-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:18px}
+.connection-form input,.connection-form select{width:100%;margin-bottom:4px}
+/* El aviso de un alcance global: no es decoracion. Una conexion global mal
+   elegida toca a TODAS las marcas, y esta linea es la unica defensa que hay
+   antes de apretar. */
+.connection-form .footnote.warn{color:var(--rust-deep);background:var(--rust-wash);border:1px solid var(--rust-soft);border-radius:var(--radius-sm);padding:7px 9px}
+/* El aviso de conexion vencida va en el hilo, con el acento de alerta: es una
+   accion pendiente, no una nota al pie. */
+.chat-card.connection-expired{border-left-color:var(--rust);background:var(--rust-wash)}
+.chat-card.connection-expired p{margin:6px 0 0;color:var(--rust-deep)}

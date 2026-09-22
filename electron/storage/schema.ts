@@ -1,6 +1,7 @@
 import { ARCHIVE_SCHEMA_SQL } from './archiveSchema';
 import { BRAND_CONTEXT_SCHEMA_SQL } from './brandContextSchema';
 import { BRANDING_SCHEMA_SQL } from './brandingSchema';
+import { CONNECTIONS_SCHEMA_SQL } from './connectionsSchema';
 import { COORDINATION_SCHEMA_SQL } from './coordinationSchema';
 import { GENERATION_SCHEMA_SQL } from './generationSchema';
 import { LEARNING_SCHEMA_SQL } from './learningSchema';
@@ -130,7 +131,7 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-` + GENERATION_SCHEMA_SQL + BRANDING_SCHEMA_SQL + LEARNING_SCHEMA_SQL + ARCHIVE_SCHEMA_SQL + BRAND_CONTEXT_SCHEMA_SQL + COORDINATION_SCHEMA_SQL;
+` + GENERATION_SCHEMA_SQL + BRANDING_SCHEMA_SQL + LEARNING_SCHEMA_SQL + ARCHIVE_SCHEMA_SQL + BRAND_CONTEXT_SCHEMA_SQL + COORDINATION_SCHEMA_SQL + CONNECTIONS_SCHEMA_SQL;
 
 /**
  * Not bumped for works.expected_output / works.result_path / works.out_of_scope_stages
@@ -152,5 +153,10 @@ CREATE TABLE IF NOT EXISTS meta (
  * pragma_table_info yet — that path is reserved for a later nullable column
  * on one of these same tables, the same way documents/works/team_members grew
  * columns above.
+ * Schema 13 adds connections + connection_tokens (conexiones MCP: el gateway
+ * local es dueño de las credenciales del proveedor). Mismo razonamiento que
+ * 12: todo viaja en el CREATE TABLE inicial de cada tabla, así que no hay
+ * ningún ALTER que gatear. Los secretos viven en una tabla APARTE a propósito
+ * -- ver `connectionsSchema.ts`.
  */
-export const SCHEMA_VERSION = '12';
+export const SCHEMA_VERSION = '13';
