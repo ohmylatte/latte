@@ -68,6 +68,18 @@ const es = {
   'settings.modeSimple': 'Simple',
   'settings.modeAdvanced': 'Avanzado',
   'settings.modeHelp': 'En modo simple Latte oculta el selector de modelo, el esfuerzo y el runtime de cada miembro. Podés volver al avanzado cuando quieras.',
+  // El `summary:` del frontmatter del pack, en el idioma de la interfaz.
+  // En castellano es la MISMA frase que el `.md`, palabra por palabra: cambiar
+  // de idioma y volver no puede cambiar el texto que la persona ya conocía.
+  // Ver `src/pack-i18n.ts`.
+  'role.summary.assistant': 'Trabaja el brief con vos sin un rol fijo. Es el punto de partida.',
+  'role.summary.strategist': 'Compara opciones contra el objetivo y deja fundamentos, tradeoffs y próximos pasos.',
+  'role.summary.researcher': 'Reúne y contrasta evidencia; devuelve fuentes, hallazgos y grado de certeza.',
+  'role.summary.analyst': 'Interpreta datos ya disponibles; devuelve cálculos, supuestos y límites.',
+  'role.summary.reviewer': 'Revisa un entregable contra el brief; separa errores de hecho, desacuerdos estratégicos y estilo.',
+  'role.summary.paid-media': 'Analizá campañas, inversión y resultados con evidencia; priorizá acciones sin modificar cuentas por tu cuenta.',
+  'role.summary.sales-copywriter': 'Convertí briefs en copy de venta listo para usar, con una promesa defendible, prueba real y un CTA claro.',
+  'skill.summary.writing': 'Corta muletillas, frases vacías y cierres de efecto. Pide concreto: nombres, números, fechas, mecanismos.',
   'settings.coordination': 'Coordinación del equipo',
   'settings.coordinationHelp': 'Los miembros pueden proponer un plan, despachar tareas y reportarse entre sí. Apagalo si querés un equipo de conversaciones sueltas.',
   'common.roles': '{count, plural, one {# rol} other {# roles}}',
@@ -979,6 +991,14 @@ const en: Record<MessageKey, string> = {
   'settings.modeSimple': 'Simple',
   'settings.modeAdvanced': 'Advanced',
   'settings.modeHelp': 'In simple mode Latte hides the model picker, effort and each member’s runtime. You can switch back to advanced at any time.',
+  'role.summary.assistant': 'Works the brief with you without a fixed role. It is the starting point.',
+  'role.summary.strategist': 'Compares options against the goal and leaves reasoning, tradeoffs and next steps.',
+  'role.summary.researcher': 'Gathers and cross-checks evidence; returns sources, findings and how certain each one is.',
+  'role.summary.analyst': 'Interprets data you already have; returns calculations, assumptions and limits.',
+  'role.summary.reviewer': 'Reviews a deliverable against the brief; separates factual errors, strategic disagreements and style.',
+  'role.summary.paid-media': 'Analyses campaigns, spend and results with evidence; prioritises actions without touching accounts on its own.',
+  'role.summary.sales-copywriter': 'Turns briefs into sales copy ready to use, with a defensible promise, real proof and a clear CTA.',
+  'skill.summary.writing': 'Cuts filler, empty phrases and punchy endings. Asks for the concrete: names, numbers, dates, mechanisms.',
   'settings.coordination': 'Team coordination',
   'settings.coordinationHelp': 'Members can propose a plan, dispatch tasks and report back to each other. Turn it off if you want a team of loose conversations.',
   'common.roles': '{count, plural, one {# role} other {# roles}}',
