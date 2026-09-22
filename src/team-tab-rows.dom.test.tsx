@@ -100,6 +100,19 @@ describe('C2: la pestaña de un miembro tiene la anatomía de toda fila', () => 
     expect(text.querySelector('.team-tab-last')).not.toBeNull();
   });
 
+  /**
+   * C8: el color por rol vuelve TAMBIEN a la pestaña. Es la misma persona en
+   * las dos superficies: si la lista la pinta y la pestaña no, el avatar deja
+   * de servir para reconocerla de un vistazo, que es lo unico que hace.
+   */
+  it('el avatar lleva el rol del miembro, para que se lo reconozca', () => {
+    const { container } = mount();
+    const avatar = container.querySelector('.team-tab .coord-av')!;
+    expect(avatar.getAttribute('data-role')).toBe('community-manager');
+    // Y el estado sigue estando en el punto, y en uno solo.
+    expect(avatar.querySelectorAll('.coord-dot')).toHaveLength(1);
+  });
+
   it('lo que ese miembro hace ahora va en UNA línea bajo el nombre', () => {
     const { container } = mount();
     const line = container.querySelector('.team-tab .team-tab-last')!;

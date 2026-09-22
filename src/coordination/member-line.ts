@@ -24,6 +24,12 @@ export type MemberDot =
   | 'live'
   /** Su último hecho fue un reporte y está ocioso. */
   | 'ok'
+  /**
+   * Su ultimo despacho volvio mal. Criterio 2: fallar no es estar quieto --es
+   * un hecho que la persona tiene que ver-- y tampoco es el acento, que
+   * significa vivo.
+   */
+  | 'failed'
   /** Quieto. Todo lo que no es ninguna de las dos de arriba. */
   | 'idle';
 
@@ -138,7 +144,7 @@ export function memberSignal(input: MemberSignalInput, memberId: string): Member
     case 'dispatchClosed':
       return { dot: 'idle', line: t('coord.member.closed'), at: last.at, asks: 0, urgent: false };
     case 'dispatchFailed':
-      return { dot: 'idle', line: last.text ? t('coord.member.failed', { text: firstLine(last.text, 80) }) : t('team.inbox.dispatchFailedBare'), at: last.at, asks: 0, urgent: false };
+      return { dot: 'failed', line: last.text ? t('coord.member.failed', { text: firstLine(last.text, 80) }) : t('team.inbox.dispatchFailedBare'), at: last.at, asks: 0, urgent: false };
     case 'answer':
       return { dot: 'idle', line: t('coord.member.answered'), at: last.at, asks: 0, urgent: false };
     case 'ask':

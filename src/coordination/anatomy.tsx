@@ -81,7 +81,9 @@ export function CoordRow(props: CoordRowProps) {
           ? <span className="coord-badge">{badge}</span>
           : <CoordTime at={props.at} label={props.time ?? ''} />}
       </span>
-      <span className={'coord-row-line' + (props.urgent ? ' is-urgent' : '')}>{props.line}</span>
+      {/* El acento significa VIVO; el fallo tiene su propio color. Nunca los
+          dos: una fila que fallo no esta esperandote nada. */}
+      <span className={'coord-row-line' + (props.urgent ? ' is-urgent' : props.dot === 'failed' ? ' is-failed' : '')}>{props.line}</span>
     </span>
   </button>;
 }

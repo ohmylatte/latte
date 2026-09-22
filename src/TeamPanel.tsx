@@ -597,7 +597,7 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', pendi
           ? <span className="team-tab-pending coord-badge" title={t('team.inbox.pending', { count: pending })}>{pending}</span>
           : <CoordTime at={at} label={time} />}
       </span>
-      {lastExchange && <span className={'team-tab-last coord-row-line' + (urgent ? ' is-urgent' : '')}>{lastExchange}</span>}
+      {lastExchange && <span className={'team-tab-last coord-row-line' + (urgent ? ' is-urgent' : signal === 'failed' ? ' is-failed' : '')}>{lastExchange}</span>}
     </span>
     <span className="visually-hidden">{statusLabel(status, attention)}</span>
   </button>;

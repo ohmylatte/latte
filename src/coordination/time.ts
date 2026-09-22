@@ -15,7 +15,11 @@ export function hourOf(value: string | null | undefined, locale = 'es-AR'): stri
   if (!value) return '';
   const at = new Date(value);
   if (Number.isNaN(at.getTime())) return '';
-  return at.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  // `hourCycle: 'h23'` y no el default del locale: en es-AR el default da
+  // "06:50 p. m." --once caracteres para decir lo que "18:50" dice en cinco--
+  // y esos seis de mas salian del ancho del NOMBRE del miembro, que es lo
+  // unico de la fila que no se puede recortar sin perder de quien se habla.
+  return at.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 }
 
 /**

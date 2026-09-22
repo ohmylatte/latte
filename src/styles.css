@@ -290,9 +290,12 @@ html,body,#root{height:100%;overflow:hidden}
   --role-assistant:#aa4e31; /* --rust: la marca, para el punto de partida */
   --role-strategist:#5c6b4a;
   --role-researcher:#4a6272;
-  --role-analyst:#9a7233;
+  /* C8: oscurecido de #9a7233 (4.10:1) para llegar a AA contra --on-accent: */
+  --role-analyst:#8f6a2f;
   --role-reviewer:#7a4f6b;
-  --role-default:#8a7f70;
+  /* C8: idem, de #8a7f70 (3.70:1). Las iniciales son 12px: no son texto
+     grande, asi que no les alcanza con 3:1. */
+  --role-default:#787060;
 }
 .team-avatar{background:var(--role-default)}
 .team-avatar[data-role=assistant]{background:var(--role-assistant)}
@@ -971,7 +974,9 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .team-view-columns{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,auto) minmax(0,1fr);gap:10px;flex:1;min-height:0;min-width:0}
 .team-view-list{margin:0;overflow-y:auto;min-width:0;min-height:0;max-height:34vh;padding-right:4px;scrollbar-width:thin}
 .team-view-list .team-inbox-row{padding:7px 6px;border-radius:var(--radius-sm)}
-.team-view-list .team-inbox-row.is-selected{background:var(--paper-raised);border-left:2px solid var(--rust);padding-left:8px}
+/* C8: la seleccion la pinta el boton de adentro --fondo --foam y borde --line
+   en los cuatro lados--, no un borde de acento a la izquierda: el acento
+   significa vivo, no "estas parado aca". */
 .team-inbox-open-chat{margin-left:auto;border:0;padding:2px 4px;font-size:var(--text-sm);color:var(--rust);flex-shrink:0}
 .team-view-thread{display:flex;flex-direction:column;min-width:0;min-height:0;overflow-y:auto;border-top:1px solid var(--line);padding-top:8px;scrollbar-width:thin}
 .team-view-thread-title{margin:0 0 8px}
@@ -1001,14 +1006,25 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
    listo es --green-ok; fallo es --danger; todo lo demas es gris. Nada de hex
    sueltos: cada color de este bloque sale de un token. El piso tipografico es
    --text-sm; --text-xs no existe. */
-.coord-av{width:30px;height:30px;flex:0 0 30px;border-radius:var(--radius-pill);background:var(--paper-deep);color:var(--ink);font-weight:600;font-size:var(--text-sm);display:flex;align-items:center;justify-content:center;position:relative}
+/* C8: EL COLOR DEL AVATAR ES IDENTIDAD, NO ESTADO.
+   Reconocer al miembro de un vistazo es lo que hace escaneable una lista de
+   tres o cuatro filas iguales. Sale de los MISMOS tokens --role-* que ya
+   pintaban .team-avatar: un segundo sistema de color seria dos identidades
+   para la misma persona. El estado sigue siendo el punto, y sigue siendo uno. */
+.coord-av{width:30px;height:30px;flex:0 0 30px;border-radius:var(--radius-pill);background:var(--role-default);color:var(--on-accent);font-weight:600;font-size:var(--text-sm);display:flex;align-items:center;justify-content:center;position:relative}
+.coord-av[data-role=assistant]{background:var(--role-assistant)}
+.coord-av[data-role=strategist]{background:var(--role-strategist)}
+.coord-av[data-role=researcher]{background:var(--role-researcher)}
+.coord-av[data-role=analyst]{background:var(--role-analyst)}
+.coord-av[data-role=reviewer]{background:var(--role-reviewer)}
 .coord-av-s{width:20px;height:20px;flex-basis:20px;font-size:var(--text-sm)}
 .coord-dot{width:8px;height:8px;flex:0 0 8px;border-radius:var(--radius-pill);background:var(--neutral-mid);display:inline-block}
 .coord-av .coord-dot{position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border:2px solid var(--paper)}
 .coord-dot-live{background:var(--rust);box-shadow:0 0 0 3px var(--rust-wash)}
 .coord-dot-ok{background:var(--green-ok)}
+.coord-dot-failed{background:var(--danger)}
 .coord-dot-idle{background:var(--neutral-mid)}
-.coord-time{font-family:var(--mono);font-size:var(--text-sm);color:var(--muted-soft);flex-shrink:0}
+.coord-time{font-family:var(--mono);font-size:var(--text-sm);color:var(--muted-soft);flex:0 0 auto}
 .coord-badge{min-width:18px;height:18px;padding:0 5px;border-radius:var(--radius-pill);background:var(--rust);color:var(--on-accent);font-size:var(--text-sm);font-weight:600;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
 /* Criterio 4: LA FILA ES LA ACCION. Un boton entero, sin un verbo repetido al costado. */
 .coord-row{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;padding:9px 10px;border-radius:var(--radius-sm);border:1px solid transparent;background:transparent;text-align:left;font:inherit;color:inherit;cursor:pointer}
@@ -1016,9 +1032,10 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .coord-row.is-selected{background:var(--foam);border-color:var(--line)}
 .coord-row-text{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
 .coord-row-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
-.coord-row-name{display:flex;align-items:center;gap:5px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coord-row-name{display:flex;align-items:center;gap:5px;font-weight:600;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .coord-row-line{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .coord-row-line.is-urgent{color:var(--rust)}
+.coord-row-line.is-failed{color:var(--danger)}
 /* C1: el encabezado del pedido. UNA linea, y debajo la tira de tareas. */
 .coord-head{display:flex;flex-direction:column;gap:10px;flex-shrink:0;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:4px}
 .coord-head-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;min-width:0}
