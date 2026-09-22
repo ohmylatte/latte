@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CoordinationEngine, type CoordinationGrant, type CoordinationProposal } from '../../electron/coordination/engine';
-import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
+import { FEATURE_KEYS, FEATURE_OFF, FEATURE_ON } from '../../electron/core/features';
 import { DEFAULT_MAX_CONCURRENT } from '../../electron/coordination/limits';
 import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
@@ -63,7 +63,8 @@ describe('lo que una aprobación concede, y las salidas que la bandera no frena'
   afterEach(() => { vi.restoreAllMocks(); b.cleanup(); });
 
   function turnFlagOff(): void {
-    b.repo.deleteMeta(FEATURE_KEYS.coordination);
+    // 1.2.0 (R1): borrar la fila vuelve al default, que ahora es PRENDIDA.
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_OFF);
   }
 
   // --- D4: las salidas no se gatean ------------------------------------------

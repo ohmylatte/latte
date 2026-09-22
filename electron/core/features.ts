@@ -4,13 +4,34 @@ export const FEATURE_KEYS = {
   generation: 'feature:generation',
   brandKits: 'feature:brand-kits',
   learning: 'feature:learning',
-  /** sdd/autonomous-coordination task 8.1: off by default, same as every other feature. */
+  /**
+   * 1.2.0 (R1): ENCENDIDA por defecto. La coordinación dejó de ser un
+   * experimento a escondidas y es la forma en que el equipo trabaja, así que
+   * una instalación nueva la trae puesta. La fila `meta` sigue mandando
+   * cuando existe: guardar `off` la apaga, y ese `off` se respeta.
+   */
   coordination: 'feature:coordination',
 } as const;
 
 export type FeatureName = keyof typeof FEATURE_KEYS;
 
 export const FEATURE_ON = 'on';
+export const FEATURE_OFF = 'off';
+
+/**
+ * Qué significa "la fila `meta` no existe" para cada feature.
+ *
+ * Hasta 1.1.0 la respuesta era siempre `false`, y por eso `isFeatureOn` (que
+ * mira un valor suelto, sin saber de qué feature es) alcanzaba. Desde 1.2.0
+ * `coordination` llega prendida, así que el default depende de la feature y
+ * la ausencia de la fila ya no se puede leer sin nombre.
+ */
+export const FEATURE_DEFAULTS: Record<FeatureName, boolean> = {
+  generation: false,
+  brandKits: false,
+  learning: false,
+  coordination: true,
+};
 
 export interface FeatureFlags {
   generation: boolean;
@@ -23,8 +44,16 @@ export function isFeatureOn(metaValue: string | null | undefined): boolean {
   return metaValue === FEATURE_ON;
 }
 
+/**
+ * La fila ausente cae en el default de la feature; una fila presente manda, y
+ * CUALQUIER valor que no sea `on` (incluido el `off` explícito que escribe el
+ * interruptor de Ajustes) apaga. Esto último es lo mismo que hacía
+ * `isFeatureOn`: no se ensancha lo que cuenta como "prendida".
+ */
 export function featureEnabled(getMeta: (key: string) => string | null, name: FeatureName): boolean {
-  return isFeatureOn(getMeta(FEATURE_KEYS[name]));
+  const stored = getMeta(FEATURE_KEYS[name]);
+  if (stored === null || stored === undefined) return FEATURE_DEFAULTS[name];
+  return isFeatureOn(stored);
 }
 
 export function readFeatureFlags(getMeta: (key: string) => string | null): FeatureFlags {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FEATURE_KEYS, FEATURE_ON, featureEnabled, isFeatureOn, readFeatureFlags, requireFeature } from '../../electron/core/features';
+import { FEATURE_KEYS, FEATURE_OFF, FEATURE_ON, featureEnabled, isFeatureOn, readFeatureFlags, requireFeature } from '../../electron/core/features';
 import { makeBackend, type TestBackend } from './helpers';
 
 const payload = {
@@ -36,28 +36,39 @@ describe('feature flags helper', () => {
     expect(() => requireFeature((k) => meta[k] ?? null, 'learning')).toThrow(/FEATURE_DISABLED|disabled/i);
   });
 
-  // Task 8.1 (rollout gate): coordination reuses this SAME generic mechanism
-  // -- no flag existed for it before this task. Off by default, like every
-  // other feature ("no secrets").
-  it('carries a coordination key too, off by default like every other feature', () => {
+  // 1.2.0 (R1): coordination sigue usando ESTE mecanismo genérico, pero su
+  // default se dio vuelta. La fila ausente ya no quiere decir "apagada": la
+  // coordinación es cómo trabaja el equipo, así que una instalación nueva la
+  // trae puesta y lo que hay que poder hacer es APAGARLA.
+  it('carries a coordination key too, ON by default -- the only feature that is', () => {
     expect(FEATURE_KEYS.coordination).toBe('feature:coordination');
     const meta: Record<string, string> = {};
-    expect(featureEnabled((k) => meta[k] ?? null, 'coordination')).toBe(false);
-    expect(() => requireFeature((k) => meta[k] ?? null, 'coordination')).toThrow(/./);
-    try {
-      requireFeature((k) => meta[k] ?? null, 'coordination');
-      expect.unreachable();
-    } catch (err) {
-      expect(err).toMatchObject({ code: 'FEATURE_DISABLED' });
-    }
-    meta[FEATURE_KEYS.coordination] = FEATURE_ON;
     expect(featureEnabled((k) => meta[k] ?? null, 'coordination')).toBe(true);
+    expect(() => requireFeature((k) => meta[k] ?? null, 'coordination')).not.toThrow();
     expect(readFeatureFlags((k) => meta[k] ?? null)).toEqual({
       generation: false,
       brandKits: false,
       learning: false,
       coordination: true,
     });
+  });
+
+  // El `off` explícito es el interruptor de emergencia: se respeta, y se
+  // respeta POR SER EXPLÍCITO. Borrar la fila vuelve al default, que es on.
+  it('an explicit off is respected, and deleting the row goes back to the default', () => {
+    const meta: Record<string, string> = { [FEATURE_KEYS.coordination]: FEATURE_OFF };
+    expect(featureEnabled((k) => meta[k] ?? null, 'coordination')).toBe(false);
+    try {
+      requireFeature((k) => meta[k] ?? null, 'coordination');
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toMatchObject({ code: 'FEATURE_DISABLED' });
+    }
+    expect(readFeatureFlags((k) => meta[k] ?? null).coordination).toBe(false);
+    meta[FEATURE_KEYS.coordination] = FEATURE_ON;
+    expect(featureEnabled((k) => meta[k] ?? null, 'coordination')).toBe(true);
+    delete meta[FEATURE_KEYS.coordination];
+    expect(featureEnabled((k) => meta[k] ?? null, 'coordination')).toBe(true);
   });
 });
 

@@ -14,6 +14,8 @@ import type { CoordinationBudget, CoordinationGlobalBudgetView } from '../shared
 const mocks = vi.hoisted(() => ({
   getCoordinationGlobalBudget: vi.fn<() => Promise<CoordinationGlobalBudgetView>>(),
   setCoordinationGlobalBudget: vi.fn<(budget: CoordinationBudget) => Promise<CoordinationBudget>>(),
+  getCoordinationEnabled: vi.fn<() => Promise<boolean>>(),
+  setCoordinationEnabled: vi.fn<(enabled: boolean) => Promise<boolean>>(),
 }));
 
 vi.mock('./browser-api', async (importOriginal) => {
@@ -25,6 +27,8 @@ vi.mock('./browser-api', async (importOriginal) => {
       appInfo: async () => ({ version: '0.0.0', dataDir: '/tmp', engine: 'sqlite', engineReason: null, pack: 'marketing-core', packRoles: 5 }),
       getCoordinationGlobalBudget: mocks.getCoordinationGlobalBudget,
       setCoordinationGlobalBudget: mocks.setCoordinationGlobalBudget,
+      getCoordinationEnabled: mocks.getCoordinationEnabled,
+      setCoordinationEnabled: mocks.setCoordinationEnabled,
     },
   };
 });
@@ -42,7 +46,11 @@ function settingsProps(patch: Record<string, unknown> = {}) {
 const mount = (patch: Record<string, unknown> = {}) => render(<I18nProvider><SettingsScreen {...settingsProps()} {...patch} /></I18nProvider>);
 
 describe('the global coordination budget cap in advanced settings (task 7.13)', () => {
-  beforeEach(() => { mocks.getCoordinationGlobalBudget.mockReset(); mocks.setCoordinationGlobalBudget.mockReset(); });
+  beforeEach(() => {
+    mocks.getCoordinationGlobalBudget.mockReset(); mocks.setCoordinationGlobalBudget.mockReset();
+    mocks.getCoordinationEnabled.mockReset().mockResolvedValue(true);
+    mocks.setCoordinationEnabled.mockReset().mockResolvedValue(true);
+  });
 
   it('shows an honest "no global cap" when unset', async () => {
     mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'unset' });
@@ -119,5 +127,58 @@ describe('U7: el boton de sacar el tope, habilitado solo cuando hay algo que sac
     mocks.getCoordinationGlobalBudget.mockResolvedValue({ state: 'invalid' });
     const { container } = mount();
     await waitFor(() => expect(clearButton(container).disabled).toBe(false));
+  });
+});
+
+/**
+ * R1: el interruptor de emergencia de la coordinación.
+ *
+ * Lo que se mira acá es que el switch SEA el estado del backend, no una copia
+ * optimista: lo que dibuja viene de `getCoordinationEnabled`, y lo que queda
+ * dibujado después de tocarlo viene de lo que `setCoordinationEnabled`
+ * devolvió, no de lo que la persona clickeó.
+ */
+describe('the coordination emergency switch in advanced settings (R1)', () => {
+  beforeEach(() => {
+    mocks.getCoordinationGlobalBudget.mockReset().mockResolvedValue({ state: 'unset' });
+    mocks.setCoordinationGlobalBudget.mockReset();
+    mocks.getCoordinationEnabled.mockReset();
+    mocks.setCoordinationEnabled.mockReset();
+  });
+
+  const theSwitch = (container: HTMLElement) => container.querySelector<HTMLInputElement>('.coordination-switch-input');
+
+  it('reflects the backend state when coordination is on', async () => {
+    mocks.getCoordinationEnabled.mockResolvedValue(true);
+    const { container } = mount();
+    await waitFor(() => expect(theSwitch(container)?.checked).toBe(true));
+    expect(container.querySelector('.coordination-switch')?.textContent).toContain('Coordinación del equipo');
+    expect(container.querySelector('.coordination-switch')?.textContent).toContain('proponer un plan');
+  });
+
+  it('reflects the backend state when coordination was switched off', async () => {
+    mocks.getCoordinationEnabled.mockResolvedValue(false);
+    const { container } = mount();
+    await waitFor(() => expect(theSwitch(container)?.checked).toBe(false));
+  });
+
+  it('turning it off calls the setter with false and keeps the answer the backend gave', async () => {
+    mocks.getCoordinationEnabled.mockResolvedValue(true);
+    mocks.setCoordinationEnabled.mockResolvedValue(false);
+    const { container } = mount();
+    await waitFor(() => expect(theSwitch(container)?.checked).toBe(true));
+    fireEvent.click(theSwitch(container)!);
+    await waitFor(() => expect(mocks.setCoordinationEnabled).toHaveBeenCalledWith(false));
+    await waitFor(() => expect(theSwitch(container)?.checked).toBe(false));
+  });
+
+  it('turning it back on calls the setter with true', async () => {
+    mocks.getCoordinationEnabled.mockResolvedValue(false);
+    mocks.setCoordinationEnabled.mockResolvedValue(true);
+    const { container } = mount();
+    await waitFor(() => expect(theSwitch(container)?.checked).toBe(false));
+    fireEvent.click(theSwitch(container)!);
+    await waitFor(() => expect(mocks.setCoordinationEnabled).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(theSwitch(container)?.checked).toBe(true));
   });
 });

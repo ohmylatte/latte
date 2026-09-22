@@ -6,12 +6,18 @@ import {
   type MemberInjectionInput,
 } from '../../electron/coordination/injection';
 import { CoordinationTokenRegistry } from '../../electron/coordination/tokens';
-import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
+import { FEATURE_KEYS, FEATURE_OFF, FEATURE_ON } from '../../electron/core/features';
 import { sessionFrom } from '../../electron/agents/types';
 import { fakeCoordinationHub, fakeExecutablePath, fakeRunner, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
  * Task 8.1 (rollout gate): coordination lives behind `featureFlags('coordination')`.
+ *
+ * 1.2.0 (R1): el default se dio vuelta. La fila `meta` ausente ya NO apaga la
+ * coordinación -- una instalación nueva la trae puesta, y lo que apaga es un
+ * `off` explícito, el que escribe el interruptor de Ajustes. Todo lo que este
+ * archivo probaba sobre la bandera BAJA sigue valiendo tal cual; lo único que
+ * cambió es cómo se la baja.
  *
  * Two corrections carried over from the tasks-doc addendum, both load-bearing
  * for how this file reads:
@@ -177,11 +183,12 @@ describe('LatteService — real bootstrap wiring: the flag gates the run/proposa
   let b: TestBackend;
   afterEach(() => b?.cleanup());
 
-  it('a fresh install (flag unset) cannot start a run, but the Claude member above the floor still gets engram', async () => {
+  it('an installation switched off (an explicit off) cannot start a run, but the Claude member above the floor still gets engram', async () => {
     b = await makeBackend({ runner: claudeAndEngramResolvable() });
     const brand = await b.service.createBrand('Marca');
     const work = await b.service.createWork(brand.id, 'Trabajo');
     await b.service.setCoordinationBudget(work.id, { maxDispatches: 5 });
+    await b.service.setCoordinationEnabled(false);
 
     await expect(b.service.startCoordinationRun(work.id)).rejects.toMatchObject({ code: 'FEATURE_DISABLED' });
     expect(await b.service.getCoordinationRun(work.id)).toBeNull();
@@ -208,5 +215,58 @@ describe('LatteService — real bootstrap wiring: the flag gates the run/proposa
 
     const run = await b.service.startCoordinationRun(work.id);
     expect(run.status).toBe('running');
+  });
+
+  // R1, lo nuevo: una instalación RECIÉN hecha, sin que nadie haya tocado
+  // nada, ya puede arrancar un run. Esto es el cambio de producto de 1.2.0 y
+  // no hay otro test que lo mire.
+  it('a fresh install (no meta row at all) can start a run out of the box', async () => {
+    b = await makeBackend();
+    const brand = await b.service.createBrand('Marca');
+    const work = await b.service.createWork(brand.id, 'Trabajo');
+    await b.service.setCoordinationBudget(work.id, { maxDispatches: 5 });
+
+    expect(await b.service.getCoordinationEnabled()).toBe(true);
+    const run = await b.service.startCoordinationRun(work.id);
+    expect(run.status).toBe('running');
+  });
+});
+
+/**
+ * R1: el interruptor de emergencia por IPC. La superficie es la misma fila
+ * `meta` que gatea el motor, así que lo que se prueba acá es que leer, apagar
+ * y volver a prender coinciden con lo que el motor hace después -- nunca una
+ * copia del estado que pueda desincronizarse.
+ */
+describe('LatteService — getCoordinationEnabled / setCoordinationEnabled (R1)', () => {
+  let b: TestBackend;
+  afterEach(() => b?.cleanup());
+
+  it('reads on out of the box, writes an explicit off, and comes back on', async () => {
+    b = await makeBackend();
+    expect(await b.service.getCoordinationEnabled()).toBe(true);
+    expect(b.repo.getMeta(FEATURE_KEYS.coordination)).toBeNull();
+
+    expect(await b.service.setCoordinationEnabled(false)).toBe(false);
+    // Apagar ESCRIBE `off`: si sólo borrara la fila, el default la volvería a
+    // prender y el interruptor no apagaría nada.
+    expect(b.repo.getMeta(FEATURE_KEYS.coordination)).toBe(FEATURE_OFF);
+    expect(await b.service.getCoordinationEnabled()).toBe(false);
+
+    expect(await b.service.setCoordinationEnabled(true)).toBe(true);
+    expect(b.repo.getMeta(FEATURE_KEYS.coordination)).toBe(FEATURE_ON);
+  });
+
+  it('the switch and the engine never disagree: off denies the run, on allows it', async () => {
+    b = await makeBackend();
+    const brand = await b.service.createBrand('Marca');
+    const work = await b.service.createWork(brand.id, 'Trabajo');
+    await b.service.setCoordinationBudget(work.id, { maxDispatches: 5 });
+
+    await b.service.setCoordinationEnabled(false);
+    await expect(b.service.startCoordinationRun(work.id)).rejects.toMatchObject({ code: 'FEATURE_DISABLED' });
+
+    await b.service.setCoordinationEnabled(true);
+    expect((await b.service.startCoordinationRun(work.id)).status).toBe('running');
   });
 });

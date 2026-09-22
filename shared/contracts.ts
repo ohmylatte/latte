@@ -1526,6 +1526,15 @@ export interface LatteAPI {
   /** The global "Equipos activos" strip: every active run across every Brand, newest-updated first. The only app-scoped read in this change. */
   listActiveCoordinationRuns(): Promise<CoordinationActiveRunSummary[]>;
   /** The OPTIONAL advanced app-wide dispatch cap, on top of (never instead of) each Work's own budget. `unset` = no extra cap applied -- never an invented limit; `invalid` = the stored value cannot be read, which is NOT "no cap" (the dispatch path denies against those same bytes). It counts the dispatches of the runs that are CURRENTLY active, not the install's whole history. */
+  /**
+   * El interruptor de emergencia de la coordinación (1.2.0, R1). Es la MISMA
+   * fila `meta` que gatea el motor (`feature:coordination`), no una copia:
+   * desde 1.2.0 la ausencia de la fila significa prendida, y apagar escribe
+   * un `off` explícito que sobrevive al reinicio.
+   */
+  getCoordinationEnabled(): Promise<boolean>;
+  /** Devuelve el estado que quedó guardado, no el que se pidió. */
+  setCoordinationEnabled(enabled: boolean): Promise<boolean>;
   getCoordinationGlobalBudget(): Promise<CoordinationGlobalBudgetView>;
   /** `null` clears the cap (back to unset, no extra cap) -- a cap you cannot take off is a trap, not a setting. Any other value goes through the same validator every coordination budget does. */
   setCoordinationGlobalBudget(budget: CoordinationBudget | null): Promise<CoordinationBudget | null>;
