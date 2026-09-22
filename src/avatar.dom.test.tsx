@@ -30,6 +30,19 @@ const face = (params: Parameters<typeof Avatar>[0]['params'], props: Partial<Par
 const parts = (container: HTMLElement): string[] =>
   Array.from(container.querySelectorAll('.av-face [data-part]')).map((node) => node.getAttribute('data-part') ?? '');
 
+/**
+ * Los puntos ABSOLUTOS de un `d`. Los comandos en minuscula son relativos y
+ * se saltean a proposito: lo unico que se necesita es una cota, y en estos
+ * dibujos los anclajes absolutos son los extremos.
+ */
+function coords(d: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const match of d.matchAll(/([ML])\s*(-?[\d.]+)[\s,]+(-?[\d.]+)/g)) {
+    out.push([Number(match[2]), Number(match[3])]);
+  }
+  return out;
+}
+
 const layer = (container: HTMLElement, part: string) => container.querySelector(`.av-face [data-part="${part}"]`)!;
 
 /**
@@ -54,14 +67,25 @@ function stubMotion(reduce: boolean) {
 afterEach(() => { Reflect.deleteProperty(window, 'matchMedia'); });
 
 describe('Avatar: las piezas', () => {
-  it('dibuja fondo, hombros, cabeza, pelo, cejas, ojos, boca y accesorio, en ese orden', () => {
+  it('dibuja fondo, cabeza, pelo, cejas, ojos, boca, accesorio y anillo, en ese orden', () => {
     const { container } = face(parseAvatar('bun.2.1.glasses-thick'));
-    expect(parts(container)).toEqual(['bg', 'body', 'head', 'hair', 'brows', 'eyes', 'mouth', 'accessory']);
+    expect(parts(container)).toEqual(['bg', 'head', 'hair', 'brows', 'eyes', 'mouth', 'accessory', 'ring']);
+  });
+
+  /**
+   * D7: SOLO EL ROSTRO. Los hombros se veian raros a 32 px —el torso se
+   * comia medio disco y dejaba una cabeza chiquita y lejos— asi que no hay
+   * cuerpo, la cara crece y el color del rol se muda al anillo.
+   */
+  it('no hay cuerpo en ninguna cara posible', () => {
+    for (let i = 0; i < 150; i += 1) {
+      expect(parts(face(avatarFromSeed(`sin-cuerpo-${i}`)).container)).not.toContain('body');
+    }
   });
 
   it('sin accesorio son siete piezas, no ocho con una vacia', () => {
     const { container } = face(parseAvatar('curly.1.3.none'));
-    expect(parts(container)).toEqual(['bg', 'body', 'head', 'hair', 'brows', 'eyes', 'mouth']);
+    expect(parts(container)).toEqual(['bg', 'head', 'hair', 'brows', 'eyes', 'mouth', 'ring']);
   });
 
   /**
@@ -214,11 +238,81 @@ describe('Avatar: la cara respira', () => {
   });
 });
 
+/**
+ * D7: SIN CUERPO, EL COLOR DEL ROL VIVE EN EL FONDO.
+ *
+ * Los hombros eran los que llevaban el color pleno. Sin ellos queda el disco
+ * con el wash y un anillo con el color: un aro lee el color a cualquier
+ * tamano sin robarle lugar a la cara.
+ */
+describe('Avatar: el anillo es el rol', () => {
+  it('el fondo lleva el wash y el anillo el color pleno', () => {
+    const { container } = face(parseAvatar('bob.2.4.phones'), { roleId: 'reviewer' });
+    expect(layer(container, 'bg').getAttribute('fill')).toBe('var(--av-wash)');
+    const ring = layer(container, 'ring');
+    expect(ring.getAttribute('stroke')).toBe('var(--av-color)');
+    expect(ring.getAttribute('fill')).toBe('none');
+    expect(Number(ring.getAttribute('stroke-width'))).toBe(2);
+  });
+
+  it('el anillo va POR DENTRO del borde: nada lo recorta', () => {
+    const ring = layer(face(parseAvatar('bob.2.4.phones')).container, 'ring');
+    expect(Number(ring.getAttribute('r')) + Number(ring.getAttribute('stroke-width')) / 2).toBeLessThanOrEqual(32);
+  });
+
+  it('el anillo se dibuja ULTIMO: un aro limpio, no uno mordido por un peinado', () => {
+    expect(parts(face(parseAvatar('long.2.2.earring')).container).at(-1)).toBe('ring');
+  });
+
+  it('la cara se re-encuadra entera: crece y se centra en el disco', () => {
+    const { container } = face(parseAvatar('beanie.3.1.none'));
+    const portrait = container.querySelector('.av-portrait')!;
+    expect(portrait).not.toBeNull();
+    // 16/13: el radio que pidio quedarse sin cuerpo.
+    expect(portrait.getAttribute('transform')).toBe('translate(32 32) scale(1.2308) translate(-32 -28)');
+    // Y TODA la cara va adentro: ni un peinado ni un gorro queda suelto.
+    for (const part of ['head', 'hair', 'brows', 'eyes', 'mouth']) {
+      expect(layer(container, part).closest('.av-portrait'), part).not.toBeNull();
+    }
+    // El fondo y el anillo NO: son el marco, no el retrato.
+    expect(layer(container, 'bg').closest('.av-portrait')).toBeNull();
+    expect(layer(container, 'ring').closest('.av-portrait')).toBeNull();
+  });
+
+  /**
+   * Nada se corta contra el borde. Se comprueba sobre la geometria de cada
+   * `<symbol>`: cada punto, despues del re-encuadre, tiene que caer dentro
+   * del disco. El gorro y el pelo largo son los que mas riesgo tienen.
+   */
+  it('ninguna forma se sale del disco despues del re-encuadre', () => {
+    const { container } = render(<AvatarSprite />);
+    const far = (x: number, y: number) => Math.hypot((32 + (x - 32) * 1.2308) - 32, (32 + (y - 28) * 1.2308) - 32);
+    const offenders: string[] = [];
+    for (const symbol of Array.from(container.querySelectorAll('symbol'))) {
+      if (symbol.id.endsWith('-bg')) continue;
+      let worst = 0;
+      for (const circle of Array.from(symbol.querySelectorAll('circle'))) {
+        worst = Math.max(worst, far(Number(circle.getAttribute('cx')), Number(circle.getAttribute('cy'))) + Number(circle.getAttribute('r')) * 1.2308);
+      }
+      for (const rect of Array.from(symbol.querySelectorAll('rect'))) {
+        const x = Number(rect.getAttribute('x')), y = Number(rect.getAttribute('y'));
+        const w = Number(rect.getAttribute('width')), h = Number(rect.getAttribute('height'));
+        for (const point of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]] as const) worst = Math.max(worst, far(point[0], point[1]));
+      }
+      for (const path of Array.from(symbol.querySelectorAll('path'))) {
+        for (const point of coords(path.getAttribute('d') ?? '')) worst = Math.max(worst, far(point[0], point[1]));
+      }
+      if (worst > 32) offenders.push(`${symbol.id}: ${worst.toFixed(1)}`);
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('Avatar: el papel del fondo', () => {
   it('el grano va SOLO en el fondo, nunca en la cara', () => {
     const { container } = face(parseAvatar('short.2.2.none'), { size: 'lg' });
     expect(layer(container, 'bg').getAttribute('filter')).toBe('url(#av-flat-grain)');
-    for (const part of ['body', 'head', 'hair', 'eyes', 'mouth']) {
+    for (const part of ['ring', 'head', 'hair', 'eyes', 'mouth']) {
       expect(layer(container, part).getAttribute('filter'), part).toBeNull();
     }
   });

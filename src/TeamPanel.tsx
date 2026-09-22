@@ -589,7 +589,7 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', pendi
    */
   const signal: MemberDot = attention || status === 'working' ? 'live' : dot;
   return <button role="tab" aria-selected={selected} className={'team-tab coord-row status-' + status + (attention ? ' attention' : '')} disabled={busy} onClick={onSelect} title={lastExchange ? title + ' · ' + lastExchange : title}>
-    <CoordAvatar name={member.roleName} roleId={member.roleId} avatar={avatarOfMember(member)} dot={signal} />
+    <CoordAvatar name={member.roleName} roleId={member.roleId} avatar={avatarOfMember(member)} dot={signal} small />
     <span className="team-tab-text coord-row-text">
       <span className="team-tab-top coord-row-top">
         <span className="team-tab-name coord-row-name">{member.roleName}{coordinator && <Users size={12} className="coord-row-coordinator" aria-label={t('coord.member.coordinator')} />}</span>

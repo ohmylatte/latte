@@ -8,6 +8,18 @@ import { avatarHash, type AvatarParams } from '../../shared/avatar';
  * el tamaño, el color del rol, el `aria-label` y el punto de estado; acá se
  * decide qué formas hay, cómo se pintan y cómo se mueven.
  *
+ * ## Por qué SOLO el rostro
+ *
+ * Habia hombros, y con hombros los avatares se veian raros: a 32 px el
+ * torso se come la mitad del disco y deja una cabeza chiquita y lejos. Sin
+ * cuerpo la cara CRECE —el radio pasa de 13 a 16 en el mismo viewBox— y se
+ * centra, que es lo unico que se mira a ese tamano.
+ *
+ * Pero los hombros eran los que llevaban el color pleno del rol, asi que la
+ * identidad se muda al FONDO: el disco con el wash del rol y un anillo de 2
+ * px en el color pleno, por dentro del borde. Un anillo lee el color a
+ * cualquier tamano sin robarle lugar a la cara.
+ *
  * ## Por qué planas
  *
  * Se probó la estética de impresión del sitio —grano, medios tonos, trazo de
@@ -41,7 +53,7 @@ export type AvatarVariant = (typeof AVATAR_VARIANTS)[number];
 export const DEFAULT_AVATAR_VARIANT: AvatarVariant = 'flat';
 
 /** Qué es cada pieza, con independencia de cómo se dibuje. */
-export type AvatarPart = 'bg' | 'body' | 'head' | 'hair' | 'brows' | 'eyes' | 'mouth' | 'accessory';
+export type AvatarPart = 'bg' | 'ring' | 'head' | 'hair' | 'brows' | 'eyes' | 'mouth' | 'accessory';
 
 /** El prefijo de ids de una variante. Dos estilos no comparten un solo id. */
 export function avatarIdPrefix(variant: AvatarVariant): string {
@@ -79,9 +91,10 @@ export function avatarBeat(seed: string): AvatarBeat {
 /**
  * Cómo se pinta cada accesorio y a qué altura entra.
  *
- * `under` es lo que pasa POR DETRÁS de la cabeza —la bufanda y el cordón de la
- * credencial nacen en los hombros—; todo lo demás va encima. El aro va en
- * `--rust`, que es lo que lo hace leerse como una joya y no como una mancha.
+ * `under` es lo que pasa POR DETRÁS de la cabeza: la bufanda y el cordón de
+ * la credencial nacen ahí y reaparecen abajo del mentón. Todo lo demás va
+ * encima. El aro va en `--rust`, que es lo que lo hace leerse como una joya
+ * y no como una mancha.
  */
 interface AccessoryArt { id: string; depth: 'under' | 'over'; fill?: string; stroke?: string }
 
@@ -103,6 +116,20 @@ const ACCESSORY: Readonly<Record<string, AccessoryArt | null>> = {
 
 /** El accesorio se dibuja con el color de pelo cuando es pelo: barba y bigote. */
 const HAIR_COLOURED = new Set(['beard', 'moustache']);
+
+/**
+ * EL RE-ENCUADRE, en una sola linea.
+ *
+ * Las formas siguen dibujadas en la grilla de siempre —cabeza en (32, 28)
+ * con r=13— porque estan afinadas ahi y volver a calcular quince paths a
+ * mano es como se rompe un dibujo. Lo que cambia es el ENCUADRE: se lleva
+ * el centro de la cara al centro del disco y se agranda 16/13, que es
+ * exactamente el radio que pidio quedarse sin cuerpo.
+ *
+ * Se lee de derecha a izquierda: llevo (32,28) al origen, escalo, y lo
+ * devuelvo a (32,32).
+ */
+const PORTRAIT = 'translate(32 32) scale(1.2308) translate(-32 -28)';
 
 export interface AvatarArtProps {
   params: AvatarParams;
@@ -126,29 +153,37 @@ export function AvatarArt({ params, variant = DEFAULT_AVATAR_VARIANT, grain = fa
   return (
     <>
       <use data-part="bg" href={`#${p}bg`} fill="var(--av-wash)" filter={grain ? `url(#${p}grain)` : undefined} />
-      <use data-part="body" href={`#${p}body`} fill="var(--av-color)" />
-      {accessory?.depth === 'under' && piece(accessory)}
-      <use data-part="head" href={`#${p}head`} fill={`var(--av-skin-${params.skin})`} />
-      <use data-part="hair" href={`#${p}hair-${params.hair}`} fill={hairColour} />
-      {/* Dos trazos, nada más: una ceja con volumen a 22px es un borrón. */}
-      <g data-part="brows" className="av-brows" fill="none" stroke="var(--ink)" strokeWidth="1.1" strokeLinecap="round">
-        <path d="M24.4 23.8q2.6-1.1 5.2 0" />
-        <path d="M34.4 23.8q2.6-1.1 5.2 0" />
+      <g className="av-portrait" transform={PORTRAIT}>
+        {accessory?.depth === 'under' && piece(accessory)}
+        <use data-part="head" href={`#${p}head`} fill={`var(--av-skin-${params.skin})`} />
+        <use data-part="hair" href={`#${p}hair-${params.hair}`} fill={hairColour} />
+        {/* Dos trazos, nada más: una ceja con volumen a 22px es un borrón. */}
+        <g data-part="brows" className="av-brows" fill="none" stroke="var(--ink)" strokeWidth="1.1" strokeLinecap="round">
+          <path d="M24.4 23.8q2.6-1.1 5.2 0" />
+          <path d="M34.4 23.8q2.6-1.1 5.2 0" />
+        </g>
+        <g data-part="eyes" className="av-eyes" fill="var(--ink)">
+          <ellipse className="av-eye" cx="27" cy="28" rx="1.7" ry="1.7" />
+          <ellipse className="av-eye" cx="37" cy="28" rx="1.7" ry="1.7" />
+        </g>
+        <path
+          data-part="mouth"
+          className="av-mouth"
+          d="M29 34q3 2.5 6 0"
+          fill="none"
+          stroke="var(--ink)"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+        {accessory?.depth === 'over' && piece(accessory)}
       </g>
-      <g data-part="eyes" className="av-eyes" fill="var(--ink)">
-        <ellipse className="av-eye" cx="27" cy="28" rx="1.7" ry="1.7" />
-        <ellipse className="av-eye" cx="37" cy="28" rx="1.7" ry="1.7" />
-      </g>
-      <path
-        data-part="mouth"
-        className="av-mouth"
-        d="M29 34q3 2.5 6 0"
-        fill="none"
-        stroke="var(--ink)"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-      {accessory?.depth === 'over' && piece(accessory)}
+      {/*
+        El anillo ES el rol: sin hombros, es lo unico que lleva el color
+        pleno. Va ULTIMO para que sea un aro limpio y no un aro mordido por
+        un peinado, y por DENTRO del borde (r=31 con trazo de 2) para que no
+        se lo coma el redondeo del huesped.
+      */}
+      <circle data-part="ring" cx="32" cy="32" r="31" fill="none" stroke="var(--av-color)" strokeWidth="2" />
     </>
   );
 }
@@ -191,7 +226,6 @@ function FlatSymbols() {
   return (
     <>
       <symbol id={`${p}bg`} viewBox="0 0 64 64"><circle cx="32" cy="32" r="32" /></symbol>
-      <symbol id={`${p}body`} viewBox="0 0 64 64"><path d="M11 64c0-11 9-18 21-18s21 7 21 18z" /></symbol>
       <symbol id={`${p}head`} viewBox="0 0 64 64"><circle cx="32" cy="28" r="13" /></symbol>
 
       {/* Cinco peinados y un gorro: el gorro OCUPA el lugar del pelo. */}
@@ -230,16 +264,21 @@ function FlatSymbols() {
       </symbol>
       <symbol id={`${p}earring`} viewBox="0 0 64 64"><circle cx="19.5" cy="33" r="1.8" /></symbol>
 
-      {/* La credencial del evento: dos cintas desde los hombros y la tarjeta. */}
+      {/*
+        La credencial y la bufanda colgaban de unos hombros que ya no estan.
+        Redibujadas para el retrato: nacen detras de la cabeza y quedan
+        dentro del disco. Las coordenadas son las de SIEMPRE porque pasan por
+        el mismo re-encuadre que la cara; el limite util es y=52, que despues
+        del transform cae en y=61, tres pixeles adentro del borde.
+      */}
       <symbol id={`${p}lanyard`} viewBox="0 0 64 64">
-        <path d="M25 47l5.4 7M39 47l-5.4 7" fill="none" strokeWidth="1.8" strokeLinecap="round" />
-        <rect x="28" y="53" width="8" height="9" rx="1.2" strokeWidth="1.4" />
-        <path d="M30 56h4" fill="none" strokeWidth="1.2" strokeLinecap="round" />
+        <path d="M24 38.5l6 7.5M40 38.5l-6 7.5" fill="none" strokeWidth="1.6" strokeLinecap="round" />
+        <rect x="28.4" y="44.8" width="7.2" height="7.4" rx="1.1" strokeWidth="1.2" />
+        <path d="M30.2 47.4h3.6" fill="none" strokeWidth="1" strokeLinecap="round" />
       </symbol>
-      {/* La bufanda: una banda sobre los hombros y una punta que cuelga. */}
       <symbol id={`${p}scarf`} viewBox="0 0 64 64">
-        <path d="M22 48q10 7 20 0v5q-10 7-20 0z" />
-        <path d="M38 52h4.5l-1 11h-4z" />
+        <path d="M21.6 38.4q10.4 6.4 20.8 0v4.6q-10.4 6.4-20.8 0z" />
+        <path d="M37.4 42h4l-.8 8h-3.6z" />
       </symbol>
       {/* La vincha: una banda sobre la frente, de sien a sien. */}
       <symbol id={`${p}headband`} viewBox="0 0 64 64"><path d="M19.6 23.4q12.4-7.6 24.8 0l-1.3 3.2q-11.1-6.6-22.2 0z" /></symbol>

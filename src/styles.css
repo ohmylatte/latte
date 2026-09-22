@@ -150,7 +150,7 @@
 .role-picker .agent-explanation{margin:10px 0 14px}
 .role-list{display:flex;flex-direction:column;gap:6px;margin-bottom:16px}
 .role-card{display:flex;align-items:center;gap:11px;text-align:left;padding:9px 11px;border-radius:var(--radius-md);background:var(--paper);font-size:12px}
-.role-card>span:not(.team-avatar){flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.role-card>span:not(.team-avatar):not(.av){flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
 .role-card strong{font-weight:550}
 .role-card small{font-size:10.5px;line-height:1.5;color:var(--muted)}
 .role-card.selected{border-color:var(--rust);background:var(--paper)}
@@ -311,7 +311,7 @@ html,body,#root{height:100%;overflow:hidden}
 .team-member.selected:has(.team-avatar[data-role=researcher]){border-left-color:var(--role-researcher)}
 .team-member.selected:has(.team-avatar[data-role=analyst]){border-left-color:var(--role-analyst)}
 .team-member.selected:has(.team-avatar[data-role=reviewer]){border-left-color:var(--role-reviewer)}
-.role-card.selected .team-avatar{box-shadow:0 0 0 3px var(--foam),0 0 0 4px currentColor}
+.role-card.selected .team-avatar,.role-card.selected .av{box-shadow:0 0 0 3px var(--foam),0 0 0 4px currentColor}
 .role-dot{height:8px;width:8px;border-radius:50%;display:inline-block;margin-right:7px;background:var(--role-default);flex-shrink:0}
 .role-dot[data-role=assistant]{background:var(--role-assistant)}
 .role-dot[data-role=strategist]{background:var(--role-strategist)}
@@ -1210,13 +1210,13 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
    El avatar llena a su huesped. Quien lo pone decide el tamano con la clase
    (22 · 32 · 40) o con la suya propia; el SVG nunca discute el tamano.
 */
-.av{position:relative;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:var(--radius-pill);overflow:visible;background:var(--av-color,var(--role-default));color:var(--on-accent);font-weight:600;line-height:1}
+.av{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;aspect-ratio:1;border-radius:var(--radius-pill);overflow:visible;background:var(--av-color,var(--role-default));color:var(--on-accent);font-weight:600;line-height:1}
 .av-face{width:100%;height:100%;display:block;border-radius:var(--radius-pill)}
 /* Sin cara, el disco es el color del rol y encima va la inicial. */
 .av-initial{display:block}
-.av-sm{width:22px;height:22px;flex-basis:22px;font-size:var(--text-sm)}
-.av-md{width:32px;height:32px;flex-basis:32px;font-size:var(--text-sm)}
-.av-lg{width:40px;height:40px;flex-basis:40px;font-size:var(--text-base)}
+.av-sm{width:22px;height:22px;flex:0 0 22px;font-size:var(--text-sm)}
+.av-md{width:32px;height:32px;flex:0 0 32px;font-size:var(--text-sm)}
+.av-lg{width:40px;height:40px;flex:0 0 40px;font-size:var(--text-base)}
 /* El punto de estado: aparte del SVG, siempre. El avatar dice quien; el punto, como esta. */
 .av-dot{position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border-radius:var(--radius-pill);border:2px solid var(--paper);background:var(--neutral-mid)}
 .av-sm .av-dot{width:8px;height:8px;border-width:1.5px}
@@ -1270,6 +1270,28 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 
 /* --- D5: la anatomia, con cara. Los tamanos no cambian con el dibujo. ------ */
 /* El avatar grande del "retomar": 54px, como antes. Lo fija el huesped, no el SVG. */
-.team-resume-av{width:54px;height:54px;flex-basis:54px;margin:0 auto 14px;font-size:var(--text-lg)}
+.team-resume-av{width:54px;height:54px;flex:0 0 54px;margin:0 auto 14px;font-size:var(--text-lg)}
 /* La cara no come el punto: el dot de la anatomia sigue arriba de todo. */
 .av .coord-dot{z-index:1}
+
+/* --- D7: el avatar es un circulo, con cara o sin ella. --------------------- */
+/*
+   El fallback se ESTIRABA. `.role-card>span:not(.team-avatar)` le daba flex:1
+   —o sea flex:1 1 0%— y le ganaba en especificidad a `.av-lg`, asi que el
+   avatar sin cara salia como una pildora ancha con la inicial adentro. Un rol
+   llega sin `avatar` cada vez que el lado Electron todavia no se reinicio, que
+   es justo cuando menos se quiere ver algo roto.
+
+   La regla de arriba ahora excluye `.av`, cada tamano declara el `flex`
+   completo y la base fija `aspect-ratio:1`. Tres candados para lo mismo,
+   porque el que falla es siempre el contenedor de al lado, que no conocemos.
+*/
+.av,.av-face{border-radius:var(--radius-pill)}
+.av-initial{flex:0 0 auto;line-height:1;user-select:none}
+/*
+   La pestana del miembro llevaba un avatar de 20px; la anatomia no tiene ese
+   tamano, y el chico (22) es el que le corresponde a una tira compacta. El de
+   32 la hacia crecer casi el doble de alto. Nada lo estira ni lo recorta.
+*/
+.team-tab .av{flex:0 0 22px}
+.team-tab{align-items:center}
