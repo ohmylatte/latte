@@ -31,13 +31,13 @@ import { EMPTY_USAGE } from '../shared/contracts';
 import type { AgentRole, CoordinationAskView, CoordinationGateView, CoordinationProposal, CoordinationRunView, TeamMember } from '../shared/contracts';
 
 const member = (id: string, roleName: string): TeamMember => ({
-  id, workId: 'w1', roleId: id, roleName, initial: roleName[0]!, runtime: 'claude', model: null, accountId: null,
+  id, workId: 'w1', roleId: id, roleName, initial: roleName[0]!, avatar: null, runtime: 'claude', model: null, accountId: null,
   label: 'Claude', status: 'idle', tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 });
 const team = [member('coord', 'Asistente'), member('cm', 'Community Manager'), member('paid', 'Paid Media')];
 const roles: AgentRole[] = [
-  { id: 'cm', name: 'Community Manager', initial: 'C', summary: '', builtin: false, tier: 'balanced' },
-  { id: 'paid', name: 'Paid Media', initial: 'P', summary: '', builtin: false, tier: 'balanced' },
+  { id: 'cm', name: 'Community Manager', initial: 'C', summary: '', builtin: false, tier: 'balanced', avatar: null },
+  { id: 'paid', name: 'Paid Media', initial: 'P', summary: '', builtin: false, tier: 'balanced', avatar: null },
 ];
 
 const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => ({

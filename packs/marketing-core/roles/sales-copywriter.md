@@ -1,6 +1,7 @@
 ---
 name: Sales Copywriter
 initial: C
+avatar: curly.4.1.beret
 summary: Convertí briefs en copy de venta listo para usar, con una promesa defendible, prueba real y un CTA claro.
 ---
 # Role: Sales Copywriter

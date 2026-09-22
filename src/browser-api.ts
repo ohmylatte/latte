@@ -1,6 +1,7 @@
 import { composeBrandContext } from '../shared/brandContext';
 import type { AgentRole, Brand, BrandContextProposal, BrandContextRevision, BrandContextStatus, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput, OnboardingDraft } from '../shared/contracts';
 import { isOnboardingDraft } from '../shared/contracts';
+import { avatarFromSeed, parseAvatar, serializeAvatar } from '../shared/avatar';
 import { createAgentBus } from './agent-events';
 import { createChatStore } from './chat-store';
 
@@ -58,13 +59,13 @@ const previewContent=async(documentId:string)=>contentFrom(normalized(),document
 function revision(s:ReturnType<typeof normalized>,documentId:string,content:string):Revision {const d=contentFrom(s,documentId).document;const r:Revision={id:id(),workId:d.workId,documentId,content,createdAt:now(),source:'human'};s.revisions.push(r);return r;}
 // The tiers mirror the shipped pack, so the preview shows the same default effort per role as the desktop.
 const shippedRoles:AgentRole[] = [
- {id:'assistant',name:'Asistente',initial:'A',summary:'Trabaja el brief con vos sin un rol fijo.',builtin:true,tier:'balanced'},
- {id:'strategist',name:'Strategist',initial:'S',summary:'Compara opciones y documenta decisiones.',builtin:false,tier:'deep'},
- {id:'researcher',name:'Researcher',initial:'R',summary:'Contrasta evidencia y fuentes.',builtin:false,tier:'light'},
- {id:'analyst',name:'Analyst',initial:'A',summary:'Interpreta datos y explicita límites.',builtin:false,tier:'balanced'},
- {id:'paid-media',name:'Paid Media',initial:'P',summary:'Analizá campañas, inversión y resultados con evidencia; priorizá acciones sin modificar cuentas por tu cuenta.',builtin:false,tier:'balanced'},
- {id:'sales-copywriter',name:'Sales Copywriter',initial:'C',summary:'Convertí briefs en copy de venta listo para usar, con una promesa defendible, prueba real y un CTA claro.',builtin:false,tier:'balanced'},
- {id:'reviewer',name:'Reviewer',initial:'V',summary:'Revisa entregables contra el brief.',builtin:false,tier:'light'},
+ {id:'assistant',name:'Asistente',initial:'A',summary:'Trabaja el brief con vos sin un rol fijo.',builtin:true,tier:'balanced',avatar:'short.2.2.lanyard'},
+ {id:'strategist',name:'Strategist',initial:'S',summary:'Compara opciones y documenta decisiones.',builtin:false,tier:'deep',avatar:'bun.2.1.glasses-thick'},
+ {id:'researcher',name:'Researcher',initial:'R',summary:'Contrasta evidencia y fuentes.',builtin:false,tier:'light',avatar:'curly.1.3.glasses-round'},
+ {id:'analyst',name:'Analyst',initial:'A',summary:'Interpreta datos y explicita límites.',builtin:false,tier:'balanced',avatar:'short.4.1.glasses'},
+ {id:'paid-media',name:'Paid Media',initial:'P',summary:'Analizá campañas, inversión y resultados con evidencia; priorizá acciones sin modificar cuentas por tu cuenta.',builtin:false,tier:'balanced',avatar:'beanie.3.1.none'},
+ {id:'sales-copywriter',name:'Sales Copywriter',initial:'C',summary:'Convertí briefs en copy de venta listo para usar, con una promesa defendible, prueba real y un CTA claro.',builtin:false,tier:'balanced',avatar:'curly.4.1.beret'},
+ {id:'reviewer',name:'Reviewer',initial:'V',summary:'Revisa entregables contra el brief.',builtin:false,tier:'light',avatar:'long.2.2.earring'},
 ];
 const builtinProfiles:AgentProfile[]=shippedRoles.map(r=>({...r,soul:r.summary,skills:'',source:'builtin',directory:null,fingerprint:'builtin-'+r.id}));
 function validateProfile(input:ProfileInput) {
@@ -329,9 +330,9 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   // No CLI to ask in a browser tab: no catalog, and no pretending there is one.
   listAccountModels: async () => ({ source: 'suggested' as const, models: [], detail: 'Esta vista previa no puede consultar los modelos de tu cuenta.' }),
   // The team roster is real only on desktop; the preview shows the roles so the concept is visible.
-  listRoles: async()=> (await browserAPI.listProfiles()).map(({id,name,initial,summary,builtin,tier})=>({id,name,initial,summary,builtin,tier})),
+  listRoles: async()=> (await browserAPI.listProfiles()).map(({id,name,initial,summary,builtin,tier,avatar})=>({id,name,initial,summary,builtin,tier,avatar})),
   listProfiles:async()=>[...builtinProfiles,...normalized().profiles],
-  saveProfile:async(input,expectedFingerprint)=>mutate(s=>{validateProfile(input);if(shippedRoles.some(r=>r.id===input.id))throw new Error('Los perfiles incluidos son de solo lectura');const existing=s.profiles.find(p=>p.id===input.id);if(expectedFingerprint===null?Boolean(existing):!existing||existing.fingerprint!==expectedFingerprint)throw new Error('El perfil cambió o ya existe. Tu borrador sigue intacto; recargá antes de reintentar.');const p:AgentProfile={...input,builtin:false,tier:'balanced',source:'custom',directory:null,fingerprint:id()};s.profiles=s.profiles.filter(p=>p.id!==input.id);s.profiles.push(p);return p;}),
+  saveProfile:async(input,expectedFingerprint)=>mutate(s=>{validateProfile(input);if(shippedRoles.some(r=>r.id===input.id))throw new Error('Los perfiles incluidos son de solo lectura');const existing=s.profiles.find(p=>p.id===input.id);if(expectedFingerprint===null?Boolean(existing):!existing||existing.fingerprint!==expectedFingerprint)throw new Error('El perfil cambió o ya existe. Tu borrador sigue intacto; recargá antes de reintentar.');const p:AgentProfile={...input,avatar:parseAvatar(input.avatar)===null?serializeAvatar(avatarFromSeed(input.id)):serializeAvatar(parseAvatar(input.avatar)!),builtin:false,tier:'balanced',source:'custom',directory:null,fingerprint:id()};s.profiles=s.profiles.filter(p=>p.id!==input.id);s.profiles.push(p);return p;}),
   listTeam: async () => [], addTeamMember: unavailable, openTeamMember: unavailable, pauseTeamMember: unavailable, finishTeamMember: unavailable, restartTeamMember: unavailable, removeTeamMember: unavailable, setTeamMemberModel: unavailable, setTeamMemberTier: unavailable, draftContinuation: unavailable,
   // The web preview is always whatever ohmylatte.app is serving: there is
   // nothing to download and nothing to restart.

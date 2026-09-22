@@ -24,7 +24,7 @@ const { TeamCards } = await import('./coordination/TeamCards');
 import type { TeamCardsProps } from './coordination/TeamCards';
 import type { AgentRole, CoordinationAskView, CoordinationGateView, CoordinationProposal, CoordinationRunView } from '../shared/contracts';
 
-const role = (patch: Partial<AgentRole> = {}): AgentRole => ({ id: 'strategist', name: 'Strategist', initial: 'S', summary: 'Compara opciones.', builtin: false, tier: 'deep', ...patch });
+const role = (patch: Partial<AgentRole> = {}): AgentRole => ({ id: 'strategist', name: 'Strategist', initial: 'S', summary: 'Compara opciones.', builtin: false, tier: 'deep', avatar: null, ...patch });
 const gateView = (patch: Partial<CoordinationGateView> = {}): CoordinationGateView => ({
   id: 'g1', kind: 'plan', runId: 'run1', createdAt: '2026-09-01T00:00:00.000Z', ...patch,
 });

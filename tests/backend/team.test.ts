@@ -45,8 +45,12 @@ describe('Roles: pack loading and catalog', () => {
   });
 
   it('parses role files defensively', () => {
-    // A role that declares no `tier:` opens at the default effort.
-    expect(parseRole('x', '---\nname: Copy\ninitial: c\nsummary: Escribe\n---\nDo copy.')).toEqual({ id: 'x', name: 'Copy', initial: 'C', summary: 'Escribe', tier: 'balanced', instructions: 'Do copy.' });
+    // A role that declares no `tier:` opens at the default effort, and one that
+    // declares no `avatar:` gets none here: the catalogue derives it from the id.
+    expect(parseRole('x', '---\nname: Copy\ninitial: c\nsummary: Escribe\n---\nDo copy.')).toEqual({ id: 'x', name: 'Copy', initial: 'C', summary: 'Escribe', avatar: null, tier: 'balanced', instructions: 'Do copy.' });
+    // An `avatar:` it cannot read is the same as none: never a dropped role.
+    expect(parseRole('x', '---\nname: Copy\ninitial: c\navatar: torcido\n---\nDo copy.')?.avatar).toBeNull();
+    expect(parseRole('x', '---\nname: Copy\ninitial: c\navatar: BOB.2.4.Phones\n---\nDo copy.')?.avatar).toBe('bob.2.4.phones');
     expect(parseRole('x', 'no front matter')).toBeNull();
     expect(parseRole('x', '---\nsummary: s\n---\nbody')).toBeNull();
     expect(parseRole('x', '---\nname: Empty\n---\n   ')).toBeNull();

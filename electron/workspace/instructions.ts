@@ -125,6 +125,12 @@ export interface PackRole {
   initial: string;
   summary: string;
   /**
+   * The face this role opens with, serialized (`bun.2.1.glasses`), from its
+   * `avatar:` front matter. Null when the pack did not choose one: the role
+   * catalogue then derives one from the role id, so nothing has to migrate.
+   */
+  avatar: string | null;
+  /**
    * Effort this role opens with, from its `tier:` front matter. A role that
    * mostly gathers and checks opens light; one that decides opens deep.
    */

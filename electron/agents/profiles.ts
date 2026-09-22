@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { DEFAULT_EFFORT_TIER, type AgentProfile, type ProfileInput } from '../../shared/contracts';
+import { parseAvatar, serializeAvatar } from '../../shared/avatar';
 import { writeFileAtomic } from '../core/atomicFile';
 
 const FILES = ['profile.json', 'SOUL.md', 'SKILL.md'] as const;
@@ -14,6 +15,10 @@ function validate(input: ProfileInput): void {
     if (typeof input[key] !== 'string' || input[key].includes('\0') || Buffer.byteLength(input[key], 'utf8') > limit) throw new TypeError(`Invalid profile ${key}`);
   }
   if (!input.name.trim() || !input.initial.trim() || !input.soul.trim()) throw new TypeError('Profile name, initial and SOUL are required');
+  // El avatar es opcional y tolerante: una eleccion ilegible se descarta y el
+  // rol vuelve a la cara que le deriva su id. Lo unico inaceptable es un tipo
+  // que no sea texto: eso es un cliente roto, no una eleccion vieja.
+  if (input.avatar !== undefined && input.avatar !== null && typeof input.avatar !== 'string') throw new TypeError('Invalid profile avatar');
 }
 /**
  * Real path of `directory`, or of its deepest existing ancestor with the missing tail re-appended.
@@ -77,11 +82,15 @@ export class ProfileStore {
       const parts = FILES.map(file => this.readFile(directory, file, file === 'SKILL.md'));
       const metadata: unknown = JSON.parse(parts[0]);
       if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new TypeError('Invalid profile metadata');
-      const input = { ...metadata, soul: parts[1], skills: parts[2] } as ProfileInput;
+      // El `avatar` del disco NO pasa por `validate`: es lo unico del perfil que
+      // se puede descartar sin perder nada, y un perfil entero no puede caerse
+      // porque alguien escribio cualquier cosa en el campo de la cara.
+      const input = { ...metadata, avatar: undefined, soul: parts[1], skills: parts[2] } as ProfileInput;
       validate(input); if (input.id !== id) throw new TypeError('Profile id does not match directory');
       // A profile the human wrote declares no effort of its own: it opens at the
       // default tier, and the human moves that member from its conversation.
-      return { id, name: input.name, initial: input.initial, summary: input.summary, tier: DEFAULT_EFFORT_TIER, soul: input.soul, skills: input.skills, builtin: false, source: 'custom', directory, fingerprint: profileFingerprint(parts) };
+      const stored = parseAvatar((metadata as { avatar?: unknown }).avatar);
+      return { id, name: input.name, initial: input.initial, summary: input.summary, avatar: stored === null ? null : serializeAvatar(stored), tier: DEFAULT_EFFORT_TIER, soul: input.soul, skills: input.skills, builtin: false, source: 'custom', directory, fingerprint: profileFingerprint(parts) };
     } catch (error) { throw new TypeError(`Invalid profile ${id}: ${error instanceof Error ? error.message : String(error)}`); }
   }
   list(strict = true): AgentProfile[] {
@@ -97,7 +106,7 @@ export class ProfileStore {
   /** Settings never loses valid profiles because one manually edited folder is broken. */
   listReported(): AgentProfile[] {
     const diagnostic = (id: string, directory: string, error: unknown): AgentProfile => ({
-      id, name: id === '__profile-storage-error' ? 'Profile storage error' : id, initial: '!', summary: 'Repair the profile files externally, then reload.',
+      id, name: id === '__profile-storage-error' ? 'Profile storage error' : id, initial: '!', avatar: null, summary: 'Repair the profile files externally, then reload.',
       tier: DEFAULT_EFFORT_TIER, soul: '', skills: '', builtin: false, source: 'custom', directory, fingerprint: '', error: error instanceof Error ? error.message : String(error),
     });
     try {
@@ -125,7 +134,12 @@ export class ProfileStore {
       const old = exists ? FILES.map(f => ({ exists: fs.existsSync(path.join(directory, f)), text: this.readFile(directory, f, f === 'SKILL.md') })) : null;
       if (!exists) fs.mkdirSync(directory);
       const { id, name, initial, summary, soul, skills } = input;
-      const parts = [JSON.stringify({ id, name, initial, summary }, null, 2) + '\n', soul, skills];
+      // El avatar viaja al lado de `initial` en profile.json, que es donde vive
+      // la identidad visible de un perfil propio. Una eleccion ilegible no se
+      // guarda: mejor sin avatar —y derivado del id— que basura en disco.
+      const chosen = parseAvatar(input.avatar);
+      const avatar = chosen === null ? null : serializeAvatar(chosen);
+      const parts = [JSON.stringify({ id, name, initial, summary, avatar }, null, 2) + '\n', soul, skills];
       const marker = path.join(directory, '.writing'); this.safe(marker);
       writeFileAtomic(marker, 'Incomplete save: inspect SOUL.md, SKILL.md and profile.json before removing this marker.\n');
       try {

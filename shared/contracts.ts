@@ -506,9 +506,9 @@ export interface ChatUsage {
 export const EMPTY_USAGE: ChatUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0, costUsd: null, contextTokens: null };
 
 /** A preset personality a team member opens with. Shipped by the discipline pack; `assistant` is the neutral default. `tier` is the effort it opens with unless the human picks another. */
-export interface AgentRole { id: string; name: string; initial: string; summary: string; builtin: boolean; tier: EffortTier }
+export interface AgentRole { id: string; name: string; initial: string; summary: string; builtin: boolean; tier: EffortTier; /** El avatar del rol, serializado (`bob.2.4.phones`). Nunca es null en lo que sale del hub: un rol sin eleccion lo deriva de su propio id. */ avatar: string | null }
 export interface AgentProfile extends AgentRole { soul: string; skills: string; source: 'builtin' | 'custom'; directory: string | null; fingerprint: string; /** Invalid disk entries are visible but must not be edited or cloned. */ error?: string }
-export interface ProfileInput { id: string; name: string; initial: string; summary: string; soul: string; skills: string }
+export interface ProfileInput { id: string; name: string; initial: string; summary: string; soul: string; skills: string; /** El avatar elegido, serializado. `null` = lo deriva del id. */ avatar?: string | null }
 /** working = answering now · idle = open and waiting · paused = closed, resumable · ended = finished by the user (can be reopened). */
 export type TeamMemberStatus = 'working' | 'idle' | 'paused' | 'ended';
 /** A role opened inside a work: its own conversation, runtime, account and status. Persisted and resumable. */
@@ -518,6 +518,13 @@ export interface TeamMember {
   roleId: string;
   roleName: string;
   initial: string;
+  /**
+   * La cara de este miembro, serializada. Es la del rol, salvo cuando el
+   * equipo ya tiene otro miembro del mismo rol: el segundo y los que sigan
+   * derivan la suya de su propio id y conservan el color. Ninguna cara
+   * repetida en un equipo.
+   */
+  avatar: string | null;
   runtime: ChatRuntime;
   model: string | null;
   accountId: string | null;

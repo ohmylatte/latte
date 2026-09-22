@@ -44,7 +44,7 @@ const GATE: CoordinationGateView = {
 };
 
 const member = (roleId: string, status: TeamMember['status'] = 'idle'): TeamMember => ({
-  id: 'mem_' + roleId, workId: 'w1', roleId, roleName: roleId, initial: roleId[0]!.toUpperCase(),
+  id: 'mem_' + roleId, workId: 'w1', roleId, roleName: roleId, initial: roleId[0]!.toUpperCase(), avatar: null,
   runtime: 'claude', model: null, accountId: null, label: 'Claude', status, tier: 'balanced',
   usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 });

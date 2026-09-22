@@ -29,6 +29,7 @@ import type { TerminalManager } from '../runtime/terminalManager';
 import type { LatteRepository, TeamMemberRecord } from '../storage/repository';
 import { AccountStore, SYSTEM_ACCOUNT_ID, type AccountRuntime } from './accounts';
 import { ASSISTANT_ROLE_ID, RoleCatalog } from './roles';
+import { avatarFromSeed, serializeAvatar } from '../../shared/avatar';
 import type { TranscriptStore } from './transcripts';
 import type { AdapterStartInput, RuntimeAdapter } from './types';
 
@@ -351,7 +352,11 @@ export class AgentHub {
   }
 
   listTeam(workId: string): TeamMember[] {
-    return this.deps.repo.listMembers(workId).map((record) => this.describe(record));
+    // Una sola lectura de los miembros para todo el equipo: `describe` sola
+    // tendria que ir a buscar los hermanos de cada uno para saber si su cara
+    // se repite, y eso serian N consultas para dibujar una lista.
+    const members = this.deps.repo.listMembers(workId);
+    return members.map((record) => this.describe(record, members));
   }
 
   getMember(memberId: string): TeamMember {
@@ -667,7 +672,32 @@ export class AgentHub {
     return null;
   }
 
-  private describe(record: TeamMemberRecord): TeamMember {
+  /**
+   * La cara de un miembro: la de su rol, salvo que el equipo ya tenga otro
+   * miembro del mismo rol.
+   *
+   * El segundo Reviewer y los que sigan derivan la suya de su propio id y se
+   * quedan con el COLOR del rol: siguen siendo Reviewers de un vistazo, pero
+   * no son la misma persona dos veces. Ninguna cara repetida en un equipo.
+   *
+   * Se calcula al leer y no se guarda: la tabla de miembros no tiene columna
+   * para esto y no hay ninguna migracion detras de este cambio. El orden lo
+   * fija `createdAt` y, si dos entraron en el mismo milisegundo, el id: el
+   * primero conserva la cara del rol y no se la roba nadie despues.
+   */
+  private avatarOf(record: TeamMemberRecord, siblings?: TeamMemberRecord[]): string | null {
+    let roleAvatar: string | null = null;
+    // Un rol borrado del disco no deja al miembro sin cara: la deriva de su id.
+    try { roleAvatar = this.deps.roles.get(record.roleId)?.avatar ?? null; } catch { roleAvatar = null; }
+    if (!roleAvatar) roleAvatar = serializeAvatar(avatarFromSeed(record.roleId));
+    const peers = (siblings ?? this.deps.repo.listMembers(record.workId))
+      .filter((m) => m.roleId === record.roleId)
+      .sort((a, b) => (a.createdAt === b.createdAt ? a.id.localeCompare(b.id) : a.createdAt.localeCompare(b.createdAt)));
+    const index = peers.findIndex((m) => m.id === record.id);
+    return index <= 0 ? roleAvatar : serializeAvatar(avatarFromSeed(record.id));
+  }
+
+  private describe(record: TeamMemberRecord, siblings?: TeamMemberRecord[]): TeamMember {
     let status: TeamMemberStatus;
     const adapter = this.adapters().find((a) => a.owns(record.id));
     if (adapter) status = adapter.isBusy(record.id) ? 'working' : 'idle';
@@ -679,6 +709,7 @@ export class AgentHub {
       roleId: record.roleId,
       roleName: record.roleName,
       initial: record.initial,
+      avatar: this.avatarOf(record, siblings),
       runtime: record.runtime,
       model: record.model,
       accountId: record.accountId,

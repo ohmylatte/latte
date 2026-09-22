@@ -30,7 +30,7 @@ import type { CoordinationLogEntryView, CoordinationMemberSupport, CoordinationR
 const work: Work = { id: 'w1', brandId: 'b1', title: 'Lanzamiento', brief: '', folder: null, updatedAt: '' };
 /** El nombre largo de la captura real, no uno de laboratorio. */
 const member: TeamMember = {
-  id: 'cm', workId: 'w1', roleId: 'community-manager', roleName: 'Community Manager', initial: 'C',
+  id: 'cm', workId: 'w1', roleId: 'community-manager', roleName: 'Community Manager', initial: 'C', avatar: null,
   runtime: 'claude', model: null, accountId: null, label: 'Claude', status: 'working', tier: 'balanced',
   usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 };

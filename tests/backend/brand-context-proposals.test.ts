@@ -290,7 +290,7 @@ describe('requestBrandContextDraft', () => {
       const work = await b.service.createWork(brand.id, 'Trabajo');
       const at = new Date().toISOString();
       const busy: TeamMember = {
-        id: 'mem_busy', workId: work.id, roleId: 'strategist', roleName: 'Strategist', initial: 'S',
+        id: 'mem_busy', workId: work.id, roleId: 'strategist', roleName: 'Strategist', initial: 'S', avatar: 'bun.2.1.glasses',
         runtime: 'opencode', model: null, accountId: null, label: 'OpenCode', status: 'working',
         tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: at, updatedAt: at,
       };

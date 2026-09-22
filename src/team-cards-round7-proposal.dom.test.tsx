@@ -30,7 +30,7 @@ const work = (patch: Partial<Work> = {}): Work => ({
   id: 'w1', brandId: 'b1', title: 'Lanzamiento', brief: 'Lanzar la campaña.',
   folder: null, updatedAt: '2026-09-01T00:00:00.000Z', ...patch,
 });
-const role = (patch: Partial<AgentRole> = {}): AgentRole => ({ id: 'strategist', name: 'Strategist', initial: 'S', summary: 'Compara opciones.', builtin: false, tier: 'deep', ...patch });
+const role = (patch: Partial<AgentRole> = {}): AgentRole => ({ id: 'strategist', name: 'Strategist', initial: 'S', summary: 'Compara opciones.', builtin: false, tier: 'deep', avatar: null, ...patch });
 const gateView = (patch: Partial<CoordinationGateView> = {}): CoordinationGateView => ({
   id: 'g-proposal', kind: 'proposal', runId: 'run1', createdAt: '2026-09-01T00:00:00.000Z', ...patch,
 });

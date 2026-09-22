@@ -1,6 +1,7 @@
 ---
 name: Paid Media
 initial: P
+avatar: beanie.3.1.none
 summary: Analizá campañas, inversión y resultados con evidencia; priorizá acciones sin modificar cuentas por tu cuenta.
 tier: balanced
 ---

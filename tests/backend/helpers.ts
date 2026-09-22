@@ -4,6 +4,7 @@ import path from 'node:path';
 import { vi } from 'vitest';
 import { EMPTY_USAGE, type AgentEvent, type ChatSession, type TeamMember, type TeamMemberStatus } from '../../shared/contracts';
 import { createBackend, type Backend, type BackendOptions } from '../../electron/bootstrap';
+import { avatarFromSeed, serializeAvatar } from '../../shared/avatar';
 import type { CommandResult, CommandRunner } from '../../electron/runtime/commandRunner';
 import type { PtyLoadResult, PtyProcessLike, PtySpawnOptions } from '../../electron/runtime/ptyLoader';
 
@@ -150,7 +151,7 @@ export interface TestBackend extends Backend {
 export interface FakeTeamMember { id: string; workId: string; roleId: string; status: TeamMemberStatus }
 
 const fakeTeamMemberShape = (m: FakeTeamMember): TeamMember => ({
-  id: m.id, workId: m.workId, roleId: m.roleId, roleName: m.roleId, initial: m.roleId[0]?.toUpperCase() ?? 'X',
+  id: m.id, workId: m.workId, roleId: m.roleId, roleName: m.roleId, initial: m.roleId[0]?.toUpperCase() ?? 'X', avatar: serializeAvatar(avatarFromSeed(m.roleId)),
   runtime: 'codex', model: null, accountId: null, label: 'Codex', status: m.status, tier: 'balanced',
   usage: EMPTY_USAGE,
   continuedFrom: null, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
