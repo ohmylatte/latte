@@ -62,9 +62,15 @@ const NEW_CLASSES = [
   // B4.3: los dos renglones de la pestana, que el chip dejo de pisar.
   'team-tab-top', 'team-tab-bottom',
   // La tira lateral y la fila de Inicio, que venían sin una sola regla.
+  // H2: `active-teams-strip-row-finished` se fue de las dos puntas a la vez —
+  // la tira ya no dibuja runs cerrados, así que la clase no la pinta nadie y
+  // la regla que la pintaba tampoco tiene por qué seguir. Una regla sin
+  // componente es la misma promesa rota que un componente sin regla, del
+  // otro lado. El punto de estado y el "y N más" ocupan su lugar en la lista.
   'active-teams-strip', 'active-teams-strip-row', 'active-teams-strip-brand',
   'active-teams-strip-work', 'active-teams-strip-status', 'active-teams-strip-budget',
-  'active-teams-strip-gates', 'active-teams-strip-row-finished', 'home-row-finished',
+  'active-teams-strip-gates', 'active-teams-strip-dot', 'active-teams-strip-more',
+  'home-row-finished',
 ];
 
 describe('B1.5: el CSS del equipo', () => {
@@ -94,10 +100,24 @@ describe('B1.5: el CSS del equipo', () => {
     expect(spans!).toContain('display:block');
   });
 
-  /** Un run cerrado no espera nada de nadie: se lee atenuado. */
-  it('un run terminado se atenúa, en la tira y por `data-live="false"`', () => {
-    expect(ruleBodyFor('active-teams-strip-row-finished')).toContain('opacity');
-    expect(css).toContain('.active-teams-strip-row[data-live="false"]');
+  /**
+   * H2: un run cerrado no espera nada de nadie — y por eso ya no está en la
+   * tira. Lo que la hoja tiene que pintar ahora es la SEÑAL de estado: el
+   * punto, con el único acento de la superficie, y su tono de "te necesita".
+   */
+  it('el punto de estado tiene forma y un solo acento', () => {
+    const dot = ruleBodyFor('active-teams-strip-dot')!;
+    expect(dot).toContain('border-radius:50%');
+    expect(css).toContain('.active-teams-strip-dot[data-tone="live"]');
+    expect(css).toContain('.active-teams-strip-dot[data-tone="needs"]');
+    expect(css).not.toContain('.active-teams-strip-row-finished');
+  });
+
+  /** El conteo de la tira es un número: se lee en mono, como todos los de la app. */
+  it('el conteo de la tira va en mono y en su propia columna', () => {
+    const budget = ruleBodyFor('active-teams-strip-budget')!;
+    expect(budget).toContain('var(--mono)');
+    expect(budget).toContain('grid-area');
   });
 
   /**

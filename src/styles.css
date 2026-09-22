@@ -984,21 +984,22 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .team-view .team-advanced{margin-top:0;flex-shrink:0}
 @container (min-width:560px){.team-view-columns{grid-template-columns:minmax(0,260px) minmax(0,1fr);grid-template-rows:minmax(0,1fr)}.team-view-list{max-height:none;border-right:1px solid var(--line);padding-right:8px}.team-view-thread{border-top:0;padding-top:0}}
 
-/* La tira de equipos activos: marca, trabajo y estado sin desbordar. */
+/* H2: la tira de equipos activos, con la anatomia de fila. Un renglon-boton
+   por equipo: el punto de estado ocupa las dos lineas a la izquierda, el
+   trabajo y la marca se apilan en el medio sin desbordar, y el conteo en mono
+   queda a la derecha, tambien a lo alto de las dos. */
 .active-teams-strip{margin:10px 0 4px;min-width:0}
 .active-teams-strip .document-kicker{margin:0 0 6px;font-size:var(--text-sm);color:var(--muted-soft)}
 .active-teams-strip ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
-.active-teams-strip-row{display:grid;grid-template-columns:minmax(0,1fr);gap:1px;width:100%;text-align:left;padding:6px 8px;border-radius:var(--radius-sm);min-width:0}
+.active-teams-strip-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:9px;align-items:center;width:100%;text-align:left;padding:6px 8px;border-radius:var(--radius-sm);min-width:0}
 .active-teams-strip-row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
-.active-teams-strip-brand{font-size:var(--text-sm);color:var(--muted-soft)}
-.active-teams-strip-work{font-size:var(--text-sm)}
-.active-teams-strip-status,.active-teams-strip-budget{font-size:var(--text-sm);color:var(--muted-soft)}
+.active-teams-strip-brand{grid-area:2/2/3/3;font-size:var(--text-sm);color:var(--muted-soft)}
+.active-teams-strip-work{grid-area:1/2/2/3;font-size:var(--text-sm)}
+.active-teams-strip-status{font-size:var(--text-sm);color:var(--muted-soft)}
+.active-teams-strip-budget{grid-area:1/3/3/4;font-family:var(--mono);font-size:var(--text-sm);color:var(--muted-soft)}
 .active-teams-strip-gates{font-size:var(--text-sm);color:var(--rust-soft)}
-/* Un run cerrado sigue a la vista mientras la persona no haya pasado por ahi,
-   pero atenuado: no espera nada de nadie. */
-.active-teams-strip-row-finished{opacity:.6}
-.active-teams-strip-row[data-live="false"]{opacity:.6}
-/* La misma regla en Inicio, para la fila de un equipo que ya termino. */
+/* En Inicio, que es donde vive lo que ya termino, la fila de un equipo cerrado
+   se atenua. La tira lateral ya no tiene una: ahi solo va lo vivo. */
 .home-row-finished{opacity:.75}
 
 /* --- C1..C6: LA GRAMATICA DE LA COORDINACION ---------------------------------
@@ -1337,3 +1338,13 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
    accion pendiente, no una nota al pie. */
 .chat-card.connection-expired{border-left-color:var(--rust);background:var(--rust-wash)}
 .chat-card.connection-expired p{margin:6px 0 0;color:var(--rust-deep)}
+
+/* H2: el estado de un equipo es una SEÑAL, no un renglon de texto. Un solo
+   acento: rust vivo (con halo mientras esta en curso), rust marcado cuando te
+   necesita, gris cuando esta suspendido y no esta haciendo nada ahora. */
+.active-teams-strip-dot{grid-area:1/1/3/2;width:7px;height:7px;border-radius:50%;background:var(--muted-soft)}
+.active-teams-strip-dot[data-tone="live"]{background:var(--rust);box-shadow:0 0 0 3px var(--rust-deep)}
+.active-teams-strip-dot[data-tone="needs"]{background:var(--rust);box-shadow:0 0 0 2px var(--rust-soft)}
+/* El resto no se esconde: se cuenta, y el renglon lleva a Inicio, que es la
+   pantalla donde estan todos los equipos, vivos y cerrados. */
+.active-teams-strip-more{width:100%;font-size:var(--text-sm)!important;color:var(--muted-soft)!important;padding:4px 8px}

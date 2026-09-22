@@ -62,6 +62,15 @@ export interface TeamCardsProps {
   /** C6: "Ver equipo" cambia el rail a Equipo. Sin handler, no se ofrece. */
   onShowTeam?: () => void;
   /**
+   * H1: la persona ya abrió el modo Equipo de ESTE run.
+   *
+   * La línea del plan aprobado es un aviso de una sola vez: lleva al equipo y
+   * se va. Con el equipo ya visto no se dibuja más para este run — mantenerla
+   * sería decoración fija arriba del composer, ocupando el alto que la
+   * conversación necesita.
+   */
+  teamSeen?: boolean;
+  /**
    * B4.3a: el encabezado plegable YA nombra la sección. Con él presente, el
    * título de adentro decía «Del equipo» por segunda vez, dos renglones
    * seguidos, y se comía el alto que las tarjetas necesitan para verse.
@@ -640,8 +649,12 @@ export function TeamCards(props: TeamCardsProps) {
      * C6: el plan aprobado deja una linea en la conversacion donde se aprobo.
      * Solo en el chat del coordinador --es su conversacion-- y solo mientras
      * el run este vivo: un run cerrado ya no tiene equipo trabajando.
+     *
+     * H1: y sólo hasta que la persona abre el equipo. El aviso lleva a mirar
+     * al equipo UNA vez; despues de eso ya no avisa nada, y un run que
+     * termina sin que lo haya abierto se lleva la linea igual por `active`.
      */
-    const approved = run?.active && run.planApproved && gateRecipient(run) === props.memberId;
+    const approved = run?.active && run.planApproved && !props.teamSeen && gateRecipient(run) === props.memberId;
     if (approved) return <section className="team-cards team-cards-approved">
       <ApprovedLine run={run!} formatTime={props.formatTime} onShowTeam={props.onShowTeam} />
     </section>;

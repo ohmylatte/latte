@@ -689,6 +689,7 @@ const es = {
   'coordination.teams.empty': 'Sin equipos coordinando ahora',
   'coordination.teams.gatesWaiting': '{count, plural, one {# aprobación pendiente} other {# aprobaciones pendientes}}',
   'coordination.teams.budgetInvalid': 'Presupuesto ilegible',
+  'coordination.teams.more': 'y {count} más',
   // --- Coordinación: motivos degradados, por miembro (Phase 7, slice 7-B) --
   'coordination.degraded.claudeBelowFloor': 'Esta versión de Claude Code es anterior a la mínima soportada: despacha en modo manual.',
   'coordination.degraded.codexRunCap': 'Este equipo llegó al tope de miembros de Codex coordinados por corrida: despacha en modo manual.',
@@ -1605,6 +1606,7 @@ const en: Record<MessageKey, string> = {
   'coordination.teams.empty': 'No teams coordinating right now',
   'coordination.teams.gatesWaiting': '{count, plural, one {# approval pending} other {# approvals pending}}',
   'coordination.teams.budgetInvalid': 'Budget unreadable',
+  'coordination.teams.more': 'and {count} more',
   // --- Coordination: degraded reasons, per member (Phase 7, slice 7-B) ---
   'coordination.degraded.claudeBelowFloor': 'This Claude Code version is older than the minimum supported: dispatch falls back to manual.',
   'coordination.degraded.codexRunCap': 'This team reached the per-run cap of coordinated Codex members: dispatch falls back to manual.',

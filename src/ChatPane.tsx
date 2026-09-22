@@ -37,6 +37,14 @@ export interface ChatCoordinationProps {
   formatTime?: (value: string) => string;
   /** C6: cambia el rail a Equipo: lo que aprieta "Ver equipo". */
   onShowTeam?: () => void;
+  /** H1: la persona ya abrió el equipo de este run; la línea del plan aprobado ya no avisa nada. */
+  teamSeen?: boolean;
+  /**
+   * H1: el rail avisa que el equipo se abrió, por el verbo o por el segmento.
+   * Lo consume `TeamPanel`, que es quien tiene el rail; viaja acá porque es el
+   * mismo paquete de props de coordinación que baja del `App`.
+   */
+  onTeamOpened?: () => void;
   /**
    * B3.5: la persona ya pidio ver el pendiente.
    *
@@ -195,6 +203,7 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
       onSelectMember={coordination.onSelectMember}
       formatTime={coordination.formatTime}
       onShowTeam={coordination.onShowTeam}
+      teamSeen={coordination.teamSeen}
       initiallyExpanded={coordination.initiallyExpanded}
     />}
     {beforeComposer}

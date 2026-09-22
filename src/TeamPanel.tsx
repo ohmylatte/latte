@@ -197,6 +197,18 @@ export function TeamPanel(props: TeamPanelProps) {
   /** Que miembro se esta leyendo en el modo Equipo. `null` cae en el coordinador, y sin run en el primero. */
   const [threadMember, setThreadMember] = useState<string | null>(null);
   useEffect(() => { setAdding(false); setContinuing(null); setRail('chat'); setThreadMember(null); }, [work?.id]);
+  /**
+   * H1: EL RAIL ES QUIEN SABE QUE EL EQUIPO SE ABRIO.
+   *
+   * "Ver equipo", el segmento Conversacion|Equipo y "Ver hilo" son tres
+   * puertas al MISMO modo, y las tres tienen que apagar el aviso del plan
+   * aprobado. En vez de colgar el aviso de cada `onClick` —que es la forma de
+   * olvidarse de la cuarta puerta— se cuelga del ESTADO: si el rail quedo en
+   * Equipo, el equipo esta abierto, haya entrado por donde haya entrado.
+   */
+  const onTeamOpened = props.chatCoordination?.onTeamOpened;
+  const railRunId = props.coordinationRun?.id ?? null;
+  useEffect(() => { if (rail === 'team') onTeamOpened?.(); }, [rail, railRunId]);
   const selected = team.find(m => m.id === selectedId) ?? null;
   const continuingMember = team.find(m => m.id === continuing) ?? null;
   const liveChat = selected ? chats[selected.id] ?? null : null;
