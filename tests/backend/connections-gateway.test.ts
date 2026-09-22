@@ -105,6 +105,15 @@ const rpc = async (url: string, bearer: string, body: unknown, headers: Record<s
     body: JSON.stringify(body),
   });
 
+/** Espera activa con techo: un test no puede quedarse colgado si el diseno falla. */
+const waitFor = async (condition: () => boolean, timeoutMs = 5_000): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('la condicion no se cumplio a tiempo');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+};
+
 const toy = async (options: Parameters<typeof startToyMcp>[0] = {}): Promise<ToyMcpServer> => {
   const server = await startToyMcp(options);
   upstreams.push(server);
@@ -311,8 +320,23 @@ describe('el 401 a mitad de run se resuelve adentro', () => {
     expect(upstream.calls[0].bearer).not.toBe(tokens.accessToken);
   });
 
+  /**
+   * La carrera que el CI de Linux encontro y el runner local tapaba.
+   *
+   * Version anterior: se disparaban diez pedidos y se contaba `POST /token`.
+   * Eso no prueba nada -- depende de que el primer refresh NO alcance a
+   * resolverse antes de que lleguen los otros nueve. En Linux, mas rapido, el
+   * primero resolvia primero y un rezagado arrancaba un SEGUNDO refresh:
+   * `expected 2 to be 1`.
+   *
+   * Ahora el AS de juguete RETIENE la respuesta del refresh hasta que los diez
+   * pedidos estan de verdad en vuelo. Con la barrera, el orden deja de ser una
+   * apuesta y la afirmacion pasa a ser sobre el diseno.
+   */
   it('diez llamadas que chocan el mismo 401 refrescan UNA sola vez', async () => {
-    const auth = await startToyOAuth();
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const auth = await startToyOAuth({ holdRefresh: () => held });
     upstreams.push(auth);
     const upstream = await toy({ isValid: (token) => auth.isLive(token) });
     const tokens = await seedTokens(auth);
@@ -320,11 +344,78 @@ describe('el 401 a mitad de run se resuelve adentro', () => {
     const bearer = h.tokens.mint('con_agentcy', 'mem_1', null);
     auth.expire(tokens.accessToken);
     const before = auth.hits.filter((hit) => hit === 'POST /token').length;
-    const all = await Promise.all(Array.from({ length: 10 }, (_, i) => rpc(h.url('con_agentcy'), bearer, { jsonrpc: '2.0', id: i, method: 'tools/list' })));
-    for (const response of all) expect(response.status).toBe(200);
+
+    const all = Array.from({ length: 10 }, (_, i) => rpc(h.url('con_agentcy'), bearer, { jsonrpc: '2.0', id: i, method: 'tools/list' }));
+    // Los diez ya pagaron su 401 y estan esperando credenciales nuevas: recien
+    // ahi se suelta el refresh. Sin esta espera el test volveria a medir el
+    // scheduler en vez del codigo.
+    await waitFor(() => upstream.calls.filter((c) => c.rpcMethod === 'tools/list').length >= 10);
+    release();
+
+    for (const response of await Promise.all(all)) expect(response.status).toBe(200);
     // Un solo `POST /token`: sin la memo, cada llamada gastaria el mismo refresh
     // token y un AS que los rota invalidaria el de las otras nueve.
     expect(auth.hits.filter((hit) => hit === 'POST /token').length - before).toBe(1);
+  });
+
+  /**
+   * El REZAGADO, que es la causa raiz exacta del fallo de Linux.
+   *
+   * Un pedido cuyo 401 llega DESPUES de que el refresh ya termino no encuentra
+   * ninguna memo -- se borra al resolver -- y arrancaba un segundo refresh, con
+   * el token viejo que capturó al entrar. Contra un AS que rota el refresh
+   * token, ese segundo intento ademas falla, asi que el rezagado terminaba
+   * marcando la conexion vencida sin que nada estuviera vencido.
+   *
+   * Lo que tiene que pasar: ve que hay una generacion mas nueva, NO refresca, y
+   * reintenta con las credenciales que ya estan guardadas.
+   */
+  it('un pedido rezagado no vuelve a refrescar: reintenta con lo que ya se renovo', async () => {
+    let releaseStraggler: () => void = () => {};
+    const stragglerHeld = new Promise<void>((resolve) => { releaseStraggler = resolve; });
+    const auth = await startToyOAuth();
+    upstreams.push(auth);
+    // Se retiene el PRIMER `tools/list` que entra: ese es el rezagado. El
+    // segundo pasa de largo, refresca y termina antes.
+    let heldOne = false;
+    const upstream = await toy({
+      isValid: (token) => auth.isLive(token),
+      holdCall: (call) => {
+        if (call.rpcMethod !== 'tools/list' || heldOne) return;
+        heldOne = true;
+        return stragglerHeld;
+      },
+    });
+    const tokens = await seedTokens(auth);
+    const h = await harness([connectionRecord({ url: upstream.url })], { con_agentcy: tokens });
+    const bearer = h.tokens.mint('con_agentcy', 'mem_1', null);
+    auth.expire(tokens.accessToken);
+    // Sembrar las credenciales ya gasto un `POST /token` (el canje del codigo):
+    // lo que se cuenta son los REFRESCOS, o sea lo que pase de aca en adelante.
+    const before = auth.hits.filter((hit) => hit === 'POST /token').length;
+
+    // (1) El rezagado sale primero y queda retenido ANTES de recibir su 401.
+    const straggler = rpc(h.url('con_agentcy'), bearer, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    try {
+      await waitFor(() => heldOne);
+
+      // (2) Otro pedido entra, cobra su 401, refresca y termina.
+      expect((await rpc(h.url('con_agentcy'), bearer, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).status).toBe(200);
+      expect(auth.hits.filter((hit) => hit === 'POST /token').length - before).toBe(1);
+    } finally {
+      // Siempre, aunque el test falle: un pedido retenido que nadie suelta
+      // queda colgado cuando el servidor cierra, y eso sale como un error sin
+      // capturar que ensucia la corrida entera.
+      releaseStraggler();
+    }
+
+    // (3) Recien ahora el rezagado cobra su 401, con el token que ya no existe.
+    expect((await straggler).status).toBe(200);
+
+    // Ni un refresh de mas, y la conexion nunca se dio por vencida.
+    expect(auth.hits.filter((hit) => hit === 'POST /token').length - before).toBe(1);
+    expect(h.store.byId.get('con_agentcy')!.state).toBe('connected');
+    expect(h.expired).toEqual([]);
   });
 
   it('sin refresh posible, la conexion pasa a VENCIDA y el miembro recibe un error legible, no un 500', async () => {

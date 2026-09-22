@@ -38,6 +38,19 @@ export interface ToyOAuthOptions {
   expiresIn?: number;
   /** El refresh falla con `invalid_grant`: el camino "no hay refresh posible" del gateway. */
   refuseRefresh?: boolean;
+  /**
+   * Una barrera ANTES de contestar un `grant_type=refresh_token`.
+   *
+   * Sin esto, "diez llamadas refrescan una sola vez" no es un test: es una
+   * apuesta a que el runner no alcance a resolver el primer refresh antes de
+   * que lleguen las otras nueve. En Linux, más rápido, la apuesta se pierde. El
+   * test retiene la respuesta hasta ver que los diez pedidos están de verdad en
+   * vuelo, y recién ahí suelta.
+   *
+   * Sólo el refresh: sembrar credenciales (`authorization_code`) nunca se
+   * bloquea, porque eso es preparación y no lo que se está probando.
+   */
+  holdRefresh?: () => Promise<void> | void;
 }
 
 export interface ToyOAuthServer {
@@ -201,6 +214,7 @@ export async function startToyOAuth(options: ToyOAuthOptions = {}): Promise<ToyO
           return;
         }
         if (grant === 'refresh_token') {
+          await options.holdRefresh?.();
           const refreshToken = form.get('refresh_token') ?? '';
           const previous = refreshes.get(refreshToken);
           if (!previous || options.refuseRefresh) { json(res, 400, { error: 'invalid_grant' }); return; }

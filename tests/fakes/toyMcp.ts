@@ -33,6 +33,15 @@ export interface ToyMcpOptions {
   sse?: boolean;
   /** Exigir el `Mcp-Session-Id` que devolvió `initialize`. */
   requireSession?: boolean;
+  /**
+   * Retiene un pedido antes de contestarlo. Recibe el pedido ya registrado en
+   * `calls`, así que el test puede decidir por índice o por método.
+   *
+   * Es lo que hace reproducible al REZAGADO: un pedido cuyo 401 llega después
+   * de que un refresh ya terminó. Sin una forma de retenerlo, ese orden depende
+   * del scheduler y no se puede afirmar nada sobre él.
+   */
+  holdCall?: (call: ToyMcpServer['calls'][number], index: number) => Promise<void> | void;
 }
 
 export interface ToyMcpServer {
@@ -71,7 +80,9 @@ export async function startToyMcp(options: ToyMcpOptions = {}): Promise<ToyMcpSe
       let parsed: { id?: unknown; method?: unknown } = {};
       try { parsed = raw ? (JSON.parse(raw) as typeof parsed) : {}; } catch { /* un cuerpo roto es un cuerpo roto */ }
       const rpcMethod = typeof parsed.method === 'string' ? parsed.method : null;
-      calls.push({ method: req.method ?? '', rpcMethod, bearer, sessionId, accept });
+      const call = { method: req.method ?? '', rpcMethod, bearer, sessionId, accept };
+      calls.push(call);
+      await options.holdCall?.(call, calls.length - 1);
 
       const accepted = options.isValid ?? ((token: string) => validTokens.has(token));
       if (!bearer || !accepted(bearer)) {

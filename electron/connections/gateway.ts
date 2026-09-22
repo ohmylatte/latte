@@ -165,8 +165,35 @@ export class ConnectionGateway {
   private pendingListen: Promise<ListenHandle> | null = null;
   private readonly fetchFn: UpstreamFetch;
   private readonly now: () => number;
-  /** Refrescos en vuelo por conexión: dos miembros que chocan el mismo 401 refrescan UNA vez, no dos. */
+  /**
+   * La GENERACIÓN de las credenciales de cada conexión: sube en cada refresh
+   * que sale bien, y en cada login nuevo (`credentialsChanged`).
+   *
+   * Existe por una carrera que el CI de Linux encontró y el runner local
+   * tapaba. La memo de abajo se borra al resolverse, así que un pedido cuyo 401
+   * llegaba DESPUÉS de que el refresh ya había terminado no encontraba nada en
+   * vuelo y arrancaba un segundo refresh — con el token que había capturado al
+   * entrar, que ya no existía. Contra un AS que rota el refresh token, ese
+   * segundo intento además falla, así que el rezagado terminaba marcando
+   * vencida una conexión que acababa de renovarse.
+   *
+   * La memo sola no alcanza para arreglarlo: "no hay nadie refrescando" y "ya
+   * refrescó alguien" son indistinguibles mirando un `Map` que se vacía. La
+   * generación las separa, porque es monótona y no se borra.
+   */
+  private readonly generation = new Map<string, number>();
+  /**
+   * El refresh en vuelo por conexión: dos miembros que chocan el mismo 401
+   * refrescan UNA vez, no dos. Se registra de forma SÍNCRONA (ver `refresh`).
+   */
   private readonly refreshing = new Map<string, Promise<ConnectionTokens | null>>();
+  /**
+   * La generación con la que un refresh ya se intentó y falló. Sin esto, cada
+   * rezagado volvería a pedir credenciales que el proveedor ya dijo que no va a
+   * dar: una vez por generación es una vez, incluso cuando la respuesta es que
+   * no.
+   */
+  private readonly refreshFailedAt = new Map<string, number>();
 
   constructor(private readonly deps: ConnectionGatewayDeps) {
     this.fetchFn = deps.fetchFn ?? ((url, init) => (globalThis as unknown as { fetch: UpstreamFetch }).fetch(url, init));
@@ -179,6 +206,25 @@ export class ConnectionGateway {
 
   get boundPort(): number | null {
     return this.handle?.port ?? null;
+  }
+
+  /**
+   * Alguien guardó credenciales NUEVAS por fuera del gateway: un login, un
+   * "volver a entrar". Sube la generación y limpia la marca de fallo, así un
+   * pedido en vuelo con las viejas reintenta con éstas en vez de refrescar, y
+   * una conexión que había fallado el refresh vuelve a poder intentarlo.
+   *
+   * Sin esto, `refreshFailedAt` dejaba la conexión clavada para siempre: la
+   * persona volvía a entrar y el gateway seguía contestando "no se pudo
+   * renovar" con la generación quemada de antes.
+   */
+  credentialsChanged(connectionId: string): void {
+    this.generation.set(connectionId, this.currentGeneration(connectionId) + 1);
+    this.refreshFailedAt.delete(connectionId);
+  }
+
+  private currentGeneration(connectionId: string): number {
+    return this.generation.get(connectionId) ?? 0;
   }
 
   /** La URL que se le inyecta a un miembro para esta conexión. Sólo vale con el gateway levantado. */
@@ -245,6 +291,11 @@ export class ConnectionGateway {
     if (!connection) return jsonResponse(404, { error: 'not_found' });
 
     const rpc = parseRpc(request.body);
+    // La generación se lee ANTES que los tokens, nunca al revés: si algo
+    // renovara entre las dos lecturas, quedarse con la generación vieja hace
+    // que este pedido reintente (inofensivo), mientras que quedarse con la
+    // nueva lo haría refrescar de gusto.
+    let generation = this.currentGeneration(connectionId);
     let tokens = this.deps.connections.readTokens(connectionId);
     if (!tokens) {
       return toolReadableFailure(rpc.id, rpc.method, `No hay una sesión guardada para ${connection.label || connection.name}: hay que volver a entrar desde Latte.`);
@@ -254,9 +305,10 @@ export class ConnectionGateway {
     // minutos. Es más barato que gastar un viaje para que el upstream nos
     // conteste 401 y tener que rehacerlo.
     if (isExpired(tokens, this.now())) {
-      const renewed = await this.refresh(connection, tokens);
+      const renewed = await this.refresh(connection, tokens, generation);
       if (!renewed) return this.expire(connection, rpc, 'la sesión venció y no se pudo renovar');
       tokens = renewed;
+      generation = this.currentGeneration(connectionId);
     }
 
     let response = await this.callUpstream(connection, tokens, request);
@@ -264,7 +316,11 @@ export class ConnectionGateway {
       // Vencimiento DESCONOCIDO: el upstream dijo que no. Se refresca y se
       // reintenta **una sola vez**; dos sería un bucle contra un servidor que
       // ya dijo que no.
-      const renewed = await this.refresh(connection, tokens);
+      //
+      // `generation` es lo que convierte esto en una decisión y no en una
+      // carrera: si mientras este pedido viajaba alguien ya renovó, `refresh`
+      // devuelve lo renovado sin pedir nada, y el reintento sale con eso.
+      const renewed = await this.refresh(connection, tokens, generation);
       if (!renewed) return this.expire(connection, rpc, 'el servidor rechazó la sesión y no se pudo renovar');
       response = await this.callUpstream(connection, renewed, request);
       if (response.status === 401) return this.expire(connection, rpc, 'el servidor sigue rechazando la sesión después de renovarla');
@@ -303,27 +359,53 @@ export class ConnectionGateway {
   }
 
   /**
-   * Un refresh por conexión aunque choquen diez miembros a la vez. Sin esta
-   * memo, cada uno gastaría el mismo refresh token y los AS que rotan el
-   * refresh invalidarían el de los otros nueve.
+   * Credenciales POSTERIORES a la generación `seen`, pidiendo un refresh sólo
+   * si hace falta y sólo una vez por generación.
+   *
+   * Tres guardas, en este orden, y cada una tapa un agujero distinto:
+   *
+   * 1. **Ya falló con estas credenciales.** No hay nada que ganar volviendo a
+   *    pedirle al proveedor lo que ya negó; quien llama marca vencida.
+   * 2. **Alguien más ya renovó** (`current > seen`): este pedido traía un token
+   *    viejo, así que NO refresca — devuelve lo que está guardado y quien llama
+   *    reintenta con eso. Ésta es la que arregla al rezagado.
+   * 3. **Hay uno en vuelo**: se espera ése. La memo se registra de forma
+   *    SÍNCRONA, antes de cualquier `await`, para que dos llamadas no puedan
+   *    colarse las dos entre el chequeo y el alta. Por eso el `Promise` se crea
+   *    con su `resolve` a mano y el trabajo async arranca DESPUÉS del `set`, en
+   *    vez de confiar en dónde cae el primer `await` de una función async.
    */
-  private refresh(connection: ConnectionRecord, tokens: ConnectionTokens): Promise<ConnectionTokens | null> {
+  private refresh(connection: ConnectionRecord, tokens: ConnectionTokens, seen: number): Promise<ConnectionTokens | null> {
+    const current = this.currentGeneration(connection.id);
+    if (this.refreshFailedAt.get(connection.id) === current) return Promise.resolve(null);
+    if (current > seen) return Promise.resolve(this.deps.connections.readTokens(connection.id));
     const inFlight = this.refreshing.get(connection.id);
     if (inFlight) return inFlight;
-    const attempt = (async (): Promise<ConnectionTokens | null> => {
+
+    let settle: (value: ConnectionTokens | null) => void = () => {};
+    const promise = new Promise<ConnectionTokens | null>((resolve) => { settle = resolve; });
+    this.refreshing.set(connection.id, promise);
+    void (async () => {
+      let renewed: ConnectionTokens | null = null;
       try {
-        const renewed = await refreshTokens(tokens, this.fetchFn as unknown as FetchLike, this.now);
+        renewed = await refreshTokens(tokens, this.fetchFn as unknown as FetchLike, this.now);
         this.deps.connections.saveTokens(connection.id, renewed);
-        return renewed;
+        this.generation.set(connection.id, current + 1);
+        this.refreshFailedAt.delete(connection.id);
       } catch (error) {
         this.deps.log?.(`[connections-gateway] no se pudo renovar ${connection.name}: ${error instanceof Error ? error.message : String(error)}`);
-        return null;
+        // La generación NO sube: las credenciales siguen siendo las mismas. Lo
+        // que se recuerda es que con ÉSTAS ya se intentó.
+        this.refreshFailedAt.set(connection.id, current);
+        renewed = null;
       } finally {
+        // Primero se baja la memo y después se resuelve: una continuación que
+        // corra al resolverse no puede encontrarse una entrada muerta.
         this.refreshing.delete(connection.id);
+        settle(renewed);
       }
     })();
-    this.refreshing.set(connection.id, attempt);
-    return attempt;
+    return promise;
   }
 
   /**

@@ -130,6 +130,7 @@ export class ConnectionsService {
       try { await revokeTokens(tokens); } catch { /* que el proveedor no quiera revocar no puede impedir borrar lo nuestro */ }
     }
     this.deps.connections.clearTokens(connectionId);
+    this.deps.gateway.credentialsChanged(connectionId);
     this.deps.tokens.revokeConnection(connectionId);
     this.deps.gateway.stopIfIdle();
     this.deps.connections.setState(connectionId, 'disconnected', '', this.clock());
@@ -234,6 +235,10 @@ export class ConnectionsService {
     }
     const at = this.clock();
     this.deps.connections.saveTokens(record.id, outcome.tokens, this.deps.secretBox, at);
+    // El gateway tiene que enterarse de que estas credenciales son otras: sin
+    // esto, una conexión cuyo refresh había fallado quedaba clavada en "no se
+    // pudo renovar" aunque la persona acabara de volver a entrar.
+    this.deps.gateway.credentialsChanged(record.id);
     // Un `client_id` del registro dinámico se guarda para no registrar un
     // cliente nuevo en cada login.
     if (outcome.clientIdFromRegistration && outcome.tokens.clientId) {
