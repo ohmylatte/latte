@@ -53,6 +53,8 @@ export interface ToyOAuthServer {
   readonly issued: Map<string, { refreshToken: string; clientId: string }>;
   /** Invalida un access token sin tocar su refresh: el 401 a mitad de run. */
   expire(accessToken: string): void;
+  /** True mientras ese access token sirva. Lo usa el MCP upstream de juguete para compartir un solo universo de tokens con este AS. */
+  isLive(accessToken: string): boolean;
 }
 
 const b64url = (buf: Buffer): string => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -237,6 +239,7 @@ export async function startToyOAuth(options: ToyOAuthOptions = {}): Promise<ToyO
     registered,
     issued,
     expire: (accessToken) => { dead.add(accessToken); },
+    isLive: (accessToken) => issued.has(accessToken) && !dead.has(accessToken),
     close: () => new Promise<void>((resolve) => {
       server.closeAllConnections?.();
       server.close(() => resolve());
