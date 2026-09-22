@@ -21,6 +21,21 @@ export interface McpDeps {
   detector: RuntimeDetector;
   /** Environment overlay per account (managed profiles). */
   accountEnv: (runtime: 'claude' | 'codex', accountId: string | null) => Record<string, string>;
+  /**
+   * La cuenta cuyo perfil hay que LEER, que es la del agente primario: el
+   * perfil que los runs de Latte usan de verdad.
+   *
+   * Esto arregla el 1.5 del brief de conexiones. Todo `mcp.ts` leía
+   * `accountEnv(runtime, null)` —el perfil **system**— mientras el login
+   * corría en el `CLAUDE_CONFIG_DIR` de la cuenta del primario. Con una cuenta
+   * gestionada, el servidor se listaba de un perfil y el token vivía en otro:
+   * la pantalla decía "necesita autenticación" para siempre, sin que nada
+   * estuviera mal. El camino de login ya no existe (decisión D), pero la
+   * lectura mentirosa sí, y es la misma línea.
+   *
+   * Ausente = el perfil `system`, que es exactamente lo que hacía antes.
+   */
+  primaryAccountId?: (runtime: 'claude' | 'codex') => string | null;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   /** Codex app-server methods; absent when this build has no Codex adapter. */
@@ -160,7 +175,7 @@ export class McpCatalog {
   private envFor(runtime: ChatRuntime): Record<string, string> {
     const base: Record<string, string> = {};
     for (const [k, v] of Object.entries(this.deps.env ?? process.env)) if (typeof v === 'string') base[k] = v;
-    if (runtime === 'claude' || runtime === 'codex') Object.assign(base, this.deps.accountEnv(runtime, null));
+    if (runtime === 'claude' || runtime === 'codex') Object.assign(base, this.deps.accountEnv(runtime, this.deps.primaryAccountId?.(runtime) ?? null));
     return base;
   }
 }

@@ -50,6 +50,8 @@ export function connectionServerName(slug: string): string {
 export class ConnectionInjectionPlanner {
   /** memberId -> los bearers vivos que se le entregaron. Lo que `release` tiene que poder deshacer. */
   private readonly issued = new Map<string, string[]>();
+  /** memberId -> las conexiones que lleva. Es quién tiene que enterarse cuando una vence. */
+  private readonly carrying = new Map<string, Set<string>>();
 
   constructor(private readonly deps: ConnectionInjectionDeps) {}
 
@@ -89,6 +91,7 @@ export class ConnectionInjectionPlanner {
       servers.push({ kind: 'http', name: connectionServerName(connection.name), url: this.deps.gateway.urlFor(connection.id), token });
       this.deps.audit?.({ connectionId: connection.id, name: connection.name, scope: connection.scope, state: connection.state, memberId: input.memberId });
     }
+    this.carrying.set(input.memberId, new Set(candidates.map((connection) => connection.id)));
     // Lo que había antes de este miembro se reemplaza, no se acumula: volver a
     // abrir un chat vuelve a emitir, y los bearers viejos ya no valen.
     const previous = this.issued.get(input.memberId) ?? [];
@@ -102,7 +105,22 @@ export class ConnectionInjectionPlanner {
    * miembro, no por token, porque quien cierra sabe QUIÉN cierra y no qué
    * conexiones le habían tocado.
    */
+  /**
+   * Los miembros que AHORA MISMO llevan esta conexión. No es "los de esta
+   * marca": es quiénes recibieron de verdad un bearer contra ella, que es a
+   * quienes les va a fallar la herramienta y por lo tanto los únicos que tienen
+   * que ver el aviso.
+   */
+  membersUsing(connectionId: string): string[] {
+    const out: string[] = [];
+    for (const [memberId, connections] of this.carrying) {
+      if (connections.has(connectionId)) out.push(memberId);
+    }
+    return out;
+  }
+
   release(memberId: string): void {
+    this.carrying.delete(memberId);
     this.issued.delete(memberId);
     const removed = this.deps.tokens.revokeMember(memberId);
     if (removed > 0) this.deps.gateway.stopIfIdle();

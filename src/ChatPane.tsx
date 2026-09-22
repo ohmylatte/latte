@@ -2,7 +2,7 @@ import { translate as t } from './i18n';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUpRight, Check, ChevronRight, CircleAlert, FilePlus, Paperclip, ShieldQuestion, Square, Wrench, X } from 'lucide-react';
+import { ArrowUpRight, Check, ChevronRight, CircleAlert, FilePlus, LogIn, Paperclip, Plug, ShieldQuestion, Square, Wrench, X } from 'lucide-react';
 import { Loading } from './brand-marks';
 import type { AgentRole, ChatMessage, ChatPart, ChatPermission, ChatQuestion, ChatSession, ChatToolStatus, CoordinationAskView, CoordinationGateView, CoordinationRunView, TeamMember } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
@@ -172,6 +172,7 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
       {state.messages.map(message => <MessageView key={message.id} message={message} roleName={session.roleName} onSaveAsDocument={onSaveAsDocument} untracked={untracked} onAdoptFile={onAdoptFile} />)}
       {state.permissions.map(permission => <PermissionCard key={permission.id} chatId={session.id} runtime={session.provider} request={permission} onError={onError} />)}
       {state.questions.map(question => <QuestionCard key={question.id} chatId={session.id} request={question} onError={onError} />)}
+      {state.expiredConnections.map(connection => <ConnectionExpiredCard key={connection.connectionId} connection={connection} onError={onError} />)}
       {busy && <div className="chat-status"><Loading size={16} />{state.status === 'retry' ? state.statusDetail || t('chat.retrying') : t('ui.auto.091')}</div>}
       {state.error && <div className="chat-error" role="alert"><CircleAlert size={14} /><span>{state.error}</span><button aria-label={t('ui.auto.092')} onClick={() => chatStore.clearError(session.id)}><X size={13} /></button></div>}
     </div>
@@ -317,6 +318,35 @@ function QuestionCard({ chatId, request, onError }: { chatId: string; request: C
     <div className="chat-card-actions">
       <button className="primary" disabled={busy || missingRequired} onClick={submit}>{t('ui.auto.363')}</button>
       <button disabled={busy} onClick={reject}>{t('ui.auto.364')}</button>
+    </div>
+  </div>;
+}
+
+/**
+ * Una Conexión MCP se venció a mitad de run.
+ *
+ * Va en el HILO, no en un toast: el runtime, ante un token que no sirve,
+ * reporta `failed` y no `needs-auth` (medido en 1.6 del brief de conexiones),
+ * así que un aviso que se va solo es un aviso que nadie va a ver. Y lo que
+ * pide es una acción concreta, no un "algo salió mal": volver a entrar. Al
+ * volver, el gateway sigue sirviendo sin reiniciar a nadie, así que la tarjeta
+ * se retira sola cuando llega `connection-restored`.
+ */
+export function ConnectionExpiredCard({ connection, onError }: {
+  connection: { connectionId: string; label: string; detail: string };
+  onError: (text: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  return <div className="chat-card connection-expired" role="group" aria-label={t('connections.expiredCardTitle', { name: connection.label })}>
+    <div className="chat-card-title"><Plug size={15} />{t('connections.expiredCardTitle', { name: connection.label })}</div>
+    <p>{t('connections.expiredCardBody')}</p>
+    <div className="chat-card-actions">
+      <button className="primary" disabled={busy} onClick={() => {
+        setBusy(true);
+        api.reconnectConnection(connection.connectionId)
+          .catch(e => onError(displayError(e)))
+          .finally(() => setBusy(false));
+      }}>{busy ? <Loading size={16} /> : <LogIn size={14} />}{t('connections.reenter')}</button>
     </div>
   </div>;
 }

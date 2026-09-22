@@ -38,6 +38,15 @@ export interface ConnectionsServiceDeps {
   log?: (line: string) => void;
   /** El evento a `agents.log`: id, servidor, alcance y estado. **Nunca contenido.** */
   audit?: (line: string) => void;
+  /** Volvió a entrar: quien escuche retira el aviso del chat de los miembros que la llevan. */
+  onRestored?: (connection: ConnectionRecord) => void;
+  /**
+   * Borra de la caché de "necesita autenticación" de Claude Code las entradas
+   * de estos nombres (1.4 del brief). Se llama al crear una Conexión: desde ese
+   * momento el login lo hace el gateway, y dejar la mentira ahí sólo sirve para
+   * que la pantalla de Herramientas siga asustando para siempre.
+   */
+  forgetCliNeedsAuth?: (names: string[]) => void;
 }
 
 /**
@@ -189,6 +198,11 @@ export class ConnectionsService {
       throw new ValidationError(this.deps.secretBox.detail || 'Este sistema no tiene dónde guardar una credencial cifrada.');
     }
     const at = this.clock();
+    // Antes de escribir la fila: esa caché está indexada por NOMBRE, no por
+    // URL, y con la entrada fresca el CLI marca `needs-auth` sin abrir el
+    // socket. Se borran las variantes del nombre y las del slug de la URL,
+    // porque el rastro de haber probado son justamente nombres parecidos.
+    this.deps.forgetCliNeedsAuth?.([name, slugFromUrl(url), (input.label ?? '').trim()].filter((n) => n.length > 0));
     return this.deps.connections.insert({
       id: newId('con'),
       name,
@@ -228,6 +242,7 @@ export class ConnectionsService {
     this.deps.connections.setState(record.id, 'connected', '', at);
     const saved = this.require(record.id);
     this.audit(saved, 'conectada');
+    this.deps.onRestored?.(saved);
     return toConnection(saved, false);
   }
 

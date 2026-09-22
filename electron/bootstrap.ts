@@ -1,4 +1,5 @@
 import path from 'node:path';
+import os from 'node:os';
 import type { AgentEvent, ChatEvent, CoordinationEvent, DecisionProposalInput } from '../shared/contracts';
 import { extractFencedBlocks } from './core/fenced';
 import { brandContextProtocolBlocks } from './workspace/brandContextProtocol';
@@ -23,6 +24,7 @@ import { ConnectionsService } from './connections/service';
 import { runConnectionLogin } from './connections/login';
 import { createLoginWindowOpener } from './connections/loginWindow';
 import { electronSecretBox } from './storage/secretBox';
+import { clearNeedsAuthEntries } from './agents/needsAuthCache';
 import type { SecretBox } from './storage/secretBox';
 import type { LoginOutcome, LoginRequest } from './connections/login';
 import { featureEnabled } from './core/features';
@@ -338,6 +340,12 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     runner,
     detector,
     accountEnv: (runtime, accountId) => accounts.envFor(runtime, accountId),
+    // 1.5 del brief de conexiones: se lee el perfil del agente PRIMARIO, que
+    // es donde los runs de Latte tienen sus credenciales, y no el `system`.
+    primaryAccountId: (runtime) => {
+      const primary = hub.getPrimary();
+      return primary && primary.runtime === runtime ? primary.accountId : null;
+    },
     env,
     codex: {
       listMcpStatus: (accountId) => codex.listMcpStatus(accountId),
@@ -442,11 +450,24 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     tokens: connectionTokens,
     listen: createGatewayListen(options.log),
     log: options.log,
-    // El gateway se entera antes que nadie de que una sesión venció. Por ahora
-    // queda registrado; el aviso en el chat con el botón de volver a entrar es
-    // la rebanada siguiente (G6).
-    onExpired: (connection, detail) => options.log?.(`[conexiones] vencida: ${connection.id} ${connection.name} alcance=${connection.scope} motivo=${detail}`),
+    // El gateway se entera antes que nadie. Dos cosas, en este orden: queda
+    // escrito en `agents.log` -- id, servidor, alcance y estado, SIN contenido
+    // ni un solo token -- y el equipo interrumpe con una tarjeta en el chat de
+    // cada miembro que de verdad lleva esa conexión.
+    //
+    // No es un toast: el runtime, ante un token que no sirve, reporta `failed`
+    // y no `needs-auth` (medido en 1.6 del brief), así que sin este aviso nadie
+    // se entera y el trabajo se arruina en silencio.
+    onExpired: (connection, detail) => {
+      options.log?.(`[conexiones] vencida: ${connection.id} ${connection.name} alcance=${connection.scope}${connection.brandId ? `:${connection.brandId}` : ''} estado=expired motivo=${detail}`);
+      for (const memberId of connectionInjection.membersUsing(connection.id)) {
+        emitChat({ chatId: memberId, type: 'connection-expired', connectionId: connection.id, label: connection.label || connection.name, detail });
+      }
+    },
   });
+  // Declarado con `let` y asignado abajo: `onExpired` lo LEE tarde (cuando una
+  // sesión vence), nunca durante la construcción, así que el ciclo gateway ->
+  // planificador -> gateway se rompe sin una capa de indirección de más.
   const connectionInjection = new ConnectionInjectionPlanner({
     repo: {
       resolveForBrand: (brandId) => repo.connections.resolveForBrand(brandId),
@@ -465,8 +486,29 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     tokens: connectionTokens,
     login: options.connectionLogin ?? ((request) => runConnectionLogin(request, { openLoginWindow: createLoginWindowOpener(options.log), log: options.log })),
     listCliServers: () => service.listMcpServers(null),
+    // 1.4 del brief: la caché de needs-auth de Claude Code, en el perfil de la
+    // cuenta que los runs usan de verdad -- no en el `system`, que sería el
+    // mismo error de perfil que 1.5.
+    forgetCliNeedsAuth: (names) => {
+      const primary = hub.getPrimary();
+      // `envFor` devuelve `{}` para la cuenta del sistema: ahí el perfil es el
+      // de siempre (`~/.claude`), que es justamente donde están las tres
+      // entradas medidas en 1.4.
+      const dir = accounts.envFor('claude', primary?.runtime === 'claude' ? primary.accountId : null).CLAUDE_CONFIG_DIR
+        ?? env.CLAUDE_CONFIG_DIR
+        ?? path.join(os.homedir(), '.claude');
+      clearNeedsAuthEntries(dir, names, options.log);
+    },
     log: options.log,
     audit: (line) => options.log?.(line),
+    // Volver a entrar saca la tarjeta del chat de quien la tenía. El gateway
+    // sigue sirviendo sin reiniciar a nadie: por eso el aviso se puede retirar
+    // en vez de pedir que se cierre el chat.
+    onRestored: (connection) => {
+      for (const memberId of connectionInjection.membersUsing(connection.id)) {
+        emitChat({ chatId: memberId, type: 'connection-restored', connectionId: connection.id });
+      }
+    },
   });
   service.attachConnections(connections);
 

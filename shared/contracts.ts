@@ -697,6 +697,18 @@ export type ChatEvent =
    * by Latte, so the UI never sums anything itself.
    */
   | { chatId: string; type: 'usage'; turn: ChatUsage; total: ChatUsage }
+  /**
+   * Una Conexión MCP venció A MITAD DE RUN y el gateway no la pudo renovar.
+   *
+   * Es un evento de chat y no un toast a propósito (brief de conexiones, 4.3):
+   * el runtime, ante un token que no sirve, reporta `failed` y NO `needs-auth`
+   * (medido en 1.6), así que sin esto nadie le avisa a nadie y el trabajo se
+   * arruina en silencio. El equipo interrumpe con la pregunta, en el chat
+   * donde la persona está mirando, con el botón de volver a entrar.
+   */
+  | { chatId: string; type: 'connection-expired'; connectionId: string; label: string; detail: string }
+  /** Volvió a entrar: la tarjeta se va sola y el gateway sigue sirviendo sin reiniciar a nadie. */
+  | { chatId: string; type: 'connection-restored'; connectionId: string }
   | { chatId: string; type: 'closed'; reason: string };
 export type PermissionReply = 'once' | 'always' | 'reject';
 export interface ChatRuntimeStatus { available: boolean; detail: string; version: string | null; models: string[]; defaultModel: string | null }

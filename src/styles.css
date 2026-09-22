@@ -1333,3 +1333,7 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
    elegida toca a TODAS las marcas, y esta linea es la unica defensa que hay
    antes de apretar. */
 .connection-form .footnote.warn{color:var(--rust-deep);background:var(--rust-wash);border:1px solid var(--rust-soft);border-radius:var(--radius-sm);padding:7px 9px}
+/* El aviso de conexion vencida va en el hilo, con el acento de alerta: es una
+   accion pendiente, no una nota al pie. */
+.chat-card.connection-expired{border-left-color:var(--rust);background:var(--rust-wash)}
+.chat-card.connection-expired p{margin:6px 0 0;color:var(--rust-deep)}
