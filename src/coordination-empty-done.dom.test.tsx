@@ -37,7 +37,7 @@ const team = [member('coord', 'Asistente'), member('cm', 'Community Manager'), m
 const done: CoordinationRunView = {
   id: 'run1', workId: 'w1', status: 'done', coordinatorMemberId: 'coord',
   budget: { maxDispatches: 3, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
-  suspendReason: null, active: false, createdAt: '2026-09-13T17:17:00.000Z', updatedAt: '2026-09-13T19:32:00.000Z', lastEventAt: '',
+  suspendReason: null, request: null, active: false, createdAt: '2026-09-13T17:17:00.000Z', updatedAt: '2026-09-13T19:32:00.000Z', lastEventAt: '',
   tasksDone: 4, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0,
 };
 

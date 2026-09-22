@@ -89,7 +89,7 @@ import {
   type SkillRef,
   type SkillResolverPort,
 } from '../../shared/generationContracts';
-import { featureEnabled, readFeatureFlags, requireFeature, type FeatureFlags } from '../core/features';
+import { FEATURE_KEYS, FEATURE_OFF, FEATURE_ON, featureEnabled, readFeatureFlags, requireFeature, type FeatureFlags } from '../core/features';
 import { GenerationContractError } from '../generation/errors';
 import { prepareGeneration as runPrepareGeneration } from '../generation/prepare';
 import { pinGeneration } from '../generation/pin';
@@ -106,7 +106,7 @@ import { WORK_FILES } from '../core/paths';
 import { EngramClient, memoryProjectFor } from '../memory/engram';
 import { AccountStore } from '../agents/accounts';
 import { isAccountRuntime, isChatRuntime, type AgentHub, type MemberContext } from '../agents/hub';
-import { CoordinationEngine } from '../coordination/engine';
+import { CoordinationEngine, coordinationRequestMetaKey } from '../coordination/engine';
 import { mergeCoordinationBudget, readStoredCoordinationBudget, requireCoordinationBudget } from '../coordination/budget';
 import type { CoordinationInjectionPlanner } from '../coordination/injection';
 import type { McpCatalog } from '../agents/mcp';
@@ -1706,6 +1706,10 @@ export class LatteService implements BackendApi {
       budgetInvalid: budgetRead.kind === 'invalid',
       planApproved: run.planApprovedAt != null,
       suspendReason: run.suspendReason,
+      // R3: la MISMA fila `meta` que escribe la aprobación. Un run sin pedido
+      // (empezado por `startRun`, o anterior a 1.2.0) da `null`, y la pantalla
+      // cae al nombre del Trabajo.
+      request: this.deps.repo.getMeta(coordinationRequestMetaKey(run.id)),
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
       // El mismo conjunto que el índice único parcial y que la tira global:
@@ -2037,6 +2041,25 @@ export class LatteService implements BackendApi {
    * Lo que cuenta son los despachos de los runs VIVOS, no el histórico de la
    * instalación; ver `CoordinationEngine.globalUsage`.
    */
+  /**
+   * R1: lee la MISMA fila que `isCoordinationEnabled` le pasa al motor, con
+   * el mismo default. Si esto tuviera su propia lectura, el interruptor
+   * podría decir "prendida" mientras el motor deniega.
+   */
+  async getCoordinationEnabled(): Promise<boolean> {
+    return featureEnabled((key) => this.deps.repo.getMeta(key), 'coordination');
+  }
+
+  /**
+   * Apagar escribe `off`, no borra la fila: desde 1.2.0 borrarla es volver al
+   * default, que es PRENDIDA. Prender escribe `on` por la misma razón, así el
+   * estado que la persona eligió es siempre explícito.
+   */
+  async setCoordinationEnabled(enabled: boolean): Promise<boolean> {
+    this.deps.repo.setMeta(FEATURE_KEYS.coordination, enabled ? FEATURE_ON : FEATURE_OFF);
+    return this.getCoordinationEnabled();
+  }
+
   async getCoordinationGlobalBudget(): Promise<CoordinationGlobalBudgetView> {
     // EL MISMO parser que usa el camino de despacho (crítico 8). Devolver
     // `null` ante bytes ilegibles hacía que la pantalla dijera "sin tope

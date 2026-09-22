@@ -57,6 +57,73 @@ describe('R6: los argumentos de las tools MCP se validan contra su inputSchema',
   });
   afterEach(() => { vi.restoreAllMocks(); b.cleanup(); });
 
+  // --- R2: un reporte no puede venir vacío -----------------------------------
+  //
+  // `summary` es LO ÚNICO que queda de una tarea cuando se liquida: el
+  // coordinador consolida con eso y la persona lee eso. El esquema pedía el
+  // campo pero no pedía que dijera algo, así que `summary: ""` liquidaba la
+  // tarea como hecha y dejaba un hueco donde tenía que estar el resultado.
+  // Ahora se rechaza ANTES de tocar nada, y el despacho sigue en vuelo: el
+  // agente puede reportar de nuevo, bien, sin que le cobren el intento.
+
+  it('`latte_report` con `summary` vacío se rechaza y deja el despacho en vuelo', async () => {
+    const created = envelope(await call('latte_task_create', { roleId: 'role_a', spec: 'a' }));
+    const taskId = (created.data as { taskId: string }).taskId;
+    await call('latte_dispatch', { taskId });
+    const memberId = b.repo.listCoordinationDispatches(runId).find((d) => d.taskId === taskId)!.memberId;
+    const workerToken = b.coordinationTokens.mint(workId, memberId);
+    const attemptsBefore = b.repo.getCoordinationTask(taskId).attempts;
+
+    const result = envelope(await call('latte_report', { taskId, outcome: 'succeeded', summary: '' }, workerToken));
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('INVALID_ARGUMENT');
+    expect(result.error?.message).toContain('summary'); // legible: le dice al agente QUÉ campo
+    expect(b.repo.getCoordinationTask(taskId).attempts).toBe(attemptsBefore);
+    expect(b.repo.getCoordinationTask(taskId).status).toBe('dispatched');
+    expect(b.repo.listCoordinationDispatches(runId).find((d) => d.taskId === taskId)!.status).toBe('dispatched');
+  });
+
+  it('`latte_report` con `summary` de puros espacios se rechaza igual: el esquema mira largo, el motor mira contenido', async () => {
+    const created = envelope(await call('latte_task_create', { roleId: 'role_a', spec: 'a' }));
+    const taskId = (created.data as { taskId: string }).taskId;
+    await call('latte_dispatch', { taskId });
+    const memberId = b.repo.listCoordinationDispatches(runId).find((d) => d.taskId === taskId)!.memberId;
+    const workerToken = b.coordinationTokens.mint(workId, memberId);
+
+    const result = envelope(await call('latte_report', { taskId, outcome: 'succeeded', summary: '      ' }, workerToken));
+
+    expect(result.ok).toBe(false);
+    // El candado del motor, no el del esquema: por eso el código es
+    // `VALIDATION`. `INVALID_ARGUMENT` es del sobre MCP y el motor no lo tira
+    // -- `report()` también se entra por IPC, donde ese código no existe.
+    expect(result.error?.code).toBe('VALIDATION');
+    expect(result.error?.message).toContain('summary');
+    expect(b.repo.getCoordinationTask(taskId).status).toBe('dispatched');
+    expect(b.repo.listCoordinationDispatches(runId).find((d) => d.taskId === taskId)!.status).toBe('dispatched');
+  });
+
+  it('el mismo despacho, con texto, reporta y liquida la tarea', async () => {
+    const created = envelope(await call('latte_task_create', { roleId: 'role_a', spec: 'a' }));
+    const taskId = (created.data as { taskId: string }).taskId;
+    await call('latte_dispatch', { taskId });
+    const memberId = b.repo.listCoordinationDispatches(runId).find((d) => d.taskId === taskId)!.memberId;
+    const workerToken = b.coordinationTokens.mint(workId, memberId);
+
+    expect(envelope(await call('latte_report', { taskId, outcome: 'succeeded', summary: '' }, workerToken)).ok).toBe(false);
+    const ok = envelope(await call('latte_report', { taskId, outcome: 'succeeded', summary: 'Listo el brief' }, workerToken));
+
+    expect(ok.ok).toBe(true);
+    expect(b.repo.getCoordinationTask(taskId).status).toBe('done');
+    expect(b.repo.getCoordinationTask(taskId).resultSummary).toBe('Listo el brief');
+  });
+
+  it('`tools/list` publica el mínimo: el agente puede leerlo antes de mandar', async () => {
+    const report = MCP_TOOL_DEFINITIONS.find((d) => d.name === 'latte_report')!;
+    const summary = (report.inputSchema as { properties: { summary: { minLength?: number } } }).properties.summary;
+    expect(summary.minLength).toBe(1);
+  });
+
   // --- el caso caro: un `outcome` fuera del enum ------------------------------
 
   it('`latte_report` con `outcome:"success"` se rechaza y NO cobra un intento', async () => {

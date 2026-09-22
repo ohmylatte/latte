@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
+import { FEATURE_KEYS, FEATURE_OFF, FEATURE_ON } from '../../electron/core/features';
 import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
@@ -61,7 +61,9 @@ describe('Ronda 9: el motivo de suspensión se calcula en un solo lugar', () => 
     b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON);
     const meta = b.repo.getMeta.bind(b.repo);
     vi.spyOn(b.repo, 'getMeta').mockImplementation((key: string) =>
-      (key === FEATURE_KEYS.coordination && !enabled ? null : meta(key)));
+      // 1.2.0 (R1): la fila ausente ya no apaga nada. Bajar la bandera en
+      // este fake es devolver el `off` explícito, el mismo que guarda Ajustes.
+      (key === FEATURE_KEYS.coordination && !enabled ? FEATURE_OFF : meta(key)));
     await b.service.setCoordinationBudget(workId, { maxDispatches: 20 });
     await b.service.setCoordinationAuthority(workId, 'auto');
     b.repo.setMeta('coordination_coordinator:' + workId, 'mem_coordinator');

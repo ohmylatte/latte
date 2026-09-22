@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import type { AgentSkill, FeatureFlags, LatteAPI, SkillCandidate } from '../shared/contracts';
 import { api, isDesktop } from './browser-api';
+import { skillSummary } from './pack-i18n';
 
 const FLAGS_OFF: FeatureFlags = { generation: false, brandKits: false, learning: false, coordination: false };
 
@@ -135,7 +136,7 @@ export function SkillsViewContent(props: {
         <Sparkles size={17} />
         <div>
           <strong>{skill.name}<small>{skill.enabled ? t('ui.auto.397') : t('ui.auto.398')}</small></strong>
-          <p>{skill.summary}</p>
+          <p>{skillSummary(skill)}</p>
         </div>
         <button aria-pressed={skill.enabled} disabled={busy === skill.id} onClick={() => onToggle(skill)}>
           {skill.enabled ? t('ui.auto.399') : t('ui.auto.400')}

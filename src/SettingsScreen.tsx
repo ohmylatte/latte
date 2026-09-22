@@ -75,7 +75,7 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       {section === 'tools' && <ToolsView onNotice={onNotice} onError={onError} workId={workId} />}
       {section === 'workspace' && <WorkspaceSection onError={onError} onReopenOnboarding={onReopenOnboarding} />}
       {section === 'language' && <LanguageSection />}
-      {section === 'advanced' && <><ModeSection mode={mode} onModeChange={onModeChange} /><CoordinationGlobalBudgetSection onError={onError} /></>}
+      {section === 'advanced' && <><ModeSection mode={mode} onModeChange={onModeChange} /><CoordinationSwitchSection onError={onError} /><CoordinationGlobalBudgetSection onError={onError} /></>}
     </main>
   </div>;
 }
@@ -124,6 +124,42 @@ function ModeSection({ mode, onModeChange }: { mode: LatteMode; onModeChange: (m
       <label>{t('settings.modeLabel')}<select value={mode} onChange={e => onModeChange(e.target.value as LatteMode)}><option value="simple">{t('settings.modeSimple')}</option><option value="advanced">{t('settings.modeAdvanced')}</option></select></label>
     </div>
     <p className="footnote">{t('settings.modeHelp')}</p>
+  </section>;
+}
+
+/**
+ * El interruptor de emergencia de la coordinación (1.2.0, R1).
+ *
+ * Desde 1.2.0 la coordinación llega PRENDIDA, así que esto no es el switch
+ * que la estrena: es el que la apaga. Vive en Avanzado, al lado del tope de
+ * despachos, porque es la misma clase de control — algo que casi nadie toca
+ * y que, cuando hace falta tocar, tiene que estar donde se lo busca.
+ *
+ * Lee y escribe la MISMA fila `meta` que gatea el motor, nunca una copia en
+ * el renderer: si la escritura falla, el switch vuelve a lo que el backend
+ * confirmó, no a lo que la persona clickeó.
+ */
+function CoordinationSwitchSection({ onError }: { onError: (text: string) => void }) {
+  const { t } = useI18n();
+  const [enabled, setEnabled] = useState(true);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { void api.getCoordinationEnabled().then(setEnabled).catch(e => onError(e instanceof Error ? e.message : String(e))); }, []);
+  const toggle = (next: boolean) => {
+    setSaving(true);
+    void api.setCoordinationEnabled(next)
+      .then(setEnabled)
+      .catch(e => onError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setSaving(false));
+  };
+  return <section className="settings-section coordination-switch">
+    <h2>{t('settings.coordination')}</h2>
+    <div className="settings-facts">
+      <label>
+        <input className="coordination-switch-input" type="checkbox" role="switch" checked={enabled} disabled={saving} onChange={e => toggle(e.target.checked)} />
+        {t('settings.coordination')}
+      </label>
+    </div>
+    <p className="footnote">{t('settings.coordinationHelp')}</p>
   </section>;
 }
 

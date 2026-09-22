@@ -33,7 +33,7 @@ const session = (): ChatSession => ({
 const run = (coordinatorMemberId: string): CoordinationRunView => ({
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId,
   budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
-  suspendReason: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
+  suspendReason: null, request: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
   tasksDone: 0, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0,
 });
 const gate = (id: string, kind: CoordinationGateView['kind']): CoordinationGateView => ({ id, kind, runId: 'run1', prompt: 'Escribir el copy', createdAt: '' });

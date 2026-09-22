@@ -41,7 +41,7 @@ const NOW = Date.parse('2026-09-13T19:00:00.000Z');
 const run: CoordinationRunView = {
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'coord',
   budget: { maxDispatches: 3, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
-  suspendReason: null, active: true, createdAt: '2026-09-13T17:17:00.000Z', updatedAt: '', lastEventAt: '',
+  suspendReason: null, request: null, active: true, createdAt: '2026-09-13T17:17:00.000Z', updatedAt: '', lastEventAt: '',
   tasksDone: 2, tasksFailed: 0, tasksInFlight: 2, tasksPending: 0,
 };
 const tasks: CoordinationRunTaskView[] = [

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CoordinationEngine } from '../../electron/coordination/engine';
-import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
+import { FEATURE_KEYS, FEATURE_OFF, FEATURE_ON } from '../../electron/core/features';
 import { fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
@@ -69,9 +69,13 @@ describe('el interruptor apagado también frena las aprobaciones (crítico 6)', 
   });
   afterEach(() => { vi.restoreAllMocks(); b.cleanup(); });
 
-  /** La bandera baja: se borra la meta (el default del repo es apagado). */
+  /**
+   * La bandera baja. Desde 1.2.0 esto es un `off` EXPLÍCITO: borrar la fila
+   * vuelve al default, y el default pasó a ser prendida, así que el
+   * `deleteMeta` de antes ya no apagaba nada.
+   */
   function turnFlagOff(): void {
-    b.repo.deleteMeta(FEATURE_KEYS.coordination);
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_OFF);
   }
 
   it('con la bandera baja, aprobar la propuesta por IPC no concede NADA y el gate queda pendiente', async () => {

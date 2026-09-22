@@ -20,7 +20,7 @@ import type { CoordinationRunView } from '../shared/contracts';
 
 const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => ({
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'm1',
-  budget: { maxDispatches: 3, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true, suspendReason: null, active: true,
+  budget: { maxDispatches: 3, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true, suspendReason: null, request: null, active: true,
   createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', lastEventAt: '2026-09-01T00:00:00.000Z',
   tasksDone: 0, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0, ...patch,
 });
@@ -72,5 +72,28 @@ describe('B5.3 + C1: la barra dice lo que está en vuelo', () => {
   it('sin tope, el presupuesto cuenta sin prometer un límite que no hay', () => {
     const { container } = mount(run({ budget: { maxDispatches: null, unlimitedConfirmedAt: '2026-09-01T00:00:00.000Z' }, tasksDone: 2 }));
     expect(budget(container)).toBe('2 despachos');
+  });
+});
+
+/**
+ * R3: EL ENCABEZADO DICE EL PEDIDO, NO EL NOMBRE DEL TRABAJO.
+ *
+ * El nombre del Trabajo puede ser "Campaña Q4" mientras lo que la persona
+ * pidió fue "armar el calendario de octubre". El pedido queda guardado al
+ * aprobar la propuesta y el encabezado lo prefiere; el nombre del Trabajo
+ * queda de respaldo para el run que no nació de un pedido.
+ */
+describe('R3: el encabezado prefiere el pedido sobre el nombre del Trabajo', () => {
+  const name = (container: HTMLElement) => container.querySelector('.coord-head-name')?.textContent ?? '';
+
+  it('muestra el pedido guardado cuando el run lo tiene', () => {
+    const { container } = mount(run({ request: 'Armar el calendario de octubre' }));
+    expect(name(container)).toBe('Armar el calendario de octubre');
+    expect(name(container)).not.toBe('Trabajo');
+  });
+
+  it('cae al nombre del Trabajo cuando el run no nació de un pedido', () => {
+    const { container } = mount(run({ request: null }));
+    expect(name(container)).toBe('Trabajo');
   });
 });
