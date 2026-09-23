@@ -51,7 +51,9 @@ const mount = (props: Partial<TeamViewProps> = {}, locale: 'es-AR' | 'en-US' = '
   ui.locale = locale;
   return render(createElement(TeamView, {
     work, team, roles: [], mode: 'simple', busy: false, selectedMemberId: null, onSelectMember: () => {},
-    formatTime: (v: string) => v, formatDate: (v: string) => v, ...props,
+    // H2: lo producido caduca a las 24 h del cierre; estos tests miran el run
+    // la misma noche en que terminó.
+    formatTime: (v: string) => v, formatDate: (v: string) => v, now: Date.parse('2026-09-13T20:00:00.000Z'), ...props,
   }));
 };
 

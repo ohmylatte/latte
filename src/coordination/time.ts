@@ -40,3 +40,35 @@ export function minutesUntil(value: string | null | undefined, now: number = Dat
   if (Number.isNaN(at)) return null;
   return Math.max(0, Math.round((at - now) / 60000));
 }
+
+/**
+ * Cuántos días de CALENDARIO (local) separan `value` de `now`: 0 es hoy, 1
+ * es ayer. No son bloques de 24 h: las 23:19 de ayer, vistas a las 9, son
+ * "ayer" aunque hayan pasado menos de diez horas.
+ */
+export function daysAgo(value: string | null | undefined, now: number = Date.now()): number | null {
+  if (!value) return null;
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return null;
+  const today = new Date(now);
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  return Math.max(0, Math.round((startOf(today) - startOf(at)) / 86400000));
+}
+
+/**
+ * H2: LA HORA DICE DE QUÉ DÍA ES.
+ *
+ * `hourOf` sola, sobre algo de ayer, se leía como de hoy: "18:50" a las 9 de
+ * la mañana es una hora que todavía no pasó. Hoy es la hora; ayer, "ayer
+ * 18:50"; antes, la fecha corta y la hora. La palabra "ayer" entra por
+ * parámetro, como el locale: este módulo no importa `i18n`.
+ */
+export function whenOf(value: string | null | undefined, options: { now?: number; locale?: string; yesterday?: string; hour?: (value: string) => string } = {}): string {
+  const days = daysAgo(value, options.now);
+  if (days === null || !value) return '';
+  const locale = options.locale ?? 'es-AR';
+  const hour = options.hour ? options.hour(value) : hourOf(value, locale);
+  if (days === 0) return hour;
+  if (days === 1) return `${options.yesterday ?? 'ayer'} ${hour}`;
+  return `${new Date(value).toLocaleDateString(locale, { day: 'numeric', month: 'short' })} ${hour}`;
+}

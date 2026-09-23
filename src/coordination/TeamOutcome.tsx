@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { CircleCheck, CircleX, FileText, List, MessageSquare, Send, Users } from 'lucide-react';
-import { translate as t } from '../i18n';
+import { currentLocale, translate as t } from '../i18n';
 import { CoordAvatar } from './anatomy';
 import { avatarOfMember } from './avatar-of';
 import { memberDisplayName } from './names';
 import { fileNames, titleOf } from './text';
+import { daysAgo, whenOf } from './time';
 import type { AgentRole, CoordinationLogEntryView, CoordinationRunView, TeamMember } from '../../shared/contracts';
 
 /**
@@ -37,6 +38,7 @@ export function EmptyTeam({ coordinatorName, onAsk }: { coordinatorName: string;
 /** Un reporte del run, como la lista de lo producido lo muestra. */
 interface OutcomeRow {
   id: string;
+  taskId: string;
   memberId: string;
   summary: string;
   files: string[];
@@ -62,6 +64,7 @@ export function outcomeRows(log: readonly CoordinationLogEntryView[] | undefined
     if (!summary) continue;
     out.push({
       id: entry.id,
+      taskId: entry.taskId,
       memberId: entry.memberId,
       summary,
       files: fileNames(entry.summaryPreview),
@@ -69,7 +72,20 @@ export function outcomeRows(log: readonly CoordinationLogEntryView[] | undefined
       failed: entry.status === 'failed' || entry.outcome === 'failed',
     });
   }
-  return out.sort((a, b) => a.at.localeCompare(b.at));
+  out.sort((a, b) => a.at.localeCompare(b.at));
+  // H2: UN FALLIDO SUPERADO NO ENCABEZA. Si la misma tarea se reportó bien
+  // después (un reintento), el fallo ya no es lo que el equipo dejó: es
+  // historia, y vive en la bitácora.
+  return out.filter((row) => !row.failed || !out.some((later) => later.taskId === row.taskId && !later.failed && later.at > row.at));
+}
+
+/** H2: pasado este tiempo desde el cierre, lo producido se pliega a una línea. */
+export const OUTCOME_FRESH_MS = 24 * 60 * 60 * 1000;
+
+/** Cuándo cerró el run: su propia entrada de cierre en la bitácora, y si no está, su última escritura. */
+function closedAt(run: CoordinationRunView, log: readonly CoordinationLogEntryView[] | undefined): string {
+  const close = (log ?? []).find((entry) => entry.kind === 'run_done' || entry.kind === 'run_cancelled');
+  return close?.createdAt ?? run.updatedAt;
 }
 
 export interface RunOutputProps {
@@ -78,22 +94,82 @@ export interface RunOutputProps {
   team: readonly TeamMember[];
   roles?: readonly AgentRole[];
   formatTime?: (value: string) => string;
+  /** El reloj contra el que se decide qué es "ayer" y qué caducó. Sólo los tests lo fijan. */
+  now?: number;
 }
 
+/**
+ * H2: LO PRODUCIDO CADUCA.
+ *
+ * - Un run CANCELADO no produjo: su panel es una línea ("Cancelado ayer 23:19 ·
+ *   Bitácora · N eventos"). Encabezarlo con sus reportes fallidos era lo que
+ *   la persona veía a la mañana siguiente, sobre un trabajo que ya estaba
+ *   hecho por otro lado.
+ * - Un run TERMINADO se ve completo durante 24 h desde su cierre; después se
+ *   pliega a "Terminado ayer 19:32 · 4 de 4 · Ver lo producido", que se
+ *   despliega a pedido.
+ * - Toda hora de otro día dice de qué día es (`whenOf`).
+ */
 export function RunOutput(props: RunOutputProps) {
   const [openLog, setOpenLog] = useState(false);
-  const time = props.formatTime ?? ((value: string) => value);
+  const [unfolded, setUnfolded] = useState(false);
+  const now = props.now ?? Date.now();
+  const locale = currentLocale();
+  const hour = props.formatTime ?? ((value: string) => value);
+  const time = (value: string) => ((daysAgo(value, now) ?? 0) > 0
+    ? whenOf(value, { now, locale, yesterday: t('coord.time.yesterday'), hour })
+    : hour(value));
   const roles = props.roles ?? [];
   const rows = outcomeRows(props.log);
   const entries = (props.log ?? []).filter((entry) => entry.kind !== 'run_done' && entry.kind !== 'run_cancelled');
+  const closed = closedAt(props.run, props.log);
+  const closedWhen = time(closed);
+  const logToggle = entries.length > 0 && <button type="button" className="coord-btn coord-btn-ghost coord-output-log"
+    aria-expanded={openLog} onClick={() => setOpenLog((v) => !v)}>
+    <List size={14} />{t('coord.done.log', { count: entries.length })}
+  </button>;
+  const logList = openLog && <ol className="coord-log">
+    {entries.map((entry) => {
+      const dispatch = entry as Extract<CoordinationLogEntryView, { taskId: string }>;
+      const name = memberDisplayName(dispatch.memberId, props.team, null, roles);
+      const settled = Boolean(dispatch.settledAt);
+      return <li key={dispatch.id} className="coord-log-row" data-status={dispatch.status}>
+        {settled
+          ? (dispatch.status === 'reported' ? <CircleCheck size={13} className="coord-ic-ok" /> : <CircleX size={13} className="coord-ic-idle" />)
+          : <Send size={13} className="coord-ic-idle" />}
+        <span className="coord-log-text">{name} · {titleOf(dispatch.promptPreview, 90)}</span>
+        <time className="coord-time" dateTime={dispatch.settledAt ?? dispatch.createdAt}>{time(dispatch.settledAt ?? dispatch.createdAt)}</time>
+      </li>;
+    })}
+  </ol>;
+
+  if (props.run.status !== 'done') {
+    return <div className="coord-output is-line">
+      <p className="coord-output-line">
+        <CircleX size={14} className="coord-ic-idle" />
+        <span className="coord-output-line-text">{t('coord.done.cancelledAt', { when: closedWhen })}</span>
+        {logToggle}
+      </p>
+      {logList}
+    </div>;
+  }
+
+  const total = props.run.tasksDone + props.run.tasksFailed + props.run.tasksInFlight + props.run.tasksPending;
+  const stale = now - new Date(closed).getTime() > OUTCOME_FRESH_MS;
+  if (stale && !unfolded) {
+    return <div className="coord-output is-line">
+      <p className="coord-output-line">
+        <CircleCheck size={14} className="coord-ic-ok" />
+        <span className="coord-output-line-text">{t('coord.done.finishedAt', { when: closedWhen })} · {t('coord.done.ofTotal', { done: props.run.tasksDone, total })}</span>
+        <button type="button" className="coord-btn coord-btn-ghost coord-output-unfold" onClick={() => setUnfolded(true)}>{t('coord.done.showProduced')}</button>
+      </p>
+    </div>;
+  }
 
   return <div className="coord-output">
     <div className="coord-output-head">
       <div className="coord-output-title">{t('coord.done.produced')}</div>
-      {entries.length > 0 && <button type="button" className="coord-btn coord-btn-ghost coord-output-log"
-        aria-expanded={openLog} onClick={() => setOpenLog((v) => !v)}>
-        <List size={14} />{t('coord.done.log', { count: entries.length })}
-      </button>}
+      {logToggle}
     </div>
     {rows.length === 0
       ? <p className="coord-output-empty">{t('coord.done.producedEmpty')}</p>
@@ -113,19 +189,6 @@ export function RunOutput(props: RunOutputProps) {
           </li>;
         })}
       </ul>}
-    {openLog && <ol className="coord-log">
-      {entries.map((entry) => {
-        const dispatch = entry as Extract<CoordinationLogEntryView, { taskId: string }>;
-        const name = memberDisplayName(dispatch.memberId, props.team, null, roles);
-        const settled = Boolean(dispatch.settledAt);
-        return <li key={dispatch.id} className="coord-log-row" data-status={dispatch.status}>
-          {settled
-            ? (dispatch.status === 'reported' ? <CircleCheck size={13} className="coord-ic-ok" /> : <CircleX size={13} className="coord-ic-idle" />)
-            : <Send size={13} className="coord-ic-idle" />}
-          <span className="coord-log-text">{name} · {titleOf(dispatch.promptPreview, 90)}</span>
-          <time className="coord-time" dateTime={dispatch.settledAt ?? dispatch.createdAt}>{time(dispatch.settledAt ?? dispatch.createdAt)}</time>
-        </li>;
-      })}
-    </ol>}
+    {logList}
   </div>;
 }

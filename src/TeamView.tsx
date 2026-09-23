@@ -71,7 +71,7 @@ export interface TeamViewProps {
   formatTime?: (value: string) => string;
   /** C4: contestar una pregunta abierta desde el detalle del miembro que la hizo. */
   onAnswerAsk?: (askId: string, answer: string) => void;
-  /** C4: el instante contra el que se cuenta "vence en N min". Inyectable para los tests. */
+  /** C4: el instante contra el que se cuenta "vence en N min" (y H2: contra el que caduca lo producido). Inyectable para los tests. */
   now?: number;
   /** C5: empezar otro pedido, o pedir el primero: abre el chat del coordinador. */
   onNewRequest?: () => void;
@@ -298,7 +298,7 @@ export function TeamView(props: TeamViewProps) {
         {/* El vacío manda mientras no haya NADA que leer: dibujarlo encima de
             una conversación que ya existe taparía justo lo que se vino a ver. */}
         {!run && !openedMember && thread.length === 0 &&<EmptyTeam coordinatorName={coordinatorName} onAsk={props.onNewRequest} />}
-        {run && !run.active && <RunOutput run={run} log={props.coordinationLog} team={team} roles={roles} formatTime={hour} />}
+        {run && !run.active && <RunOutput run={run} log={props.coordinationLog} team={team} roles={roles} formatTime={hour} now={props.now} />}
         {/* Con el run TERMINADO, lo que el equipo dejo va arriba y la
             conversacion del coordinador sigue abajo. Antes el panel se quedaba
             solo con el resumen de salida: la charla desaparecia justo cuando la
