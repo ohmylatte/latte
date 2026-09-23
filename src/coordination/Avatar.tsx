@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { UserX } from 'lucide-react';
 import { serializeAvatar, type AvatarParams } from '../../shared/avatar';
 import { initialsOf } from './text';
 import { roleColor } from './role-color';
@@ -92,6 +93,16 @@ export interface AvatarProps {
    */
   dot?: ReactNode;
   className?: string;
+  /**
+   * ESTA PERSONA YA NO ESTÁ.
+   *
+   * La cadena de `memberDisplayName` termina en "miembro que ya no está", que
+   * es un hecho y no un relleno. El avatar tomaba esa FRASE como si fuera un
+   * nombre y le sacaba las iniciales: "MQ", un círculo que parece una persona
+   * con nombre y no lo es. Quien no existe no tiene iniciales ni color de rol:
+   * lleva un ícono neutro, y el nombre accesible sigue siendo la frase.
+   */
+  gone?: boolean;
   /** Reemplaza la cara entera: el avatar punteado de "Sumar un rol" lleva un ícono. */
   children?: ReactNode;
 }
@@ -106,31 +117,35 @@ export function Avatar({
   status,
   dot,
   className,
+  gone = false,
   children,
 }: AvatarProps) {
   const motionAllowed = useMotionAllowed();
   const { color, wash } = roleColor(roleId);
-  const classes = ['av', `av-${size}`, className].filter(Boolean).join(' ');
+  const classes = ['av', `av-${size}`, gone ? 'av-gone' : null, className].filter(Boolean).join(' ');
   /*
    * A 22px una cara mide poco más que un carácter: un parpadeo ahí no se lee
    * como vida, se lee como un parpadeo de la pantalla. Y son los avatares que
    * aparecen de a decenas —la tira de tareas, las tarjetas del chat—, o sea
    * justo donde más costaría. Los chicos están quietos.
    */
-  const alive = Boolean(params) && motionAllowed && size !== 'sm';
+  // Nadie respira cuando ya no está: un avatar neutro no es una cara.
+  const alive = Boolean(params) && !gone && motionAllowed && size !== 'sm';
   const grain = Boolean(params) && size !== 'sm';
   const pulse = alive && params ? avatarPulse(avatarBeat(seed || `${name}\u0000${serializeAvatar(params)}`)) : null;
   return (
     <span
       className={classes}
-      style={{ '--av-color': color, '--av-wash': wash } as CSSProperties}
-      data-role={roleId ?? undefined}
-      data-avatar={params ? params.hair : children ? 'slot' : 'initial'}
-      data-avatar-variant={params ? variant : undefined}
+      style={(gone ? {} : { '--av-color': color, '--av-wash': wash }) as CSSProperties}
+      data-role={gone ? undefined : roleId ?? undefined}
+      data-avatar={gone ? 'gone' : params ? params.hair : children ? 'slot' : 'initial'}
+      data-avatar-variant={gone ? undefined : params ? variant : undefined}
       role="img"
       aria-label={name}
     >
-      {children ?? (params
+      {gone
+        ? <UserX className="av-gone-icon" aria-hidden="true" focusable="false" />
+        : children ?? (params
         ? (
           <svg
             className={['av-face', pulse?.className].filter(Boolean).join(' ')}

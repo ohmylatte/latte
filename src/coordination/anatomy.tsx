@@ -19,7 +19,7 @@ import type { MemberDot } from './member-line';
 /** El punto de estado. `none` es para el avatar de una tarea o un archivo, que no tiene estado propio. */
 export type DotState = MemberDot | 'none';
 
-export function CoordAvatar({ name, dot = 'none', small = false, roleId, avatar, children }: {
+export function CoordAvatar({ name, dot = 'none', small = false, roleId, avatar, gone = false, children }: {
   name: string;
   dot?: DotState;
   /** El avatar chico: el dueño de una tarea en la tira, el autor de un archivo. */
@@ -31,6 +31,12 @@ export function CoordAvatar({ name, dot = 'none', small = false, roleId, avatar,
    * que es lo que ve un fixture viejo y lo que veía todo esto hasta ayer.
    */
   avatar?: AvatarParams | null;
+  /**
+   * Quien ya no está en el equipo: ni cara, ni iniciales, ni color de rol.
+   * "Miembro que ya no está" es una frase, y sacarle iniciales daba "MQ" —un
+   * círculo que parece una persona con nombre y no lo es.
+   */
+  gone?: boolean;
   /** Reemplaza la cara: el avatar punteado de "Sumar un rol" lleva un ícono. */
   children?: ReactNode;
 }) {
@@ -44,6 +50,7 @@ export function CoordAvatar({ name, dot = 'none', small = false, roleId, avatar,
     size={small ? 'sm' : 'md'}
     name={name}
     roleId={roleId}
+    gone={gone}
     params={children ? null : avatar}
     dot={dot !== 'none' ? <i className={'coord-dot coord-dot-' + dot} /> : undefined}
   >{children}</Avatar>;
@@ -62,6 +69,8 @@ export interface CoordRowProps {
   roleId?: string;
   /** La cara de quien es esta fila. Ver `CoordAvatar`. */
   avatar?: AvatarParams | null;
+  /** Esta fila es de alguien que ya no está en el equipo. */
+  gone?: boolean;
   /** Un ícono chico al lado del nombre: el coordinador lleva `Users`. */
   nameIcon?: ReactNode;
   /**
@@ -97,7 +106,7 @@ export function CoordRow(props: CoordRowProps) {
     onClick={props.onClick}
     title={props.title ?? props.line}
   >
-    <CoordAvatar name={props.name} dot={props.dot ?? 'none'} roleId={props.roleId} avatar={props.avatar}>{props.icon}</CoordAvatar>
+    <CoordAvatar name={props.name} dot={props.dot ?? 'none'} roleId={props.roleId} avatar={props.avatar} gone={props.gone}>{props.icon}</CoordAvatar>
     <span className="coord-row-text">
       <span className="coord-row-top">
         <span className="coord-row-name">{props.name}{props.nameIcon}</span>

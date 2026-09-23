@@ -1352,3 +1352,10 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .connections-cli-row{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--paper);padding:10px 14px;font-size:var(--text-base)}
 .connections-cli-row>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .connections-cli-row small{color:var(--muted);font-size:var(--text-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* UN MIEMBRO QUE YA NO ESTA NO TIENE INICIALES.
+   'Miembro que ya no esta' es una frase, y sacarle iniciales daba 'MQ': un
+   circulo que parece una persona con nombre y no lo es. Sin color de rol
+   tampoco --no hay rol que reconocer-- y con el icono neutro en gris. */
+.av.av-gone{background:var(--paper-deep);color:var(--muted-soft);border:1px solid var(--line)}
+.av-gone .av-gone-icon{width:60%;height:60%}

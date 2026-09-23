@@ -155,7 +155,7 @@ export function MemberDetail(props: MemberDetailProps) {
 
   return <div className="coord-detail">
     <div className="coord-detail-head">
-      <CoordAvatar name={name} dot={props.signal.dot} roleId={member?.roleId} avatar={member ? avatarOfMember(member) : null} />
+      <CoordAvatar name={name} dot={props.signal.dot} roleId={member?.roleId} avatar={member ? avatarOfMember(member) : null} gone={!member} />
       <div className="coord-detail-title">
         <div className="coord-detail-name">{name}</div>
         <div className="coord-detail-sub">{props.signal.at
