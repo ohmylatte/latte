@@ -1,10 +1,11 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { ConnectionsContent, AddConnectionDialog, sortConnections, suggestedName } from './ConnectionsView';
 import { formatMessage } from './i18n';
-import type { Brand, Connection } from '../shared/contracts';
+import { catalogs } from './i18n';
+import type { Brand, Connection, ImportableConnection } from '../shared/contracts';
 
 /**
  * UNA SOLA PANTALLA DE CONEXIONES.
@@ -208,5 +209,71 @@ describe('K3: Contexto sin conexiones', () => {
     const context = readFileSync(join(process.cwd(), 'src', 'ContextView.tsx'), 'utf8');
     expect(context.length).toBeGreaterThan(500);
     expect(context).not.toContain('Connection');
+  });
+});
+
+/**
+ * K2: EL REGISTRO DE LOS CLI ES UN BLOQUE SECUNDARIO, NO UNA PANTALLA.
+ *
+ * "Herramientas (MCP)" era una sección entera de Ajustes para mostrar lo que
+ * Claude Code y Codex tienen anotado por su cuenta. Eso no es una pantalla: es
+ * una nota al pie de Conexiones, plegada, que se abre el día que alguien
+ * quiere traerse algo de un CLI.
+ */
+const importable: ImportableConnection = {
+  runtime: 'claude', name: 'the-agentcy', url: 'https://theagentcy.app/api/mcp', suggestedScope: 'brand', alreadyImported: false,
+};
+
+describe('K2: "De tus CLI", plegado al pie', () => {
+  it('es un <details> CERRADO: no ocupa la pantalla de nadie que no lo pidió', () => {
+    render(<ConnectionsContent {...props({ importable: [importable] })} />);
+    const block = document.querySelector('details.connections-cli') as HTMLDetailsElement;
+    expect(block).toBeTruthy();
+    expect(block.open).toBe(false);
+    expect(within(block).getByText(t('connections.importHead'))).toBeTruthy();
+  });
+
+  it('lista lo anotado, con importar y el tacho para quitarlo del registro', () => {
+    const onImport = vi.fn();
+    const onForget = vi.fn();
+    render(<ConnectionsContent {...props({ importable: [importable], onImport, onForget })} />);
+    const block = document.querySelector('details.connections-cli') as HTMLElement;
+    expect(within(block).getByText('the-agentcy')).toBeTruthy();
+    expect(within(block).getByText('https://theagentcy.app/api/mcp')).toBeTruthy();
+    fireEvent.click(within(block).getByText(t('connections.import')).closest('button')!);
+    expect(onImport).toHaveBeenCalledWith(importable);
+    fireEvent.click(within(block).getByLabelText(t('connections.forget', { name: 'the-agentcy' })));
+    expect(onForget).toHaveBeenCalledWith(importable);
+  });
+
+  it('sin nada anotado lo dice, en vez de dejar un bloque vacío', () => {
+    render(<ConnectionsContent {...props()} />);
+    expect(screen.getByText(t('connections.cliEmpty'))).toBeTruthy();
+  });
+
+  it('la advertencia es UNA línea gris, no un párrafo', () => {
+    render(<ConnectionsContent {...props()} />);
+    const line = screen.getByText(t('connections.authorization'));
+    expect(line.className).toContain('footnote');
+    expect(t('connections.authorization').length).toBeLessThan(120);
+  });
+});
+
+describe('K2: Herramientas (MCP) se fue del menú de Ajustes', () => {
+  const settings = readFileSync(join(process.cwd(), 'src', 'SettingsScreen.tsx'), 'utf8');
+
+  it('la sección ya no existe ni se puede navegar a ella', () => {
+    expect(settings.length).toBeGreaterThan(1000);
+    expect(settings).not.toContain("'tools'");
+    expect(settings).not.toContain('ToolsView');
+  });
+
+  it('la pantalla que la dibujaba tampoco', () => {
+    expect(existsSync(join(process.cwd(), 'src', 'ToolsView.tsx'))).toBe(false);
+  });
+
+  it('y su nombre salió de los dos idiomas', () => {
+    expect(Object.keys(catalogs['es-AR'])).not.toContain('settings.tools');
+    expect(Object.keys(catalogs['en-US'])).not.toContain('settings.tools');
   });
 });

@@ -1,17 +1,16 @@
 import { translate as t } from './i18n';
 import { useEffect, useState, type ReactNode } from 'react';
-import { ArrowLeft, HardDrive, Info, Plug, SlidersHorizontal, Sparkles, Wrench } from 'lucide-react';
+import { ArrowLeft, HardDrive, Info, Plug, SlidersHorizontal, Sparkles } from 'lucide-react';
 import type { AppInfo, CoordinationGlobalBudgetView } from '../shared/contracts';
 import { api, isDesktop } from './browser-api';
 import { ProvidersView } from './ProvidersView';
 import { ProfilesView } from './ProfilesView';
 import { SkillsView } from './SkillsView';
-import { ToolsView } from './ToolsView';
 import { ConnectionsView } from './ConnectionsView';
 import { useI18n } from './i18n';
 import type { LatteMode } from './TeamPanel';
 
-export type SettingsSection = 'agents' | 'profiles' | 'skills' | 'connections' | 'tools' | 'workspace' | 'language' | 'advanced';
+export type SettingsSection = 'agents' | 'profiles' | 'skills' | 'connections' | 'workspace' | 'language' | 'advanced';
 
 /**
  * Settings is its own screen, not a document view: no work breadcrumb, no
@@ -59,7 +58,6 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       <button className={section === 'profiles' ? 'selected' : ''} onClick={() => navigate('profiles')}><Info size={16} />{t('settings.profiles')}</button>
       <button className={section === t('ui.auto.390') ? 'selected' : ''} onClick={() => navigate('skills')}><Sparkles size={16} />{t('settings.skills')}</button>
       <button className={section === 'connections' ? 'selected' : ''} onClick={() => navigate('connections')}><Plug size={16} />{t('settings.connections')}</button>
-      <button className={section === 'tools' ? 'selected' : ''} onClick={() => navigate('tools')}><Wrench size={16} />{t('settings.tools')}</button>
       <button className={section === 'workspace' ? 'selected' : ''} onClick={() => navigate('workspace')}><HardDrive size={16} />{t('settings.workspace')}</button>
       <button className={section === 'language' ? 'selected' : ''} onClick={() => navigate('language')}><Info size={16} />{t('settings.language')}</button>
       <button className={section === 'advanced' ? 'selected' : ''} onClick={() => navigate('advanced')}><SlidersHorizontal size={16} />{t('settings.advanced')}</button>
@@ -76,7 +74,6 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       {section === t('ui.auto.390') && <SkillsView onNotice={onNotice} onError={onError} />}
       {/* TODAS las conexiones, globales y de marca: son una cosa técnica, y lo técnico vive acá. */}
       {section === 'connections' && <ConnectionsView onNotice={onNotice} onError={onError} />}
-      {section === 'tools' && <ToolsView onNotice={onNotice} onError={onError} workId={workId} />}
       {section === 'workspace' && <WorkspaceSection onError={onError} onReopenOnboarding={onReopenOnboarding} />}
       {section === 'language' && <LanguageSection />}
       {section === 'advanced' && <><ModeSection mode={mode} onModeChange={onModeChange} /><CoordinationSwitchSection onError={onError} /><CoordinationGlobalBudgetSection onError={onError} /></>}
