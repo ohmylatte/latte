@@ -117,17 +117,18 @@ describe('F6/F7/F8: las puertas que no miraban el estado', () => {
     expect(b.repo.listCoordinationTasks(run.id)).toHaveLength(1);
   });
 
-  it('F7: un handoff de un rol sin aprobar degrada al borrador, sin tarea ni excepción', async () => {
+  it('F7: un handoff de un rol sin aprobar no se puentea, sin tarea ni excepción, y dice por qué', async () => {
     const run = await b.service.startCoordinationRun(workId);
     approveCoordinationRoles(b, run.id, 'strategist'); // `analyst` NO
     fs.writeFileSync(path.join(dir, 'para-analyst.md'), '---\npara: analyst\n---\nMedí la campaña\n');
 
     const result = await b.service.acceptHandoffAsTask(workId, 'para-analyst.md');
 
-    expect(result).toEqual({ bridged: false, task: null, outcome: null, reason: null }); // R3: sin puente no hay despacho del cual hablar
+    // H1: el motivo viaja. Con la coordinación prendida no hay borrador al que caer.
+    expect(result).toEqual({ bridged: false, task: null, outcome: null, reason: 'ROLE_NOT_APPROVED' });
     expect(b.repo.listCoordinationTasks(run.id)).toEqual([]);
     expect(b.repo.listCoordinationDispatches(run.id)).toEqual([]);
-    // El borrador sigue sobre la mesa: no se consumió nada.
+    // El pedido sigue sobre la mesa: no se consumió nada.
     expect(fs.existsSync(path.join(dir, 'para-analyst.md'))).toBe(true);
   });
 

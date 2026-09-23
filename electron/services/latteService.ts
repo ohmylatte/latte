@@ -101,6 +101,7 @@ import { createHash } from 'node:crypto';
 import { writeFileAtomic } from '../core/atomicFile';
 import { LatteError, NotFoundError, UnavailableError, ValidationError } from '../core/errors';
 import { stripLeadingHeading } from '../../shared/markdown';
+import { wroteFile } from '../../shared/editTools';
 import { isValidId, newId, nowIso, slugify } from '../core/ids';
 import { WORK_FILES } from '../core/paths';
 import { EngramClient, memoryProjectFor } from '../memory/engram';
@@ -112,7 +113,7 @@ import type { CoordinationInjectionPlanner } from '../coordination/injection';
 import type { Connection, ConnectionInput, ImportableConnection } from '../../shared/contracts';
 import type { ConnectionsService } from '../connections/service';
 import type { McpCatalog } from '../agents/mcp';
-import { ROLE_AVATAR_KEY, RoleCatalog } from '../agents/roles';
+import { ASSISTANT_ROLE_ID, ROLE_AVATAR_KEY, RoleCatalog } from '../agents/roles';
 import { parseAvatar, serializeAvatar } from '../../shared/avatar';
 import { isEffortTier } from '../agents/tiers';
 import type { ChatManager } from '../opencode/chatManager';
@@ -1874,48 +1875,80 @@ export class LatteService implements BackendApi {
   }
 
   /**
-   * WHEN the Work has an active run, mints a `coordination_task` for the
-   * accepted handoff and attempts to dispatch it through the exact same
-   * choke point `latte_dispatch` uses; the handoff file is then dismissed,
-   * matching the existing "accepting consumes the request" behaviour.
-   * Outside an active run this is a pure no-op: `listHandoffs`/`dismissHandoff`
-   * are untouched, and the caller falls back to opening a chat draft exactly
-   * as it did before this change.
+   * Un traspaso de un miembro, puenteado a la coordinación.
+   *
+   * - Con un run CORRIENDO crea la `coordination_task` y la despacha por el
+   *   mismo punto que `latte_dispatch` (autoridad, presupuesto, concurrencia).
+   * - H1: SIN RUN la convierte en una propuesta de una tarea (`outcome:
+   *   'proposed'`), la misma tarjeta que `latte_request_coordination`; su
+   *   coordinador es quien escribió el archivo (`handoffAuthor`).
+   *
+   * En los dos casos el archivo se consume. Cuando no puentea el archivo queda
+   * y el resultado trae el MOTIVO (`reason`, código del motor). La única
+   * respuesta sin motivo es la de la coordinación apagada: ésa es la que la
+   * interfaz lee como "abrí el borrador de chat, como antes de que la
+   * coordinación existiera". Con la coordinación prendida nunca se prellena
+   * nada.
    */
   async acceptHandoffAsTask(workId: string, fileName: string): Promise<HandoffTaskBridgeResult> {
     const id = requireId(workId, 'workId');
     this.deps.repo.getWork(id);
-    if (!this.deps.repo.findActiveCoordinationRun(id)) return { bridged: false, task: null, outcome: null, reason: null };
-    // D4: con la bandera baja esto DEGRADA, no tira. El docstring de arriba
-    // promete "el llamador cae al borrador de chat exactamente como antes", y
-    // dejar escapar `FEATURE_DISABLED` rompía esa promesa justo donde importa:
-    // la persona apagaba coordinación y aceptar un pedido pasaba a fallar en
-    // vez de abrirle el chat que tenía antes de que coordinación existiera.
+    // D4: con la bandera baja esto DEGRADA, no tira: la persona apagaba
+    // coordinación y aceptar un pedido pasaba a fallar en vez de abrirle el
+    // chat que tenía antes de que coordinación existiera.
     if (!featureEnabled((key) => this.deps.repo.getMeta(key), 'coordination')) return { bridged: false, task: null, outcome: null, reason: null };
     const pending = await this.listHandoffs(id);
     const handoff = pending.find((h) => h.fileName === fileName);
     if (!handoff) throw new ValidationError('Ese pedido ya no está en la carpeta');
+    // Un rol que Latte no tiene es un error de tipeo, no una contratación: no
+    // se propone el alta de algo que `hub.addMember` no puede crear.
+    if (!handoff.known) return { bridged: false, task: null, outcome: null, reason: 'UNKNOWN_ROLE' };
     // C3 BUG (a): la tarea NACE limpia. El cuerpo del traspaso lo escribe un
     // agente y empieza con un encabezado de Markdown; ese cuerpo se vuelve el
     // spec de la tarea, el spec se vuelve el prompt del despacho y su recorte
     // terminaba en pantalla como "despachó: # Piezas exactas...". Se saca la
     // SINTAXIS de la primera linea, nunca su contenido.
-    const result = await this.coordination.bridgeHandoffToTask(id, handoff.roleId, stripLeadingHeading(handoff.request));
-    if (!result.bridged) return { bridged: false, task: null, outcome: null, reason: null };
+    const result = await this.coordination.bridgeHandoffToTask(id, handoff.roleId, stripLeadingHeading(handoff.request), {
+      coordinatorMemberId: this.handoffAuthor(id, fileName),
+    });
+    if (!result.bridged) return { bridged: false, task: null, outcome: null, reason: result.reason };
     await this.dismissHandoff(id, fileName).catch(() => undefined);
+    if (result.proposed) return { bridged: true, task: null, outcome: 'proposed', reason: null };
     // R3/Q1: el pedido se consumió igual — la tarea existe — pero el despacho
-    // pudo no salir, Y PUDO QUEDAR ESPERANDO UNA APROBACIÓN. Eran tres hechos
-    // metidos en un booleano: `result.dispatch != null` daba `true` tanto para
-    // un despacho que salió como para una fila `pending_approval`, o sea que
-    // bajo la autoridad por defecto (`manual`) la interfaz anunciaba
-    // "despachada al equipo" sobre una tarea que nadie había aprobado todavía.
-    // El estado del motor viaja tal cual y la pantalla elige la frase.
+    // pudo no salir, Y PUDO QUEDAR ESPERANDO UNA APROBACIÓN. El estado del
+    // motor viaja tal cual y la pantalla elige la frase.
     return {
       bridged: true,
       task: { id: result.task.id, roleId: result.task.roleId, spec: result.task.spec, status: result.task.status },
       outcome: result.dispatch ? result.dispatch.status : 'not_dispatched',
       reason: result.reason,
     };
+  }
+
+  /**
+   * H1: QUIÉN ESCRIBIÓ EL TRASPASO, para que sea el coordinador de la
+   * propuesta que nace de él.
+   *
+   * Se lee de lo que cada runtime reporta de sus tools (`wroteFile`, la misma
+   * lista que usa la interfaz para "está editando"): atribución, no una
+   * conjetura sobre el texto del archivo. Con un solo autor, ése. Si no hay
+   * ninguno (el runtime no expone la conversación) o hay más de uno, cae en el
+   * destinatario del chat de equipo — la misma cadena que `teamChatTarget`
+   * del renderer sin run: quien tiene el permiso de coordinar, si no el
+   * Asistente, si no el primero del equipo.
+   */
+  private handoffAuthor(workId: string, fileName: string): string | null {
+    let team: TeamMember[];
+    try { team = this.deps.hub.listTeam(workId).filter((m) => m.status !== 'ended'); } catch { team = []; }
+    const writers = team.filter((m) => {
+      try { return wroteFile(this.deps.hub.recentMessages(m.id).messages, fileName); } catch { return false; }
+    });
+    if (writers.length === 1) return writers[0].id;
+    const grant = this.readCoordinatorGrant(workId);
+    return (grant && team.some((m) => m.id === grant) ? grant : null)
+      ?? team.find((m) => m.roleId === ASSISTANT_ROLE_ID)?.id
+      ?? team[0]?.id
+      ?? null;
   }
 
   /**

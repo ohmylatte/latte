@@ -1268,9 +1268,11 @@ export interface CoordinationEvent {
 
 /**
  * `acceptHandoffAsTask` bridges a handoff into a `coordination_task` only
- * when the Work has an active run; `bridged:false` means "do nothing new" —
- * the existing handoff flow (open a member, draft the request, dismiss the
- * file) is unaffected, exactly as the spec requires outside an active run.
+ * when the Work has a running run, and into a one-task PROPOSAL when it has
+ * none (H1, `outcome: 'proposed'`). `bridged:false` leaves the file where it
+ * is and always names its `reason` — except with coordination switched off,
+ * the one case with `reason: null`, which the renderer reads as "open the chat
+ * draft, as before coordination existed".
  */
 /**
  * Q1: los TRES finales que puede tener un puente de handoff, porque el motor
@@ -1279,8 +1281,9 @@ export interface CoordinationEvent {
  * tarea del puente nace fuera del plan—, así que un booleano `dispatched`
  * obligaba a la interfaz a elegir entre dos frases para tres hechos, y elegía
  * la que mentía: "despachada al equipo" sobre una tarea esperando aprobación.
+ * H1: y un cuarto, `proposed`: sin run, el traspaso se volvió una propuesta.
  */
-export type HandoffBridgeOutcome = 'dispatched' | 'pending_approval' | 'not_dispatched';
+export type HandoffBridgeOutcome = 'dispatched' | 'pending_approval' | 'not_dispatched' | 'proposed';
 
 export interface HandoffTaskBridgeResult {
   bridged: boolean;

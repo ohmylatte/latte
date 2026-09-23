@@ -1369,3 +1369,11 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .chat-card.question.is-answered{border-left-color:var(--line-strong)}
 .chat-question-answered{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:var(--text-sm);overflow-wrap:anywhere}
 .chat-question-answered svg{flex:0 0 auto;color:var(--green-ok)}
+/* H2: lo producido caduca. Un run cancelado, o uno terminado hace más de 24 h,
+   es una sola línea: qué pasó, cuándo, y lo demás a un clic. */
+.coord-output-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0;padding:8px 6px;color:var(--muted);font-size:var(--text-base);min-width:0}
+.coord-output-line svg{flex:0 0 auto}
+.coord-output-line-text{flex:1 1 180px;min-width:0;overflow-wrap:anywhere}
+.coord-output.is-line{flex:0 0 auto}
+/* M3: el detalle de un puente que no se hizo va en gris, detrás de la frase. */
+.handoff-reason-detail{color:var(--muted)}

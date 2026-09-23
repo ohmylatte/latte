@@ -179,14 +179,14 @@ describe('la contratación que la persona destildó', () => {
     // a contratar, que es justamente el camino que hay que cerrar.
     await b.service.setCoordinationAuthority(workId, 'auto');
 
-    // F7: el puente DEGRADA al borrador en vez de tirar. El chequeo de rol se
+    // F7: el puente NO puentea en vez de tirar. El chequeo de rol se
     // hace ahora ANTES de `createTaskRow` —antes se salteaba y la tarea nacía
     // igual, para morir `failed` tres saltos más adentro ensuciando la
     // bitácora—, y "no se puede convertir en tarea" es exactamente el mismo
     // hecho que "no hay run": `{bridged:false}`, el handoff sigue sobre la
     // mesa. Lo que este test protege —que NADIE se contrate— sigue intacto.
     const before = b.repo.listCoordinationTasks(run.id).length;
-    await expect(engine.bridgeHandoffToTask(workId, 'designer', 'Diseñar algo')).resolves.toEqual({ bridged: false });
+    await expect(engine.bridgeHandoffToTask(workId, 'designer', 'Diseñar algo')).resolves.toEqual({ bridged: false, reason: 'ROLE_NOT_APPROVED' }); // H1: y dice por qué
 
     expect(b.repo.listCoordinationTasks(run.id)).toHaveLength(before); // el puente no escribió ninguna tarea nueva
     expect(members.map((m) => m.roleId)).toEqual(['copywriter']);

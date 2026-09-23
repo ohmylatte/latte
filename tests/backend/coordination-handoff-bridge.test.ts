@@ -32,17 +32,17 @@ describe('acceptHandoffAsTask: the handoff-to-coordination bridge', () => {
     fs.writeFileSync(path.join(dir, fileName), `---\npara: ${roleId}\n---\n${request}\n`);
   }
 
-  it('is a no-op with no active run: the handoff stays exactly as listHandoffs/dismissHandoff already behave', async () => {
+  it('with no active run it becomes a one-task proposal: nothing dispatched, the handoff consumed (H1)', async () => {
     writeHandoff('para-strategist.md', 'strategist', 'Draft the Q3 brief.');
-    const before = await b.service.listHandoffs(workId);
     const result = await b.service.acceptHandoffAsTask(workId, 'para-strategist.md');
-    // R3: el resultado dice además si el despacho salió. Sin puente no hay
-    // despacho del cual hablar, así que las dos cosas son `null` — no `false`,
-    // que sería afirmar que algo se intentó y no salió.
-    expect(result).toEqual({ bridged: false, task: null, outcome: null, reason: null });
-    // Untouched: still there, unconsumed, exactly like before this change.
-    expect(await b.service.listHandoffs(workId)).toEqual(before);
-    expect(fs.existsSync(path.join(dir, 'para-strategist.md'))).toBe(true);
+    // H1: sin run el traspaso ya no degrada al borrador de chat (la persona en
+    // el medio): se vuelve una propuesta, y la tarea nace recién al aprobarla.
+    expect(result).toEqual({ bridged: true, task: null, outcome: 'proposed', reason: null });
+    const run = b.repo.findActiveCoordinationRun(workId)!;
+    expect(run.status).toBe('planning');
+    expect(b.repo.listCoordinationTasks(run.id)).toEqual([]);
+    expect(b.hub.send).not.toHaveBeenCalled();
+    expect(await b.service.listHandoffs(workId)).toEqual([]);
   });
 
   it('mints a coordination_task and dismisses the handoff during an active run', async () => {

@@ -47,6 +47,8 @@ import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, I
 const APPROVED_ROLES_META = 'coordination_approved_roles:';
 /** Las altas de ESTE run, en meta (como `decisionAuthority`): sin subir de versión de esquema. */
 const HIRES_META = 'coordination_hires:';
+/** H1: el run nació de un traspaso (una propuesta que Latte armó por un agente). Aprobarlo despacha solo. */
+const HANDOFF_RUN_META = 'coordination_handoff_run:';
 /**
  * R3: EL PEDIDO, GUARDADO AL APROBAR.
  *
@@ -882,6 +884,24 @@ export class CoordinationEngine {
       // nunca existió como equipo.
       const requestTitle = coordinationRequestTitle(proposal);
       if (requestTitle !== '') this.deps.repo.setMeta(coordinationRequestMetaKey(run.id), requestTitle);
+      // H1: LA PROPUESTA DE UN TRASPASO SE DESPACHA AL APROBARLA.
+      //
+      // Quien escribió el traspaso ya dijo a quién y qué; lo único que faltaba
+      // era el sí de la persona. Esperar a que el coordinador lea el aviso y
+      // llame a `latte_dispatch` volvía a poner un paso en el medio — y si el
+      // coordinador no tiene MCP, ese paso no llega nunca. Pasa por
+      // `startDispatch`, así que la autoridad (manual → gate), el presupuesto y
+      // la concurrencia valen igual. Nunca tira: la aprobación ya está
+      // commiteada y no se deshace porque un despacho se haya denegado.
+      if (this.deps.repo.getMeta(HANDOFF_RUN_META + run.id) === '1') {
+        for (const task of this.deps.repo.listCoordinationTasks(run.id).filter((t) => t.status === 'ready')) {
+          try {
+            await this.startDispatch({ grant: { workId: run.workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id });
+          } catch (error) {
+            this.deps.log?.(`[latte] handoff dispatch after approval failed (${run.id}): ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+      }
       // A1: Y EL COORDINADOR SE ENTERA, fuera de la transacción.
       //
       // Éste era el agujero medido en uso real: la persona aprobaba y el
@@ -1326,11 +1346,27 @@ export class CoordinationEngine {
    * MCP: the human's own UI action both creates the task and requests its
    * dispatch, and authority gating (manual/plan/auto) applies exactly as it
    * would to a coordinator-originated dispatch.
+   *
+   * H1 (uso real, 2026-09-23): SIN RUN, EL TRASPASO SE VUELVE UNA PROPUESTA.
+   *
+   * Antes esto devolvía `{bridged:false}` y la interfaz caía al borrador: el
+   * pedido que un agente le escribía a otro terminaba pegado en el cuadro de
+   * texto para que la PERSONA lo mandara a mano — la persona en el medio de
+   * una conversación entre dos agentes. Ahora arma una propuesta de UNA tarea
+   * (con el alta del rol si falta) y la guarda por `requestCoordination`, el
+   * mismo camino que `latte_request_coordination`: mismos candados, misma
+   * tarjeta, mismo Aprobar/Editar/Rechazar. El coordinador del run es quien
+   * escribió el traspaso (lo resuelve el llamador, que ve las conversaciones).
+   *
+   * Cuando NO puentea devuelve SIEMPRE su motivo, con el código del motor: la
+   * interfaz ya no tiene un borrador al que caer mientras la coordinación esté
+   * prendida, así que necesita saber por qué el pedido se quedó quieto.
    */
-  async bridgeHandoffToTask(workId: string, roleId: string, spec: string): Promise<
-    | { bridged: false }
-    | { bridged: true; task: CoordinationTaskRecord; dispatch: { status: 'dispatched' | 'pending_approval'; dispatchId: string }; reason: null }
-    | { bridged: true; task: CoordinationTaskRecord; dispatch: null; reason: string }
+  async bridgeHandoffToTask(workId: string, roleId: string, spec: string, options: { coordinatorMemberId?: string | null } = {}): Promise<
+    | { bridged: false; reason: string }
+    | { bridged: true; proposed: CoordinationRunRecord }
+    | { bridged: true; proposed?: undefined; task: CoordinationTaskRecord; dispatch: { status: 'dispatched' | 'pending_approval'; dispatchId: string }; reason: null }
+    | { bridged: true; proposed?: undefined; task: CoordinationTaskRecord; dispatch: null; reason: string }
   > {
     // Crítico 6: `startDispatch` ya chequeaba la bandera, pero ACÁ abajo —
     // después de que `createTaskRow` ya había escrito la tarea. Con la
@@ -1338,7 +1374,7 @@ export class CoordinationEngine {
     // aceptado. El chequeo va antes de escribir, no después.
     this.requireCoordinationEnabled();
     const run = this.deps.repo.findActiveCoordinationRun(workId);
-    if (!run) return { bridged: false };
+    if (!run) return this.proposeFromHandoff(workId, roleId, spec, options.coordinatorMemberId ?? null);
     // R3: Y EL ESTADO DEL RUN, ANTES DE ESCRIBIR NADA. "Activo" incluye
     // `planning` (una propuesta que la persona todavía no aprobó) y
     // `suspended` (un equipo pausado o sin presupuesto). Sobre cualquiera de
@@ -1347,21 +1383,22 @@ export class CoordinationEngine {
     // dejando una tarea `ready` colada en un run que nadie aprobó — que con
     // autoridad `auto` se despacha sola en cuanto el run arranque — y una
     // excepción subiendo hasta la interfaz por haber aceptado un pedido. Sólo
-    // un run CORRIENDO acepta trabajo nuevo; con cualquier otro estado esto
-    // degrada al borrador de chat, que es exactamente lo que este método
-    // promete cuando no hay run.
-    if (run.status !== 'running') return { bridged: false };
+    // un run CORRIENDO acepta trabajo nuevo; con cualquier otro estado el
+    // pedido se queda quieto y el motivo viaja (H1: ya no hay borrador al que
+    // degradar). Una propuesta pendiente es la misma puerta cerrada que ve
+    // `requestCoordination`, con el mismo código.
+    if (run.status !== 'running') return { bridged: false, reason: run.status === 'planning' ? 'RUN_ALREADY_ACTIVE' : 'RUN_NOT_ACTIVE' };
     // EL MISMO chequeo que `taskCreate` y `planSubmit` (F7). Este camino
     // llamaba a `createTaskRow` directo: la tarea nacía, el despacho moría con
     // `ROLE_NOT_APPROVED` tres saltos más adentro, quedaba una tarea `failed`
     // en la bitácora de la persona y la excepción subía hasta la interfaz por
     // haber aceptado un borrador. Un rol que nadie aprobó no se puede
-    // convertir en tarea por ningún camino; el handoff DEGRADA al borrador,
-    // que es exactamente lo que este método promete cuando no hay run.
+    // convertir en tarea por ningún camino; el handoff se queda quieto y dice
+    // por qué.
     try {
       this.assertRoleCreatable(run, roleId);
     } catch (error) {
-      if (error instanceof LatteError && error.code === 'ROLE_NOT_APPROVED') return { bridged: false };
+      if (error instanceof LatteError && error.code === 'ROLE_NOT_APPROVED') return { bridged: false, reason: 'ROLE_NOT_APPROVED' };
       throw error;
     }
     const task = this.createTaskRow(run.id, roleId, spec, []);
@@ -1384,6 +1421,37 @@ export class CoordinationEngine {
         dispatch: null,
         reason: error instanceof LatteError ? error.code : 'INTERNAL',
       };
+    }
+  }
+
+  /**
+   * H1: la propuesta que nace de un traspaso. Una tarea (el pedido), el alta
+   * del rol sólo si nadie del equipo lo hace, el presupuesto que la persona ya
+   * configuró para el Trabajo (o el mínimo que alcanza para una tarea con sus
+   * reintentos) y un título de una línea. Entra por `requestCoordination`, así
+   * que no hay un segundo validador ni un segundo lugar donde una propuesta se
+   * vuelve fila: lo que ese camino rechaza, acá también, con el mismo código.
+   */
+  private async proposeFromHandoff(workId: string, roleId: string, spec: string, coordinatorMemberId: string | null): Promise<{ bridged: false; reason: string } | { bridged: true; proposed: CoordinationRunRecord }> {
+    const plan = [{ roleId, spec }];
+    const covered = this.computeRoleCoverage(workId, { plan, membersToHire: [], estimatedDispatches: 1, rationale: '' })[0]?.coverage === 'member';
+    let configured: number | null = null;
+    try { configured = this.requireReadableBudget(workId)?.maxDispatches ?? null; } catch { configured = null; }
+    const proposal: CoordinationProposal = {
+      plan,
+      estimatedDispatches: configured ?? MAX_ATTEMPTS_PER_TASK,
+      membersToHire: covered ? [] : [{ roleId, why: `The request is for ${roleId} and nobody on the team does it yet.` }],
+      rationale: coordinationRequestTitle({ rationale: '', plan }),
+    };
+    try {
+      const run = await this.requestCoordination({ workId, runId: null, memberId: coordinatorMemberId ?? '', role: 'worker' }, proposal);
+      // Marcado para que aprobarla despache sola (ver `resolveProposalGate`):
+      // quien la pidió ya dijo a quién y qué, no hay nada que coordinar.
+      this.deps.repo.setMeta(HANDOFF_RUN_META + run.id, '1');
+      return { bridged: true, proposed: run };
+    } catch (error) {
+      if (error instanceof LatteError) return { bridged: false, reason: error.code };
+      throw error;
     }
   }
 
@@ -1442,7 +1510,7 @@ export class CoordinationEngine {
       id: newId('crn'),
       workId: grant.workId,
       status: 'planning',
-      coordinatorMemberId: grant.memberId,
+      coordinatorMemberId: grant.memberId || null,
       // `unlimitedConfirmedAt` se DESCARTA acá, tanto del presupuesto como de
       // la propuesta guardada: "un presupuesto ilimitado es siempre una
       // elección humana, nunca un default implícito" se volvía satisfacible
@@ -1612,6 +1680,11 @@ export class CoordinationEngine {
       for (const hire of hired) lines.push(`- ${hire.memberId} (${hire.roleId})`);
     }
     lines.push('');
+    if (this.deps.repo.getMeta(HANDOFF_RUN_META + run.id) === '1') {
+      // H1: la propuesta nació de un traspaso y Latte ya la despachó al aprobarla.
+      lines.push('This plan came from your handoff file, and Latte already took care of the dispatch when the person approved (under manual authority it waits for their approval of that dispatch): do not dispatch it again. The member reports back with `latte_report`, and Latte tells you.');
+      return lines.join('\n');
+    }
     lines.push('These tasks already exist. Dispatch them with `latte_dispatch(taskId)` in dependency order (`latte_task_list` shows them, with their current status). Do NOT recreate them with `latte_task_create`: tasks created outside the approved plan need the person\'s approval for every dispatch.');
     lines.push('The run closes itself the moment its last task reports, so dispatch what is ready and let the reports come back.');
     return lines.join('\n');
