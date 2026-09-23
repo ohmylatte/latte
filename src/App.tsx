@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, Home, MessageSquare, Minus, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, X } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
+import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, HandoffTaskBridgeResult, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
 import { api, chatStore, isDesktop } from './browser-api';
 import { DocumentsView, NewDocumentDialog } from './DocumentsView';
 import { hasMetadataDrafts } from './DocumentMetadata';
@@ -261,6 +261,19 @@ export function App() {
   const [profileDirty,setProfileDirty]=useState(false);
   const [untracked, setUntracked] = useState<UntrackedFile[]>([]);
   const [handoffs, setHandoffs] = useState<HandoffRequest[]>([]);
+  /**
+   * H1: lo que pasó con cada traspaso que Latte intentó puentear solo, por
+   * `<workId>/<archivo>`. Sin entrada = todavía no se intentó (el aviso no se
+   * dibuja: no hay nada que ofrecer mientras el puente está en vuelo);
+   * `null` = coordinación apagada (el aviso de siempre, borrador a pedido);
+   * un código = no se pudo, y el aviso dice por qué.
+   */
+  const [handoffHolds, setHandoffHolds] = useState<Record<string, string | null>>({});
+  /** H1: la propuesta que nació de un traspaso, para la línea "Propuesta lista · Aprobar". */
+  const [handoffProposal, setHandoffProposal] = useState<{ workId: string; roleName: string } | null>(null);
+  /** Los traspasos que ya se intentaron puentear solos: uno por archivo, nunca en bucle. */
+  const handoffAttempts = useRef(new Set<string>());
+  const openWorkIdRef = useRef<string | null>(null);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [contextProposals, setContextProposals] = useState<BrandContextProposal[]>([]);
   // The fingerprint, works and history of the context the editor is editing.
@@ -673,6 +686,60 @@ export function App() {
     loadFolderDelta(work.id, () => active);
     return () => { active = false; };
   }, [work?.id]);
+  openWorkIdRef.current = work?.id ?? null;
+  /**
+   * H1: EL TRASPASO SE PUENTEA SOLO.
+   *
+   * Donde antes aparecía el aviso con "abrir conversación" (y la persona
+   * terminaba mandando a mano lo que un agente le escribió a otro), ahora
+   * Latte llama al puente apenas ve el archivo: sin run, una propuesta; con
+   * run, tarea y despacho. Una vez por archivo —un pedido que no se pudo
+   * puentear no se reintenta en bucle; el aviso ofrece reintentar— y sin
+   * `run()`: es trabajo de fondo, no una acción de la persona, así que no
+   * bloquea la pantalla ni pisa su error.
+   */
+  useEffect(() => {
+    if (!work) return;
+    const workId = work.id;
+    const fresh = handoffs.filter(h => !handoffAttempts.current.has(`${workId}/${h.fileName}`));
+    if (fresh.length === 0) return;
+    for (const h of fresh) handoffAttempts.current.add(`${workId}/${h.fileName}`);
+    void (async () => {
+      let consumed = false;
+      for (const handoff of fresh) {
+        let result: HandoffTaskBridgeResult;
+        try {
+          result = await api.acceptHandoffAsTask(workId, handoff.fileName);
+        } catch (e) {
+          holdHandoff(workId, handoff.fileName, e instanceof Error && 'code' in e && typeof e.code === 'string' ? e.code : 'INTERNAL');
+          continue;
+        }
+        if (!result.bridged) { holdHandoff(workId, handoff.fileName, result.reason); continue; }
+        consumed = true;
+        if (openWorkIdRef.current === workId) announceHandoffBridge(workId, handoff, result);
+      }
+      if (!consumed) return;
+      const list = await api.listHandoffs(workId).catch(() => null);
+      if (list && openWorkIdRef.current === workId) setHandoffs(list);
+    })();
+  }, [work?.id, handoffs]);
+  const holdHandoff = (workId: string, fileName: string, reason: string | null) => {
+    setHandoffHolds(prev => ({ ...prev, [`${workId}/${fileName}`]: reason }));
+  };
+  /** Lo que el aviso de cada traspaso del Trabajo abierto tiene que decir (ver `handoffHolds`). */
+  const openHandoffHolds: Record<string, string | null> = {};
+  for (const h of handoffs) {
+    const key = `${work?.id ?? ''}/${h.fileName}`;
+    if (key in handoffHolds) openHandoffHolds[h.fileName] = handoffHolds[key];
+  }
+  /**
+   * La línea "Propuesta lista" vive mientras la propuesta siga esperando: se
+   * va sola cuando la persona la aprueba o la rechaza (el run deja de estar
+   * `planning`), sin que nadie tenga que acordarse de borrarla.
+   */
+  const pendingHandoffProposal = handoffProposal && work && handoffProposal.workId === work.id
+    && coordination.run?.status === 'planning' && coordination.gates.some(g => g.kind === 'proposal')
+    ? handoffProposal.roleName : null;
   useEffect(() => {
     if (!brand || !work) { selectionWorkRef.current = null; return; }
     if (selectionWorkRef.current === work.id) return;
@@ -1138,35 +1205,55 @@ export function App() {
   const pauseMember = (memberId: string) => run(async () => { await api.pauseTeamMember(memberId); dropChat(memberId); if (work) await loadTeam(work.id); });
   const finishMember = (memberId: string) => run(async () => { await api.finishTeamMember(memberId); dropChat(memberId); if (work) await loadTeam(work.id); setNotice('Miembro marcado como finalizado'); });
   /**
-   * Acepta un handoff como TAREA de la coordinación cuando el Trabajo tiene un
-   * run vivo: `acceptHandoffAsTask` estaba cableada de punta a punta (motor,
-   * IPC, contrato, preload, browser-api, tests) y no tenía un solo llamador en
-   * el renderer. Fuera de un run vivo devuelve `{bridged:false}` y cae al
-   * camino de siempre, el borrador de chat.
+   * Puentea un traspaso a la coordinación (`acceptHandoffAsTask`): con un run
+   * corriendo, tarea + despacho; sin run (H1), una propuesta de una tarea.
+   * Es lo que hace el botón del aviso, y es lo MISMO que Latte hace solo al
+   * detectar el archivo (ver el efecto de `handoffs`).
+   *
+   * H1: EL BORRADOR SÓLO CON LA COORDINACIÓN APAGADA. El motor responde
+   * `reason: null` únicamente en ese caso, y sólo ahí se cae al camino de
+   * siempre (`acceptHandoff`, que prellena el chat). Con la coordinación
+   * prendida un pedido que no se pudo puentear se queda en el aviso con su
+   * motivo: nunca se pega en el cuadro de texto de nadie.
    */
   const acceptHandoffAsTask = (handoff: HandoffRequest) => run(async () => {
     if (!work) return;
-    const result = await api.acceptHandoffAsTask(work.id, handoff.fileName);
-    if (!result.bridged) { await acceptHandoff(handoff); return; }
-    setHandoffs(await api.listHandoffs(work.id).catch(() => []));
-    // NO se abrio ninguna conversacion: se creo una `coordination_task` y
-    // `startDispatch` ya la mando (gastando un despacho, con `hub.send`
-    // incluido). Reusar la frase de la otra rama --"revisalo antes de
-    // enviarlo"-- le pedia a la persona revisar algo que no existe DESPUES de
-    // haber gastado. Clave semantica propia, en los dos idiomas.
-    // R3: el puente ya no tira cuando el despacho se deniega, lo devuelve. Y
-    // entonces la frase no puede ser la misma: la tarea existe pero nadie la
-    // está haciendo, y decir "despachada" sería anunciar algo que no pasó.
-    // Q1: y son TRES, no dos. Con la autoridad por defecto (`manual`, y también
-    // `plan`, porque la tarea del puente nace fuera del plan) el motor devuelve
-    // `pending_approval`: la tarea existe, nadie la está haciendo, y lo que
-    // falta es un gesto de la persona en Decisiones. Decirle "despachada al
-    // equipo" la dejaba esperando un resultado que nunca iba a llegar, sin
-    // saber que la decisión era suya.
+    const workId = work.id;
+    const result = await api.acceptHandoffAsTask(workId, handoff.fileName);
+    if (!result.bridged) {
+      if (result.reason === null) { await acceptHandoff(handoff); return; }
+      holdHandoff(workId, handoff.fileName, result.reason);
+      setNotice(t('handoff.held', { role: handoff.roleName, reason: result.reason }));
+      return;
+    }
+    setHandoffs(await api.listHandoffs(workId).catch(() => []));
+    announceHandoffBridge(workId, handoff, result);
+  });
+  /**
+   * La frase de cada final del puente.
+   *
+   * NO se abrio ninguna conversacion: se creo una `coordination_task` y
+   * `startDispatch` ya la mando (o la dejó esperando). Reusar la frase de la
+   * otra rama --"revisalo antes de enviarlo"-- le pedia a la persona revisar
+   * algo que no existe DESPUES de haber gastado. Clave semantica propia, en
+   * los dos idiomas.
+   * R3: el puente ya no tira cuando el despacho se deniega, lo devuelve. Y
+   * entonces la frase no puede ser la misma: la tarea existe pero nadie la
+   * está haciendo, y decir "despachada" sería anunciar algo que no pasó.
+   * Q1: y son TRES, no dos. Con la autoridad por defecto (`manual`, y también
+   * `plan`, porque la tarea del puente nace fuera del plan) el motor devuelve
+   * `pending_approval`: la tarea existe, nadie la está haciendo, y lo que
+   * falta es un gesto de la persona en Decisiones.
+   * H1: y un cuarto, `proposed`: no hay frase suelta sino la línea
+   * "Propuesta lista · Aprobar" arriba de la conversación, que lleva a la
+   * tarjeta. Un aviso que se va solo no alcanza para algo que espera un sí.
+   */
+  const announceHandoffBridge = (workId: string, handoff: HandoffRequest, result: HandoffTaskBridgeResult) => {
+    if (result.outcome === 'proposed') { setHandoffProposal({ workId, roleName: handoff.roleName }); return; }
     if (result.outcome === 'not_dispatched') { setNotice(t('handoff.bridged.queued', { role: handoff.roleName, reason: result.reason ?? '' })); return; }
     if (result.outcome === 'pending_approval') { setNotice(t('handoff.bridged.pendingApproval', { role: handoff.roleName })); return; }
     setNotice(t('handoff.bridged.dispatched', { role: handoff.roleName }));
-  });
+  };
   const acceptHandoff = (handoff: HandoffRequest) => run(async () => {
     if (!work || startingChat) return;
     const existing = team.find(m => m.roleId === handoff.roleId);
@@ -1329,7 +1416,7 @@ export function App() {
       <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
     </main>
     <aside className="agent-panel">{focusChat && (error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}<button type="button" className={'panel-resizer' + (dragging ? ' dragging' : '')} aria-label={t('ui.auto.066')} title={t('ui.auto.067')} onPointerDown={startResize} />
-      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onAcceptHandoffAsTask={acceptHandoffAsTask} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} coordinationLog={work ? coordination.log : undefined} coordinationMessages={work ? coordination.messages : undefined} coordinationAsks={work ? coordination.openAsks : undefined} coordinationHires={work ? coordination.hires : undefined} coordinationGates={work ? coordination.gates : undefined} coordinationTasks={work ? coordination.tasks : undefined} formatTime={hour} formatDate={date} coordinationSupport={work ? coordination.support : undefined} coordinationAuthority={work ? coordination.authority : undefined} onSetCoordinationAuthority={changeCoordinationAuthority} coordinationBudget={work ? coordination.budget : undefined} onSetCoordinationBudget={coordination.setBudget} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} chatCoordination={{ coordinationRun: work ? coordination.run : undefined, gates: work ? coordination.gates : undefined, openAsks: work ? coordination.openAsks : undefined, roles, team, formatDate: date, onResolveGate: coordination.resolveGate, onAnswerAsk: coordination.answerAsk, coordinationPending: coordination.pending, onSelectMember: selectMember, initiallyExpanded: cardsFromPending, teamSeen: coordination.run ? teamSeenRuns.seen(coordination.run.id) : false, onTeamOpened: () => { const r = coordination.run; if (r?.planApproved) teamSeenRuns.markSeen(r.id); } }} />
+      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onAcceptHandoffAsTask={acceptHandoffAsTask} handoffHolds={openHandoffHolds} handoffProposal={pendingHandoffProposal} onOpenHandoffProposal={() => setCardsFromPending(true)} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} coordinationLog={work ? coordination.log : undefined} coordinationMessages={work ? coordination.messages : undefined} coordinationAsks={work ? coordination.openAsks : undefined} coordinationHires={work ? coordination.hires : undefined} coordinationGates={work ? coordination.gates : undefined} coordinationTasks={work ? coordination.tasks : undefined} formatTime={hour} formatDate={date} coordinationSupport={work ? coordination.support : undefined} coordinationAuthority={work ? coordination.authority : undefined} onSetCoordinationAuthority={changeCoordinationAuthority} coordinationBudget={work ? coordination.budget : undefined} onSetCoordinationBudget={coordination.setBudget} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} chatCoordination={{ coordinationRun: work ? coordination.run : undefined, gates: work ? coordination.gates : undefined, openAsks: work ? coordination.openAsks : undefined, roles, team, formatDate: date, onResolveGate: coordination.resolveGate, onAnswerAsk: coordination.answerAsk, coordinationPending: coordination.pending, onSelectMember: selectMember, initiallyExpanded: cardsFromPending, teamSeen: coordination.run ? teamSeenRuns.seen(coordination.run.id) : false, onTeamOpened: () => { const r = coordination.run; if (r?.planApproved) teamSeenRuns.markSeen(r.id); } }} />
       <details className="active-context">
         <summary><Bookmark size={12} />{t('ui.auto.035')}<span>{[brand?.context ? 'marca' : null, work ? 'trabajo' : null, decisions.length ? `${decisions.length} decisiones` : null].filter(Boolean).join(' · ') || t('ui.auto.068')}</span></summary>
         <div className="active-context-body">

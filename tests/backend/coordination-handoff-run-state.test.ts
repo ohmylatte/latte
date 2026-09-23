@@ -194,10 +194,10 @@ describe('Q1: el puente informa el estado real del despacho', () => {
     expect(result.reason).toBe('BUDGET_EXCEEDED');
   });
 
-  it('sin run no hay puente y no hay estado que inventar', async () => {
+  it('sin run no hay despacho que inventar: el traspaso se vuelve una propuesta (H1)', async () => {
     writeHandoff('strategist', 'Draft the Q3 brief.');
     const result = await b.service.acceptHandoffAsTask(workId, 'para-strategist.md');
-    expect(result.bridged).toBe(false);
-    expect(result.outcome).toBeNull();
+    expect(result).toEqual({ bridged: true, task: null, outcome: 'proposed', reason: null });
+    expect(b.hub.send).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
-import type { ChatMessage, ChatPart } from '../shared/contracts';
+import type { ChatMessage } from '../shared/contracts';
+import { isEditTool } from '../shared/editTools';
 
 /**
  * Which file a member is editing right now, taken from what the runtime itself
@@ -11,7 +12,6 @@ import type { ChatMessage, ChatPart } from '../shared/contracts';
  * Claude puts `file_path` in the title, Codex joins the changed paths, and
  * OpenCode passes whatever the provider's tool reported.
  */
-const EDIT_TOOL = /^(write|edit|multiedit|apply_patch|patch|str_replace|create_file|notebook_edit)$/i;
 
 export interface ActiveEdit {
   chatId: string;
@@ -35,11 +35,4 @@ export function editsInProgress(messages: ChatMessage[], fileNames: string[]): s
     }
   }
   return [...editing];
-}
-
-function isEditTool(part: Extract<ChatPart, { type: 'tool' }>): boolean {
-  if (EDIT_TOOL.test(part.tool)) return true;
-  // Codex reports file changes as `edit`; a shell command is not an edit even
-  // if it mentions the file, so commands are deliberately excluded.
-  return part.tool.toLowerCase() === 'edit';
 }

@@ -729,6 +729,13 @@ const es = {
   // el borrador de nadie -- crea la tarea y la despacha con la autoridad del
   // run. La copy tiene que decir eso, porque es otra cosa que "aceptar".
   'handoff.dispatchAsTask': 'Despachar como tarea del equipo',
+  // H1: sin run, el traspaso de un agente se vuelve una propuesta sola. La
+  // línea lleva a la tarjeta; nunca se pega el pedido en un cuadro de texto.
+  'handoff.proposed': 'Propuesta lista: sumar a {role} con su pedido.',
+  'handoff.proposed.open': 'Aprobar',
+  'handoff.held': 'El pedido para {role} no pasó al equipo todavía ({reason}).',
+  'handoff.heldReason': ' — todavía no pasó al equipo ({reason}).',
+  'handoff.retry': 'Reintentar',
   // --- Coordinación: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
   'coordination.teams.status.planning': 'Planificando',
   'coordination.teams.status.running': 'En curso',
@@ -1629,6 +1636,11 @@ const en: Record<MessageKey, string> = {
   'handoff.bridged.queued': 'Task created for {role}, but it has not started yet: {reason}. It stays queued, in Decisions.',
   'handoff.bridged.pendingApproval': 'Task created for {role}. Waiting for your approval in Decisions.',
   'handoff.dispatchAsTask': 'Dispatch as a team task',
+  'handoff.proposed': 'Proposal ready: add {role} with its request.',
+  'handoff.proposed.open': 'Approve',
+  'handoff.held': 'The request for {role} has not reached the team yet ({reason}).',
+  'handoff.heldReason': ' — it has not reached the team yet ({reason}).',
+  'handoff.retry': 'Retry',
   // --- Coordination: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
   'coordination.teams.status.planning': 'Planning',
   'coordination.teams.status.running': 'Running',
