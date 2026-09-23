@@ -104,9 +104,11 @@ describe('Q1: el aviso del handoff puenteado distingue los tres finales', () => 
     expect(text).toContain('Decisiones');
   });
 
-  it('en cola: NO dice despachada, y trae la razón del motor', async () => {
+  it('en cola: NO dice despachada, y trae la razón del motor en palabras', async () => {
     const text = await noticeAfterAccept({ bridged: true, task, outcome: 'not_dispatched', reason: 'BUDGET_EXCEEDED' });
     expect(text).not.toContain('despachada al equipo');
-    expect(text).toContain('BUDGET_EXCEEDED');
+    // M3: la razón del motor, en palabras; el código nunca llega a la pantalla.
+    expect(text).toContain('presupuesto de despachos');
+    expect(text).not.toContain('BUDGET_EXCEEDED');
   });
 });

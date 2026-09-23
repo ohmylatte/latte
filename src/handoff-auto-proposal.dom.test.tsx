@@ -164,7 +164,9 @@ describe('H1: con la coordinación prendida el traspaso se vuelve propuesta sin 
     const banner = await waitFor(() => {
       const found = container.querySelector<HTMLElement>('.doc-banner.handoff');
       expect(found).not.toBeNull();
-      expect(found!.textContent).toContain('RUN_ALREADY_ACTIVE');
+      // M3: el motivo, en palabras; nunca el código del motor.
+      expect(found!.textContent).toContain('Ya hay una propuesta pendiente en este trabajo');
+      expect(found!.textContent).not.toContain('RUN_ALREADY_ACTIVE');
       return found!;
     });
     // El único camino adelante es reintentar el puente o descartar.

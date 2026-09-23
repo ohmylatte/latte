@@ -720,7 +720,7 @@ const es = {
   // denegarse igual (presupuesto agotado, concurrencia al tope). Antes eso
   // subia como excepcion y la persona veia un error rojo despues de aceptar un
   // pedido; ahora vuelve en el resultado, y decir "despachada" seria mentir.
-  'handoff.bridged.queued': 'Tarea creada para {role}, pero todavía no salió: {reason}. Queda en la cola, en Decisiones.',
+  'handoff.bridged.queued': 'Tarea creada para {role}, pero todavía no salió. {reason} Queda en la cola, en Decisiones.',
   // Q1: el tercer final. Con la autoridad por defecto el despacho queda
   // esperando un gesto de la persona, y si la frase no se lo dice nadie va a ir
   // a darlo.
@@ -733,8 +733,14 @@ const es = {
   // línea lleva a la tarjeta; nunca se pega el pedido en un cuadro de texto.
   'handoff.proposed': 'Propuesta lista: sumar a {role} con su pedido.',
   'handoff.proposed.open': 'Aprobar',
-  'handoff.held': 'El pedido para {role} no pasó al equipo todavía ({reason}).',
-  'handoff.heldReason': ' — todavía no pasó al equipo ({reason}).',
+  'handoff.held': 'El pedido para {role} no pasó al equipo todavía. {reason}',
+  // M3: por qué un traspaso no pasó al equipo, en palabras. Nunca el código.
+  'handoff.reason.runAlreadyActive': 'Ya hay una propuesta pendiente en este trabajo.',
+  'handoff.reason.runNotActive': 'El equipo no está en marcha.',
+  'handoff.reason.roleNotApproved': 'Ese rol no está aprobado para este trabajo.',
+  'handoff.reason.unknownRole': 'Ese rol no existe en Latte.',
+  'handoff.reason.failed': 'No se pudo proponer:',
+  'handoff.reason.failedUnknown': 'Latte no reconoce el motivo.',
   'handoff.retry': 'Reintentar',
   // --- Coordinación: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
   'coordination.teams.status.planning': 'Planificando',
@@ -1640,13 +1646,18 @@ const en: Record<MessageKey, string> = {
   'coordination.proposal.unlimitedConfirm': 'I confirm an UNLIMITED budget for this team',
   'decision.permissions.handoffs.accept': 'Accept as task',
   'handoff.bridged.dispatched': 'Task created for {role} and dispatched to the team. Follow it in Decisions.',
-  'handoff.bridged.queued': 'Task created for {role}, but it has not started yet: {reason}. It stays queued, in Decisions.',
+  'handoff.bridged.queued': 'Task created for {role}, but it has not started yet. {reason} It stays queued, in Decisions.',
   'handoff.bridged.pendingApproval': 'Task created for {role}. Waiting for your approval in Decisions.',
   'handoff.dispatchAsTask': 'Dispatch as a team task',
   'handoff.proposed': 'Proposal ready: add {role} with its request.',
   'handoff.proposed.open': 'Approve',
-  'handoff.held': 'The request for {role} has not reached the team yet ({reason}).',
-  'handoff.heldReason': ' — it has not reached the team yet ({reason}).',
+  'handoff.held': 'The request for {role} has not reached the team yet. {reason}',
+  'handoff.reason.runAlreadyActive': 'There is already a pending proposal in this work.',
+  'handoff.reason.runNotActive': 'The team is not running.',
+  'handoff.reason.roleNotApproved': 'That role is not approved for this work.',
+  'handoff.reason.unknownRole': 'That role does not exist in Latte.',
+  'handoff.reason.failed': 'Could not propose it:',
+  'handoff.reason.failedUnknown': 'Latte does not recognize the reason.',
   'handoff.retry': 'Retry',
   // --- Coordination: slice 7-B (Phase 7 tasks 7.8-7.14) -------------------
   'coordination.teams.status.planning': 'Planning',

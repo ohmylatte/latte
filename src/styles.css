@@ -1375,3 +1375,5 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .coord-output-line svg{flex:0 0 auto}
 .coord-output-line-text{flex:1 1 180px;min-width:0;overflow-wrap:anywhere}
 .coord-output.is-line{flex:0 0 auto}
+/* M3: el detalle de un puente que no se hizo va en gris, detrás de la frase. */
+.handoff-reason-detail{color:var(--muted)}

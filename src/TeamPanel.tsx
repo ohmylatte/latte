@@ -82,10 +82,11 @@ export interface TeamPanelProps {
    * - sin entrada: el puente está en vuelo, y el aviso NO se dibuja — no hay
    *   nada que ofrecer, y el botón viejo prellenaría el borrador;
    * - `null`: la coordinación está apagada, vuelve el aviso de siempre;
-   * - un código: no se pudo; el aviso dice por qué y ofrece reintentar el
-   *   puente, NUNCA el borrador.
+   * - un motivo: no se pudo; el aviso dice por qué —en palabras, ya
+   *   resuelto por el contenedor (M3: nunca un código)— y ofrece reintentar
+   *   el puente, NUNCA el borrador.
    */
-  handoffHolds?: Record<string, string | null>;
+  handoffHolds?: Record<string, { text: string; detail: string | null } | null>;
   /** H1: el rol de la propuesta que nació de un traspaso y espera un sí. Dibuja "Propuesta lista · Aprobar". */
   handoffProposal?: string | null;
   /** H1: la línea lleva a la tarjeta DESPLEGADA: el contenedor sabe abrirla como "vengo de un pendiente". */
@@ -435,13 +436,13 @@ export function TeamPanel(props: TeamPanelProps) {
       // el motor (ver `handoffHolds`). Sin él, el aviso de siempre.
       if (holds && !(handoff.fileName in holds)) return null;
       const held = holds ? holds[handoff.fileName] : null;
-      const retry = typeof held === 'string' && typeof props.onAcceptHandoffAsTask === 'function';
+      const retry = Boolean(held) && typeof props.onAcceptHandoffAsTask === 'function';
       // Con el puente automático y la coordinación apagada (`null`) vuelve el
       // borrador a pedido; sin la prop, lo de B4.1 tal cual.
       const asTask = bridgeHandoffs && !holds;
       return <div key={handoff.fileName} className="doc-banner handoff" role="status">
         <UserPlus size={14} />
-        <span>{t('ui.auto.266')} <strong>{handoff.roleName}</strong> {t('handoff.wants')} <em>{handoff.request.split(/\r?\n/)[0].slice(0, 140)}</em>{handoff.known ? '' : t('handoff.unknownRole')}{retry && handoff.known ? t('handoff.heldReason', { reason: held ?? '' }) : ''}</span>
+        <span>{t('ui.auto.266')} <strong>{handoff.roleName}</strong> {t('handoff.wants')} <em>{handoff.request.split(/\r?\n/)[0].slice(0, 140)}</em>{handoff.known || held ? '' : t('handoff.unknownRole')}{held && <span className="handoff-reason"> — {held.text}{held.detail && <> <span className="handoff-reason-detail">{held.detail}</span></>}</span>}</span>
         {handoff.known && (retry
           ? <button className="primary" disabled={busy} onClick={() => void props.onAcceptHandoffAsTask!(handoff)}>{t('handoff.retry')}</button>
           : <button className="primary" disabled={busy} onClick={() => void (asTask ? props.onAcceptHandoffAsTask!(handoff) : props.onAcceptHandoff(handoff))}>{asTask ? t('handoff.dispatchAsTask') : t('ui.auto.267')}</button>)}

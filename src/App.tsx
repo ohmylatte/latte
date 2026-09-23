@@ -210,6 +210,33 @@ export const APP_ERROR_KEYS: Record<string, MessageKey> = {
  * mapas tendría que leerse con la frase específica. Hoy no hay ninguno, y el
  * test estructural de `coordination-error-map.dom.test.tsx` lo sostiene.
  */
+/**
+ * M3: POR QUÉ UN TRASPASO NO PASÓ AL EQUIPO, EN PALABRAS.
+ *
+ * El motor devuelve un código (`reason`) y la pantalla lo mostraba crudo:
+ * "RUN_ALREADY_ACTIVE" en un aviso para la persona. Los cuatro propios del
+ * puente tienen frase propia; los del despacho usan la misma que el resto de la
+ * app (`COORDINATION_ERROR_KEYS`); y uno que no se conoce dice "No se pudo
+ * proponer:" con el detalle aparte (en gris). El código nunca llega a la
+ * pantalla.
+ */
+const HANDOFF_REASON_KEYS: Record<string, MessageKey> = {
+  RUN_ALREADY_ACTIVE: 'handoff.reason.runAlreadyActive',
+  RUN_NOT_ACTIVE: 'handoff.reason.runNotActive',
+  ROLE_NOT_APPROVED: 'handoff.reason.roleNotApproved',
+  UNKNOWN_ROLE: 'handoff.reason.unknownRole',
+};
+export interface HandoffHold { code: string; detail: string | null }
+export interface HandoffReasonText { text: string; detail: string | null }
+export const handoffReasonText = (code: string, detail: string | null): HandoffReasonText => {
+  const key = Object.hasOwn(HANDOFF_REASON_KEYS, code) ? HANDOFF_REASON_KEYS[code]
+    : Object.hasOwn(COORDINATION_ERROR_KEYS, code) ? COORDINATION_ERROR_KEYS[code]
+      : undefined;
+  if (key) return { text: t(key), detail: null };
+  return { text: t('handoff.reason.failed'), detail: detail ?? t('handoff.reason.failedUnknown') };
+};
+/** La misma razón, en una sola frase, para un aviso que es texto plano. */
+const reasonSentence = (reason: HandoffReasonText) => (reason.detail ? `${reason.text} ${reason.detail}` : reason.text);
 export const displayError = (e: unknown) => {
   const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
   // L13 (ronda 9): `Object.hasOwn`, no la indexación pelada. Un objeto literal
@@ -268,7 +295,7 @@ export function App() {
    * `null` = coordinación apagada (el aviso de siempre, borrador a pedido);
    * un código = no se pudo, y el aviso dice por qué.
    */
-  const [handoffHolds, setHandoffHolds] = useState<Record<string, string | null>>({});
+  const [handoffHolds, setHandoffHolds] = useState<Record<string, HandoffHold | null>>({});
   /** H1: la propuesta que nació de un traspaso, para la línea "Propuesta lista · Aprobar". */
   const [handoffProposal, setHandoffProposal] = useState<{ workId: string; roleName: string } | null>(null);
   /** Los traspasos que ya se intentaron puentear solos: uno por archivo, nunca en bucle. */
@@ -711,10 +738,12 @@ export function App() {
         try {
           result = await api.acceptHandoffAsTask(workId, handoff.fileName);
         } catch (e) {
-          holdHandoff(workId, handoff.fileName, e instanceof Error && 'code' in e && typeof e.code === 'string' ? e.code : 'INTERNAL');
+          // M3: el código se guarda para elegir la frase; lo que se muestra
+          // cuando no hay frase es el mensaje (ya traducido si se puede), nunca el código.
+          holdHandoff(workId, handoff.fileName, { code: e instanceof Error && 'code' in e && typeof e.code === 'string' ? e.code : 'INTERNAL', detail: displayError(e) });
           continue;
         }
-        if (!result.bridged) { holdHandoff(workId, handoff.fileName, result.reason); continue; }
+        if (!result.bridged) { holdHandoff(workId, handoff.fileName, result.reason === null ? null : { code: result.reason, detail: null }); continue; }
         consumed = true;
         if (openWorkIdRef.current === workId) announceHandoffBridge(workId, handoff, result);
       }
@@ -723,14 +752,16 @@ export function App() {
       if (list && openWorkIdRef.current === workId) setHandoffs(list);
     })();
   }, [work?.id, handoffs]);
-  const holdHandoff = (workId: string, fileName: string, reason: string | null) => {
+  const holdHandoff = (workId: string, fileName: string, reason: HandoffHold | null) => {
     setHandoffHolds(prev => ({ ...prev, [`${workId}/${fileName}`]: reason }));
   };
   /** Lo que el aviso de cada traspaso del Trabajo abierto tiene que decir (ver `handoffHolds`). */
-  const openHandoffHolds: Record<string, string | null> = {};
+  const openHandoffHolds: Record<string, HandoffReasonText | null> = {};
   for (const h of handoffs) {
     const key = `${work?.id ?? ''}/${h.fileName}`;
-    if (key in handoffHolds) openHandoffHolds[h.fileName] = handoffHolds[key];
+    if (!(key in handoffHolds)) continue;
+    const hold = handoffHolds[key];
+    openHandoffHolds[h.fileName] = hold ? handoffReasonText(hold.code, hold.detail) : null;
   }
   /**
    * La línea "Propuesta lista" vive mientras la propuesta siga esperando: se
@@ -1222,8 +1253,8 @@ export function App() {
     const result = await api.acceptHandoffAsTask(workId, handoff.fileName);
     if (!result.bridged) {
       if (result.reason === null) { await acceptHandoff(handoff); return; }
-      holdHandoff(workId, handoff.fileName, result.reason);
-      setNotice(t('handoff.held', { role: handoff.roleName, reason: result.reason }));
+      holdHandoff(workId, handoff.fileName, { code: result.reason, detail: null });
+      setNotice(t('handoff.held', { role: handoff.roleName, reason: reasonSentence(handoffReasonText(result.reason, null)) }));
       return;
     }
     setHandoffs(await api.listHandoffs(workId).catch(() => []));
@@ -1250,7 +1281,7 @@ export function App() {
    */
   const announceHandoffBridge = (workId: string, handoff: HandoffRequest, result: HandoffTaskBridgeResult) => {
     if (result.outcome === 'proposed') { setHandoffProposal({ workId, roleName: handoff.roleName }); return; }
-    if (result.outcome === 'not_dispatched') { setNotice(t('handoff.bridged.queued', { role: handoff.roleName, reason: result.reason ?? '' })); return; }
+    if (result.outcome === 'not_dispatched') { setNotice(t('handoff.bridged.queued', { role: handoff.roleName, reason: reasonSentence(handoffReasonText(result.reason ?? '', null)) })); return; }
     if (result.outcome === 'pending_approval') { setNotice(t('handoff.bridged.pendingApproval', { role: handoff.roleName })); return; }
     setNotice(t('handoff.bridged.dispatched', { role: handoff.roleName }));
   };
