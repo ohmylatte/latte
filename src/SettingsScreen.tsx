@@ -74,8 +74,8 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       </section>}
       {section === 'profiles' && <ProfilesView onChanged={onChanged} onError={onError} onNotice={onNotice} onDirtyChange={setProfileDirty} />}
       {section === t('ui.auto.390') && <SkillsView onNotice={onNotice} onError={onError} />}
-      {/* Las globales: valen para todas las marcas, así que se agregan acá. Las de una marca viven en la pantalla de esa marca. */}
-      {section === 'connections' && <ConnectionsView brandId={null} onNotice={onNotice} onError={onError} />}
+      {/* TODAS las conexiones, globales y de marca: son una cosa técnica, y lo técnico vive acá. */}
+      {section === 'connections' && <ConnectionsView onNotice={onNotice} onError={onError} />}
       {section === 'tools' && <ToolsView onNotice={onNotice} onError={onError} workId={workId} />}
       {section === 'workspace' && <WorkspaceSection onError={onError} onReopenOnboarding={onReopenOnboarding} />}
       {section === 'language' && <LanguageSection />}

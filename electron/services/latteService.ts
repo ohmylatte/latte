@@ -2515,6 +2515,11 @@ export class LatteService implements BackendApi {
     return this.connections.list(brandId ?? null);
   }
 
+  async listAllConnections(): Promise<Connection[]> {
+    if (!this.connections) return [];
+    return this.connections.listAll();
+  }
+
   async connectConnection(input: ConnectionInput): Promise<Connection> {
     const connections = this.requireConnections();
     if (typeof input !== 'object' || input === null) throw new TypeError('Invalid input');

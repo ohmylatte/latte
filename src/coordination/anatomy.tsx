@@ -64,6 +64,12 @@ export interface CoordRowProps {
   avatar?: AvatarParams | null;
   /** Un ícono chico al lado del nombre: el coordinador lleva `Users`. */
   nameIcon?: ReactNode;
+  /**
+   * Reemplaza la cara. Una fila que no es una PERSONA no tiene inicial que
+   * mostrar: una conexión lleva el ícono de su alcance, y el punto de estado
+   * sigue estando donde estaba.
+   */
+  icon?: ReactNode;
   /** Qué hace ahora, en una línea. */
   line: string;
   /** La línea habla de algo que te espera: se lee en el acento. */
@@ -91,7 +97,7 @@ export function CoordRow(props: CoordRowProps) {
     onClick={props.onClick}
     title={props.title ?? props.line}
   >
-    <CoordAvatar name={props.name} dot={props.dot ?? 'none'} roleId={props.roleId} avatar={props.avatar} />
+    <CoordAvatar name={props.name} dot={props.dot ?? 'none'} roleId={props.roleId} avatar={props.avatar}>{props.icon}</CoordAvatar>
     <span className="coord-row-text">
       <span className="coord-row-top">
         <span className="coord-row-name">{props.name}{props.nameIcon}</span>
