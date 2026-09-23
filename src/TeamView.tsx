@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { translate as t } from './i18n';
 import { MessageSquare, UserPlus, Users } from 'lucide-react';
 import type {
-  AgentRole, ChatMessage, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
+  AgentRole, ChatMessage, ChatStatus, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
   CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport,
   CoordinationMessageView, CoordinationRunTaskView, CoordinationRunView, TeamMember, Work,
 } from '../shared/contracts';
-import type { ChatCoordinationProps } from './ChatPane';
+import { ChatWorking, type ChatCoordinationProps } from './ChatPane';
 import { ChatComposer } from './ChatComposer';
 import { TeamCardsCollapsible } from './coordination/TeamCards';
 import { describeCoordinationSupport, describeMemorySupport, memberCoordinationState, type LatteMode } from './TeamPanel';
@@ -107,6 +107,23 @@ export interface TeamViewProps {
    */
   coordinatorChat?: readonly ChatMessage[];
   /**
+   * EL DESTINATARIO DEL CHAT DE EQUIPO, resuelto por `TeamPanel` (ver
+   * `teamChatTarget`). Es el MISMO id al que apunta `composer.sessionId`: con
+   * un run cancelado cuyo coordinador ya no está, la vista miraba a un miembro
+   * fantasma mientras lo que se escribía le llegaba a otro.
+   *
+   * Opcional y aditivo: sin esto se cae a lo que había, que es lo que ven los
+   * llamadores que todavía no lo pasan.
+   */
+  teamChatTargetId?: string | null;
+  /**
+   * Cómo está la conversación del destinatario, del store del chat. Con
+   * `busy`/`retry` su fila lo dice y el hilo muestra el mismo indicador que la
+   * conversación de un miembro.
+   */
+  teamChatStatus?: ChatStatus;
+  teamChatStatusDetail?: string;
+  /**
    * Las tarjetas del equipo —propuesta, presupuesto, despacho, pregunta—, que
    * salian en el chat del coordinador y ahora salen donde vive esa
    * conversacion. Es el MISMO paquete que recibe `ChatPane`.
@@ -125,8 +142,11 @@ export function selectedThreadMember(
   team: readonly TeamMember[],
   selectedMemberId: string | null,
   run: CoordinationRunView | null | undefined,
+  /** El destinatario del chat de equipo. Es el primer default: el hilo abierto es con quien se habla. */
+  target?: string | null,
 ): string | null {
   if (selectedMemberId && team.some((m) => m.id === selectedMemberId)) return selectedMemberId;
+  if (target && team.some((m) => m.id === target)) return target;
   const coordinator = run?.coordinatorMemberId ?? null;
   if (coordinator && team.some((m) => m.id === coordinator)) return coordinator;
   return team[0]?.id ?? null;
@@ -141,7 +161,18 @@ export function TeamView(props: TeamViewProps) {
     asks: props.coordinationAsks,
     hires: props.coordinationHires,
   };
-  const selected = selectedThreadMember(team, props.selectedMemberId, run);
+  /**
+   * QUIÉN RECIBE LO QUE SE ESCRIBE ABAJO — y por lo tanto de quién es el hilo.
+   *
+   * Lo resuelve `TeamPanel` (`teamChatTarget`) y viaja ya resuelto: acá no se
+   * vuelve a derivar, porque derivarlo dos veces es cómo se llegó a que el
+   * composer le escribiera a uno y la pantalla mirara a otro. El `??` es sólo
+   * para un llamador que todavía no lo pasa.
+   */
+  const coordinatorId = props.teamChatTargetId !== undefined
+    ? props.teamChatTargetId
+    : (run?.coordinatorMemberId ?? props.coordinatorGrant ?? null);
+  const selected = selectedThreadMember(team, props.selectedMemberId, run, coordinatorId);
   const hour = (at: string) => (props.formatTime ? props.formatTime(at) : hourOf(at));
   /**
    * C2: el titulo de una tarea sale del PLAN, no del prompt del despacho.
@@ -151,19 +182,28 @@ export function TeamView(props: TeamViewProps) {
    */
   const taskTitle = (taskId: string) => titleOf((props.coordinationTasks ?? []).find((task) => task.id === taskId)?.spec);
   /**
-   * QUIEN COORDINA, RESUELTO UNA VEZ.
+   * LO QUE ESTÁ PASANDO AHORA MISMO GANA.
    *
-   * El del run manda; sin run, el permiso del trabajo. Es quien recibe lo que
-   * se escribe abajo y el unico cuyo hilo trae tambien su conversacion.
+   * `memberSignal` deriva de las filas del run —despachos, reportes,
+   * preguntas—, que no saben nada del proceso del chat. El destinatario del
+   * chat de equipo puede estar contestando sin una sola fila de coordinación:
+   * ahí su línea decía "Sin novedades" mientras escribía. Trabajar es el hecho
+   * más fuerte que una fila puede contar, así que se dice primero.
    */
-  const coordinatorId = run?.coordinatorMemberId ?? props.coordinatorGrant ?? null;
+  const signalOf = (memberId: string) => {
+    const signal = memberSignal({ ...input, team, roles, run, taskTitle }, memberId);
+    if (!targetWorking || memberId !== coordinatorId) return signal;
+    return { ...signal, dot: 'live' as const, line: t('coord.member.working'), urgent: false };
+  };
   const readingCoordinator = Boolean(selected && selected === coordinatorId);
+  /** El destinatario está escribiendo: lo dicen su fila y el final de su hilo, con las mismas palabras que la conversación. */
+  const targetWorking = props.teamChatStatus === 'busy' || props.teamChatStatus === 'retry';
   // La conversacion entra SOLO en el hilo del coordinador: los demas la tienen
   // en su propia pestana, y meterla en los dos seria la misma charla dos veces.
   const thread = selected ? inboxEvents(readingCoordinator ? { ...input, chat: props.coordinatorChat } : input, selected) : [];
-  const coordinatorName = run?.coordinatorMemberId
-    ? memberDisplayName(run.coordinatorMemberId, team, null, roles)
-    : (props.coordinatorGrant ? memberDisplayName(props.coordinatorGrant, team, null, roles) : '');
+  // El nombre de a quién se le va a pedir: el MISMO destinatario del composer,
+  // no un coordinador que el run nombró y el equipo ya no tiene.
+  const coordinatorName = coordinatorId ? memberDisplayName(coordinatorId, team, null, roles) : '';
   /**
    * C5: el vacio manda MIENTRAS la persona no haya abierto a nadie. Abrir un
    * miembro es una decision suya, y taparsela con la pantalla de bienvenida
@@ -200,7 +240,7 @@ export function TeamView(props: TeamViewProps) {
           entero, con su frase larga— al pie, en modo avanzado. */}
       <ul className="team-inbox team-view-list" aria-label={t('coord.list.label')}>
         {team.map((member) => {
-          const signal = memberSignal({ ...input, team, roles, run, taskTitle }, member.id);
+          const signal = signalOf(member.id);
           const waiting = pendingForMember(member.id, props.coordinationGates, props.coordinationAsks, run);
           const isCoordinator = run?.coordinatorMemberId === member.id;
           return <li key={member.id} className={'team-inbox-row' + (member.id === selected ? ' is-selected' : '')} data-member-id={member.id}>
@@ -237,7 +277,9 @@ export function TeamView(props: TeamViewProps) {
           C5: y el panel derecho cambia con el estado del pedido. Sin run es el
           vacío con propósito; con el run terminado, lo que el equipo dejó. */}
       <div className="team-view-thread">
-        {!run && !openedMember && <EmptyTeam coordinatorName={coordinatorName} onAsk={props.onNewRequest} />}
+        {/* El vacío manda mientras no haya NADA que leer: dibujarlo encima de
+            una conversación que ya existe taparía justo lo que se vino a ver. */}
+        {!run && !openedMember && thread.length === 0 &&<EmptyTeam coordinatorName={coordinatorName} onAsk={props.onNewRequest} />}
         {run && !run.active && <RunOutput run={run} log={props.coordinationLog} team={team} roles={roles} formatTime={hour} />}
         {/* Con el run TERMINADO, lo que el equipo dejo va arriba y la
             conversacion del coordinador sigue abajo. Antes el panel se quedaba
@@ -245,10 +287,16 @@ export function TeamView(props: TeamViewProps) {
             persona vuelve a buscarla, y ahora esta pantalla ES esa charla. */}
         {(run?.active || openedMember || readingCoordinator) && selected && <MemberDetail memberId={selected} team={team} roles={roles} run={run}
           events={thread} tasks={props.coordinationTasks}
-          signal={memberSignal({ ...input, team, roles, run, taskTitle }, selected)}
+          signal={signalOf(selected)}
           formatTime={hour} onOpenChat={readingCoordinator ? undefined : props.onOpenChat}
           openAsks={(props.coordinationAsks ?? []).filter((ask) => ask.memberId === selected && (run == null || run.active))}
-          onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now} />}
+          onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now}>
+          {/* El final del hilo: el MISMO indicador que la conversación de un
+              miembro, no una segunda forma de decir lo mismo. La línea de
+              tiempo es descendente —lo último arriba—, así que el final del
+              hilo está justo encima de ella. */}
+          {readingCoordinator && <ChatWorking status={props.teamChatStatus ?? 'idle'} detail={props.teamChatStatusDetail} />}
+        </MemberDetail>}
       </div>
     </div>
     {/* Las tarjetas del equipo, arriba del composer y fuera del scroll de la

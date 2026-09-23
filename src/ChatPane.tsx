@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Check, ChevronRight, CircleAlert, FilePlus, LogIn, Plug, ShieldQuestion, Square, Wrench, X } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { AgentRole, ChatMessage, ChatPart, ChatPermission, ChatQuestion, ChatSession, ChatToolStatus, CoordinationAskView, CoordinationGateView, CoordinationRunView, TeamMember } from '../shared/contracts';
+import type { AgentRole, ChatMessage, ChatPart, ChatPermission, ChatQuestion, ChatSession, ChatStatus, ChatToolStatus, CoordinationAskView, CoordinationGateView, CoordinationRunView, TeamMember } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { useChatState } from './chat-store';
 import { friendlyTool } from './tool-names';
@@ -107,7 +107,7 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
       {state.permissions.map(permission => <PermissionCard key={permission.id} chatId={session.id} runtime={session.provider} request={permission} onError={onError} />)}
       {state.questions.map(question => <QuestionCard key={question.id} chatId={session.id} request={question} onError={onError} />)}
       {state.expiredConnections.map(connection => <ConnectionExpiredCard key={connection.connectionId} connection={connection} onError={onError} />)}
-      {busy && <div className="chat-status"><Loading size={16} />{state.status === 'retry' ? state.statusDetail || t('chat.retrying') : t('ui.auto.091')}</div>}
+      <ChatWorking status={state.status} detail={state.statusDetail} />
       {state.error && <div className="chat-error" role="alert"><CircleAlert size={14} /><span>{state.error}</span><button aria-label={t('ui.auto.092')} onClick={() => chatStore.clearError(session.id)}><X size={13} /></button></div>}
     </div>
     {unread && <button className="conversation-new-messages" onClick={showLatest}>{t('chat.newMessages')}</button>}
@@ -135,6 +135,21 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
     {beforeComposer}
     <ChatComposer sessionId={session.id} onError={onError} onAttachFiles={onAttachFiles} />
   </div>;
+}
+
+/**
+ * "El agente está trabajando…", UNA vez para las DOS superficies.
+ *
+ * La conversación de un miembro y el hilo del chat de equipo cuentan el mismo
+ * hecho —el destinatario está escribiendo— y tienen que contarlo igual: mismo
+ * texto, misma marca, mismo reintento. Duplicarlo sería la forma de que un día
+ * una de las dos se quede muda, que es exactamente lo que pasó con el hilo.
+ *
+ * `idle` no dibuja nada: una barra que dice "listo" es una barra que sobra.
+ */
+export function ChatWorking({ status, detail }: { status: ChatStatus; detail?: string }) {
+  if (status !== 'busy' && status !== 'retry') return null;
+  return <div className="chat-status"><Loading size={16} />{status === 'retry' ? detail || t('chat.retrying') : t('ui.auto.091')}</div>;
 }
 
 function MessageView({ message, roleName, onSaveAsDocument, untracked, onAdoptFile }: { message: ChatMessage; roleName: string; onSaveAsDocument?: (text: string) => void; untracked: string[]; onAdoptFile?: (fileName: string) => void }) {
