@@ -190,3 +190,29 @@ describe('copy fija', () => {
     expect(formatMessage('en-US', 'connections.scopeGlobalWarning')).toContain('EVERY');
   });
 });
+
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+/**
+ * K3: EL ÁREA DE LA MARCA QUEDA LIMPIA.
+ *
+ * Una conexión es una cuenta con un servidor MCP: algo técnico, que se
+ * configura una vez. La vista Contexto es el día a día de la marca. Mezclarlas
+ * era el error, así que el candado mira el código: si alguien vuelve a colgar
+ * `ConnectionsView` de la pantalla de la marca, esto falla.
+ */
+describe('K3: Contexto sin conexiones', () => {
+  const app = readFileSync(join(process.cwd(), 'src', 'App.tsx'), 'utf8');
+
+  it('App no importa ni dibuja ConnectionsView en ninguna vista de la marca', () => {
+    expect(app.length).toBeGreaterThan(1000);
+    expect(app).not.toContain('ConnectionsView');
+  });
+
+  it('la vista Contexto tampoco las nombra por su cuenta', () => {
+    const context = readFileSync(join(process.cwd(), 'src', 'ContextView.tsx'), 'utf8');
+    expect(context.length).toBeGreaterThan(500);
+    expect(context).not.toContain('Connection');
+  });
+});

@@ -19,7 +19,6 @@ import { UpdateBanner } from './UpdateBanner';
 import { ALL_BRAND_SCOPE, inKnowledgeScope, selectWorkBrief, workBrief, workTitles, type KnowledgeScope } from './brand-knowledge';
 import { KnowledgeScopeFilter } from './KnowledgeScope';
 import { ContextView } from './ContextView';
-import { ConnectionsView } from './ConnectionsView';
 import { HomeView } from './HomeView';
 import { ResumenView } from './ResumenView';
 import { TrabajoView } from './TrabajoView';
@@ -1302,10 +1301,6 @@ export function App() {
       {view === 'evidencia' && <EvidenciaView work={work} workId={work?.id ?? ''} documents={documents} decisions={decisions} untracked={untracked} states={homeStates} checking={homeChecking} formatDate={date} onTrack={trackFile} onImported={() => loadKnowledge(work?.brandId ?? '', work?.id)} busy={busy} />}
       {view === 'resultados' && <ResultadosView work={work} decisions={decisions} formatDate={date} />}
       {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={(next) => { if (next === 'brief') setLayout('review'); setView(next); }} work={work} brandName={brand?.name ?? ''} documents={visibleDocuments} selectedId={selectedDocId} onSelect={id => brand && setSelectedDoc(prev => ({ ...prev, [brand.id]: id }))} onDocumentsChanged={async () => { if (brand) await loadKnowledge(brand.id, work?.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} currentWorkId={work?.id ?? null} workTitles={titlesByWork} showWorkDelta={showWorkDelta} />}
-      {/* Marca -> Conexiones: las de esta marca, mas las globales heredadas.
-          Vive debajo del contexto porque es la misma pantalla de marca, y no
-          adentro de `ContextView`, que es presentacional y no habla con nadie. */}
-      {view === 'context' && brand && <ConnectionsView brandId={brand.id} brandName={brand.name} onNotice={setNotice} onError={setError} />}
       {view === 'context' && brand && <ContextView
         brand={brand}
         proposals={contextProposals}
