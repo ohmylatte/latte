@@ -277,3 +277,92 @@ describe('K2: Herramientas (MCP) se fue del menú de Ajustes', () => {
     expect(Object.keys(catalogs['en-US'])).not.toContain('settings.tools');
   });
 });
+
+/**
+ * K4: CADA CLASE QUE ESTA PANTALLA PINTA TIENE UNA REGLA QUE LA PINTA.
+ *
+ * Mismo candado que la superficie del equipo (`team-styles.dom.test.tsx`): una
+ * clase sin regla no es un estilo pendiente, es una promesa que el componente
+ * hace y la hoja no cumple. Y al revés: las reglas de la pantalla vieja se van
+ * con ella, porque una regla sin componente envejece igual de mal.
+ */
+describe('K4: el CSS de Conexiones', () => {
+  const css = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8');
+  const lines = css.split(/\r?\n/);
+
+  const ruleBodyFor = (className: string): string | null => {
+    const needle = '.' + className;
+    for (const line of lines) {
+      const brace = line.indexOf('{');
+      if (brace < 0) continue;
+      const selector = line.slice(0, brace);
+      if (!new RegExp(`\\${needle}(?![\\w-])`).test(selector)) continue;
+      const body = line.slice(brace + 1, line.lastIndexOf('}'));
+      if (body.trim().length > 0) return body;
+    }
+    return null;
+  };
+
+  const CLASSES = [
+    'connections-actions', 'connections-list', 'connection-row',
+    'connection-detail', 'connection-detail-head', 'connection-detail-facts', 'connection-detail-actions',
+    'connections-cli', 'connections-cli-list', 'connections-cli-row',
+  ];
+
+  it('la hoja se leyó de verdad', () => {
+    expect(lines.length).toBeGreaterThan(50);
+  });
+
+  for (const className of CLASSES) {
+    it(`.${className} tiene una regla con declaraciones`, () => {
+      const body = ruleBodyFor(className);
+      expect(body, `.${className} no tiene ninguna regla en styles.css`).not.toBeNull();
+      expect(body!.length, `.${className} tiene una regla vacía`).toBeGreaterThan(3);
+    });
+  }
+
+  it('las reglas de las dos pantallas viejas se fueron con ellas', () => {
+    for (const dead of ['connection-card', 'connection-dot', 'connection-when', 'connections-subhead', 'mcp-card', 'mcp-dot', 'mcp-form', 'mcp-detail', 'tools-view']) {
+      expect(css, `.${dead} sigue pintado y ya no lo dibuja nadie`).not.toContain('.' + dead);
+    }
+  });
+
+  it('sólo tokens: ninguna regla nueva trae un color literal ni un tamaño suelto', () => {
+    for (const className of CLASSES) {
+      const body = ruleBodyFor(className)!;
+      expect(body, className).not.toMatch(/#[0-9a-fA-F]{3}/);
+      expect(body, className).not.toContain('--text-xs');
+    }
+  });
+});
+
+/** La copy existe y está TRADUCIDA en los dos idiomas: nada en español adentro del inglés. */
+describe('K4: la copy de Conexiones', () => {
+  const keys = [
+    'connections.title', 'connections.lead', 'connections.empty', 'connections.add', 'connections.refresh',
+    'connections.connect', 'connections.reenter', 'connections.disconnect', 'connections.import',
+    'connections.line', 'connections.scopeGlobalShort', 'connections.scopeBrandShort',
+    'connections.agoMin', 'connections.agoHours', 'connections.agoDays',
+    'connections.accountLabel', 'connections.stateLabel', 'connections.brandLabel', 'connections.close',
+    'connections.scope.global', 'connections.scope.brand', 'connections.scopeLabel',
+    'connections.state.connected', 'connections.state.expired', 'connections.state.error', 'connections.state.disconnected',
+    'connections.importHead', 'connections.importHelp', 'connections.cliEmpty', 'connections.authorization', 'connections.forget',
+  ] as const;
+
+  it('cada clave existe en los dos idiomas', () => {
+    expect(keys.length).toBeGreaterThan(10);
+    for (const key of keys) {
+      expect(formatMessage('es-AR', key, { brand: 'X', name: 'X', count: 1, scope: 'X', detail: 'X' }).length, key).toBeGreaterThan(0);
+      expect(formatMessage('en-US', key, { brand: 'X', name: 'X', count: 1, scope: 'X', detail: 'X' }).length, key).toBeGreaterThan(0);
+    }
+  });
+
+  it('el inglés no arrastra literales del español', () => {
+    for (const key of keys) {
+      const en = formatMessage('en-US', key, { brand: 'X', name: 'X', count: 1, scope: 'X', detail: 'X' });
+      for (const literal of ['Marca:', 'hace ', 'Cuenta', 'Todas las marcas', 'Una marca', 'Entrar', 'Actualizar']) {
+        expect(en, `${key} en inglés`).not.toContain(literal);
+      }
+    }
+  });
+});
