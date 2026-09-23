@@ -19,7 +19,11 @@ interface BrowserWindowLike {
   on(event: 'closed', listener: () => void): void;
   destroy(): void;
   isDestroyed(): boolean;
-  webContents: { session: { clearStorageData?: () => Promise<void> } };
+  webContents: {
+    session: { clearStorageData?: () => Promise<void> };
+    /** Las ventanas hijas que abre el proveedor: el popup de "Iniciar sesión con Google" es una. */
+    setWindowOpenHandler?: (handler: (details: { url: string }) => unknown) => void;
+  };
 }
 
 interface ElectronModule {
@@ -35,7 +39,20 @@ interface ElectronModule {
  * Sin `nodeIntegration` y con `contextIsolation`, igual que la ventana
  * principal: acá se carga HTML de un tercero.
  */
-export function createLoginWindowOpener(log?: (line: string) => void): LoginWindowOpener {
+export function createLoginWindowOpener(
+  log?: (line: string) => void,
+  /**
+   * El MISMO `APP_ICON` que la ventana principal, pasado desde `main.ts`.
+   *
+   * Viaja como parámetro y no se calcula acá: en desarrollo cada módulo corre
+   * desde su propia carpeta y en distribución todo esto es un solo bundle, así
+   * que un `__dirname` local daría dos rutas distintas para el mismo archivo.
+   *
+   * Sin él la ventana se abre igual, con el icono por defecto de Electron: no
+   * se inventa una ruta a un archivo que puede no estar.
+   */
+  icon?: string | null,
+): LoginWindowOpener {
   return async (url: string, hooks: { onClosed: () => void }): Promise<LoginWindow> => {
     const loaded = optionalRequire<ElectronModule>('electron');
     if (!loaded.ok) throw new Error(`No se pudo abrir la ventana de login: ${loaded.error}`);
@@ -44,6 +61,7 @@ export function createLoginWindowOpener(log?: (line: string) => void): LoginWind
       height: 720,
       title: 'Entrar',
       autoHideMenuBar: true,
+      ...(icon ? { icon } : {}),
       webPreferences: {
         partition: `connection-login-${Date.now()}`,
         nodeIntegration: false,
@@ -51,6 +69,17 @@ export function createLoginWindowOpener(log?: (line: string) => void): LoginWind
         sandbox: true,
       },
     });
+    /**
+     * El popup del proveedor ("Iniciar sesión con Google") es una ventana
+     * HIJA, y una ventana hija no hereda nada de su padre: nace con el icono
+     * por defecto de Electron salvo que se le diga el suyo acá. Se le pasa el
+     * mismo, que es lo que hace que las dos se vean como una sola aplicación
+     * en la barra de tareas.
+     */
+    window.webContents.setWindowOpenHandler?.(() => ({
+      action: 'allow',
+      ...(icon ? { overrideBrowserWindowOptions: { icon } } : {}),
+    }));
     let closedByUs = false;
     window.on('closed', () => {
       // Cerrarla nosotros al terminar NO es una cancelación: sin esta guarda,

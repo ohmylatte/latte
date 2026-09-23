@@ -1,27 +1,29 @@
 import { useEffect, useState } from 'react';
-import { CircleAlert, CircleCheck, CircleSlash, Download, LogIn, Plug, Plus, RefreshCw, Trash2, Unplug, X } from 'lucide-react';
-import { translate as t, type MessageKey } from './i18n';
+import { Building2, Download, Globe, LogIn, Plug, Plus, RefreshCw, Trash2, Unplug, X } from 'lucide-react';
+import { translate as t, currentLocale, type MessageKey } from './i18n';
+import { CoordRow } from './coordination/anatomy';
+import { hourOf, minutesSince } from './coordination/time';
 import { Loading } from './brand-marks';
 import { api } from './browser-api';
 import { displayError } from './App';
-import type { Connection, ConnectionScope, ConnectionState, ImportableConnection } from '../shared/contracts';
+import type { Brand, ChatRuntime, Connection, ConnectionInput, ConnectionScope, ConnectionState, ImportableConnection } from '../shared/contracts';
 
 /**
- * Conexiones MCP: las cuentas que Latte tiene con un servidor externo.
+ * Conexiones: UNA SOLA PANTALLA, en Ajustes.
  *
- * Dos pantallas, porque hay dos alcances (brief
- * `docs/briefs/2026-09-23-conexiones-mcp-arquitectura.md`, 4.3):
+ * Antes eran dos —las globales acá, las de la marca adentro de la marca— y eso
+ * metía lo técnico en lo cotidiano: el área de una marca terminaba llena de
+ * direcciones de servidores MCP, que no es lo que alguien va a buscar ahí. Lo
+ * técnico vive en Ajustes; la marca es el día a día.
  *
- * - **Ajustes → Conexiones** (`brandId = null`) lista las globales y es donde
- *   se agregan. Una global vale para TODAS las marcas, y el formulario lo dice
- *   con todas las letras: es el riesgo 3 del documento, y la única defensa
- *   contra él es que se lea antes de apretar.
- * - **Marca → Conexiones** (`brandId` presente) lista las de esa marca y
- *   muestra las globales **heredadas**, en gris y sin botón de quitar, con la
- *   salida "usar una cuenta propia para esta marca" — que crea una de marca y
- *   pasa a ganar sobre la global sin tocar a las demás.
+ * Así que esta lista trae TODAS: las globales primero, después las de cada
+ * marca, y cada fila dice de quién es en su única línea ("Global · conectada",
+ * "Marca: Maldita Poesía · vencida hace 2 h"). La fila ES la acción: abre el
+ * detalle, que es donde están la dirección, la cuenta y los botones.
  *
- * La fila tiene la anatomía del equipo: ícono, nombre, UNA línea y la hora.
+ * La anatomía es la del equipo (`coordination/anatomy`), no una parecida:
+ * ícono y punto de estado a la izquierda, nombre, una línea, la hora en mono a
+ * la derecha.
  */
 
 const STATE_LABEL: Record<ConnectionState, MessageKey> = {
@@ -31,37 +33,86 @@ const STATE_LABEL: Record<ConnectionState, MessageKey> = {
   disconnected: 'connections.state.disconnected',
 };
 
-function StateIcon({ state }: { state: ConnectionState }) {
-  if (state === 'connected') return <CircleCheck size={15} />;
-  if (state === 'expired') return <CircleAlert size={15} />;
-  if (state === 'error') return <CircleAlert size={15} />;
-  return <CircleSlash size={15} />;
+/**
+ * El punto. Verde es "anda"; el acento (rust) es lo que te necesita —una
+ * vencida o una en error son exactamente eso—; gris es "existe y todavía nadie
+ * entró". Nunca el rojo de `failed`: una conexión sin sesión no es un fallo.
+ */
+const DOT: Record<ConnectionState, 'ok' | 'live' | 'idle'> = {
+  connected: 'ok',
+  expired: 'live',
+  error: 'live',
+  disconnected: 'idle',
+};
+
+/** El nombre de la marca dueña, o '' cuando la conexión es global. */
+function brandNameOf(connection: Connection, brands: Brand[]): string {
+  if (connection.scope === 'global') return '';
+  return brands.find(brand => brand.id === connection.brandId)?.name ?? '';
 }
 
-export function ConnectionsView({ brandId, brandName, onNotice, onError }: {
-  /** `null` = la pantalla de Ajustes: sólo globales, y es donde se agregan. */
-  brandId: string | null;
-  brandName?: string;
+/** "Global" o "Marca: Maldita Poesía". Lo que la fila dice antes del estado. */
+export function scopeLabel(connection: Connection, brands: Brand[]): string {
+  if (connection.scope === 'global') return t('connections.scopeGlobalShort');
+  return t('connections.scopeBrandShort', { brand: brandNameOf(connection, brands) });
+}
+
+/**
+ * "hace 2 h". Sólo para lo que NO está conectado: de una conexión que anda, la
+ * hora de la derecha ya dice todo lo que hay que saber; de una vencida, lo que
+ * importa es cuánto hace que lo está.
+ */
+export function agoLabel(at: string, now: number): string {
+  const minutes = minutesSince(at, now);
+  if (minutes === null) return '';
+  if (minutes < 60) return t('connections.agoMin', { count: minutes });
+  if (minutes < 60 * 48) return t('connections.agoHours', { count: Math.floor(minutes / 60) });
+  return t('connections.agoDays', { count: Math.floor(minutes / (60 * 24)) });
+}
+
+/** La única línea de la fila: alcance y estado, nunca dos renglones. */
+export function connectionLine(connection: Connection, brands: Brand[], now: number): string {
+  const state = t(STATE_LABEL[connection.state]);
+  const ago = connection.state === 'connected' ? '' : agoLabel(connection.updatedAt, now);
+  return t('connections.line', { scope: scopeLabel(connection, brands), detail: ago ? `${state} ${ago}` : state });
+}
+
+/** Globales primero; después por marca, y adentro de cada una por nombre. */
+export function sortConnections(connections: Connection[], brands: Brand[]): Connection[] {
+  return [...connections].sort((a, b) => {
+    if (a.scope !== b.scope) return a.scope === 'global' ? -1 : 1;
+    const byBrand = brandNameOf(a, brands).localeCompare(brandNameOf(b, brands));
+    return byBrand !== 0 ? byBrand : a.label.localeCompare(b.label);
+  });
+}
+
+/** Lo que el diálogo trae escrito al abrirse: vacío, o lo de una importación. */
+export interface AddDraft { url: string; name: string }
+
+export function ConnectionsView({ onNotice, onError }: {
   onNotice: (text: string) => void;
   onError: (text: string) => void;
 }) {
   const [connections, setConnections] = useState<Connection[] | null>(null);
+  const [brands, setBrands] = useState<Brand[]>([]);
   const [importable, setImportable] = useState<ImportableConnection[]>([]);
   const [busy, setBusy] = useState(false);
-  const [adding, setAdding] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<AddDraft | null>(null);
   const [needsClientId, setNeedsClientId] = useState(false);
 
   const load = async () => {
     try {
-      const [list, toImport] = await Promise.all([api.listConnections(brandId), api.listImportableConnections()]);
+      const [list, brandList, toImport] = await Promise.all([api.listAllConnections(), api.listBrands(), api.listImportableConnections()]);
       setConnections(list);
+      setBrands(brandList);
       setImportable(toImport.filter(entry => !entry.alreadyImported));
     } catch (e) {
       setConnections([]);
       onError(displayError(e));
     }
   };
-  useEffect(() => { void load(); }, [brandId]);
+  useEffect(() => { void load(); }, []);
 
   const run = async (action: () => Promise<unknown>, done: string) => {
     setBusy(true);
@@ -70,9 +121,10 @@ export function ConnectionsView({ brandId, brandName, onNotice, onError }: {
       await load();
       onNotice(done);
       setNeedsClientId(false);
+      setDraft(null);
     } catch (e) {
       // El único error que cambia la PANTALLA y no sólo el mensaje: este
-      // servidor no da de alta clientes solo, así que el formulario tiene que
+      // servidor no da de alta clientes solo, así que el diálogo tiene que
       // pedir el id de cliente y quedarse abierto con lo que ya se escribió.
       if (typeof e === 'object' && e !== null && 'code' in e && (e as { code: string }).code === 'CONNECTION_CLIENT_ID_REQUIRED') setNeedsClientId(true);
       onError(displayError(e));
@@ -81,192 +133,238 @@ export function ConnectionsView({ brandId, brandName, onNotice, onError }: {
     }
   };
 
-  return <ConnectionsContent
-    brandId={brandId}
-    brandName={brandName}
-    connections={connections}
-    importable={importable}
-    busy={busy}
-    adding={adding}
-    needsClientId={needsClientId}
-    onAdding={next => { setAdding(next); if (!next) setNeedsClientId(false); }}
-    onConnect={input => run(() => api.connectConnection(input), t('connections.connected', { name: input.name }))}
-    onReconnect={connection => run(() => api.reconnectConnection(connection.id), t('connections.connected', { name: connection.label }))}
-    onDisconnect={connection => run(() => api.disconnectConnection(connection.id), t('connections.disconnected', { name: connection.label }))}
-    onDelete={connection => {
-      if (!window.confirm(t('connections.confirmDelete', { name: connection.label }))) return;
-      void run(() => api.deleteConnection(connection.id), t('connections.deleted', { name: connection.label }));
-    }}
-    onImport={entry => run(
-      () => api.connectConnection({ name: entry.name, url: entry.url, scope: brandId ? 'brand' : entry.suggestedScope, brandId }),
-      t('connections.connected', { name: entry.name }),
-    )}
-    onRefresh={() => void load()}
-  />;
+  return <>
+    <ConnectionsContent
+      connections={connections}
+      brands={brands}
+      importable={importable}
+      busy={busy}
+      selectedId={selectedId}
+      onSelect={setSelectedId}
+      onAdd={() => { setNeedsClientId(false); setDraft({ url: '', name: '' }); }}
+      onReconnect={connection => void run(() => api.reconnectConnection(connection.id), t('connections.connected', { name: connection.label }))}
+      onDisconnect={connection => void run(() => api.disconnectConnection(connection.id), t('connections.disconnected', { name: connection.label }))}
+      onDelete={connection => {
+        if (!window.confirm(t('connections.confirmDelete', { name: connection.label }))) return;
+        setSelectedId(null);
+        void run(() => api.deleteConnection(connection.id), t('connections.deleted', { name: connection.label }));
+      }}
+      onImport={entry => { setNeedsClientId(false); setDraft({ url: entry.url, name: entry.name }); }}
+      onForget={entry => {
+        if (entry.runtime !== 'claude' && entry.runtime !== 'codex') return;
+        if (!window.confirm(t('connections.forget', { name: entry.name }))) return;
+        void run(() => api.removeMcpServer(entry.runtime as 'claude' | 'codex', entry.name), t('connections.forgotten', { name: entry.name, runtime: RUNTIME_NAME[entry.runtime] ?? entry.runtime }));
+      }}
+      onRefresh={() => void load()} />
+    {draft && <AddConnectionDialog
+      brands={brands}
+      initial={draft}
+      busy={busy}
+      needsClientId={needsClientId}
+      onCancel={() => { setDraft(null); setNeedsClientId(false); }}
+      onConnect={input => void run(() => api.connectConnection(input), t('connections.connected', { name: input.name }))} />}
+  </>;
 }
 
 export interface ConnectionsContentProps {
-  brandId: string | null;
-  brandName?: string;
+  /** TODAS: globales y de marca. `null` mientras se cargan. */
   connections: Connection[] | null;
+  brands: Brand[];
+  /** Lo que los CLI tienen anotado y todavía no es una Conexión de Latte. */
   importable: ImportableConnection[];
   busy: boolean;
-  adding: boolean;
-  needsClientId: boolean;
-  onAdding: (adding: boolean) => void;
-  onConnect: (input: { name: string; url: string; scope: ConnectionScope; brandId: string | null; clientId: string | null }) => void;
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  onAdd: () => void;
   onReconnect: (connection: Connection) => void;
   onDisconnect: (connection: Connection) => void;
   onDelete: (connection: Connection) => void;
+  /** Traerse una del registro de un CLI: abre el mismo diálogo, así el alcance se elige igual. */
   onImport: (entry: ImportableConnection) => void;
+  /** Sacarla del registro del CLI. No toca ninguna conexión de Latte. */
+  onForget: (entry: ImportableConnection) => void;
   onRefresh: () => void;
+  /** Inyectable para que "hace 2 h" se pueda probar sin un reloj de verdad. */
+  now?: number;
 }
 
 /** Presentational: renderizarla no habla con ningún servidor. */
 export function ConnectionsContent(props: ConnectionsContentProps) {
-  const { brandId, connections, importable, busy } = props;
-  const own = connections?.filter(connection => !connection.inherited) ?? [];
-  const inherited = connections?.filter(connection => connection.inherited) ?? [];
+  const { connections, brands, busy } = props;
+  const now = props.now ?? Date.now();
+  const rows = connections ? sortConnections(connections, brands) : [];
+  const selected = rows.find(connection => connection.id === props.selectedId) ?? null;
 
   return <section className="settings-section connections-view">
     <h2>{t('connections.title')}</h2>
-    <p className="settings-lead">{brandId ? t('connections.leadBrand', { brand: props.brandName ?? '' }) : t('connections.leadGlobal')}</p>
-
-    {connections === null && <p className="footnote"><Loading size={16} /> {t('connections.loading')}</p>}
-
-    {connections !== null && own.length === 0 && <p className="footnote">{brandId ? t('connections.emptyBrand') : t('connections.emptyGlobal')}</p>}
-
-    {own.length > 0 && <div className="provider-list">
-      {own.map(connection => <ConnectionRow key={connection.id} connection={connection} busy={busy}
-        onReconnect={() => props.onReconnect(connection)}
-        onDisconnect={() => props.onDisconnect(connection)}
-        onDelete={() => props.onDelete(connection)} />)}
-    </div>}
-
-    {/* Las globales vistas desde una marca: se usan, no se tocan desde acá. */}
-    {brandId && inherited.length > 0 && <>
-      <h3 className="connections-subhead">{t('connections.inheritedHead')}</h3>
-      <p className="footnote">{t('connections.inheritedHelp')}</p>
-      <div className="provider-list">
-        {inherited.map(connection => <div className="provider-card connection-card inherited" key={connection.id}>
-          <i className={'connection-dot ' + connection.state} aria-hidden="true"><StateIcon state={connection.state} /></i>
-          <div>
-            <strong>{connection.label}</strong>
-            <small>{t('connections.inheritedLine', { url: connection.url })}</small>
-          </div>
-          <span className="tag">{t('connections.scope.global')}</span>
-          <button className="subtle" disabled={busy} onClick={() => props.onAdding(true)}>{t('connections.ownAccount')}</button>
-        </div>)}
-      </div>
-    </>}
-
-    {/* Importación única del registro del CLI (decisión C). */}
-    {importable.length > 0 && <>
-      <h3 className="connections-subhead">{t('connections.importHead')}</h3>
-      <p className="footnote">{t('connections.importHelp')}</p>
-      <div className="provider-list">
-        {importable.map(entry => <div className="provider-card connection-card" key={`${entry.runtime}-${entry.name}`}>
-          <i className="connection-dot disconnected" aria-hidden="true"><Download size={15} /></i>
-          <div>
-            <strong>{entry.name}</strong>
-            <small>{entry.url}</small>
-          </div>
-          <button className="subtle" disabled={busy} onClick={() => props.onImport(entry)}><Download size={13} />{t('connections.import')}</button>
-        </div>)}
-      </div>
-    </>}
+    <p className="settings-lead">{t('connections.lead')}</p>
 
     <div className="connections-actions">
-      {!props.adding && <button className="subtle" disabled={busy} onClick={() => props.onAdding(true)}><Plus size={13} />{t('connections.add')}</button>}
+      <button className="subtle" disabled={busy} onClick={props.onAdd}><Plus size={13} />{t('connections.add')}</button>
       <button className="subtle" disabled={busy} onClick={props.onRefresh}><RefreshCw size={13} />{t('connections.refresh')}</button>
     </div>
 
-    {props.adding && <AddConnection
-      brandId={brandId}
+    {connections === null && <p className="footnote"><Loading size={16} /> {t('connections.loading')}</p>}
+    {connections !== null && rows.length === 0 && <p className="footnote">{t('connections.empty')}</p>}
+
+    {rows.length > 0 && <div className="connections-list">
+      {rows.map(connection => <CoordRow
+        key={connection.id}
+        name={connection.label}
+        icon={connection.scope === 'global' ? <Globe size={15} /> : <Building2 size={15} />}
+        dot={DOT[connection.state]}
+        line={connectionLine(connection, brands, now)}
+        urgent={connection.state === 'expired' || connection.state === 'error'}
+        at={connection.updatedAt}
+        time={hourOf(connection.updatedAt, currentLocale())}
+        selected={connection.id === props.selectedId}
+        className="connection-row"
+        onClick={() => props.onSelect(connection.id === props.selectedId ? null : connection.id)} />)}
+    </div>}
+
+    {selected && <ConnectionDetail
+      connection={selected}
+      scope={scopeLabel(selected, brands)}
       busy={busy}
-      needsClientId={props.needsClientId}
-      onCancel={() => props.onAdding(false)}
-      onConnect={props.onConnect} />}
+      onClose={() => props.onSelect(null)}
+      onReconnect={() => props.onReconnect(selected)}
+      onDisconnect={() => props.onDisconnect(selected)}
+      onDelete={() => props.onDelete(selected)} />}
+
+    <CliRegistry importable={props.importable} busy={busy} onImport={props.onImport} onForget={props.onForget} />
   </section>;
 }
 
-function ConnectionRow({ connection, busy, onReconnect, onDisconnect, onDelete }: {
-  connection: Connection;
+const RUNTIME_NAME: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' };
+
+/**
+ * El registro de los CLI: un bloque SECUNDARIO, plegado.
+ *
+ * Fue una sección entera de Ajustes ("Herramientas (MCP)"), y no lo merecía:
+ * es de sólo lectura, casi nadie la abre, y lo único que se hace desde acá es
+ * traerse algo a Latte o sacarlo del registro. Cerrado por defecto, al pie de
+ * la única pantalla de Conexiones.
+ */
+function CliRegistry({ importable, busy, onImport, onForget }: {
+  importable: ImportableConnection[];
   busy: boolean;
+  onImport: (entry: ImportableConnection) => void;
+  onForget: (entry: ImportableConnection) => void;
+}) {
+  const canForget = (runtime: ChatRuntime) => runtime === 'claude' || runtime === 'codex';
+  return <details className="connections-cli">
+    <summary>{t('connections.importHead')}</summary>
+    <p className="footnote">{t('connections.importHelp')}</p>
+    {importable.length === 0 && <p className="footnote">{t('connections.cliEmpty')}</p>}
+    {importable.length > 0 && <div className="connections-cli-list">
+      {importable.map(entry => <div className="connections-cli-row" key={`${entry.runtime}-${entry.name}`}>
+        <div>
+          <strong>{entry.name}</strong>
+          <small title={entry.url}>{entry.url}</small>
+        </div>
+        <button className="subtle" disabled={busy} onClick={() => onImport(entry)}><Download size={13} />{t('connections.import')}</button>
+        {canForget(entry.runtime) && <button className="icon-button" aria-label={t('connections.forget', { name: entry.name })} disabled={busy} onClick={() => onForget(entry)}><Trash2 size={14} /></button>}
+      </div>)}
+    </div>}
+    <p className="footnote">{t('connections.authorization')}</p>
+  </details>;
+}
+
+/** Lo que la fila no dice porque no cabe: la dirección, la cuenta, y qué hacer. */
+function ConnectionDetail({ connection, scope, busy, onClose, onReconnect, onDisconnect, onDelete }: {
+  connection: Connection;
+  scope: string;
+  busy: boolean;
+  onClose: () => void;
   onReconnect: () => void;
   onDisconnect: () => void;
   onDelete: () => void;
 }) {
-  // UNA línea, la del equipo: qué es, de quién, y qué pasó. El detalle del
-  // error va en esa misma línea y no en una segunda: una fila que crece cuando
-  // algo falla hace que la lista se mueva justo cuando hay que leerla.
-  const line = connection.state === 'connected'
-    ? t('connections.lineConnected', { url: connection.url, identity: connection.identity ?? '' })
-    : connection.stateDetail || connection.url;
-  return <div className={'provider-card connection-card ' + connection.state}>
-    <i className={'connection-dot ' + connection.state} aria-hidden="true"><StateIcon state={connection.state} /></i>
-    <div>
+  return <div className="connection-detail" role="group" aria-label={connection.label}>
+    <div className="connection-detail-head">
       <strong>{connection.label}</strong>
-      <small title={connection.url}>{line}</small>
+      <button className="icon-button" aria-label={t('connections.close')} onClick={onClose}><X size={14} /></button>
     </div>
-    <span className="tag">{t(STATE_LABEL[connection.state])}</span>
-    <small className="connection-when">{new Date(connection.updatedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</small>
-    {connection.state !== 'connected' && <button className="subtle" disabled={busy} onClick={onReconnect}><LogIn size={13} />{t('connections.reenter')}</button>}
-    {connection.state === 'connected' && <button className="subtle" disabled={busy} onClick={onDisconnect}><Unplug size={13} />{t('connections.disconnect')}</button>}
-    <button className="icon-button" aria-label={t('connections.delete', { name: connection.label })} disabled={busy} onClick={onDelete}><Trash2 size={14} /></button>
+    <dl className="connection-detail-facts">
+      <div><dt>{t('connections.urlLabel')}</dt><dd><code>{connection.url}</code></dd></div>
+      <div><dt>{t('connections.scopeLabel')}</dt><dd>{scope}</dd></div>
+      {connection.identity && <div><dt>{t('connections.accountLabel')}</dt><dd>{connection.identity}</dd></div>}
+      <div><dt>{t('connections.stateLabel')}</dt><dd>{t(STATE_LABEL[connection.state])}{connection.stateDetail ? ` · ${connection.stateDetail}` : ''}</dd></div>
+    </dl>
+    <div className="connection-detail-actions">
+      {connection.state !== 'connected' && <button className="primary" disabled={busy} onClick={onReconnect}><RefreshCw size={13} />{t('connections.reenter')}</button>}
+      {connection.state === 'connected' && <button disabled={busy} onClick={onDisconnect}><Unplug size={13} />{t('connections.disconnect')}</button>}
+      <button className="icon-button" aria-label={t('connections.delete', { name: connection.label })} disabled={busy} onClick={onDelete}><Trash2 size={14} /></button>
+    </div>
   </div>;
 }
 
-export function AddConnection({ brandId, busy, needsClientId, onCancel, onConnect }: {
-  brandId: string | null;
+/**
+ * Agregar una conexión: un diálogo, como el de sumar un miembro. El alcance se
+ * ELIGE acá y no se deduce de dónde estabas parado — por eso las dos opciones
+ * están escritas, y "Una marca" trae su selector.
+ */
+export function AddConnectionDialog({ brands, initial, busy, needsClientId, onCancel, onConnect }: {
+  brands: Brand[];
+  initial: AddDraft;
   busy: boolean;
   needsClientId: boolean;
   onCancel: () => void;
-  onConnect: ConnectionsContentProps['onConnect'];
+  onConnect: (input: ConnectionInput) => void;
 }) {
-  const [url, setUrl] = useState('');
-  const [name, setName] = useState('');
-  // Desde una marca el alcance arranca en `brand`, que es lo que la persona
-  // fue a buscar; desde Ajustes arranca en `global`, porque ésa es la pantalla
-  // de las globales. En los dos casos se puede cambiar (decisión A).
-  const [scope, setScope] = useState<ConnectionScope>(brandId ? 'brand' : 'global');
+  const [url, setUrl] = useState(initial.url);
+  const [name, setName] = useState(initial.name);
+  const [scope, setScope] = useState<ConnectionScope>('global');
+  const [brandId, setBrandId] = useState(brands[0]?.id ?? '');
   const [clientId, setClientId] = useState('');
   const suggested = suggestedName(url);
   const finalName = (name.trim() || suggested).toLowerCase();
-  const ready = /^https?:\/\//.test(url.trim()) && /^[a-z0-9][a-z0-9-]{0,47}$/.test(finalName);
+  const ready = /^https?:\/\//.test(url.trim())
+    && /^[a-z0-9][a-z0-9-]{0,47}$/.test(finalName)
+    && (scope === 'global' || Boolean(brandId));
 
-  return <div className="chat-card connection-form" role="group" aria-label={t('connections.add')}>
-    <div className="chat-card-title"><Plug size={15} />{t('connections.add')}</div>
+  return <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
+    <section role="dialog" aria-modal="true" aria-labelledby="add-connection-title" className="modal">
+      <div className="modal-head">
+        <div><div className="document-kicker"><Plug size={13} />{t('connections.title')}</div><h2 id="add-connection-title">{t('connections.add')}</h2></div>
+        <button className="modal-close" aria-label={t('connections.close')} onClick={onCancel}><X size={20} /></button>
+      </div>
+      <div className="modal-body connection-form">
+        <label className="field-label" htmlFor="connection-url">{t('connections.urlLabel')}</label>
+        <input id="connection-url" value={url} maxLength={500} placeholder="https://theagentcy.app/api/mcp" onChange={e => setUrl(e.target.value)} />
+        <p className="footnote">{t('connections.urlHelp')}</p>
 
-    <label className="field-label" htmlFor="connection-url">{t('connections.urlLabel')}</label>
-    <input id="connection-url" value={url} maxLength={500} placeholder="https://theagentcy.app/api/mcp" onChange={e => setUrl(e.target.value)} />
-    <p className="footnote">{t('connections.urlHelp')}</p>
+        <label className="field-label" htmlFor="connection-name">{t('connections.nameLabel')}</label>
+        <input id="connection-name" value={name} maxLength={48} placeholder={suggested} onChange={e => setName(e.target.value)} />
 
-    <label className="field-label" htmlFor="connection-name">{t('connections.nameLabel')}</label>
-    <input id="connection-name" value={name} maxLength={48} placeholder={suggested} onChange={e => setName(e.target.value)} />
+        <label className="field-label" htmlFor="connection-scope">{t('connections.scopeLabel')}</label>
+        <select id="connection-scope" value={scope} onChange={e => setScope(e.target.value as ConnectionScope)}>
+          <option value="global">{t('connections.scope.global')}</option>
+          <option value="brand">{t('connections.scope.brand')}</option>
+        </select>
 
-    <label className="field-label" htmlFor="connection-scope">{t('connections.scopeLabel')}</label>
-    <select id="connection-scope" value={scope} onChange={e => setScope(e.target.value as ConnectionScope)} disabled={!brandId}>
-      <option value="global">{t('connections.scope.global')}</option>
-      {brandId && <option value="brand">{t('connections.scope.brand')}</option>}
-    </select>
-    {/* Riesgo 3 del documento: una global mal elegida toca a todas las marcas,
-        así que la pantalla lo dice con todas las letras ANTES de conectar. */}
-    <p className={'footnote ' + (scope === 'global' ? 'warn' : '')}>{scope === 'global' ? t('connections.scopeGlobalWarning') : t('connections.scopeBrandHelp')}</p>
+        {scope === 'brand' && <>
+          <label className="field-label" htmlFor="connection-brand">{t('connections.brandLabel')}</label>
+          <select id="connection-brand" value={brandId} onChange={e => setBrandId(e.target.value)}>
+            {brands.map(brand => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+          </select>
+        </>}
 
-    {needsClientId && <>
-      <label className="field-label" htmlFor="connection-client-id">{t('connections.clientIdLabel')}</label>
-      <input id="connection-client-id" value={clientId} maxLength={200} onChange={e => setClientId(e.target.value)} />
-      <p className="footnote">{t('connections.clientIdHelp')}</p>
-    </>}
+        {needsClientId && <>
+          <label className="field-label" htmlFor="connection-client-id">{t('connections.clientIdLabel')}</label>
+          <input id="connection-client-id" value={clientId} maxLength={200} onChange={e => setClientId(e.target.value)} />
+          <p className="footnote">{t('connections.clientIdHelp')}</p>
+        </>}
 
-    <div className="chat-card-actions">
-      <button className="primary" disabled={busy || !ready}
-        onClick={() => onConnect({ name: finalName, url: url.trim(), scope, brandId: scope === 'brand' ? brandId : null, clientId: clientId.trim() || null })}>
-        {busy ? <Loading size={16} /> : <LogIn size={14} />}{t('connections.connect')}
-      </button>
-      <button disabled={busy} onClick={onCancel}><X size={14} />{t('ui.auto.241')}</button>
-    </div>
+        <div className="chat-card-actions">
+          <button className="primary" disabled={busy || !ready}
+            onClick={() => onConnect({ name: finalName, url: url.trim(), scope, brandId: scope === 'brand' ? brandId : null, clientId: clientId.trim() || null })}>
+            {busy ? <Loading size={16} /> : <LogIn size={14} />}{t('connections.connect')}
+          </button>
+          <button disabled={busy} onClick={onCancel}><X size={14} />{t('ui.auto.241')}</button>
+        </div>
+      </div>
+    </section>
   </div>;
 }
 

@@ -146,6 +146,18 @@ export class ConnectionsRepository {
     });
   }
 
+  /**
+   * TODAS: las globales y las de cada marca, en una sola lista. Es lo que
+   * dibuja Ajustes → Conexiones, que es una pantalla sola y no dos. Ninguna
+   * sale marcada como heredada: acá cada fila se muestra con SU alcance, que
+   * es justo lo que la línea de la fila dice.
+   */
+  listAll(): Connection[] {
+    return this.db
+      .all<ConnectionRow>(`${SELECT} ORDER BY scope ASC, name ASC`)
+      .map((row) => toConnection(toRecord(row), false));
+  }
+
   /** Las de un alcance solo, sin heredadas: lo que la pantalla de una marca puede quitar. */
   listOwn(brandId: string | null): ConnectionRecord[] {
     const rows = brandId

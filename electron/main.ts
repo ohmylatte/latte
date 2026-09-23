@@ -130,6 +130,7 @@ async function start(): Promise<void> {
       },
       openExternal: async (url) => { if (isExternalHttp(url)) await shell.openExternal(url); },
       log: backendLog,
+      appIcon: APP_ICON,
     });
     // Persist the first automatic choice. From then on the explicit preference
     // always wins over an operating-system locale change.

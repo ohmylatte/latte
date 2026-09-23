@@ -2,9 +2,9 @@ import { translate as t } from './i18n';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Check, ChevronRight, CircleAlert, FilePlus, LogIn, Plug, ShieldQuestion, Square, Wrench, X } from 'lucide-react';
+import { Check, ChevronRight, CircleAlert, CircleHelp, FilePlus, LogIn, Plug, ShieldQuestion, Square, Wrench, X } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { AgentRole, ChatMessage, ChatPart, ChatPermission, ChatQuestion, ChatSession, ChatToolStatus, CoordinationAskView, CoordinationGateView, CoordinationRunView, TeamMember } from '../shared/contracts';
+import type { AgentRole, ChatMessage, ChatPart, ChatPermission, ChatQuestion, ChatSession, ChatStatus, ChatToolStatus, CoordinationAskView, CoordinationGateView, CoordinationRunView, TeamMember } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { useChatState } from './chat-store';
 import { friendlyTool } from './tool-names';
@@ -107,7 +107,7 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
       {state.permissions.map(permission => <PermissionCard key={permission.id} chatId={session.id} runtime={session.provider} request={permission} onError={onError} />)}
       {state.questions.map(question => <QuestionCard key={question.id} chatId={session.id} request={question} onError={onError} />)}
       {state.expiredConnections.map(connection => <ConnectionExpiredCard key={connection.connectionId} connection={connection} onError={onError} />)}
-      {busy && <div className="chat-status"><Loading size={16} />{state.status === 'retry' ? state.statusDetail || t('chat.retrying') : t('ui.auto.091')}</div>}
+      <ChatWorking status={state.status} detail={state.statusDetail} />
       {state.error && <div className="chat-error" role="alert"><CircleAlert size={14} /><span>{state.error}</span><button aria-label={t('ui.auto.092')} onClick={() => chatStore.clearError(session.id)}><X size={13} /></button></div>}
     </div>
     {unread && <button className="conversation-new-messages" onClick={showLatest}>{t('chat.newMessages')}</button>}
@@ -135,6 +135,21 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
     {beforeComposer}
     <ChatComposer sessionId={session.id} onError={onError} onAttachFiles={onAttachFiles} />
   </div>;
+}
+
+/**
+ * "El agente está trabajando…", UNA vez para las DOS superficies.
+ *
+ * La conversación de un miembro y el hilo del chat de equipo cuentan el mismo
+ * hecho —el destinatario está escribiendo— y tienen que contarlo igual: mismo
+ * texto, misma marca, mismo reintento. Duplicarlo sería la forma de que un día
+ * una de las dos se quede muda, que es exactamente lo que pasó con el hilo.
+ *
+ * `idle` no dibuja nada: una barra que dice "listo" es una barra que sobra.
+ */
+export function ChatWorking({ status, detail }: { status: ChatStatus; detail?: string }) {
+  if (status !== 'busy' && status !== 'retry') return null;
+  return <div className="chat-status"><Loading size={16} />{status === 'retry' ? detail || t('chat.retrying') : t('ui.auto.091')}</div>;
 }
 
 function MessageView({ message, roleName, onSaveAsDocument, untracked, onAdoptFile }: { message: ChatMessage; roleName: string; onSaveAsDocument?: (text: string) => void; untracked: string[]; onAdoptFile?: (fileName: string) => void }) {
@@ -227,23 +242,64 @@ function PermissionCard({ chatId, runtime, request, onError }: { chatId: string;
   </div>;
 }
 
+/**
+ * Las preguntas abiertas de un chat, para quien no es `ChatPane`.
+ *
+ * El hilo del modo Equipo ES la conversación de su destinatario, así que una
+ * pregunta suya tiene que poder responderse ahí: reutiliza esta lista en vez
+ * de dibujar una segunda tarjeta que haría lo mismo peor.
+ */
+export function ChatQuestions({ chatId, questions, onError }: { chatId: string; questions: readonly ChatQuestion[]; onError: (error: string) => void }) {
+  if (questions.length === 0) return null;
+  return <>{questions.map(question => <QuestionCard key={question.id} chatId={chatId} request={question} onError={onError} />)}</>;
+}
+
+/**
+ * LA PREGUNTA QUE TE ESPERA, CON LA ANATOMÍA DE LAS TARJETAS DEL EQUIPO.
+ *
+ * La misma forma que una aprobación del equipo (`coord-card`: el círculo con
+ * ícono, el título, una acción), porque es el mismo tipo de hecho — algo que
+ * no sigue hasta que la persona decide. El acento se gasta acá a propósito:
+ * esto TE ESPERA.
+ *
+ * Al responder se pliega en una línea. Lo que se respondió es un hecho y hay
+ * que poder releerlo; el formulario ya usado, en cambio, es media pantalla de
+ * ruido. La tarjeta se va sola cuando el runtime confirma (`question-resolved`)
+ * y hasta entonces queda la línea, que es lo honesto: se mandó, falta que
+ * llegue.
+ */
 function QuestionCard({ chatId, request, onError }: { chatId: string; request: ChatQuestion; onError: (e: string) => void }) {
   const [answers, setAnswers] = useState<string[][]>(() => request.questions.map(() => []));
   const [custom, setCustom] = useState<string[]>(() => request.questions.map(() => ''));
   const [busy, setBusy] = useState(false);
+  /** Lo que ya se respondió, por pregunta. `null` mientras la tarjeta sigue abierta. */
+  const [sent, setSent] = useState<string[][] | null>(null);
   const toggle = (qi: number, label: string, multiple: boolean) => setAnswers(prev => prev.map((a, i) => i !== qi ? a : multiple ? (a.includes(label) ? a.filter(x => x !== label) : [...a, label]) : [label]));
   const submit = () => {
     const final = answers.map((a, i) => (custom[i].trim() ? [...a, custom[i].trim()] : a));
     if (final.some((a, i) => request.questions[i].required !== false && a.length === 0)) return;
     setBusy(true);
-    api.replyQuestion(chatId, request.id, final).catch(e => onError(displayError(e))).finally(() => setBusy(false));
+    setSent(final);
+    api.replyQuestion(chatId, request.id, final)
+      .catch(e => { setSent(null); onError(displayError(e)); })
+      .finally(() => setBusy(false));
   };
   const reject = () => { setBusy(true); api.replyQuestion(chatId, request.id, null).catch(e => onError(displayError(e))).finally(() => setBusy(false)); };
   const missingRequired = answers.some((a, i) => request.questions[i].required !== false && a.length === 0 && !custom[i].trim());
-  return <div className="chat-card question" role="group" aria-label={t('ui.auto.104')}>
+  if (sent) {
+    return <div className="chat-card question coord-card is-answered" role="group" aria-label={t('ui.auto.104')}>
+      {request.questions.map((q, qi) => <p key={qi} className="chat-question-answered">
+        <Check size={13} />{t('chat.question.answered', { answer: sent[qi]!.join(', ') })}
+      </p>)}
+    </div>;
+  }
+  return <div className="chat-card question coord-card" role="group" aria-label={t('ui.auto.104')}>
     {request.questions.map((q, qi) => <div key={qi} className="chat-question">
-      <div className="chat-card-title"><ShieldQuestion size={15} />{q.header || t('ui.auto.105')}</div>
-      <p>{q.question}</p>
+      <div className="coord-card-head">
+        <span className="coord-tic coord-tic-live"><CircleHelp size={14} /></span>
+        <span className="coord-card-title">{q.header || t('ui.auto.105')}</span>
+      </div>
+      <p className="chat-question-text">{q.question}</p>
       <div className="chat-options">{q.options.map(o => <button key={o.label} className={answers[qi].includes(o.label) ? 'selected-option' : ''} title={o.description} onClick={() => toggle(qi, o.label, q.multiple)}>{answers[qi].includes(o.label) && <Check size={12} />}{o.label}</button>)}</div>
       {q.custom && <input aria-label={t('ui.auto.106')} placeholder={t('ui.auto.107')} value={custom[qi]} onChange={e => setCustom(prev => prev.map((c, i) => (i === qi ? e.target.value : c)))} />}
     </div>)}

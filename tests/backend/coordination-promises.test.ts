@@ -273,9 +273,10 @@ describe('lo que se publica existe y lo que entra se valida (crítico 12)', () =
     it('le llega al asistente sin rol: la base va en el prompt de sistema de CUALQUIER miembro', () => {
       const catalog = new RoleCatalog(loadInstructionPack(path.resolve(__dirname, '../../packs'), 'marketing-core'));
       const assistant = catalog.promptFor('assistant');
-      // El asistente no tiene instrucciones propias: si la sección no está en
-      // base.md, no está en ninguna parte de su prompt.
-      expect(catalog.get('assistant')!.instructions).toBe('');
+      // Lo único propio del asistente es su regla de no hacer el trabajo de
+      // otro rol; TODO lo demás que se afirma acá tiene que venir de base.md,
+      // que es lo que este caso prueba.
+      expect(catalog.get('assistant')!.instructions).not.toContain('The team, and who actually did the work');
       expect(assistant).toContain('The team, and who actually did the work');
       expect(assistant).toContain('latte_request_coordination');
       expect(assistant).toContain('I did it myself');

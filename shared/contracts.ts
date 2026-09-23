@@ -1533,6 +1533,8 @@ export interface LatteAPI {
   // --- Conexiones MCP (el gateway local es dueño de las credenciales) -------
   /** Las de esta marca más las globales, marcadas como heredadas. `null` = sólo las globales (Ajustes). */
   listConnections(brandId: string | null): Promise<Connection[]>;
+  /** TODAS, globales y de marca, cada una con su alcance: la pantalla única de Ajustes → Conexiones. */
+  listAllConnections(): Promise<Connection[]>;
   /** Crea la conexión y abre el login. Si el login falla, no queda ninguna fila a medias. */
   connectConnection(input: ConnectionInput): Promise<Connection>;
   /** Volver a entrar a una que ya existe: el botón de una conexión vencida. */

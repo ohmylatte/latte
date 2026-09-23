@@ -95,6 +95,11 @@ export class ConnectionsService {
     return this.deps.connections.list(brandId);
   }
 
+  /** TODAS, globales y de marca: la pantalla única de Ajustes. */
+  listAll(): Connection[] {
+    return this.deps.connections.listAll();
+  }
+
   /**
    * Crear y entrar, en un solo paso. Si el login falla, **no queda una fila
    * a medias**: la conexión se borra y el error sube tal cual. Una fila

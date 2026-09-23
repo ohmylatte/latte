@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_EFFORT_TIER, EMPTY_USAGE, type ChatEvent, type ChatMessage, type ChatPart, type ChatUsage, type PermissionReply } from '../../../shared/contracts';
+import { DEFAULT_EFFORT_TIER, EMPTY_USAGE, type ChatEvent, type ChatMessage, type ChatPart, type ChatQuestionItem, type ChatQuestionOption, type ChatUsage, type PermissionReply } from '../../../shared/contracts';
 import { writeFileAtomic } from '../../core/atomicFile';
 import { NotFoundError, UnavailableError, ValidationError } from '../../core/errors';
 import { newId } from '../../core/ids';
@@ -52,6 +52,52 @@ interface PendingPermission {
   toolName: string;
   input: unknown;
   suggestions: unknown[] | null;
+  /**
+   * ESTE `can_use_tool` NO ES UN PERMISO.
+   *
+   * `AskUserQuestion` es la herramienta nativa de preguntas del CLI y llega
+   * por el mismo canal. Contestarla como permiso —`allow` con el input
+   * intacto— hace que el CLI lea "the user did not answer the questions" y
+   * siga solo: la persona ve la pregunta adentro del detalle de la llamada y
+   * no tiene donde responderla. Esta marca es lo que separa las dos vias.
+   */
+  questions: ChatQuestionItem[] | null;
+}
+
+/** El nombre exacto de la herramienta nativa de preguntas de Claude Code. */
+const ASK_USER_QUESTION = 'AskUserQuestion';
+
+/**
+ * Las preguntas de un `AskUserQuestion`, leidas del input que el CLI manda.
+ *
+ * `null` cuando no hay ni una sola pregunta legible: ahi no se inventa una
+ * tarjeta vacia, se contesta el `can_use_tool` como lo que el CLI espera y
+ * listo. Nada se narra a partir de un input que no trae lo que promete.
+ */
+export function askUserQuestions(input: unknown): ChatQuestionItem[] | null {
+  if (!isRecord(input) || !Array.isArray(input.questions)) return null;
+  const out: ChatQuestionItem[] = [];
+  for (const raw of input.questions) {
+    if (!isRecord(raw)) continue;
+    const question = str(raw.question);
+    if (!question) continue;
+    const options: ChatQuestionOption[] = [];
+    for (const option of Array.isArray(raw.options) ? raw.options : []) {
+      if (!isRecord(option)) continue;
+      const label = str(option.label);
+      if (label) options.push({ label, description: str(option.description) });
+    }
+    out.push({
+      header: str(raw.header),
+      question,
+      options,
+      multiple: raw.multiSelect === true,
+      // "Other" es parte del contrato de la herramienta: siempre se puede
+      // contestar algo que no esta en la lista.
+      custom: true,
+    });
+  }
+  return out.length > 0 ? out : null;
 }
 
 interface LiveChat {
@@ -352,7 +398,10 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
   async replyPermission(chatId: string, requestId: string, reply: PermissionReply): Promise<void> {
     const live = this.require(chatId);
     const pending = live.pending.get(requestId);
-    if (!pending) throw new NotFoundError('Permission request', requestId);
+    // Una pregunta nativa no se contesta por acá: `once` sobre ella devolvería
+    // el input intacto, que es exactamente el bug — el CLI lo lee como "no
+    // contestó" y sigue solo.
+    if (!pending || pending.questions) throw new NotFoundError('Permission request', requestId);
     const response = reply === 'reject'
       ? { behavior: 'deny', message: 'The user declined this action in Latte.' }
       : { behavior: 'allow', updatedInput: pending.input, ...(reply === 'always' && pending.suggestions ? { updatedPermissions: pending.suggestions } : {}) };
@@ -361,9 +410,37 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
     this.deps.emit({ chatId, type: 'permission-resolved', requestId });
   }
 
-  async replyQuestion(chatId: string, requestId: string, _answers: string[][] | null): Promise<void> {
-    this.require(chatId);
-    throw new NotFoundError('Question', requestId);
+  /**
+   * LA RESPUESTA A UNA PREGUNTA NATIVA VUELVE DONDE EL PROTOCOLO LA ESPERA.
+   *
+   * `behavior: 'allow'` con `updatedInput.answers`: una entrada por pregunta,
+   * con el TEXTO de la pregunta como clave y la etiqueta elegida como valor.
+   * Con `multiSelect` van todas las elegidas separadas por coma, y el texto
+   * libre ("Other") viaja como una etiqueta más — el CLI no distingue, y
+   * inventarle una forma distinta sería adivinar.
+   *
+   * `null` es descartarla: se deniega con un motivo legible en vez de
+   * contestar por la persona algo que no dijo.
+   */
+  async replyQuestion(chatId: string, requestId: string, answers: string[][] | null): Promise<void> {
+    const live = this.require(chatId);
+    const pending = live.pending.get(requestId);
+    if (!pending || !pending.questions) throw new NotFoundError('Question', requestId);
+    let response: Record<string, unknown>;
+    if (answers === null) {
+      response = { behavior: 'deny', message: 'The user dismissed these questions in Latte. Continue without an answer, or ask again if you cannot.' };
+    } else {
+      const map: Record<string, string> = {};
+      pending.questions.forEach((question, index) => {
+        const chosen = (answers[index] ?? []).map((value) => value.trim()).filter((value) => value !== '');
+        if (chosen.length > 0) map[question.question] = chosen.join(', ');
+      });
+      const input = isRecord(pending.input) ? pending.input : {};
+      response = { behavior: 'allow', updatedInput: { ...input, answers: map } };
+    }
+    this.write(live, { type: 'control_response', response: { subtype: 'success', request_id: requestId, response } });
+    live.pending.delete(requestId);
+    this.deps.emit({ chatId, type: 'question-resolved', requestId });
   }
 
   stop(chatId: string): void {
@@ -593,7 +670,21 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
         if (request.subtype === 'can_use_tool') {
           const toolName = str(request.tool_name, 'tool');
           const input = request.input;
-          live.pending.set(requestId, { requestId, toolName, input, suggestions: Array.isArray(request.permission_suggestions) ? request.permission_suggestions : null });
+          const questions = toolName === ASK_USER_QUESTION ? askUserQuestions(input) : null;
+          live.pending.set(requestId, { requestId, toolName, input, suggestions: Array.isArray(request.permission_suggestions) ? request.permission_suggestions : null, questions });
+          /**
+           * UNA PREGUNTA NO ES UN PERMISO.
+           *
+           * Sale por el canal de preguntas, con sus opciones, y se responde
+           * con `updatedInput.answers`. Dibujarla como "permitir
+           * AskUserQuestion" era ofrecerle a la persona un Si/No sobre una
+           * herramienta, mientras la pregunta de verdad quedaba escondida en
+           * el detalle de la llamada.
+           */
+          if (questions) {
+            this.deps.emit({ chatId, type: 'question', request: { id: requestId, questions } });
+            return;
+          }
           this.deps.emit({
             chatId,
             type: 'permission',

@@ -181,6 +181,55 @@ const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claud
 const ASSISTANT_ROLE = 'assistant';
 
 /**
+ * QUIÉN COORDINA ESTE TRABAJO — el que se lleva la tira y el modo Equipo.
+ *
+ * El del run si ese miembro EXISTE en el equipo; si no, el coordinador
+ * designado del Trabajo, con la misma condición.
+ *
+ * Ese "tiene que existir" es el bug entero: con un run cancelado cuyo
+ * coordinador ya estaba borrado, la vista fijaba un coordinador fantasma. El
+ * composer le escribía al Asistente por su propio fallback y el hilo miraba a
+ * nadie, así que el Asistente trabajaba y contestaba mientras la pantalla
+ * decía "Sin novedades".
+ *
+ * Un run TERMINADO cuyo coordinador sigue en el equipo sí lo fija, y a
+ * propósito: cerrar un run no borra la conversación en la que se pidió, y ese
+ * hilo es donde la persona vuelve a buscarla.
+ */
+export function teamCoordinator(
+  team: readonly TeamMember[],
+  run: CoordinationRunView | null | undefined,
+  grant: string | null | undefined,
+): string | null {
+  const inTeam = (id: string | null | undefined) => (id && team.some(m => m.id === id) ? id : null);
+  return inTeam(run?.coordinatorMemberId) ?? inTeam(grant);
+}
+
+/**
+ * Y a quién le llega lo que se escribe abajo: el coordinador; sin ninguno el
+ * Asistente, que es el rol que siempre está y el único que puede pedir
+ * coordinación; y sin él el primero del equipo — el cuadro de texto nunca
+ * escribe al vacío.
+ *
+ * Esos dos últimos eslabones NO sacan a nadie de la tira, y es la diferencia
+ * que importa: un Trabajo sin run y sin permiso no tiene coordinador, tiene
+ * miembros. Sus pestañas siguen donde estaban y su conversación sigue siendo
+ * suya; lo único que esto decide ahí es a quién le llega el mensaje si la
+ * persona igual escribe en el modo Equipo — y de quién es, entonces, el hilo
+ * que ese modo tiene que mostrar.
+ */
+export function teamChatTarget(
+  team: readonly TeamMember[],
+  run: CoordinationRunView | null | undefined,
+  grant: string | null | undefined,
+): string | null {
+  return teamCoordinator(team, run, grant)
+    ?? team.find(m => m.roleId === ASSISTANT_ROLE)?.id
+    ?? team[0]?.id
+    ?? null;
+}
+
+/**
  * The work's team: one row per role opened in this work, the selected one's
  * conversation underneath. Status is live for open members (from the chat
  * store) and persisted for the rest (paused / finished).
@@ -224,7 +273,8 @@ export function TeamPanel(props: TeamPanelProps) {
    * pedido"— aterriza acá, sin que ninguno de esos caminos tenga que saber que
    * existe un rail: el rail es de este componente, así que la regla vive acá.
    */
-  const coordinatorId = props.coordinationRun?.coordinatorMemberId ?? props.coordinatorGrant ?? null;
+  const coordinatorId = teamCoordinator(team, props.coordinationRun, props.coordinatorGrant);
+  const teamChatTargetId = teamChatTarget(team, props.coordinationRun, props.coordinatorGrant);
   const memberTabs = team.filter(m => m.id !== coordinatorId);
   const coordinatorSelected = Boolean(coordinatorId && selectedId === coordinatorId);
   // Sin nadie más que el coordinador no hay "uno" con quien hablar: el modo
@@ -252,7 +302,7 @@ export function TeamPanel(props: TeamPanelProps) {
   const activity = useTeamActivity(team, chats);
   // La conversación del coordinador, para que su línea de tiempo la traiga
   // intercalada por hora con los hechos del run. Es una sola lista.
-  const coordinatorState = useChatState(chatStore, coordinatorId);
+  const coordinatorState = useChatState(chatStore, teamChatTargetId);
   /**
    * Y SI EL COORDINADOR ESTA PAUSADO, SE PIDE SU TRANSCRIPTO.
    *
@@ -268,17 +318,24 @@ export function TeamPanel(props: TeamPanelProps) {
    * abierta el store ya viene alimentado por eventos, y re-sincronizar encima
    * de un turno en vuelo le pisaria el mensaje que se esta escribiendo.
    */
-  const liveCoordinator = Boolean(coordinatorId && chats[coordinatorId]);
+  const liveCoordinator = Boolean(teamChatTargetId && chats[teamChatTargetId]);
   const runStatus = props.coordinationRun?.status ?? null;
   useEffect(() => {
-    if (rail !== 'team' || !coordinatorId || liveCoordinator) return;
-    void chatStore.sync(coordinatorId).catch(() => undefined);
-  }, [rail, coordinatorId, liveCoordinator, runStatus]);
+    if (rail !== 'team' || !teamChatTargetId || liveCoordinator) return;
+    void chatStore.sync(teamChatTargetId).catch(() => undefined);
+  }, [rail, teamChatTargetId, liveCoordinator, runStatus]);
   // The first team is the empty state itself; after that, adding is a dialog.
   const firstTeam = team.length === 0 && Boolean(work);
   const showPicker = adding || firstTeam;
   const workTotal = useTeamUsageTotal(team);
-  const railPending = pendingForWork(props.coordinationGates, props.coordinationAsks, props.coordinationRun ?? null);
+  /**
+   * Lo que el Trabajo entero está esperando. Las preguntas NATIVAS del
+   * destinatario (`AskUserQuestion`) cuentan igual que una `latte_ask`: son
+   * dos canales distintos y una sola persona a la que le toca decidir. Sin
+   * esto, el segmento decía "nada pendiente" con una pregunta abierta adentro.
+   */
+  const railPending = pendingForWork(props.coordinationGates, props.coordinationAsks, props.coordinationRun ?? null)
+    + coordinatorState.questions.length;
   const inbox = { log: props.coordinationLog, messages: props.coordinationMessages, asks: props.coordinationAsks, hires: props.coordinationHires };
   /**
    * B4.1: las DOS condiciones, no una. `active` porque un run cerrado no puede
@@ -313,21 +370,10 @@ export function TeamPanel(props: TeamPanelProps) {
    * donde su pestaña ya no existe.
    */
   const openCoordinatorChat = () => {
-    const target = teamTarget;
-    if (target && team.some(m => m.id === target)) props.onSelect(target);
+    if (teamChatTargetId) props.onSelect(teamChatTargetId);
     setThreadMember(null);
     setRailChoice('team');
   };
-  /**
-   * A QUIÉN LE LLEGA LO QUE SE ESCRIBE EN EL MODO EQUIPO.
-   *
-   * El coordinador del run; sin run, el permiso del trabajo; sin ninguno, el
-   * Asistente, que es el rol que siempre está y el único que puede pedir
-   * coordinación. Nunca "a todos": despertar N miembros a la vez pelea con los
-   * techos de procesos y rompe *cada bot aislado, uno consolida*.
-   */
-  const teamTarget = (coordinatorId && team.some(m => m.id === coordinatorId) ? coordinatorId : null)
-    ?? team.find(m => m.roleId === ASSISTANT_ROLE)?.id ?? team[0]?.id ?? null;
 
   return <div className="team">
     {/* FUERA del guard `team.length > 0`: un run `planning` es exactamente el
@@ -391,13 +437,17 @@ export function TeamPanel(props: TeamPanelProps) {
       onSetCoordinationBudget={props.onSetCoordinationBudget} coordinatorGrant={props.coordinatorGrant}
       chatCoordination={props.chatCoordination}
       coordinatorChat={coordinatorState.messages}
-      composer={teamTarget ? {
-        sessionId: teamTarget,
+      teamChatTargetId={teamChatTargetId}
+      teamChatStatus={coordinatorState.status} teamChatStatusDetail={coordinatorState.statusDetail}
+      teamChatQuestions={coordinatorState.questions}
+      onError={props.onError}
+      composer={teamChatTargetId ? {
+        sessionId: teamChatTargetId,
         onError: props.onError,
         onAttachFiles: props.onAttachFiles,
         // Cerrar un run apaga al coordinador: escribirle lo despierta, y recién
         // después sale el mensaje. Si abrir falla, el borrador queda intacto.
-        onBeforeSend: async () => { if (!chats[teamTarget]) await props.onOpen(teamTarget); },
+        onBeforeSend: async () => { if (!chats[teamChatTargetId]) await props.onOpen(teamChatTargetId); },
       } : undefined} />}
     {/*
       EL DIALOGO DE SUMAR UN ROL VIVE ACA, FUERA DEL MODO CONVERSACION.

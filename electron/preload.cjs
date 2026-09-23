@@ -111,6 +111,7 @@ const METHODS = [
   'listMcpServers',
   'removeMcpServer',
   'listConnections',
+  'listAllConnections',
   'connectConnection',
   'reconnectConnection',
   'disconnectConnection',

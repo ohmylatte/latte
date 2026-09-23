@@ -334,21 +334,6 @@ html,body,#root{height:100%;overflow:hidden}
 .doc-banner.editing strong{color:var(--ink)}
 
 /* --- Herramientas MCP ------------------------------------------------------- */
-.tools-view .runtime-card{margin-top:14px}
-.mcp-card{align-items:flex-start}
-.mcp-card>div{flex:1;min-width:0}
-.mcp-card small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mcp-detail{color:var(--rust-deep)!important;white-space:normal!important}
-.mcp-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;margin-top:5px;background:var(--rust-soft)}
-.mcp-dot.connected{background:var(--green-ok)}
-.mcp-dot.failed{background:var(--danger)}
-.mcp-dot.pending{background:var(--rust)}
-.mcp-dot.disabled{background:var(--rust-soft)}
-.mcp-form{margin-top:10px}
-.mcp-form input,.mcp-form select,.mcp-form textarea{width:100%;font-size:12.5px}
-.mcp-form .context-editor.short{min-height:70px}
-.tools-view code{font:11.5px var(--mono);background:var(--paper-deep);padding:2px 5px;border-radius:var(--radius-sm)}
-.tools-view .footnote{display:flex;gap:7px;align-items:flex-start}
 
 /* --- Diálogos: el encabezado y la X no scrollean --------------------------- */
 .modal{display:flex;flex-direction:column;overflow:hidden;padding:0}
@@ -414,7 +399,6 @@ html,body,#root{height:100%;overflow:hidden}
 .answer-file-hint{display:flex;flex-direction:column;gap:6px;margin:0 0 8px;padding:8px 10px;border:1px solid rgba(200,160,90,.35);border-radius:var(--radius-md);background:rgba(200,160,90,.07)}
 .answer-file-hint span{font-size:10px;line-height:1.6;color:var(--muted-soft)}
 .answer-file-hint button{align-self:flex-start;padding:3px 9px;font-size:11px}
-.runtime-card.pending{opacity:.6}
 /* Conversation is the work surface; review preserves the same mounted panes. */
 .workspace-modes{display:flex;gap:4px;margin-left:auto;flex-shrink:0}
 .workspace-modes button{font-size:12px;padding:7px 11px}
@@ -1313,27 +1297,13 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
    El detalle del error va en esa MISMA linea. Una fila que crece cuando algo
    falla mueve la lista justo cuando hay que leerla.
 */
-.connections-view .provider-list{display:flex;flex-direction:column;gap:8px;margin:14px 0}
-.connection-card small{display:block;color:var(--muted);font-size:var(--text-sm);margin-top:4px;overflow-wrap:anywhere}
-.connection-card>div{min-width:0;flex:1}
-.connection-dot{display:grid;place-items:center;flex-shrink:0;color:var(--muted-soft)}
-.connection-dot.connected{color:var(--green-ok)}
-.connection-dot.expired{color:var(--rust)}
-.connection-dot.error{color:var(--danger)}
-.connection-when{color:var(--muted-soft);font-size:var(--text-sm);flex-shrink:0;white-space:nowrap}
 /* Una global vista desde una marca: se usa, no se toca. El gris lo dice antes
    que cualquier texto, y el `tag` la nombra para quien no lea el color. */
-.connection-card.inherited{background:var(--paper-deep);color:var(--muted)}
-.connection-card.inherited strong{font-weight:400}
-.connection-card.expired{border-color:var(--rust-soft);background:var(--rust-wash)}
-.connection-card.error{border-color:var(--rust-soft)}
-.connections-subhead{font-size:var(--text-base);font-weight:550;margin:26px 0 0;letter-spacing:-.2px}
 .connections-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:18px}
 .connection-form input,.connection-form select{width:100%;margin-bottom:4px}
 /* El aviso de un alcance global: no es decoracion. Una conexion global mal
    elegida toca a TODAS las marcas, y esta linea es la unica defensa que hay
    antes de apretar. */
-.connection-form .footnote.warn{color:var(--rust-deep);background:var(--rust-wash);border:1px solid var(--rust-soft);border-radius:var(--radius-sm);padding:7px 9px}
 /* El aviso de conexion vencida va en el hilo, con el acento de alerta: es una
    accion pendiente, no una nota al pie. */
 .chat-card.connection-expired{border-left-color:var(--rust);background:var(--rust-wash)}
@@ -1356,3 +1326,46 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
    padding, los dos botones-- lo trae `.prompt-form`: hay un solo composer. */
 .team-view-composer{flex-shrink:0;margin-top:0;border-top:1px solid var(--line);padding-top:8px}
 .team-view .team-cards,.team-view .team-cards-collapsed{flex-shrink:0}
+/* --- Conexiones: la lista unica, el detalle y el registro de los CLI ------- */
+/*
+   La fila ES la del equipo (`.coord-row`), no una parecida: hay UNA anatomia
+   en la app y esta pantalla la usa. Lo propio de esta superficie es apenas el
+   marco: la separacion entre filas, el detalle que abre la fila, y el bloque
+   plegado del pie, que tiene que verse secundario sin dejar de estar.
+*/
+.connections-list{display:flex;flex-direction:column;gap:2px;margin:14px 0 0}
+.connection-row .coord-av{background:var(--paper-deep);color:var(--muted)}
+.connection-detail{border:1px solid var(--line);border-radius:var(--radius-md);background:var(--paper-raised);padding:14px 16px;margin-top:12px}
+.connection-detail-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+.connection-detail-head strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.connection-detail-facts{display:flex;flex-direction:column;gap:8px;margin:12px 0 0}
+.connection-detail-facts>div{display:flex;gap:10px;align-items:baseline;min-width:0}
+.connection-detail-facts dt{flex:0 0 96px;color:var(--muted);font-size:var(--text-sm)}
+.connection-detail-facts dd{margin:0;min-width:0;overflow-wrap:anywhere;font-size:var(--text-base)}
+.connection-detail-facts code{font:var(--text-sm) var(--mono);background:var(--paper-deep);padding:2px 6px;border-radius:var(--radius-sm)}
+.connection-detail-actions{display:flex;align-items:center;gap:8px;margin-top:16px}
+/* El pie: cerrado, gris, y sin una linea de mas. Se abre el dia que alguien
+   quiere traerse algo de un CLI, y no ocupa la pantalla el resto del tiempo. */
+.connections-cli{margin-top:28px;border-top:1px solid var(--line);padding-top:14px}
+.connections-cli>summary{cursor:pointer;color:var(--muted);font-size:var(--text-base)}
+.connections-cli-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.connections-cli-row{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--paper);padding:10px 14px;font-size:var(--text-base)}
+.connections-cli-row>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.connections-cli-row small{color:var(--muted);font-size:var(--text-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* UN MIEMBRO QUE YA NO ESTA NO TIENE INICIALES.
+   'Miembro que ya no esta' es una frase, y sacarle iniciales daba 'MQ': un
+   circulo que parece una persona con nombre y no lo es. Sin color de rol
+   tampoco --no hay rol que reconocer-- y con el icono neutro en gris. */
+.av.av-gone{background:var(--paper-deep);color:var(--muted-soft);border:1px solid var(--line)}
+.av-gone .av-gone-icon{width:60%;height:60%}
+
+/* LA PREGUNTA NATIVA DEL RUNTIME (`AskUserQuestion`), con la anatomia de las
+   tarjetas del equipo: es el mismo tipo de hecho --algo que no sigue hasta que
+   la persona decide--, asi que se ve igual. Respondida, se pliega en una
+   linea: lo que se contesto hay que poder releerlo; el formulario ya usado no. */
+.chat-card.question .chat-question-text{font-size:var(--text-lg);line-height:1.45;margin:0;overflow-wrap:anywhere}
+.chat-card.question .chat-question+.chat-question{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}
+.chat-card.question.is-answered{border-left-color:var(--line-strong)}
+.chat-question-answered{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:var(--text-sm);overflow-wrap:anywhere}
+.chat-question-answered svg{flex:0 0 auto;color:var(--green-ok)}

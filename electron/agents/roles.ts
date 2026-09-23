@@ -12,6 +12,33 @@ export const ASSISTANT_ROLE_ID = 'assistant';
 export const ROLE_AVATAR_KEY = (roleId: string): string => `role-avatar:${roleId}`;
 export const ROLE_ID = /^[a-z][a-z0-9-]{0,40}$/;
 
+/**
+ * LO ÚNICO PROPIO DEL ASISTENTE: NO HACER EL TRABAJO DE OTRO ROL.
+ *
+ * Uso real: con una Conexión cableada (The Agentcy), el dueño pidió las piezas
+ * de una campaña por el chat de equipo y el Asistente las COMPUSO él mismo
+ * —trabajo del Community Manager— en vez de proponer coordinación con el alta
+ * del CM y despachar. Tener la herramienta no es tener el rol, y una pantalla
+ * no lo puede arreglar: el que decide es el prompt.
+ *
+ * Vive acá y no en `packs/marketing-core/base.md` a propósito. La base la paga
+ * CADA miembro en CADA mensaje y está a cinco caracteres de su techo; esto es
+ * del punto de partida, así que lo paga sólo él.
+ *
+ * En inglés como el resto de los prompts, y con los saltos de línea puestos a
+ * mano: cada regla entra entera en un renglón, que es lo que hace que un test
+ * la pueda afirmar línea por línea.
+ */
+const ASSISTANT_INSTRUCTIONS = [
+  "# Another role's work is not yours",
+  '',
+  'You are the starting point, not the specialist. Yours: the brief, the context, the questions, and consolidating what the team reports.',
+  '',
+  "Producing pieces, writing copy, setting up or launching campaigns, publishing: that is another role's work, and you do not do it yourself -- not even when the tools for it are connected.",
+  'Instead, call `latte_request_coordination` with the plan, including the hires the team is missing for that work, and wait for the human to approve it.',
+  'A connection (The Agentcy, Meta, any other) grants access to a tool, never a role: having the tool does not change who does what.',
+].join('\n');
+
 const ASSISTANT: PackRole = {
   id: ASSISTANT_ROLE_ID,
   name: 'Asistente',
@@ -22,7 +49,7 @@ const ASSISTANT: PackRole = {
   // The starting point has no specialty, so it takes the middle: neither the
   // cheapest answer nor the slowest one for someone who is still framing.
   tier: DEFAULT_EFFORT_TIER,
-  instructions: '',
+  instructions: ASSISTANT_INSTRUCTIONS,
 };
 
 /**
@@ -113,7 +140,12 @@ export class RoleCatalog {
     const parts: string[] = [];
     if (this.base) parts.push(this.base);
     if (role && role.instructions) {
-      parts.push(
+      // El Asistente no "actúa como" nada: es el punto de partida, y su única
+      // regla propia dice justamente que el trabajo de un rol no es suyo.
+      // Envolverla en "acting as: Asistente" convertiría en un puesto a lo
+      // que existe para no serlo.
+      if (role.id === ASSISTANT_ROLE_ID) parts.push(role.instructions);
+      else parts.push(
         [
           `You are a member of a Latte marketing team, acting as: ${role.name}.`,
           'The instructions below narrow the behaviour above to your responsibility in this work. They never override the user\'s explicit requests, the brand context or the runtime\'s permission rules.',

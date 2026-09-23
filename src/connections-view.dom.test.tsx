@@ -1,18 +1,32 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
-import { ConnectionsContent, AddConnection, suggestedName } from './ConnectionsView';
+import { render, screen, fireEvent, within } from '@testing-library/react';
+import { ConnectionsContent, AddConnectionDialog, sortConnections, suggestedName } from './ConnectionsView';
 import { formatMessage } from './i18n';
-import type { Connection, ImportableConnection } from '../shared/contracts';
+import { catalogs } from './i18n';
+import type { Brand, Connection, ImportableConnection } from '../shared/contracts';
 
 /**
- * Las dos pantallas de Conexiones (G5 del brief
- * `docs/briefs/2026-09-23-conexiones-mcp-arquitectura.md`, 4.3).
+ * UNA SOLA PANTALLA DE CONEXIONES.
+ *
+ * Antes eran dos —las globales en Ajustes, las de la marca adentro de la
+ * marca— y el resultado era lo técnico metido en lo cotidiano: la pantalla de
+ * una marca se llenaba de direcciones de servidores MCP. Ahora TODAS las
+ * conexiones viven en Ajustes, en una lista sola, y cada fila dice de quién
+ * es. El área de la marca no tiene ninguna.
  *
  * Todo contra la superficie PRESENTACIONAL: renderizarla no habla con ningún
- * servidor, así que lo que se prueba es lo que la persona ve y no lo que el
- * backend hace.
+ * servidor, así que lo que se prueba es lo que la persona ve.
  */
 const t = (key: Parameters<typeof formatMessage>[1], params?: Record<string, string | number>) => formatMessage('es-AR', key, params);
+
+const NOW = Date.parse('2026-09-23T12:00:00.000Z');
+
+const brands: Brand[] = [
+  { id: 'brd_1', name: 'Maldita Poesía', context: '', createdAt: '', archivedAt: null },
+  { id: 'brd_2', name: 'Ámbar', context: '', createdAt: '', archivedAt: null },
+];
 
 const connection = (over: Partial<Connection> & Pick<Connection, 'id' | 'name'>): Connection => ({
   label: over.name,
@@ -32,109 +46,140 @@ const connection = (over: Partial<Connection> & Pick<Connection, 'id' | 'name'>)
 });
 
 const props = (over: Partial<Parameters<typeof ConnectionsContent>[0]> = {}): Parameters<typeof ConnectionsContent>[0] => ({
-  brandId: null,
   connections: [],
+  brands,
   importable: [],
   busy: false,
-  adding: false,
-  needsClientId: false,
-  onAdding: () => {},
-  onConnect: () => {},
+  selectedId: null,
+  onSelect: () => {},
+  onAdd: () => {},
   onReconnect: () => {},
   onDisconnect: () => {},
   onDelete: () => {},
   onImport: () => {},
+  onForget: () => {},
   onRefresh: () => {},
+  now: NOW,
   ...over,
 });
 
-describe('Ajustes → Conexiones (las globales)', () => {
-  it('dice con todas las letras que una conexión de acá vale para todas las marcas', () => {
-    render(<ConnectionsContent {...props()} />);
-    expect(screen.getByText(t('connections.leadGlobal'))).toBeTruthy();
-    expect(screen.getByText(t('connections.emptyGlobal'))).toBeTruthy();
-  });
+const global = connection({ id: 'con_g', name: 'meta', label: 'Meta Ads' });
+const ofBrand = connection({
+  id: 'con_b', name: 'theagentcy', label: 'The Agentcy', scope: 'brand', brandId: 'brd_1',
+  state: 'expired', stateDetail: 'la sesión venció y no se pudo renovar',
+  updatedAt: '2026-09-23T10:00:00.000Z',
+});
 
-  it('la fila tiene la anatomía del equipo: estado, nombre, una línea y la hora', () => {
-    render(<ConnectionsContent {...props({ connections: [connection({ id: 'con_1', name: 'theagentcy', label: 'The Agentcy' })] })} />);
+describe('una sola lista: las globales y las de cada marca', () => {
+  it('dibuja las dos en la misma lista, cada una con su alcance escrito en la línea', () => {
+    render(<ConnectionsContent {...props({ connections: [global, ofBrand] })} />);
+    const rows = document.querySelectorAll('.connections-list .coord-row');
+    expect(rows).toHaveLength(2);
+    expect(screen.getByText('Meta Ads')).toBeTruthy();
     expect(screen.getByText('The Agentcy')).toBeTruthy();
-    expect(screen.getByText(t('connections.state.connected'))).toBeTruthy();
-    // Una conexión conectada ofrece desconectar, no volver a entrar.
-    expect(screen.getByText(t('connections.disconnect'))).toBeTruthy();
-    expect(screen.queryByText(t('connections.reenter'))).toBeNull();
+    expect(screen.getByText(t('connections.line', { scope: t('connections.scopeGlobalShort'), detail: t('connections.state.connected') }))).toBeTruthy();
+    expect(screen.getByText(
+      t('connections.line', {
+        scope: t('connections.scopeBrandShort', { brand: 'Maldita Poesía' }),
+        detail: `${t('connections.state.expired')} ${t('connections.agoHours', { count: 2 })}`,
+      }),
+    )).toBeTruthy();
   });
 
-  it('una VENCIDA muestra su motivo en la misma línea y ofrece volver a entrar', () => {
-    render(<ConnectionsContent {...props({
-      connections: [connection({ id: 'con_1', name: 'theagentcy', label: 'The Agentcy', state: 'expired', stateDetail: 'la sesión venció y no se pudo renovar' })],
-    })} />);
-    expect(screen.getByText(t('connections.state.expired'))).toBeTruthy();
-    expect(screen.getByText('la sesión venció y no se pudo renovar')).toBeTruthy();
-    expect(screen.getByText(t('connections.reenter'))).toBeTruthy();
-    expect(screen.queryByText(t('connections.disconnect'))).toBeNull();
+  it('las globales van primero y después cada marca', () => {
+    const otherBrand = connection({ id: 'con_c', name: 'gmail', label: 'Gmail', scope: 'brand', brandId: 'brd_2' });
+    const sorted = sortConnections([ofBrand, otherBrand, global], brands);
+    expect(sorted.map(c => c.id)).toEqual(['con_g', 'con_c', 'con_b']);
   });
 
-  it('una en ERROR también ofrece volver a entrar, con su motivo escrito', () => {
-    render(<ConnectionsContent {...props({
-      connections: [connection({ id: 'con_1', name: 'x', label: 'X', state: 'error', stateDetail: 'esa dirección no dice cómo se entra' })],
-    })} />);
-    expect(screen.getByText('esa dirección no dice cómo se entra')).toBeTruthy();
-    expect(screen.getByText(t('connections.reenter'))).toBeTruthy();
+  it('sin ninguna conexión el vacío lo dice en una sola línea', () => {
+    render(<ConnectionsContent {...props()} />);
+    expect(screen.getByText(t('connections.empty'))).toBeTruthy();
   });
 });
 
-describe('Marca → Conexiones', () => {
-  const inherited = connection({ id: 'con_g', name: 'meta', label: 'Meta Ads', scope: 'global', inherited: true });
-  const own = connection({ id: 'con_b', name: 'theagentcy', label: 'The Agentcy', scope: 'brand', brandId: 'brd_1', inherited: false });
-
-  it('separa las propias de las heredadas, y las heredadas no se pueden quitar desde acá', () => {
-    render(<ConnectionsContent {...props({ brandId: 'brd_1', brandName: 'Ámbar', connections: [own, inherited] })} />);
-    expect(screen.getByText(t('connections.leadBrand', { brand: 'Ámbar' }))).toBeTruthy();
-    expect(screen.getByText(t('connections.inheritedHead'))).toBeTruthy();
-
-    const inheritedRow = screen.getByText('Meta Ads').closest('.connection-card') as HTMLElement;
-    expect(inheritedRow.className).toContain('inherited');
-    // Ni borrar ni desconectar: desde acá se usa, no se toca.
-    expect(within(inheritedRow).queryByLabelText(t('connections.delete', { name: 'Meta Ads' }))).toBeNull();
-    expect(within(inheritedRow).queryByText(t('connections.disconnect'))).toBeNull();
-    // La salida que sí ofrece: una cuenta propia, que pasa a ganar.
-    expect(within(inheritedRow).getByText(t('connections.ownAccount'))).toBeTruthy();
-
-    const ownRow = screen.getByText('The Agentcy').closest('.connection-card') as HTMLElement;
-    expect(ownRow.className).not.toContain('inherited');
-    expect(within(ownRow).getByLabelText(t('connections.delete', { name: 'The Agentcy' }))).toBeTruthy();
+describe('la fila es la acción: abre el detalle', () => {
+  it('clickearla la selecciona', () => {
+    const onSelect = vi.fn();
+    render(<ConnectionsContent {...props({ connections: [global], onSelect })} />);
+    fireEvent.click(screen.getByText('Meta Ads').closest('button')!);
+    expect(onSelect).toHaveBeenCalledWith('con_g');
   });
 
-  it('sin conexión propia, el vacío dice que puede estar usando una global', () => {
-    render(<ConnectionsContent {...props({ brandId: 'brd_1', brandName: 'Ámbar', connections: [inherited] })} />);
-    expect(screen.getByText(t('connections.emptyBrand'))).toBeTruthy();
+  it('el detalle trae la dirección, el alcance y los botones; conectada ofrece desconectar', () => {
+    render(<ConnectionsContent {...props({ connections: [global], selectedId: 'con_g' })} />);
+    const detail = document.querySelector('.connection-detail') as HTMLElement;
+    expect(detail).toBeTruthy();
+    expect(within(detail).getByText('https://theagentcy.app/api/mcp')).toBeTruthy();
+    expect(within(detail).getByText(t('connections.scopeGlobalShort'))).toBeTruthy();
+    expect(within(detail).getByText(t('connections.disconnect'))).toBeTruthy();
+    expect(within(detail).queryByText(t('connections.reenter'))).toBeNull();
+  });
+
+  it('una vencida muestra su motivo y ofrece volver a entrar, y nombra la marca dueña', () => {
+    render(<ConnectionsContent {...props({ connections: [ofBrand], selectedId: 'con_b' })} />);
+    const detail = document.querySelector('.connection-detail') as HTMLElement;
+    expect(within(detail).getByText(t('connections.scopeBrandShort', { brand: 'Maldita Poesía' }))).toBeTruthy();
+    expect(detail.textContent).toContain('la sesión venció y no se pudo renovar');
+    expect(within(detail).getByText(t('connections.reenter'))).toBeTruthy();
+    expect(within(detail).queryByText(t('connections.disconnect'))).toBeNull();
+  });
+
+  it('la cuenta sólo aparece cuando el servidor dijo alguna', () => {
+    const { rerender } = render(<ConnectionsContent {...props({ connections: [global], selectedId: 'con_g' })} />);
+    expect(screen.queryByText(t('connections.accountLabel'))).toBeNull();
+    rerender(<ConnectionsContent {...props({ connections: [connection({ ...global, identity: 'ads@estudio.com' })], selectedId: 'con_g' })} />);
+    expect(screen.getByText(t('connections.accountLabel'))).toBeTruthy();
+    expect(screen.getByText('ads@estudio.com')).toBeTruthy();
   });
 });
 
-describe('Agregar conexión', () => {
-  it('desde Ajustes el alcance es global y AVISA que toca a todas las marcas', () => {
-    render(<AddConnection brandId={null} busy={false} needsClientId={false} onCancel={() => {}} onConnect={() => {}} />);
-    const select = screen.getByLabelText(t('connections.scopeLabel')) as HTMLSelectElement;
-    expect(select.value).toBe('global');
-    // Desde Ajustes no hay a qué marca acotarlo, así que la opción no existe.
-    expect(select.disabled).toBe(true);
-    expect(screen.getByText(t('connections.scopeGlobalWarning'))).toBeTruthy();
+describe('Agregar conexión: un diálogo, con el alcance adentro', () => {
+  const dialog = (over: Partial<Parameters<typeof AddConnectionDialog>[0]> = {}) => render(<AddConnectionDialog
+    brands={brands} initial={{ url: '', name: '' }} busy={false} needsClientId={false}
+    onCancel={() => {}} onConnect={() => {}} {...over} />);
+
+  it('es un modal, como el de sumar un miembro', () => {
+    dialog();
+    const modal = screen.getByRole('dialog');
+    expect(modal.getAttribute('aria-modal')).toBe('true');
+    expect(within(modal).getByText(t('connections.add'))).toBeTruthy();
   });
 
-  it('desde una marca arranca en "sólo esta marca" y explica que le gana a la global', () => {
-    render(<AddConnection brandId="brd_1" busy={false} needsClientId={false} onCancel={() => {}} onConnect={() => {}} />);
-    const select = screen.getByLabelText(t('connections.scopeLabel')) as HTMLSelectElement;
-    expect(select.value).toBe('brand');
-    expect(select.disabled).toBe(false);
-    expect(screen.getByText(t('connections.scopeBrandHelp'))).toBeTruthy();
+  it('arranca en todas las marcas y el selector de marca no existe todavía', () => {
+    dialog();
+    const scope = screen.getByLabelText(t('connections.scopeLabel')) as HTMLSelectElement;
+    expect(scope.value).toBe('global');
+    expect([...scope.options].map(o => o.textContent)).toEqual([t('connections.scope.global'), t('connections.scope.brand')]);
+    expect(screen.queryByLabelText(t('connections.brandLabel'))).toBeNull();
+  });
+
+  it('elegir "Una marca" abre el selector con las marcas y manda esa marca al entrar', () => {
+    const onConnect = vi.fn();
+    dialog({ initial: { url: 'https://theagentcy.app/api/mcp', name: '' }, onConnect });
+    fireEvent.change(screen.getByLabelText(t('connections.scopeLabel')), { target: { value: 'brand' } });
+    const picker = screen.getByLabelText(t('connections.brandLabel')) as HTMLSelectElement;
+    expect([...picker.options].map(o => o.textContent)).toEqual(['Maldita Poesía', 'Ámbar']);
+    fireEvent.change(picker, { target: { value: 'brd_2' } });
+    fireEvent.click(screen.getByText(t('connections.connect')).closest('button')!);
+    expect(onConnect).toHaveBeenCalledWith(expect.objectContaining({ scope: 'brand', brandId: 'brd_2', name: 'theagentcy' }));
+  });
+
+  it('una conexión para todas las marcas no manda ninguna marca', () => {
+    const onConnect = vi.fn();
+    dialog({ initial: { url: 'https://theagentcy.app/api/mcp', name: '' }, onConnect });
+    fireEvent.click(screen.getByText(t('connections.connect')).closest('button')!);
+    expect(onConnect).toHaveBeenCalledWith(expect.objectContaining({ scope: 'global', brandId: null }));
+  });
+
+  it('no deja entrar sin una dirección http(s)', () => {
+    dialog();
+    expect((screen.getByText(t('connections.connect')).closest('button') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('el id de cliente sólo aparece cuando el servidor no da de alta clientes solo', () => {
-    const { rerender } = render(<AddConnection brandId={null} busy={false} needsClientId={false} onCancel={() => {}} onConnect={() => {}} />);
-    expect(screen.queryByLabelText(t('connections.clientIdLabel'))).toBeNull();
-    rerender(<AddConnection brandId={null} busy={false} needsClientId onCancel={() => {}} onConnect={() => {}} />);
+    dialog({ needsClientId: true });
     expect(screen.getByLabelText(t('connections.clientIdLabel'))).toBeTruthy();
-    expect(screen.getByText(t('connections.clientIdHelp'))).toBeTruthy();
   });
 
   it('propone un nombre a partir del dominio, así nadie tiene que inventarlo', () => {
@@ -142,51 +187,182 @@ describe('Agregar conexión', () => {
     expect(suggestedName('https://www.facebook.com/ads')).toBe('facebook');
     expect(suggestedName('no es una url')).toBe('');
   });
+});
 
-  it('no deja conectar sin una URL http(s)', () => {
-    const onConnect = vi.fn();
-    render(<AddConnection brandId={null} busy={false} needsClientId={false} onCancel={() => {}} onConnect={onConnect} />);
-    const connect = screen.getByText(t('connections.connect')).closest('button') as HTMLButtonElement;
-    expect(connect.disabled).toBe(true);
+/**
+ * K3: EL ÁREA DE LA MARCA QUEDA LIMPIA.
+ *
+ * Una conexión es una cuenta con un servidor MCP: algo técnico, que se
+ * configura una vez. La vista Contexto es el día a día de la marca. Mezclarlas
+ * era el error, así que el candado mira el código: si alguien vuelve a colgar
+ * `ConnectionsView` de la pantalla de la marca, esto falla.
+ */
+describe('K3: Contexto sin conexiones', () => {
+  const app = readFileSync(join(process.cwd(), 'src', 'App.tsx'), 'utf8');
+
+  it('App no importa ni dibuja ConnectionsView en ninguna vista de la marca', () => {
+    expect(app.length).toBeGreaterThan(1000);
+    expect(app).not.toContain('ConnectionsView');
+  });
+
+  it('la vista Contexto tampoco las nombra por su cuenta', () => {
+    const context = readFileSync(join(process.cwd(), 'src', 'ContextView.tsx'), 'utf8');
+    expect(context.length).toBeGreaterThan(500);
+    expect(context).not.toContain('Connection');
   });
 });
 
-describe('Importación única del registro del CLI', () => {
-  const importable: ImportableConnection = { runtime: 'claude', name: 'the-agentcy', url: 'https://theagentcy.app/api/mcp', suggestedScope: 'brand', alreadyImported: false };
+/**
+ * K2: EL REGISTRO DE LOS CLI ES UN BLOQUE SECUNDARIO, NO UNA PANTALLA.
+ *
+ * "Herramientas (MCP)" era una sección entera de Ajustes para mostrar lo que
+ * Claude Code y Codex tienen anotado por su cuenta. Eso no es una pantalla: es
+ * una nota al pie de Conexiones, plegada, que se abre el día que alguien
+ * quiere traerse algo de un CLI.
+ */
+const importable: ImportableConnection = {
+  runtime: 'claude', name: 'the-agentcy', url: 'https://theagentcy.app/api/mcp', suggestedScope: 'brand', alreadyImported: false,
+};
 
-  it('ofrece importar y explica que los tokens del CLI no se copian', () => {
+describe('K2: "De tus CLI", plegado al pie', () => {
+  it('es un <details> CERRADO: no ocupa la pantalla de nadie que no lo pidió', () => {
     render(<ConnectionsContent {...props({ importable: [importable] })} />);
-    expect(screen.getByText(t('connections.importHead'))).toBeTruthy();
-    expect(screen.getByText(t('connections.importHelp'))).toBeTruthy();
-    expect(screen.getByText('the-agentcy')).toBeTruthy();
-    expect(screen.getByText(t('connections.import'))).toBeTruthy();
+    const block = document.querySelector('details.connections-cli') as HTMLDetailsElement;
+    expect(block).toBeTruthy();
+    expect(block.open).toBe(false);
+    expect(within(block).getByText(t('connections.importHead'))).toBeTruthy();
   });
 
-  it('sin nada que importar, la sección no existe', () => {
+  it('lista lo anotado, con importar y el tacho para quitarlo del registro', () => {
+    const onImport = vi.fn();
+    const onForget = vi.fn();
+    render(<ConnectionsContent {...props({ importable: [importable], onImport, onForget })} />);
+    const block = document.querySelector('details.connections-cli') as HTMLElement;
+    expect(within(block).getByText('the-agentcy')).toBeTruthy();
+    expect(within(block).getByText('https://theagentcy.app/api/mcp')).toBeTruthy();
+    fireEvent.click(within(block).getByText(t('connections.import')).closest('button')!);
+    expect(onImport).toHaveBeenCalledWith(importable);
+    fireEvent.click(within(block).getByLabelText(t('connections.forget', { name: 'the-agentcy' })));
+    expect(onForget).toHaveBeenCalledWith(importable);
+  });
+
+  it('sin nada anotado lo dice, en vez de dejar un bloque vacío', () => {
     render(<ConnectionsContent {...props()} />);
-    expect(screen.queryByText(t('connections.importHead'))).toBeNull();
+    expect(screen.getByText(t('connections.cliEmpty'))).toBeTruthy();
+  });
+
+  it('la advertencia es UNA línea gris, no un párrafo', () => {
+    render(<ConnectionsContent {...props()} />);
+    const line = screen.getByText(t('connections.authorization'));
+    expect(line.className).toContain('footnote');
+    expect(t('connections.authorization').length).toBeLessThan(120);
   });
 });
 
-describe('copy fija', () => {
-  it('cada clave de conexiones existe en los dos idiomas y ninguna se repite tal cual', () => {
-    const keys = [
-      'connections.title', 'connections.leadGlobal', 'connections.leadBrand', 'connections.add',
-      'connections.connect', 'connections.reenter', 'connections.disconnect', 'connections.import',
-      'connections.state.connected', 'connections.state.expired', 'connections.state.error', 'connections.state.disconnected',
-      'connections.scope.global', 'connections.scope.brand', 'connections.scopeGlobalWarning',
-      'connections.inheritedHead', 'connections.ownAccount', 'connections.clientIdLabel',
-    ] as const;
-    for (const key of keys) {
-      const es = formatMessage('es-AR', key, { brand: 'X', name: 'X', url: 'X', identity: '' });
-      const en = formatMessage('en-US', key, { brand: 'X', name: 'X', url: 'X', identity: '' });
-      expect(es.length, key).toBeGreaterThan(0);
-      expect(en.length, key).toBeGreaterThan(0);
+describe('K2: Herramientas (MCP) se fue del menú de Ajustes', () => {
+  const settings = readFileSync(join(process.cwd(), 'src', 'SettingsScreen.tsx'), 'utf8');
+
+  it('la sección ya no existe ni se puede navegar a ella', () => {
+    expect(settings.length).toBeGreaterThan(1000);
+    expect(settings).not.toContain("'tools'");
+    expect(settings).not.toContain('ToolsView');
+  });
+
+  it('la pantalla que la dibujaba tampoco', () => {
+    expect(existsSync(join(process.cwd(), 'src', 'ToolsView.tsx'))).toBe(false);
+  });
+
+  it('y su nombre salió de los dos idiomas', () => {
+    expect(Object.keys(catalogs['es-AR'])).not.toContain('settings.tools');
+    expect(Object.keys(catalogs['en-US'])).not.toContain('settings.tools');
+  });
+});
+
+/**
+ * K4: CADA CLASE QUE ESTA PANTALLA PINTA TIENE UNA REGLA QUE LA PINTA.
+ *
+ * Mismo candado que la superficie del equipo (`team-styles.dom.test.tsx`): una
+ * clase sin regla no es un estilo pendiente, es una promesa que el componente
+ * hace y la hoja no cumple. Y al revés: las reglas de la pantalla vieja se van
+ * con ella, porque una regla sin componente envejece igual de mal.
+ */
+describe('K4: el CSS de Conexiones', () => {
+  const css = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8');
+  const lines = css.split(/\r?\n/);
+
+  const ruleBodyFor = (className: string): string | null => {
+    const needle = '.' + className;
+    for (const line of lines) {
+      const brace = line.indexOf('{');
+      if (brace < 0) continue;
+      const selector = line.slice(0, brace);
+      if (!new RegExp(`\\${needle}(?![\\w-])`).test(selector)) continue;
+      const body = line.slice(brace + 1, line.lastIndexOf('}'));
+      if (body.trim().length > 0) return body;
+    }
+    return null;
+  };
+
+  const CLASSES = [
+    'connections-actions', 'connections-list', 'connection-row',
+    'connection-detail', 'connection-detail-head', 'connection-detail-facts', 'connection-detail-actions',
+    'connections-cli', 'connections-cli-list', 'connections-cli-row',
+  ];
+
+  it('la hoja se leyó de verdad', () => {
+    expect(lines.length).toBeGreaterThan(50);
+  });
+
+  for (const className of CLASSES) {
+    it(`.${className} tiene una regla con declaraciones`, () => {
+      const body = ruleBodyFor(className);
+      expect(body, `.${className} no tiene ninguna regla en styles.css`).not.toBeNull();
+      expect(body!.length, `.${className} tiene una regla vacía`).toBeGreaterThan(3);
+    });
+  }
+
+  it('las reglas de las dos pantallas viejas se fueron con ellas', () => {
+    for (const dead of ['connection-card', 'connection-dot', 'connection-when', 'connections-subhead', 'mcp-card', 'mcp-dot', 'mcp-form', 'mcp-detail', 'tools-view']) {
+      expect(css, `.${dead} sigue pintado y ya no lo dibuja nadie`).not.toContain('.' + dead);
     }
   });
 
-  it('el aviso de alcance global nombra a TODAS las marcas en los dos idiomas', () => {
-    expect(formatMessage('es-AR', 'connections.scopeGlobalWarning')).toContain('TODAS');
-    expect(formatMessage('en-US', 'connections.scopeGlobalWarning')).toContain('EVERY');
+  it('sólo tokens: ninguna regla nueva trae un color literal ni un tamaño suelto', () => {
+    for (const className of CLASSES) {
+      const body = ruleBodyFor(className)!;
+      expect(body, className).not.toMatch(/#[0-9a-fA-F]{3}/);
+      expect(body, className).not.toContain('--text-xs');
+    }
+  });
+});
+
+/** La copy existe y está TRADUCIDA en los dos idiomas: nada en español adentro del inglés. */
+describe('K4: la copy de Conexiones', () => {
+  const keys = [
+    'connections.title', 'connections.lead', 'connections.empty', 'connections.add', 'connections.refresh',
+    'connections.connect', 'connections.reenter', 'connections.disconnect', 'connections.import',
+    'connections.line', 'connections.scopeGlobalShort', 'connections.scopeBrandShort',
+    'connections.agoMin', 'connections.agoHours', 'connections.agoDays',
+    'connections.accountLabel', 'connections.stateLabel', 'connections.brandLabel', 'connections.close',
+    'connections.scope.global', 'connections.scope.brand', 'connections.scopeLabel',
+    'connections.state.connected', 'connections.state.expired', 'connections.state.error', 'connections.state.disconnected',
+    'connections.importHead', 'connections.importHelp', 'connections.cliEmpty', 'connections.authorization', 'connections.forget',
+  ] as const;
+
+  it('cada clave existe en los dos idiomas', () => {
+    expect(keys.length).toBeGreaterThan(10);
+    for (const key of keys) {
+      expect(formatMessage('es-AR', key, { brand: 'X', name: 'X', count: 1, scope: 'X', detail: 'X' }).length, key).toBeGreaterThan(0);
+      expect(formatMessage('en-US', key, { brand: 'X', name: 'X', count: 1, scope: 'X', detail: 'X' }).length, key).toBeGreaterThan(0);
+    }
+  });
+
+  it('el inglés no arrastra literales del español', () => {
+    for (const key of keys) {
+      const en = formatMessage('en-US', key, { brand: 'X', name: 'X', count: 1, scope: 'X', detail: 'X' });
+      for (const literal of ['Marca:', 'hace ', 'Cuenta', 'Todas las marcas', 'Una marca', 'Entrar', 'Actualizar']) {
+        expect(en, `${key} en inglés`).not.toContain(literal);
+      }
+    }
   });
 });

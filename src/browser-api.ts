@@ -331,7 +331,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   // Las Conexiones MCP necesitan el gateway local, que vive en el proceso
   // principal: en la previsualización del navegador la lista está vacía y todo
   // lo demás dice honestamente que no está disponible.
-  listConnections: async () => [], connectConnection: unavailable, reconnectConnection: unavailable,
+  listConnections: async () => [], listAllConnections: async () => [], connectConnection: unavailable, reconnectConnection: unavailable,
   disconnectConnection: unavailable, deleteConnection: unavailable, listImportableConnections: async () => [],
   getPrimaryAgent: async () => null, setPrimaryAgent: unavailable, listAgentRuntimes: async () => [], addAgentAccount: unavailable, removeAgentAccount: unavailable, startAccountLogin: unavailable, logoutAccount: unavailable,
   // No CLI to ask in a browser tab: no catalog, and no pretending there is one.
