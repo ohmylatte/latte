@@ -1,7 +1,7 @@
 import { translate as t } from '../i18n';
 import { memberDisplayName } from './names';
 import type {
-  AgentRole, CoordinationAskView, CoordinationDispatchStatus, CoordinationGateView, CoordinationHireView,
+  AgentRole, ChatMessage, CoordinationAskView, CoordinationDispatchStatus, CoordinationGateView, CoordinationHireView,
   CoordinationLogEntryView, CoordinationMessageView, CoordinationRunView, TeamMember,
 } from '../../shared/contracts';
 
@@ -44,7 +44,15 @@ export type InboxEventKind =
   /** Su pregunta ya fue contestada. */
   | 'answer'
   /** Se sumó al equipo. */
-  | 'hired';
+  | 'hired'
+  /**
+   * La persona le escribió. Sólo existe en el hilo del coordinador: el modo
+   * Equipo ES su conversación, así que su línea de tiempo tiene que traer
+   * también lo que se habló, intercalado por hora con los hechos del run.
+   */
+  | 'said'
+  /** El coordinador contestó. El otro lado de `said`. */
+  | 'replied';
 
 export interface InboxEvent {
   /** Estable y único dentro del hilo de un miembro: sirve de `key` de React. */
@@ -109,6 +117,19 @@ export interface InboxInput {
   messages?: readonly CoordinationMessageView[];
   asks?: readonly CoordinationAskView[];
   hires?: readonly CoordinationHireView[];
+  /**
+   * La conversación de ESTE miembro con la persona, cuando la hay.
+   *
+   * Se pasa sólo para el hilo del coordinador, que es el único cuyo chat vive
+   * en el modo Equipo. Los demás siguen teniendo su conversación en su propia
+   * pestaña, y meterla acá duplicaría la misma charla en dos pantallas.
+   */
+  chat?: readonly ChatMessage[];
+}
+
+/** El texto de un mensaje de chat: sólo las partes de texto, que es lo que se lee. */
+function chatText(message: ChatMessage): string {
+  return message.parts.map((part) => (part.type === 'text' ? part.text : '')).filter((text) => text.trim() !== '').join('\n').trim();
 }
 
 /** La primera línea, recortada: un renglón del buzón es un renglón. */
@@ -162,6 +183,23 @@ export function inboxEvents(input: InboxInput, memberId: string): InboxEvent[] {
     if (hire.memberId !== memberId) continue;
     out.push({ id: `hire:${hire.memberId}`, memberId, kind: 'hired', at: hire.hiredAt, text: '' });
   }
+  // La conversación, intercalada por hora como un hecho más. Un mensaje vacío
+  // —una respuesta que todavía no escribió una sola palabra, un turno que sólo
+  // trajo herramientas— no es una línea: no se dibuja un renglón en blanco.
+  for (const message of input.chat ?? []) {
+    if (message.chatId !== memberId) continue;
+    if (message.role !== 'user' && message.role !== 'assistant') continue;
+    const text = chatText(message);
+    if (!text) continue;
+    out.push({
+      id: `${message.id}:${message.role === 'user' ? 'said' : 'replied'}`,
+      memberId,
+      kind: message.role === 'user' ? 'said' : 'replied',
+      at: message.createdAt,
+      text: firstLine(text),
+      detail: text,
+    });
+  }
   // Orden estable: mismo instante, mismo id, mismo orden en dos renders.
   return out.sort((a, b) => (a.at === b.at ? a.id.localeCompare(b.id) : a.at.localeCompare(b.at)));
 }
@@ -204,6 +242,8 @@ export function describeInboxEvent(event: InboxEvent, team: readonly TeamMember[
     case 'ask': return text ? t('team.inbox.ask', { text }) : t('team.inbox.askBare');
     case 'answer': return text ? t('team.inbox.answer', { text }) : t('team.inbox.answerBare');
     case 'hired': return t('team.inbox.hired');
+    case 'said': return text ? t('team.inbox.said', { text }) : t('team.inbox.saidBare');
+    case 'replied': return text ? t('team.inbox.replied', { text }) : t('team.inbox.repliedBare');
     default: {
       const exhaustive: never = event.kind;
       return exhaustive;

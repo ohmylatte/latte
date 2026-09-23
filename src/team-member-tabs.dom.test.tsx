@@ -37,7 +37,8 @@ const member = (id: string, roleName: string, status: TeamMemberStatus = 'idle')
   label: 'Claude', status, tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 });
 const run = (patch: Partial<CoordinationRunView> = {}): CoordinationRunView => ({
-  id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'cm',
+  // El coordinador vive fuera de esta tira: su conversacion ES el modo Equipo.
+  id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'coord',
   budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
   suspendReason: null, request: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
   tasksDone: 0, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0, ...patch,
@@ -108,10 +109,19 @@ describe('C2: la pestaña de miembro tiene la MISMA anatomía que la lista', () 
     expect(reported.container.querySelector('.team-tab .coord-dot-ok')).not.toBeNull();
   });
 
-  /** El coordinador lleva su ícono, igual que en la lista del modo Equipo. */
-  it('el coordinador se nombra con un ícono', () => {
-    const { container } = mount({ coordinationRun: run() });
-    expect(container.querySelector('.team-tab .coord-row-coordinator')).not.toBeNull();
+  /**
+   * EL COORDINADOR NO TIENE PESTAÑA, Y POR ESO NO TIENE ÍCONO ACÁ.
+   *
+   * Antes llevaba el suyo al lado del nombre, igual que en la lista del modo
+   * Equipo. Eso era el sintoma: el coordinador era una pestaña más en un rail
+   * que no lo esperaba, compitiendo por el alto con los demás mientras la vida
+   * del equipo pasaba en la otra mitad. Su conversación ES el modo Equipo; el
+   * ícono sigue existiendo, en la fila de la lista de allá.
+   */
+  it('el coordinador no tiene pestaña en la tira, ni el ícono que la nombraba', () => {
+    const { container } = mount({ coordinationRun: run({ coordinatorMemberId: 'cm' }) });
+    expect(container.querySelector('.team-tab-strip .team-tab')).toBeNull();
+    expect(container.querySelector('.team-tab .coord-row-coordinator')).toBeNull();
   });
 });
 

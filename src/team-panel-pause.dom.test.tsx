@@ -115,7 +115,11 @@ describe('"Pausar equipo" (additive, autonomous-coordination Phase 7 task 7.7)',
   it('el mismo control en inglés, sin nada en castellano', async () => {
     localStorage.setItem('latte-ui-locale', 'en-US');
     const { container } = render(<I18nProvider><TeamPanel {...panelProps()} coordinationRun={run()} /></I18nProvider>);
-    fireEvent.click(container.querySelector('.team-rail-team')!);
+    // El equipo de este fixture es el coordinador solo: sin nadie mas con quien
+    // hablar no hay dos modos que alternar, asi que el toggle no se dibuja y el
+    // modo Equipo ya es la pantalla. Con mas miembros, el segmento vuelve.
+    const toTeam = container.querySelector('.team-rail-team');
+    if (toTeam) fireEvent.click(toTeam);
     await waitFor(() => expect(container.querySelector('.team-pause-coordination')?.getAttribute('aria-label')).toBe('Pause the team'));
     expect(container.textContent).not.toContain('Pausar');
     localStorage.removeItem('latte-ui-locale');

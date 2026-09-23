@@ -2,10 +2,13 @@ import { useState } from 'react';
 import { translate as t } from './i18n';
 import { MessageSquare, UserPlus, Users } from 'lucide-react';
 import type {
-  AgentRole, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
+  AgentRole, ChatMessage, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
   CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport,
   CoordinationMessageView, CoordinationRunTaskView, CoordinationRunView, TeamMember, Work,
 } from '../shared/contracts';
+import type { ChatCoordinationProps } from './ChatPane';
+import { ChatComposer } from './ChatComposer';
+import { TeamCardsCollapsible } from './coordination/TeamCards';
 import { describeCoordinationSupport, describeMemorySupport, memberCoordinationState, type LatteMode } from './TeamPanel';
 import { inboxEvents, pendingForMember } from './coordination/inbox';
 import { RunHeader } from './coordination/RunHeader';
@@ -82,6 +85,33 @@ export interface TeamViewProps {
   coordinationBudget?: CoordinationBudgetView;
   onSetCoordinationBudget?: (maxDispatches: number) => void;
   coordinatorGrant?: string | null;
+  /**
+   * EL CHAT DE EQUIPO: a quien le llega lo que se escribe abajo.
+   *
+   * Es el coordinador del run; sin run, el coordinador designado del trabajo o
+   * el Asistente. No hay destinatario que elegir y no existe un "a todos": el
+   * coordinador ES el "a todos" — le pedis al equipo y el despacha. Sin esto
+   * cableado el modo Equipo no dibuja composer, que es como estaba.
+   */
+  composer?: {
+    /** La sesion destino. En Latte el id de un chat ES el id de su miembro. */
+    sessionId: string;
+    onError: (error: string) => void;
+    onAttachFiles?: () => Promise<string[]>;
+    /** Despierta al destinatario cuando no tiene proceso vivo (cerrar un run lo apaga). */
+    onBeforeSend?: () => Promise<void>;
+  };
+  /**
+   * La conversacion del coordinador con la persona, para intercalarla por hora
+   * en su linea de tiempo. Sale del store del chat, que es de quien navega.
+   */
+  coordinatorChat?: readonly ChatMessage[];
+  /**
+   * Las tarjetas del equipo —propuesta, presupuesto, despacho, pregunta—, que
+   * salian en el chat del coordinador y ahora salen donde vive esa
+   * conversacion. Es el MISMO paquete que recibe `ChatPane`.
+   */
+  chatCoordination?: ChatCoordinationProps;
 }
 
 /**
@@ -120,7 +150,17 @@ export function TeamView(props: TeamViewProps) {
    * que es lo que ya habia.
    */
   const taskTitle = (taskId: string) => titleOf((props.coordinationTasks ?? []).find((task) => task.id === taskId)?.spec);
-  const thread = selected ? inboxEvents(input, selected) : [];
+  /**
+   * QUIEN COORDINA, RESUELTO UNA VEZ.
+   *
+   * El del run manda; sin run, el permiso del trabajo. Es quien recibe lo que
+   * se escribe abajo y el unico cuyo hilo trae tambien su conversacion.
+   */
+  const coordinatorId = run?.coordinatorMemberId ?? props.coordinatorGrant ?? null;
+  const readingCoordinator = Boolean(selected && selected === coordinatorId);
+  // La conversacion entra SOLO en el hilo del coordinador: los demas la tienen
+  // en su propia pestana, y meterla en los dos seria la misma charla dos veces.
+  const thread = selected ? inboxEvents(readingCoordinator ? { ...input, chat: props.coordinatorChat } : input, selected) : [];
   const coordinatorName = run?.coordinatorMemberId
     ? memberDisplayName(run.coordinatorMemberId, team, null, roles)
     : (props.coordinatorGrant ? memberDisplayName(props.coordinatorGrant, team, null, roles) : '');
@@ -202,11 +242,37 @@ export function TeamView(props: TeamViewProps) {
         {(run?.active || openedMember) && selected && <MemberDetail memberId={selected} team={team} roles={roles} run={run}
           events={thread} tasks={props.coordinationTasks}
           signal={memberSignal({ ...input, team, roles, run, taskTitle }, selected)}
-          formatTime={hour} onOpenChat={props.onOpenChat}
+          formatTime={hour} onOpenChat={readingCoordinator ? undefined : props.onOpenChat}
           openAsks={(props.coordinationAsks ?? []).filter((ask) => ask.memberId === selected && (run == null || run.active))}
           onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now} />}
       </div>
     </div>
+    {/* Las tarjetas del equipo, arriba del composer y fuera del scroll de la
+        lista, por el mismo motivo que en el chat de un miembro: una aprobacion
+        que se va hacia arriba con los mensajes es una aprobacion que nadie ve. */}
+    {props.chatCoordination && coordinatorId && <TeamCardsCollapsible
+      memberId={coordinatorId}
+      coordinationRun={props.chatCoordination.coordinationRun}
+      gates={props.chatCoordination.gates}
+      openAsks={props.chatCoordination.openAsks}
+      roles={roles}
+      team={team}
+      formatDate={props.formatDate}
+      onResolveGate={props.chatCoordination.onResolveGate}
+      onAnswerAsk={props.chatCoordination.onAnswerAsk}
+      pending={props.chatCoordination.coordinationPending}
+      onSelectMember={props.onSelectMember}
+      formatTime={props.formatTime}
+      now={props.now}
+      /* "Ver equipo" no se ofrece: ya estas en el equipo. */
+      teamSeen={props.chatCoordination.teamSeen}
+      initiallyExpanded={props.chatCoordination.initiallyExpanded}
+    />}
+    {/* EL COMPOSER, AL PIE. Un mensaje aca va al coordinador: eso es hablarle
+        al equipo. Hablarle a UNO sigue siendo su hilo, que se abre de la lista. */}
+    {props.composer && <ChatComposer className="team-view-composer" sessionId={props.composer.sessionId}
+      onError={props.composer.onError} onAttachFiles={props.composer.onAttachFiles}
+      onBeforeSend={props.composer.onBeforeSend} />}
     {props.mode === 'advanced' && <TeamAdvanced {...props} />}
   </div>;
 }

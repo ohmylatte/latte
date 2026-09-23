@@ -174,12 +174,22 @@ describe('B3.1: el buzón ya NO vive en la columna del chat', () => {
     expect(source).not.toContain('team-thread');
   });
 
-  it('el contador de pendientes va en la pestaña del miembro al que le tocan', () => {
+  /**
+   * El contador sigue yendo a la pestaña del miembro al que le toca, con una
+   * sola diferencia: el coordinador ya no tiene pestaña. Su gate no se pierde
+   * —lo cuenta el contador del rail y la tarjeta sale en el modo Equipo, que
+   * ES su conversación—, pero no puede aparecer en una tira de la que salió.
+   */
+  it('el contador de pendientes va en la pestaña del miembro al que le tocan, y el coordinador ya no tiene una', () => {
     const { container } = mount({ ...wired, chats: {} });
     const tabs = [...container.querySelectorAll('.team-tab')];
+    expect(tabs.some((tab) => tab.textContent?.includes('Coordinador'))).toBe(false);
     const withCount = tabs.filter((tab) => tab.querySelector('.team-tab-pending'));
-    expect(withCount).toHaveLength(2); // el coordinador (su gate) y quien pregunto
+    expect(withCount).toHaveLength(1); // quien pregunto; el gate del coordinador vive en el modo Equipo
+    expect(withCount[0]!.textContent).toContain('Paid Media');
     expect(container.querySelectorAll('.team-tab-pending')[0]!.textContent).toBe('1');
+    // Y el pendiente del coordinador sigue contado, en el boton del rail.
+    expect(container.querySelector('.team-rail-pending')!.textContent).toBe('2');
   });
 
   /** C7: el estado del run vive en el encabezado del pedido, en el modo Equipo. */

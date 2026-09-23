@@ -34,8 +34,12 @@ const member: TeamMember = {
   runtime: 'claude', model: null, accountId: null, label: 'Claude', status: 'working', tier: 'balanced',
   usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 };
+  /* El coordinador ya no tiene pestana --su conversacion ES el modo Equipo--,
+     asi que quien coordina este run es alguien de afuera de esta tira. Lo que
+     este archivo vigila es la anatomia de la pestana de un miembro, y eso es
+     justamente lo que se mira sobre alguien que no coordina. */
 const run: CoordinationRunView = {
-  id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'cm',
+  id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'coord',
   budget: { maxDispatches: 10, unlimitedConfirmedAt: null }, budgetInvalid: false, planApproved: true,
   suspendReason: null, request: null, active: true, createdAt: '', updatedAt: '', lastEventAt: '',
   tasksDone: 0, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0,
