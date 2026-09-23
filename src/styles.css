@@ -1348,3 +1348,11 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 /* El resto no se esconde: se cuenta, y el renglon lleva a Inicio, que es la
    pantalla donde estan todos los equipos, vivos y cerrados. */
 .active-teams-strip-more{width:100%;font-size:var(--text-sm)!important;color:var(--muted-soft)!important;padding:4px 8px}
+
+/* EL COMPOSER DEL MODO EQUIPO: el mismo de la conversacion, al pie.
+   No cede alto (la lista y el hilo scrollean arriba, el cuadro de texto se
+   queda donde la mano lo busca) y se despega de lo que tiene encima con el
+   mismo filete que separa la lista del hilo. Todo lo demas --el borde, el
+   padding, los dos botones-- lo trae `.prompt-form`: hay un solo composer. */
+.team-view-composer{flex-shrink:0;margin-top:0;border-top:1px solid var(--line);padding-top:8px}
+.team-view .team-cards,.team-view .team-cards-collapsed{flex-shrink:0}

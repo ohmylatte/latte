@@ -27,6 +27,15 @@ const member: TeamMember = {
   tier: 'balanced', usage: EMPTY_USAGE, continuedFrom: null, createdAt: '', updatedAt: '',
 };
 const chat: ChatSession = { id: 'm1', workId: 'w1', provider: 'opencode', model: null, accountId: null, label: 'OpenCode', resumed: false, roleId: 'strategist', roleName: 'Estratega', historyRecovered: false };
+/**
+ * El segundo miembro existe para que haya un "uno" con quien hablar: desde que
+ * la conversacion del coordinador ES el modo Equipo, su pestana salio de la
+ * tira, y un equipo donde el unico miembro coordina no ofrece el toggle porque
+ * no hay dos modos que alternar. Lo que este archivo vigila --que el estado del
+ * run se dibuje UNA sola vez, y en el modo Equipo-- no cambia.
+ */
+const other: TeamMember = { ...member, id: 'm2', roleId: 'copywriter', roleName: 'Redactor', initial: 'R' };
+const otherChat: ChatSession = { ...chat, id: 'm2', roleId: 'copywriter', roleName: 'Redactor' };
 
 const run: CoordinationRunView = {
   id: 'run1', workId: 'w1', status: 'running', coordinatorMemberId: 'm1',
@@ -37,7 +46,7 @@ const run: CoordinationRunView = {
 
 function panelProps(mode: LatteMode = 'simple') {
   return {
-    work, team: [member], chats: { m1: chat } as Record<string, ChatSession>, selectedId: 'm1', roles,
+    work, team: [member, other], chats: { m1: chat, m2: otherChat } as Record<string, ChatSession>, selectedId: 'm2', roles,
     primaryLabel: 'OpenCode', primaryDetail: 'Listo', primaryReady: true, checking: false,
     primaryRuntime: 'opencode' as ChatRuntime, primaryAccountId: null, primaryModel: null,
     choices: [] as RuntimeChoice[], busy: false, isDesktop: false,

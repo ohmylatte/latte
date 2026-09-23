@@ -115,8 +115,10 @@ describe('C5: el run terminado muestra lo que el equipo dejó', () => {
     const { container } = mount(wired);
     const head = container.querySelector('.coord-head')!;
     expect(head.querySelector('.coord-tic-ok')).not.toBeNull();
-    expect(head.querySelector('.coord-head-sub')!.textContent).toContain('Terminado a las');
-    expect(head.querySelector('.coord-progress-done')!.textContent).toBe('4 de 4 listas');
+    expect(head.querySelector('.coord-head-sub')!.textContent).toBe('Terminamos · 4 de 4');
+    // El rotulo de la barra se fue: "4 de 4 listas" decia, palabra por palabra,
+    // lo que el subtitulo ya dice. La barra llena lo muestra sin escribirlo.
+    expect(head.querySelector('.coord-progress-done')).toBeNull();
     expect(head.querySelector('.coord-progress-rest')!.textContent).toBe('0 fallidas');
     const bar = head.querySelector('[role="progressbar"]')!;
     expect(bar.getAttribute('aria-valuenow')).toBe('4');

@@ -1,4 +1,4 @@
-import { CircleCheck, CircleHelp, CircleX, FileText, Flag, MessageSquare, Send, UserPlus } from 'lucide-react';
+import { ArrowUpRight, CircleCheck, CircleHelp, CircleX, CornerDownLeft, FileText, Flag, MessageSquare, Send, UserPlus } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { translate as t } from '../i18n';
 import { CoordAvatar, CoordTime } from './anatomy';
@@ -103,6 +103,10 @@ function EventIcon({ kind }: { kind: InboxEvent['kind'] }) {
     case 'answer': return <span className="coord-tic coord-tic-ok"><CircleCheck size={14} /></span>;
     case 'hired': return <span className="coord-tic"><UserPlus size={14} /></span>;
     case 'sent': case 'received': return <span className="coord-tic"><MessageSquare size={14} /></span>;
+    // La conversacion con la persona: la flecha dice de que lado vino, y el
+    // acento no se gasta aca -- nada de esto te esta esperando.
+    case 'said': return <span className="coord-tic"><ArrowUpRight size={14} /></span>;
+    case 'replied': return <span className="coord-tic"><CornerDownLeft size={14} /></span>;
     default: return <span className="coord-tic"><Flag size={14} /></span>;
   }
 }
@@ -130,6 +134,8 @@ function eventTitle(event: InboxEvent, props: MemberDetailProps): string {
     case 'hired': return t('coord.event.hired', { role: self });
     case 'sent': return t('coord.event.sent', { role: other });
     case 'received': return t('coord.event.received', { role: other });
+    case 'said': return t('coord.event.said');
+    case 'replied': return t('coord.event.replied');
     default: {
       const exhaustive: never = event.kind;
       return exhaustive;

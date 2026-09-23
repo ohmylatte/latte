@@ -163,6 +163,12 @@ export function memberSignal(input: MemberSignalInput, memberId: string): Member
     }
     case 'hired':
       return { dot: 'idle', line: t('team.inbox.hired'), at: last.at, asks: 0, urgent: false };
+    // La conversacion con la persona no cambia el estado de nadie: nadie esta
+    // esperando nada por haber hablado. Se lee, y el punto sigue en gris.
+    case 'said':
+      return { dot: 'idle', line: t('coord.member.said'), at: last.at, asks: 0, urgent: false };
+    case 'replied':
+      return { dot: 'idle', line: t('coord.member.replied', { text: titleOf(last.text, 80) }), at: last.at, asks: 0, urgent: false };
     default: {
       const exhaustive: never = last.kind;
       return exhaustive;

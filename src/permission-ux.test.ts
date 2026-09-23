@@ -18,7 +18,10 @@ describe('work permission UX', () => {
     // este test seguía verde sin haber comparado nada real.
     const unread = pane.indexOf('conversation-new-messages');
     const slot = pane.indexOf('{beforeComposer}');
-    const composer = pane.indexOf('<form className="prompt-form"');
+    // El composer se extrajo a `ChatComposer` —es el MISMO que usa el modo
+    // Equipo, y dos copias son dos comportamientos que se separan—, asi que el
+    // ancla es donde se monta, no el `<form>` que ahora vive en el otro lado.
+    const composer = pane.indexOf('<ChatComposer');
     expect(unread).toBeGreaterThan(-1);
     expect(slot).toBeGreaterThan(-1);
     expect(composer).toBeGreaterThan(-1);
@@ -45,11 +48,17 @@ describe('work permission UX', () => {
   // adjunto deja el borrador escrito; lo que se verifica es eso.
   it('offers chat attachments with copy from the dictionaries and without sending on its own', () => {
     const pane = fs.readFileSync('src/ChatPane.tsx', 'utf8');
+    // El composer vive en su propio archivo desde que el modo Equipo usa el
+    // MISMO: lo que se vigila --copy de los diccionarios, adjuntar que no
+    // manda-- se mudo con el, y sigue siendo uno solo para las dos pantallas.
+    const composer = fs.readFileSync('src/ChatComposer.tsx', 'utf8');
     expect(pane).toContain('onAttachFiles?: () => Promise<string[]>');
-    expect(pane).toContain("t('chat.attach.label')");
-    expect(pane).toContain("t('chat.attach.note'");
-    expect(pane).not.toContain('Adjuntar archivos al trabajo');
-    // El único `sendChat` del panel es el del botón de enviar: adjuntar no manda.
-    expect(pane.match(/api\.sendChat\(/g)).toHaveLength(1);
+    expect(composer).toContain("t('chat.attach.label')");
+    expect(composer).toContain("t('chat.attach.note'");
+    expect(composer).not.toContain('Adjuntar archivos al trabajo');
+    // El unico `sendChat` es el del boton de enviar: adjuntar no manda. Y el
+    // panel no tiene ninguno propio: si lo tuviera, seria un segundo composer.
+    expect(composer.match(/api\.sendChat\(/g)).toHaveLength(1);
+    expect(pane).not.toContain('api.sendChat(');
   });
 });
