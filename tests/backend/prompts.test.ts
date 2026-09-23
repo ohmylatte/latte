@@ -49,12 +49,39 @@ describe('Marketing base prompt composition', () => {
   it('ships a base that covers the behaviours the product promises', () => {
     expect(pack).not.toBeNull();
     expect(catalog.hasBase).toBe(true);
-    const base = catalog.promptFor('assistant');
+    const assistant = catalog.promptFor('assistant');
     for (const [name, pattern] of BASE_MARKERS) {
-      expect(pattern.test(base), `base prompt is missing: ${name}`).toBe(true);
+      expect(pattern.test(assistant), `base prompt is missing: ${name}`).toBe(true);
     }
     // Compact on purpose: a long prompt per request is a cost and a distraction.
-    expect(base.length).toBeLessThan(7_500);
+    // Measured on the pack's base, which is what every role pays for: the
+    // assistant now layers its own rule on top and has its own ceiling below.
+    expect((pack?.base ?? '').trim().length).toBeLessThan(7_500);
+  });
+
+  /**
+   * THE ASSISTANT DOES NOT DO ANOTHER ROLE'S WORK.
+   *
+   * Real use: with a connection wired (The Agentcy), the owner asked for the
+   * pieces of a campaign and the assistant composed them itself -- the
+   * Community Manager's job -- instead of proposing coordination with the hire
+   * and dispatching. Having the tool is not having the role.
+   *
+   * Asserted line by line so a CRLF never breaks a marker, and the composed
+   * prompt keeps a ceiling of its own: it is charged on every message.
+   */
+  it('tells the neutral assistant to coordinate instead of doing another role work', () => {
+    const assistant = catalog.promptFor('assistant');
+    const lines = assistant.split(/\r?\n/).map((line) => line.trim());
+    const has = (pattern: RegExp) => lines.some((line) => pattern.test(line));
+    expect(has(/^# Another role's work is not yours$/), 'the section').toBe(true);
+    expect(has(/you do not do it yourself/), 'the rule itself').toBe(true);
+    expect(has(/latte_request_coordination.*including the hires/), 'the way out, with the hires').toBe(true);
+    expect(has(/grants access to a tool, never a role/), 'a connected tool does not grant a role').toBe(true);
+    // El techo del asistente es el de la base MÁS el presupuesto de su propia
+    // regla. Son dos cuentas distintas a propósito: la base la paga cada
+    // miembro en cada mensaje; esto lo paga sólo el punto de partida.
+    expect(assistant.length).toBeLessThan(7_500 + 700);
   });
 
   it('gives the neutral assistant the base and nothing role-specific', () => {
@@ -82,7 +109,11 @@ describe('Marketing base prompt composition', () => {
   it('degrades honestly when a build has no pack', () => {
     const empty = new RoleCatalog(null);
     expect(empty.hasBase).toBe(false);
-    expect(empty.promptFor('assistant')).toBe('');
+    // Sin pack no hay comportamiento de marketing que repartir. Lo único que
+    // queda es la regla propia del asistente, que no sale del pack: no hacer
+    // el trabajo de otro rol vale igual en un build sin disciplina cargada.
+    expect(empty.promptFor('assistant')).not.toContain('marketing, not on software');
+    expect(empty.promptFor('assistant')).toContain("Another role's work is not yours");
     expect(empty.list().map((r) => r.id)).toEqual(['assistant']);
   });
 
