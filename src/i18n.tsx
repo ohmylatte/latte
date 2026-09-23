@@ -911,7 +911,10 @@ const es = {
   'coord.empty.example': 'Coordiná al equipo y preparen el contenido del mes',
   'coord.empty.action': 'Pedirlo en el chat',
   'coord.empty.addRole': 'Sumar un rol',
-  'coord.done.at': 'Terminado a las {time}',
+  // El cierre del run es UNA linea: no la hora, sino que terminamos y cuanto
+  // de lo pedido se hizo. Fusiona lo que eran `coord.done.at` (la hora, que no
+  // es la noticia) y `coord.run.progress` (el avance, que si lo es).
+  'coord.done.together': 'Terminamos · {done} de {total}',
   'coord.cancelled.at': 'Cancelado a las {time}',
   'coord.done.counts': '{done} de {total} listas · {failed} fallidas',
   'coord.done.newRequest': 'Nuevo pedido',
@@ -1796,7 +1799,7 @@ const en: Record<MessageKey, string> = {
   'coord.empty.example': 'Coordinate the team and prepare this month of content',
   'coord.empty.action': 'Ask for it in the chat',
   'coord.empty.addRole': 'Add a role',
-  'coord.done.at': 'Finished at {time}',
+  'coord.done.together': 'We are done · {done} of {total}',
   'coord.cancelled.at': 'Cancelled at {time}',
   'coord.done.counts': '{done} of {total} done · {failed} failed',
   'coord.done.newRequest': 'New request',

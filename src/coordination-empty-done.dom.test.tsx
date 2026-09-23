@@ -115,7 +115,7 @@ describe('C5: el run terminado muestra lo que el equipo dejó', () => {
     const { container } = mount(wired);
     const head = container.querySelector('.coord-head')!;
     expect(head.querySelector('.coord-tic-ok')).not.toBeNull();
-    expect(head.querySelector('.coord-head-sub')!.textContent).toContain('Terminado a las');
+    expect(head.querySelector('.coord-head-sub')!.textContent).toBe('Terminamos · 4 de 4');
     expect(head.querySelector('.coord-progress-done')!.textContent).toBe('4 de 4 listas');
     expect(head.querySelector('.coord-progress-rest')!.textContent).toBe('0 fallidas');
     const bar = head.querySelector('[role="progressbar"]')!;

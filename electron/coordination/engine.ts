@@ -331,6 +331,22 @@ export class CoordinationEngine {
   private readonly pendingClose = new Set<string>();
 
   /**
+   * Los convocados que el cierre todavía no pudo apagar porque estaban EN MEDIO
+   * de un turno, y el run al que pertenecen (para la bitácora).
+   *
+   * Cortarle el proceso abajo a alguien que está respondiendo es tirar su turno
+   * a la basura: el trabajo ya se pagó y el resultado se pierde sin que nadie
+   * se entere. Se anota acá y se apaga en el `status:'idle'` siguiente, el
+   * mismo camino por el que ya se destraban el cierre pendiente (`pendingClose`)
+   * y los avisos encolados (`pendingNotices`).
+   *
+   * En memoria y no en la base, por la misma razón que sus dos hermanos: "¿está
+   * ocupado?" es estado vivo de ESTE proceso. Un reinicio lo pierde y no
+   * importa — un reinicio ya apagó a todo el mundo.
+   */
+  private readonly pendingPause = new Map<string, string>();
+
+  /**
    * Los avisos que todavía no se le pudieron entregar a un miembro, en orden.
    *
    * Un aviso (la aprobación de un plan, la respuesta a una pregunta) es un
@@ -2603,8 +2619,74 @@ export class CoordinationEngine {
     // B5.5: el último eslabón. Un run que cierra es el hecho que la persona
     // más busca en el log cuando algo quedó a medias.
     this.deps.log?.(`[latte] coordination run closed (run=${runId} work=${run.workId} status=${status})`);
-    if (notice) void this.deliverNotice(coordinatorId, notice);
+    // El apagado va DESPUÉS del estado escrito: si pausar tirara, el run tiene
+    // que quedar cerrado igual. Un proceso de más es un desperdicio; un run que
+    // no cierra es un equipo que la persona no puede terminar.
+    this.stopRunMembers(runId, coordinatorId);
+    // El coordinador es el ÚLTIMO en salir, y recién cuando ya no queda nada en
+    // vuelo para él: el aviso de cierre que se manda acá abajo es un turno de
+    // usuario, y apagarlo antes de que ese aviso llegue es cerrarle la puerta
+    // en la cara con la carta adentro. Entregado (o encolado, o fallado), se
+    // apaga; si el aviso lo dejó en un turno, `pauseWhenIdle` lo aparca hasta
+    // que termine, igual que a cualquier otro convocado.
+    const stopCoordinator = () => this.pauseWhenIdle(coordinatorId, runId);
+    if (notice) void this.deliverNotice(coordinatorId, notice).then(stopCoordinator, stopCoordinator);
+    else stopCoordinator();
     return closed;
+  }
+
+  /**
+   * Los que ESTE run convocó: sus altas (`listHires`) y todo el que recibió un
+   * despacho. Son dos conjuntos distintos y hacen falta los dos — un miembro
+   * que ya estaba en el equipo antes del run no es un alta, pero si el run lo
+   * despachó, el run lo convocó.
+   *
+   * Al que la persona abrió A MANO no lo convocó nadie: no tiene alta ni
+   * despacho, y por eso no aparece acá. Ésa es toda la regla, sin necesidad de
+   * que el motor sepa qué ventana tiene abierta la persona.
+   */
+  private runMemberIds(runId: string): Set<string> {
+    const ids = new Set<string>();
+    for (const hire of this.listHires(runId)) ids.add(hire.memberId);
+    try {
+      for (const dispatch of this.deps.repo.listCoordinationDispatches(runId)) {
+        if (dispatch.memberId) ids.add(dispatch.memberId);
+      }
+    } catch { /* una lectura que falla apaga de menos, nunca de más */ }
+    return ids;
+  }
+
+  /** Apaga a los convocados del run, salvo el coordinador, que sale último (`closeRun`). */
+  private stopRunMembers(runId: string, coordinatorId: string): void {
+    for (const memberId of this.runMemberIds(runId)) {
+      if (memberId === coordinatorId) continue;
+      this.pauseWhenIdle(memberId, runId);
+    }
+  }
+
+  /**
+   * Apaga al miembro ahora, o lo aparca hasta el final de su turno.
+   *
+   * `pauseMember` y no `finishMember`: pausar cierra la conversación y deja la
+   * fila viva y reanudable. `finishMember` además marca `done`, y terminar un
+   * run no termina a nadie — la bitácora, el uso y la sesión siguen ahí.
+   */
+  private pauseWhenIdle(memberId: string, runId: string): void {
+    if (!memberId) return;
+    if (this.memberIsBusy(memberId)) {
+      this.pendingPause.set(memberId, runId);
+      this.deps.log?.(`[latte] coordination member stop deferred (run=${runId} member=${memberId} reason=busy)`);
+      return;
+    }
+    this.pendingPause.delete(memberId);
+    try {
+      this.deps.hub.pauseMember(memberId);
+      this.deps.log?.(`[latte] coordination member stopped (run=${runId} member=${memberId})`);
+    } catch (error) {
+      // Un miembro que ya no existe, o un proceso que se murió solo, es
+      // exactamente el final que se buscaba. Se anota y se sigue.
+      this.deps.log?.(`[latte] coordination member stop failed (run=${runId} member=${memberId}): ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**
@@ -2645,6 +2727,16 @@ export class CoordinationEngine {
     // pendiente porque puede LIQUIDAR un despacho, y liquidar es justamente lo
     // que puede volver cerrable a un run que hasta este instante no lo era.
     this.noteTurnWithoutReport(memberId, now);
+    // El apagado que había quedado esperando a este turno. Va acá arriba, antes
+    // del corte por `pendingClose`: el run de este miembro YA cerró — si el
+    // corte se leyera primero, el único convocado que estaba ocupado al cerrar
+    // se quedaría vivo para siempre, que es justo el agujero que este bloque
+    // tapa.
+    const owedRunId = this.pendingPause.get(memberId);
+    if (owedRunId !== undefined) {
+      this.pendingPause.delete(memberId);
+      this.pauseWhenIdle(memberId, owedRunId);
+    }
     if (this.pendingClose.size === 0) return;
     // Se recorre lo PENDIENTE, no el miembro: `findMember` no sirve acá (el
     // coordinador puede no tener fila propia). Como mucho hay un puñado.

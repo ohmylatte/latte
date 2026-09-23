@@ -94,7 +94,7 @@ describe('"Pausar equipo" (additive, autonomous-coordination Phase 7 task 7.7)',
     expect(container.querySelector('.team-pause-coordination')).toBeNull();
     expect(container.querySelector('.team-resume-coordination')).toBeNull();
     expect(container.querySelector('.team-cancel-coordination')).toBeNull();
-    expect(container.querySelector('.coord-head-sub')!.textContent).toContain('Terminado a las');
+    expect(container.querySelector('.coord-head-sub')!.textContent).toContain('Terminamos ·');
   });
 
   it('un run CANCELADO se dice cancelado, no terminado', () => {

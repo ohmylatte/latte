@@ -237,6 +237,15 @@ export function fakeCoordinationHub(b: TestBackend, members: FakeTeamMember[], o
   // `paused` o un `ended` nunca están en un turno.
   vi.spyOn(b.hub, 'isMemberBusy').mockImplementation((memberId: string) =>
     members.some((m) => m.id === memberId && m.status === 'working'));
+  // El apagado del cierre pasa por acá. El hub real empieza por
+  // `repo.getMember`, y los miembros de estos tests no tienen fila propia: sin
+  // el doble, pausar a un id inventado tiraría `NotFound` y el fake dejaría de
+  // modelar lo único que importa acá — que el proceso se apaga y la fila queda
+  // (`paused`, nunca `ended`), reanudable.
+  const pauseMember = vi.spyOn(b.hub, 'pauseMember').mockImplementation((memberId: string) => {
+    const member = members.find((m) => m.id === memberId);
+    if (member) member.status = 'paused';
+  });
   vi.spyOn(b.hub, 'openMember').mockImplementation(async (memberId: string) => {
     const member = members.find((m) => m.id === memberId);
     if (!member) throw new Error(`fakeCoordinationHub: unknown member ${memberId}`);
@@ -269,7 +278,7 @@ export function fakeCoordinationHub(b: TestBackend, members: FakeTeamMember[], o
     member.status = 'idle';
     return fakeSessionFor(member);
   });
-  return { send, members };
+  return { send, pauseMember, members };
 }
 
 export async function makeBackend(overrides: Partial<BackendOptions> = {}): Promise<TestBackend> {

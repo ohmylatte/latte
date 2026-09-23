@@ -77,9 +77,29 @@ describe('un run terminado, en el encabezado del pedido', () => {
     const mark = container.querySelector('.coord-tic-lg')!;
     expect(mark.getAttribute('data-run-status')).toBe('done');
     expect(mark.className).toContain('coord-tic-ok');
-    expect(container.querySelector('.coord-head-sub')!.textContent).toContain('Terminado a las');
+    expect(container.querySelector('.coord-head-sub')!.textContent).toBe('Terminamos · 4 de 5');
     expect(container.querySelector('.coord-progress-done')!.textContent).toBe('4 de 5 listas');
     expect(container.querySelector('.coord-progress-rest')!.textContent).toBe('1 fallidas');
+  });
+
+  /**
+   * EL CIERRE, EN UNA LINEA Y UN BOTON.
+   *
+   * Eran dos datos separados y ninguno decia lo que la persona quiere leer: la
+   * hora ("Terminado a las 14:20") arriba y el avance ("4 de 5 listas") al
+   * costado. La hora no es la noticia; la noticia es que terminamos, y cuanto
+   * de lo pedido se hizo. La pregunta "seguir o desconectar" no existe: el
+   * motor ya desconecto, y seguir es escribir.
+   */
+  it('cierra con una sola linea y un solo boton, Nuevo pedido', () => {
+    const { container } = mount({
+      coordinationRun: run({ status: 'done', active: false, tasksDone: 4, tasksFailed: 0, tasksInFlight: 0, tasksPending: 0 }),
+    });
+    const head = container.querySelector('.coord-head')!;
+    expect(head.querySelector('.coord-head-sub')!.textContent).toBe('Terminamos · 4 de 4');
+    const buttons = [...head.querySelectorAll('button')];
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].textContent).toContain('Nuevo pedido');
   });
 
   it('un run cancelado lo dice con sus propias palabras, no con las del terminado', () => {
@@ -89,7 +109,7 @@ describe('un run terminado, en el encabezado del pedido', () => {
     expect(mark.className).not.toContain('coord-tic-ok');
     const sub = container.querySelector('.coord-head-sub')!.textContent ?? '';
     expect(sub.toLowerCase()).toContain('cancelado');
-    expect(sub).not.toContain('Terminado');
+    expect(sub).not.toContain('Terminamos');
     // Lo que quedo sin terminar sigue contandose: 1 de 3.
     expect(container.querySelector('.coord-progress-done')!.textContent).toBe('1 de 3 listas');
   });

@@ -125,8 +125,14 @@ export function RunHeader(props: RunHeaderProps) {
       {finished && <span className={'coord-tic coord-tic-lg ' + (cancelled ? 'coord-tic-bad' : 'coord-tic-ok')} data-run-status={run.status}>{cancelled ? <CircleX size={16} /> : <Flag size={16} />}</span>}
       <div className="coord-head-title">
         <div className="coord-head-name">{run.request ?? props.title}</div>
+        {/* EL CIERRE ES UNA LINEA: "Terminamos · 4 de 4".
+            Eran dos datos separados y ninguno decia lo que se quiere leer: la
+            hora arriba ("Terminado a las 14:20") y el avance al costado ("4 de
+            4 listas"). La hora no es la noticia. Un run CANCELADO conserva la
+            suya: no "terminamos" nada, lo cortaron, y la hora del corte es
+            justamente lo que se busca despues. */}
         <div className="coord-head-sub">{finished
-          ? (cancelled ? t('coord.cancelled.at', { time: time(run.updatedAt) }) : t('coord.done.at', { time: time(run.updatedAt) }))
+          ? (cancelled ? t('coord.cancelled.at', { time: time(run.updatedAt) }) : t('coord.done.together', { done, total }))
           : props.coordinatorName
             ? t('coord.run.coordinates', { name: props.coordinatorName, time: time(run.createdAt) })
             : ''}</div>
