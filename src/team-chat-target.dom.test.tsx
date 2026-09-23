@@ -167,4 +167,32 @@ describe('el destinatario del chat de equipo', () => {
     forgetAll();
     cleanup();
   });
+
+  /**
+   * La pregunta NATIVA del CLI (`AskUserQuestion`) llega al hilo del modo
+   * Equipo por la misma puerta que a la conversación de un miembro: es el mismo
+   * componente. Sin esto, escribirle al equipo y que el destinatario preguntara
+   * dejaba la pregunta en una pantalla a la que no se estaba mirando.
+   */
+  it('la pregunta del destinatario se responde desde el hilo, y su fila lo dice', async () => {
+    mocks.sendChat.mockReset();
+    mocks.listChatMessages.mockReset();
+    mocks.listChatMessages.mockResolvedValue([]);
+    const { container } = mountPanel({ chats: { asis: chat('asis') }, coordinationRun: null });
+    toTeam(container);
+    act(() => {
+      mocks.emit?.({
+        chatId: 'asis',
+        type: 'question',
+        request: { id: 'ask_1', questions: [{ header: 'Tono', question: '¿Qué tono usamos?', options: [{ label: 'Cercano', description: '' }], multiple: false, custom: true }] },
+      });
+    });
+    await waitFor(() => expect(container.querySelector('.team-view .chat-card.question')).not.toBeNull());
+    expect(container.querySelector('.team-view .chat-card.question')!.textContent).toContain('¿Qué tono usamos?');
+    const row = rowOf(container, 'asis')!;
+    expect(row.textContent).toContain('Te pregunta');
+    expect(row.querySelector('.coord-badge')!.textContent).toBe('1');
+    forgetAll();
+    cleanup();
+  });
 });

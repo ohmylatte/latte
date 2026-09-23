@@ -22,6 +22,8 @@ const mcpServers = process.env.FAKE_CLAUDE_MCP_STATUS
 let initialised = false;
 let counter = 0;
 let pendingTool = null;
+/** La pregunta nativa del CLI en vuelo. No es un permiso, aunque llegue por el mismo canal. */
+let pendingAsk = null;
 
 function reply(text, extraBlocks) {
   const id = `msg_${++counter}`;
@@ -82,6 +84,23 @@ rl.on('line', (line) => {
     if (/razonar/i.test(text)) {
       replyThinkingThenText('Encontre actividad real en la cuenta.');
       finish('ok');
+      return;
+    }
+    // `AskUserQuestion`, la herramienta NATIVA de preguntas del CLI. Llega por
+    // el MISMO canal que un permiso (`can_use_tool`) y no es un permiso: el
+    // protocolo espera la respuesta en `updatedInput.answers`, y un `allow` con
+    // el input intacto se lee como "the user did not answer the questions".
+    if (/preguntar/i.test(text)) {
+      const toolId = `toolu_${++counter}`;
+      const input = { questions: [{
+        question: 'Que tono usamos?',
+        header: 'Tono',
+        multiSelect: false,
+        options: [{ label: 'Cercano', description: 'De vos' }, { label: 'Formal', description: 'De usted' }],
+      }] };
+      reply('Te pregunto algo antes de seguir.', [{ type: 'tool_use', id: toolId, name: 'AskUserQuestion', input }]);
+      pendingAsk = { toolId };
+      out({ type: 'control_request', request_id: `ask_${counter}`, request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input, tool_use_id: toolId } });
       return;
     }
     if (/write/i.test(text)) {
@@ -148,6 +167,18 @@ rl.on('line', (line) => {
     }
     reply(`Echo: ${text}`);
     finish(`Echo: ${text}`, false);
+    return;
+  }
+  // Lo que Latte contesto, devuelto tal cual en el resultado de la herramienta:
+  // es lo unico que un test puede mirar para saber si las respuestas llegaron
+  // donde el protocolo las espera.
+  if (msg.type === 'control_response' && pendingAsk) {
+    const response = msg.response?.response || {};
+    const allowed = response.behavior === 'allow';
+    out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: pendingAsk.toolId, content: allowed ? JSON.stringify(response.updatedInput) : String(response.message || 'denied'), is_error: !allowed }] }, session_id: sessionId });
+    pendingAsk = null;
+    reply(allowed ? 'Gracias, sigo.' : 'Entendido, sigo sin eso.');
+    finish('Done', false);
     return;
   }
   if (msg.type === 'control_response' && pendingTool) {

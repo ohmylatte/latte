@@ -1359,3 +1359,13 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
    tampoco --no hay rol que reconocer-- y con el icono neutro en gris. */
 .av.av-gone{background:var(--paper-deep);color:var(--muted-soft);border:1px solid var(--line)}
 .av-gone .av-gone-icon{width:60%;height:60%}
+
+/* LA PREGUNTA NATIVA DEL RUNTIME (`AskUserQuestion`), con la anatomia de las
+   tarjetas del equipo: es el mismo tipo de hecho --algo que no sigue hasta que
+   la persona decide--, asi que se ve igual. Respondida, se pliega en una
+   linea: lo que se contesto hay que poder releerlo; el formulario ya usado no. */
+.chat-card.question .chat-question-text{font-size:var(--text-lg);line-height:1.45;margin:0;overflow-wrap:anywhere}
+.chat-card.question .chat-question+.chat-question{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}
+.chat-card.question.is-answered{border-left-color:var(--line-strong)}
+.chat-question-answered{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:var(--text-sm);overflow-wrap:anywhere}
+.chat-question-answered svg{flex:0 0 auto;color:var(--green-ok)}

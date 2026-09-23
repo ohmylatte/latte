@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { translate as t } from './i18n';
 import { MessageSquare, UserPlus, Users } from 'lucide-react';
 import type {
-  AgentRole, ChatMessage, ChatStatus, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
+  AgentRole, ChatMessage, ChatQuestion, ChatStatus, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
   CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport,
   CoordinationMessageView, CoordinationRunTaskView, CoordinationRunView, TeamMember, Work,
 } from '../shared/contracts';
-import { ChatWorking, type ChatCoordinationProps } from './ChatPane';
+import { ChatQuestions, ChatWorking, type ChatCoordinationProps } from './ChatPane';
 import { ChatComposer } from './ChatComposer';
 import { TeamCardsCollapsible } from './coordination/TeamCards';
 import { describeCoordinationSupport, describeMemorySupport, memberCoordinationState, type LatteMode } from './TeamPanel';
@@ -124,6 +124,15 @@ export interface TeamViewProps {
   teamChatStatus?: ChatStatus;
   teamChatStatusDetail?: string;
   /**
+   * Las preguntas NATIVAS del runtime que el destinatario dejó abiertas
+   * (`AskUserQuestion` de Claude Code). No son las de coordinación
+   * (`latte_ask`): son dos canales distintos y los dos terminan acá, porque
+   * este hilo ES su conversación.
+   */
+  teamChatQuestions?: readonly ChatQuestion[];
+  /** Para reportar un fallo al responderla. Sin esto la lista no se dibuja. */
+  onError?: (error: string) => void;
+  /**
    * Las tarjetas del equipo —propuesta, presupuesto, despacho, pregunta—, que
    * salian en el chat del coordinador y ahora salen donde vive esa
    * conversacion. Es el MISMO paquete que recibe `ChatPane`.
@@ -192,12 +201,18 @@ export function TeamView(props: TeamViewProps) {
    */
   const signalOf = (memberId: string) => {
     const signal = memberSignal({ ...input, team, roles, run, taskTitle }, memberId);
-    if (!targetWorking || memberId !== coordinatorId) return signal;
-    return { ...signal, dot: 'live' as const, line: t('coord.member.working'), urgent: false };
+    if (memberId !== coordinatorId) return signal;
+    // Lo que TE ESPERA gana sobre lo que está pasando: la escala de urgencia
+    // es la misma que la de las preguntas de coordinación.
+    if (targetQuestions > 0) return { ...signal, dot: 'live' as const, line: t('coord.member.askingYou'), urgent: true };
+    if (targetWorking) return { ...signal, dot: 'live' as const, line: t('coord.member.working'), urgent: false };
+    return signal;
   };
   const readingCoordinator = Boolean(selected && selected === coordinatorId);
   /** El destinatario está escribiendo: lo dicen su fila y el final de su hilo, con las mismas palabras que la conversación. */
   const targetWorking = props.teamChatStatus === 'busy' || props.teamChatStatus === 'retry';
+  /** Preguntas nativas del destinatario sin responder: cuentan como pendiente, igual que una `latte_ask`. */
+  const targetQuestions = (props.teamChatQuestions ?? []).length;
   // La conversacion entra SOLO en el hilo del coordinador: los demas la tienen
   // en su propia pestana, y meterla en los dos seria la misma charla dos veces.
   const thread = selected ? inboxEvents(readingCoordinator ? { ...input, chat: props.coordinatorChat } : input, selected) : [];
@@ -241,7 +256,10 @@ export function TeamView(props: TeamViewProps) {
       <ul className="team-inbox team-view-list" aria-label={t('coord.list.label')}>
         {team.map((member) => {
           const signal = signalOf(member.id);
-          const waiting = pendingForMember(member.id, props.coordinationGates, props.coordinationAsks, run);
+          // Las preguntas nativas del destinatario se suman al badge: son
+          // decisiones que espera de la persona igual que un gate.
+          const waiting = pendingForMember(member.id, props.coordinationGates, props.coordinationAsks, run)
+            + (member.id === coordinatorId ? targetQuestions : 0);
           const isCoordinator = run?.coordinatorMemberId === member.id;
           return <li key={member.id} className={'team-inbox-row' + (member.id === selected ? ' is-selected' : '')} data-member-id={member.id}>
             <CoordRow
@@ -295,6 +313,11 @@ export function TeamView(props: TeamViewProps) {
               miembro, no una segunda forma de decir lo mismo. La línea de
               tiempo es descendente —lo último arriba—, así que el final del
               hilo está justo encima de ella. */}
+          {/* Su pregunta nativa, respondible acá mismo: este hilo ES su
+              conversación, y mandarla a otra pantalla sería pedirle a la
+              persona que la busque. */}
+          {readingCoordinator && props.onError && coordinatorId
+            && <ChatQuestions chatId={coordinatorId} questions={props.teamChatQuestions ?? []} onError={props.onError} />}
           {readingCoordinator && <ChatWorking status={props.teamChatStatus ?? 'idle'} detail={props.teamChatStatusDetail} />}
         </MemberDetail>}
       </div>

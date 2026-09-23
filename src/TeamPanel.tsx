@@ -328,7 +328,14 @@ export function TeamPanel(props: TeamPanelProps) {
   const firstTeam = team.length === 0 && Boolean(work);
   const showPicker = adding || firstTeam;
   const workTotal = useTeamUsageTotal(team);
-  const railPending = pendingForWork(props.coordinationGates, props.coordinationAsks, props.coordinationRun ?? null);
+  /**
+   * Lo que el Trabajo entero está esperando. Las preguntas NATIVAS del
+   * destinatario (`AskUserQuestion`) cuentan igual que una `latte_ask`: son
+   * dos canales distintos y una sola persona a la que le toca decidir. Sin
+   * esto, el segmento decía "nada pendiente" con una pregunta abierta adentro.
+   */
+  const railPending = pendingForWork(props.coordinationGates, props.coordinationAsks, props.coordinationRun ?? null)
+    + coordinatorState.questions.length;
   const inbox = { log: props.coordinationLog, messages: props.coordinationMessages, asks: props.coordinationAsks, hires: props.coordinationHires };
   /**
    * B4.1: las DOS condiciones, no una. `active` porque un run cerrado no puede
@@ -432,6 +439,8 @@ export function TeamPanel(props: TeamPanelProps) {
       coordinatorChat={coordinatorState.messages}
       teamChatTargetId={teamChatTargetId}
       teamChatStatus={coordinatorState.status} teamChatStatusDetail={coordinatorState.statusDetail}
+      teamChatQuestions={coordinatorState.questions}
+      onError={props.onError}
       composer={teamChatTargetId ? {
         sessionId: teamChatTargetId,
         onError: props.onError,
