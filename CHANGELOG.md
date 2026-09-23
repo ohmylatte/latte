@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.3.0 — 2026-09-23
+
+Latte se conecta por vos a los servidores MCP que piden login, y el equipo aprende a terminar: cerrar un trabajo apaga a quienes convocó, y el chat de equipo pasa a ser un solo lugar donde le hablás al coordinador y ves todo lo que pasa.
+
+### Conexiones
+
+- **Latte hace el login OAuth por vos.** Un servidor MCP con OAuth no se podía conectar a un miembro: el login del CLI sólo existe en modo interactivo. Ahora Latte abre la ventana de login, guarda los tokens cifrados y los refresca solo. theagentcy funciona.
+- **Una sola pantalla, en Ajustes → Conexiones**, con todas las conexiones: las globales y las de cada marca, con su estado. Al agregar una elegís si vale para todas las marcas o para una.
+- **Cada miembro recibe las conexiones de su marca** sin ver el login ni el token: le llegan por un endpoint local de Latte, y la de marca gana sobre la global para el mismo servidor.
+- **Si una sesión vence a mitad de un trabajo**, aparece «Volver a entrar» en el chat del miembro y nadie se reinicia.
+- **Herramientas (MCP) desaparece del menú.** Lo que tenías registrado en tus CLI queda en sólo lectura, con un botón para importarlo.
+- **Meta queda para después**: requiere una app propia registrada.
+
+### El equipo
+
+- **Cerrar el run apaga a los convocados.** Quien está a mitad de un turno se pausa al terminarlo, y el coordinador sale último. El encabezado dice «Terminamos · N de M», con un solo botón: «Nuevo pedido».
+- **El chat de equipo es el modo Equipo.** Un cuadro de texto al pie le habla al coordinador, y una sola lista junta tus mensajes, sus respuestas, los despachos, los reportes y las preguntas. El coordinador ya no tiene pestaña propia.
+- **Un traspaso sin run se vuelve propuesta, solo.** Si un miembro le pide algo a otro rol y no hay run activo, queda «Propuesta lista · Aprobar» y aprobar despacha. Nunca más un borrador pegado.
+- **«Lo que produjo el equipo» caduca.** Un run cancelado es una línea con acceso a la bitácora; uno terminado se ve completo 24 h y después se pliega.
+- **La tira de equipos activos** en la barra lateral es una fila por equipo, con tope de tres y sin los terminados.
+- **La línea «Plan aprobado» se va al abrir el equipo** y no vuelve para ese run.
+
+### Chat
+
+- **Las preguntas con opciones de Claude Code se muestran y se responden en el chat**, con «Otra respuesta» si ninguna opción sirve.
+- **El Asistente propone coordinación** cuando el trabajo es de otro rol, en vez de hacerlo él.
+- **Las ventanas de login llevan el ícono de Latte.**
+- **Un miembro que ya no está** se dibuja con un avatar neutro, sin iniciales inventadas.
+
+### Conocido
+
+- OpenCode todavía no recibe conexiones: su servidor es uno solo por proceso y el acceso quedaría compartido entre marcas.
+- Meta necesita una app registrada para conectarse.
+- El avatar de un rol todavía no se exporta como PNG, y los archivos que produce una tarea se siguen leyendo del texto del reporte.
+- El plantel por marca viene en la próxima.
+
 ## 1.2.0 — 2026-09-22
 
 El equipo deja de ser un montón de conversaciones sueltas. Pedís en el chat, aprobás una vez, y el equipo se organiza solo: despacha, se reporta y consolida. También estrena cara propia por rol y memoria de marca por defecto.
