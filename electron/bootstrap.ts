@@ -99,6 +99,13 @@ export interface BackendOptions {
    * entra por acá.
    */
   connectionLogin?: (request: LoginRequest) => Promise<LoginOutcome>;
+  /**
+   * El icono de la aplicacion, para que la ventana de login de una Conexion
+   * --y el popup que el proveedor abre desde ella-- no aparezcan con el icono
+   * por defecto de Electron. Lo sabe `main.ts`, que es quien resuelve la ruta;
+   * aca solo se pasa.
+   */
+  appIcon?: string | null;
 }
 
 export interface Backend {
@@ -484,7 +491,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     secretBox,
     gateway: connectionGateway,
     tokens: connectionTokens,
-    login: options.connectionLogin ?? ((request) => runConnectionLogin(request, { openLoginWindow: createLoginWindowOpener(options.log), log: options.log })),
+    login: options.connectionLogin ?? ((request) => runConnectionLogin(request, { openLoginWindow: createLoginWindowOpener(options.log, options.appIcon), log: options.log })),
     listCliServers: () => service.listMcpServers(null),
     // 1.4 del brief: la caché de needs-auth de Claude Code, en el perfil de la
     // cuenta que los runs usan de verdad -- no en el `system`, que sería el
