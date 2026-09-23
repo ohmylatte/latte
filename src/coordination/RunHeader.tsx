@@ -140,7 +140,12 @@ export function RunHeader(props: RunHeaderProps) {
       {!finished && openAsks.length > 0 && <span className="coord-pill coord-pill-live"><CircleHelp size={13} />{t('coord.run.needsYou')}</span>}
       <div className="coord-progress">
         <div className="coord-progress-line">
-          <span className="coord-progress-done">{t('coord.run.progress', { done, total })}</span>
+          {/* EL ROTULO NO SE REPITE. Sobre un run terminado el subtitulo ya dice
+              "Terminamos · 4 de 4": escribir "4 de 4 listas" al costado es el
+              mismo dato dos veces, y la barra llena lo muestra sin una palabra.
+              Un run CANCELADO lo conserva: su subtitulo dice la hora del corte,
+              no las cuentas, asi que este es el unico lugar donde se leen. */}
+          {(!finished || cancelled) && <span className="coord-progress-done">{t('coord.run.progress', { done, total })}</span>}
           <span className="coord-progress-rest">{finished
             ? t('coord.run.failedCount', { count: failed })
             : t('coord.run.inFlight', { count: inFlight })}</span>

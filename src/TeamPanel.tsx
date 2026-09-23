@@ -253,6 +253,27 @@ export function TeamPanel(props: TeamPanelProps) {
   // La conversación del coordinador, para que su línea de tiempo la traiga
   // intercalada por hora con los hechos del run. Es una sola lista.
   const coordinatorState = useChatState(chatStore, coordinatorId);
+  /**
+   * Y SI EL COORDINADOR ESTA PAUSADO, SE PIDE SU TRANSCRIPTO.
+   *
+   * Pausar a un miembro hace `chatStore.forget`, y cerrar un run pausa al
+   * coordinador: el renderer se queda sin una sola linea de su conversacion.
+   * Mientras su chat era una pestana mas eso se arreglaba solo —abrirla llamaba
+   * a `openMember`, que sincroniza—, pero desde que su conversacion ES el modo
+   * Equipo, el mismo olvido deja un vacio que MIENTE: el equipo termino y lo
+   * que se hablo no esta en ningun lado.
+   *
+   * Sin reabrir nada: `listChatMessages` contesta con lo que Latte guarda
+   * cuando no hay adaptador vivo. Y solo cuando NO hay sesion viva — con una
+   * abierta el store ya viene alimentado por eventos, y re-sincronizar encima
+   * de un turno en vuelo le pisaria el mensaje que se esta escribiendo.
+   */
+  const liveCoordinator = Boolean(coordinatorId && chats[coordinatorId]);
+  const runStatus = props.coordinationRun?.status ?? null;
+  useEffect(() => {
+    if (rail !== 'team' || !coordinatorId || liveCoordinator) return;
+    void chatStore.sync(coordinatorId).catch(() => undefined);
+  }, [rail, coordinatorId, liveCoordinator, runStatus]);
   // The first team is the empty state itself; after that, adding is a dialog.
   const firstTeam = team.length === 0 && Boolean(work);
   const showPicker = adding || firstTeam;

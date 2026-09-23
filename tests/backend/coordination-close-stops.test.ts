@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CoordinationEngine, type CoordinationGrant } from '../../electron/coordination/engine';
+import { EMPTY_USAGE } from '../../shared/contracts';
 import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, settle, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
@@ -166,5 +167,37 @@ describe('cerrar el run apaga a los convocados', () => {
     await settle();
     expect(b.repo.getCoordinationRun(runId).status).toBe('cancelled');
     expect(hub.pauseMember).toHaveBeenCalledWith(hired);
+  });
+
+  /**
+   * Y LA CONVERSACION DEL QUE SE APAGO SE SIGUE PUDIENDO LEER.
+   *
+   * `hub.listMessages` enruta por adaptador y tira `NotFoundError` cuando
+   * ninguno posee el chat, o sea sobre cualquier miembro PAUSADO — que desde
+   * este bloque es el estado normal de un coordinador cuyo equipo termino, y su
+   * conversacion es lo primero que la persona vuelve a buscar. Se contesta con
+   * lo que Latte guarda, y NUNCA levantando un proceso: apagar y volver a
+   * prender para leer seria deshacer lo que el cierre acaba de hacer.
+   */
+  it('leer la conversacion de un miembro pausado no le levanta el proceso', async () => {
+    const now = new Date().toISOString();
+    b.repo.insertMember({
+      id: 'mem_pausado', workId, roleId: 'copywriter', roleName: 'Redactor', initial: 'R',
+      runtime: 'claude', model: null, accountId: null, sessionId: '', done: false, continuedFrom: null,
+      tier: 'balanced', usage: EMPTY_USAGE,
+      createdAt: now, updatedAt: now,
+    });
+    const said = { id: 'msg1', chatId: 'mem_pausado', role: 'user' as const, parts: [{ id: 'p1', type: 'text' as const, text: 'armame el calendario' }], createdAt: now, completed: true, error: null };
+    const recent = vi.spyOn(b.hub, 'recentMessages').mockReturnValue({ messages: [said], exposed: true });
+    const open = vi.spyOn(b.hub, 'openMember');
+
+    expect(await b.service.listChatMessages('mem_pausado')).toEqual([said]);
+    expect(recent).toHaveBeenCalledWith('mem_pausado');
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  /** Un id que no es de nadie sigue siendo un error: taparlo con vacio miente distinto. */
+  it('un id que no pertenece a ningun miembro sigue fallando', async () => {
+    await expect(b.service.listChatMessages('mem_no_existe')).rejects.toThrow();
   });
 });

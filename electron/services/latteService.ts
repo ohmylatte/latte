@@ -2416,8 +2416,24 @@ export class LatteService implements BackendApi {
     return member ? this.workPermissions(member.workId) === 'auto' : false;
   }
 
+  /**
+   * LEER LO QUE YA SE DIJO NO PUEDE LEVANTARLE UN PROCESO A NADIE.
+   *
+   * `hub.listMessages` enruta por adaptador y tira `NotFoundError` cuando
+   * ninguno posee el chat, o sea sobre cualquier miembro PAUSADO. Desde que
+   * cerrar un run apaga a los que convocó, ése es el estado normal de un
+   * coordinador cuyo equipo terminó — y su conversación es lo primero que la
+   * persona vuelve a buscar. `recentMessages` es la primitiva honesta: el
+   * adaptador vivo si lo hay, el transcripto que Latte guarda si es Claude, y
+   * vacío —nunca un spawn— cuando el runtime se lleva la historia consigo.
+   *
+   * El `NotFoundError` sigue existiendo para un id que no es de nadie: eso es
+   * un error de verdad, y taparlo con una lista vacía sería mentir distinto.
+   */
   async listChatMessages(chatId: string): Promise<ChatMessage[]> {
-    return this.deps.hub.listMessages(requireId(chatId, 'chatId'));
+    const id = requireId(chatId, 'chatId');
+    if (this.deps.repo.findMember(id)) return this.deps.hub.recentMessages(id).messages;
+    return this.deps.hub.listMessages(id);
   }
 
   async sendChat(chatId: string, text: string): Promise<void> {

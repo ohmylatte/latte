@@ -239,7 +239,11 @@ export function TeamView(props: TeamViewProps) {
       <div className="team-view-thread">
         {!run && !openedMember && <EmptyTeam coordinatorName={coordinatorName} onAsk={props.onNewRequest} />}
         {run && !run.active && <RunOutput run={run} log={props.coordinationLog} team={team} roles={roles} formatTime={hour} />}
-        {(run?.active || openedMember) && selected && <MemberDetail memberId={selected} team={team} roles={roles} run={run}
+        {/* Con el run TERMINADO, lo que el equipo dejo va arriba y la
+            conversacion del coordinador sigue abajo. Antes el panel se quedaba
+            solo con el resumen de salida: la charla desaparecia justo cuando la
+            persona vuelve a buscarla, y ahora esta pantalla ES esa charla. */}
+        {(run?.active || openedMember || readingCoordinator) && selected && <MemberDetail memberId={selected} team={team} roles={roles} run={run}
           events={thread} tasks={props.coordinationTasks}
           signal={memberSignal({ ...input, team, roles, run, taskTitle }, selected)}
           formatTime={hour} onOpenChat={readingCoordinator ? undefined : props.onOpenChat}

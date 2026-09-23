@@ -78,8 +78,13 @@ describe('un run terminado, en el encabezado del pedido', () => {
     expect(mark.getAttribute('data-run-status')).toBe('done');
     expect(mark.className).toContain('coord-tic-ok');
     expect(container.querySelector('.coord-head-sub')!.textContent).toBe('Terminamos · 4 de 5');
-    expect(container.querySelector('.coord-progress-done')!.textContent).toBe('4 de 5 listas');
+    // Una sola vez: el subtitulo lo dice, la barra lo muestra. Lo fallido no
+    // esta en el subtitulo, asi que eso si se sigue escribiendo.
+    expect(container.querySelector('.coord-progress-done')).toBeNull();
     expect(container.querySelector('.coord-progress-rest')!.textContent).toBe('1 fallidas');
+    const bar = container.querySelector('[role="progressbar"]')!;
+    expect(bar.getAttribute('aria-valuenow')).toBe('4');
+    expect(bar.getAttribute('aria-valuemax')).toBe('5');
   });
 
   /**
@@ -110,7 +115,10 @@ describe('un run terminado, en el encabezado del pedido', () => {
     const sub = container.querySelector('.coord-head-sub')!.textContent ?? '';
     expect(sub.toLowerCase()).toContain('cancelado');
     expect(sub).not.toContain('Terminamos');
-    // Lo que quedo sin terminar sigue contandose: 1 de 3.
+    // Lo que quedo sin terminar sigue contandose: 1 de 3. Y el rotulo SIGUE
+    // aca, a diferencia del run terminado: el subtitulo de un cancelado dice
+    // la hora del corte, no las cuentas, asi que este es el unico lugar donde
+    // se leen. Sacarlo seria perder el dato, no dejar de repetirlo.
     expect(container.querySelector('.coord-progress-done')!.textContent).toBe('1 de 3 listas');
   });
 });

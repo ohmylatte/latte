@@ -26,10 +26,21 @@ vi.mock('./i18n', async (importOriginal) => {
   return { ...real, translate: (key: MessageKey, params?: Record<string, string | number>) => real.formatMessage(ui.locale, key, params) };
 });
 
-const mocks = vi.hoisted(() => ({ sendChat: vi.fn<(chatId: string, text: string) => Promise<void>>() }));
+const mocks = vi.hoisted(() => ({
+  sendChat: vi.fn<(chatId: string, text: string) => Promise<void>>(),
+  listChatMessages: vi.fn<(chatId: string) => Promise<unknown[]>>(async () => []),
+}));
+/**
+ * El store se rearma sobre la api doblada, no se hereda del modulo real: se
+ * construye UNA vez al cargar `browser-api`, asi que un `chatStore` heredado
+ * seguiria pidiendole el transcripto a la api de verdad y este archivo no
+ * estaria probando el camino que dice probar.
+ */
 vi.mock('./browser-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./browser-api')>();
-  return { ...actual, api: { ...actual.api, sendChat: mocks.sendChat } };
+  const { createChatStore } = await import('./chat-store');
+  const api = { ...actual.api, sendChat: mocks.sendChat, listChatMessages: mocks.listChatMessages };
+  return { ...actual, api, chatStore: createChatStore(api as unknown as typeof actual.api) };
 });
 
 const { createElement } = await import('react');
@@ -243,5 +254,51 @@ describe('el copy del chat de equipo, en los dos idiomas', () => {
     toTeam(container);
     expect(composerOf(container)!.getAttribute('aria-label')).toBe(formatMessage('en-US', 'ui.auto.019'));
     ui.locale = 'es-AR';
+  });
+});
+
+/**
+ * EL RUN TERMINO Y LA CHARLA NO ESTABA.
+ *
+ * Cerrar un run apaga al coordinador, y pausar a un miembro hace
+ * `chatStore.forget`: el renderer se queda sin una sola linea de su
+ * conversacion. Mientras su chat era una pestana mas eso se arreglaba solo
+ * (se abria la pestana y `openMember` sincronizaba el transcripto). Desde que
+ * su conversacion ES el modo Equipo, el mismo olvido deja un vacio que MIENTE:
+ * el equipo termino y lo que se hablo no esta en ningun lado.
+ *
+ * El modo Equipo pide el transcripto al entrar, y sin levantarle el proceso a
+ * nadie: `listChatMessages` contesta con lo que Latte guarda cuando no hay
+ * adaptador vivo. Se pide solo cuando NO hay sesion viva -- con una abierta el
+ * store ya viene alimentado por eventos, y re-sincronizar encima de un turno
+ * en vuelo le pisaria el mensaje que se esta escribiendo.
+ */
+describe('un run terminado no se lleva la conversacion del coordinador', () => {
+  it('con el coordinador pausado, la lista igual muestra lo que se hablo', async () => {
+    mocks.listChatMessages.mockReset();
+    mocks.listChatMessages.mockImplementation(async (chatId: string) => (chatId === 'coord'
+      ? [chatMessage('c1', 'user', 'armame el calendario', '2026-09-01T09:00:00.000Z'),
+        chatMessage('c2', 'assistant', 'listo, quedaron cuatro tareas', '2026-09-01T11:00:00.000Z')]
+      : []));
+    // Sin sesion viva: es exactamente lo que `dropChat` deja despues de pausar.
+    const { container } = mountPanel({
+      chats: {}, selectedId: 'coord',
+      coordinationRun: run({ status: 'done', active: false, tasksDone: 4, tasksFailed: 0 }),
+      team: [{ ...team[0]!, status: 'paused' }, team[1]!],
+    });
+    await waitFor(() => expect(mocks.listChatMessages).toHaveBeenCalledWith('coord'));
+    await waitFor(() => expect(container.textContent).toContain('listo, quedaron cuatro tareas'));
+    expect(container.textContent).toContain('armame el calendario');
+    chatStore.forget('coord');
+  });
+
+  /** Con la sesion viva no se pide nada: el store ya lo tiene, por eventos. */
+  it('con sesion viva no vuelve a pedir el transcripto', async () => {
+    mocks.listChatMessages.mockReset();
+    mocks.listChatMessages.mockResolvedValue([]);
+    const { container } = mountPanel({ selectedId: 'coord' });
+    expect(container.querySelector('.team-view')).not.toBeNull();
+    await Promise.resolve();
+    expect(mocks.listChatMessages).not.toHaveBeenCalledWith('coord');
   });
 });
