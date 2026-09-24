@@ -53,14 +53,38 @@ export function contextWeight(contextTokens: number | null): ContextWeight {
   return 'heavy';
 }
 
+/** The warning is about the NEXT message: only the context as it stands now counts, never a sum. */
+export function isHeavyConversation(usage: ChatUsage): boolean {
+  return contextWeight(usage.contextTokens) === 'heavy';
+}
+
+function formatUsd(value: number, locale: UiLocale): string {
+  const digits = value < 1 ? { minimumFractionDigits: 2, maximumFractionDigits: 3 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+  return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD', ...digits }).format(value);
+}
+
 /**
- * The one line a marketer sees about what a conversation has spent so far.
- * Empty before the first turn: there is nothing honest to report yet, and an
- * empty string is the caller's cue to render nothing at all.
+ * The one line a marketer sees about a conversation, with two honest numbers.
+ *
+ * N3: it used to be the grand total of every token, cache reads at full
+ * weight: "15,9 M" after a short morning, 94% of it the same context re-read
+ * turn after turn. Now it says (1) how big the context is right now — what
+ * the next message re-reads — and (2) what was actually spent: the price when
+ * the runtime gave one, otherwise the new tokens (fresh input plus output) as
+ * "generated". Empty before the first turn: nothing honest to report yet.
  */
 export function describeUsage(usage: ChatUsage, locale: UiLocale): string {
   if (usage.turns <= 0) return '';
-  const tokens = formatTokens(totalTokens(usage), locale);
+  const parts: string[] = [];
+  if (usage.contextTokens != null && usage.contextTokens > 0) parts.push(formatMessage(locale, 'usage.context', { tokens: formatTokens(usage.contextTokens, locale) }));
+  parts.push(usage.costUsd != null
+    ? formatMessage(locale, 'usage.spent', { cost: formatUsd(usage.costUsd, locale) })
+    : formatMessage(locale, 'usage.generated', { tokens: formatTokens(usage.inputTokens + usage.outputTokens, locale) }));
+  return parts.join(' · ');
+}
+
+/** The detail behind the line (its tooltip): how much of the input the cache served. */
+export function describeUsageDetail(usage: ChatUsage, locale: UiLocale): string {
   const percent = new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 0 }).format(cacheShare(usage));
-  return formatMessage(locale, 'usage.line', { tokens, percent });
+  return formatMessage(locale, 'usage.help') + ' ' + formatMessage(locale, 'usage.cacheShare', { percent });
 }

@@ -7,7 +7,7 @@ import { ChatPane, type ChatCoordinationProps } from './ChatPane';
 import { useChatMessagesOf, useChatState } from './chat-store';
 import { canChangePermission } from './permission-ux';
 import { continuationModel, continuationOptions, type ContinuationTarget } from './provider-models';
-import { contextWeight, describeUsage, formatTokens, totalTokens } from './usage-format';
+import { describeUsage, describeUsageDetail, formatTokens, isHeavyConversation, totalTokens } from './usage-format';
 import { Loading } from './brand-marks';
 import { pendingForMember, pendingForWork } from './coordination/inbox';
 import { roleSummary } from './pack-i18n';
@@ -739,11 +739,13 @@ function useTeamUsageTotal(team: TeamMember[]): number {
  */
 function MemberUsage({ member }: { member: TeamMember }) {
   const state = useChatState(chatStore, member.id);
-  const line = describeUsage(state.usage, currentLocale());
+  const locale = currentLocale();
+  const line = describeUsage(state.usage, locale);
   if (!line) return null;
-  const heavy = contextWeight(state.usage.contextTokens) === 'heavy';
-  return <p className="team-usage" title={t('usage.help')}>
-    <span>{t('usage.label')}: {line}</span>
+  // N3: el aviso mira el contexto de la ÚLTIMA lectura, nunca una suma.
+  const heavy = isHeavyConversation(state.usage);
+  return <p className="team-usage" title={describeUsageDetail(state.usage, locale)}>
+    <span>{line}</span>
     {heavy && <span className="team-usage-hint">{t('usage.heavyHint')}</span>}
   </p>;
 }
