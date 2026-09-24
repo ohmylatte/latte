@@ -103,3 +103,89 @@ describe('el coordinador habitual de la marca', () => {
     expect(run.coordinatorMemberId).toBe(chosen.id);
   });
 });
+
+describe('sin herencia: quitar a quien coordina se lleva su permiso', () => {
+  let fake: FakeOpenCode;
+  let b: TestBackend;
+
+  beforeEach(async () => {
+    fake = await startFakeOpenCode();
+    b = await makeBackend({
+      chatEndpoint: fake.endpoint,
+      runner: fakeRunner((file, args) => {
+        if (file === 'where.exe' || file === 'which') return { code: 0, stdout: `C:\\bin\\${args[0]}.exe\n` };
+        if (args[0] === 'auth' && args[1] === 'status') return { code: 0, stdout: JSON.stringify({ loggedIn: true, subscriptionType: 'max' }) };
+        return { code: 0, stdout: '1.0.0\n' };
+      }),
+      emitChat: () => {},
+    });
+  });
+
+  afterEach(async () => {
+    b.cleanup();
+    await fake.close();
+  });
+
+  async function workWithTwo() {
+    const brand = await b.service.createBrand('Casa');
+    await b.service.addBrandMember(brand.id, 'strategist', null);
+    const roster = await b.service.addBrandMember(brand.id, 'reviewer', null);
+    const strategist = roster.find((m) => m.roleId === 'strategist')!;
+    const reviewer = roster.find((m) => m.roleId === 'reviewer')!;
+    const work = await b.service.createWork(brand.id, 'Uno');
+    return { brand, work, strategist, reviewer };
+  }
+  const storedGrant = (workId: string) => b.repo.getMeta('coordination_coordinator:' + workId) ?? '';
+
+  it('desconvocar al coordinador borra el permiso, y re-convocarlo NO se lo devuelve', async () => {
+    const { work, strategist, reviewer } = await workWithTwo();
+    const first = await b.service.callUpMember(work.id, strategist.id);
+    await b.service.callUpMember(work.id, reviewer.id);
+    await b.service.setCoordinatorGrant(work.id, first.id);
+
+    await b.service.removeTeamMember(first.id);
+    // Borrado en la misma operación: el meta no queda apuntando a un id muerto.
+    expect(storedGrant(work.id)).toBe('');
+    expect(await b.service.getCoordinatorGrant(work.id)).toBeNull();
+
+    const again = await b.service.callUpMember(work.id, strategist.id);
+    // La convocatoria nueva es OTRA fila: el id de `team_members` no se reutiliza.
+    expect(again.id).not.toBe(first.id);
+    expect(await b.service.getCoordinatorGrant(work.id)).toBeNull();
+    expect((await b.service.listTeam(work.id)).some((m) => m.coordinatesBrand)).toBe(false);
+  });
+
+  it('desconvocar a otro no toca el permiso de quien coordina', async () => {
+    const { work, strategist, reviewer } = await workWithTwo();
+    const coordinator = await b.service.callUpMember(work.id, strategist.id);
+    const other = await b.service.callUpMember(work.id, reviewer.id);
+    await b.service.setCoordinatorGrant(work.id, coordinator.id);
+    await b.service.removeTeamMember(other.id);
+    expect(storedGrant(work.id)).toBe(coordinator.id);
+  });
+
+  it('el habitual de la marca SÍ coordina al volver a ser convocado', async () => {
+    const { brand, work, strategist, reviewer } = await workWithTwo();
+    await b.service.setBrandCoordinator(brand.id, strategist.id);
+    const first = await b.service.callUpMember(work.id, strategist.id);
+    await b.service.callUpMember(work.id, reviewer.id);
+    await b.service.removeTeamMember(first.id);
+    expect((await b.service.listTeam(work.id)).some((m) => m.coordinatesBrand)).toBe(false);
+
+    const again = await b.service.callUpMember(work.id, strategist.id);
+    expect((await b.service.listTeam(work.id)).filter((m) => m.coordinatesBrand).map((m) => m.id)).toEqual([again.id]);
+  });
+
+  it('quitar del plantel al habitual le saca la marca: si vuelve, vuelve sin coordinar', async () => {
+    const { brand, work, strategist } = await workWithTwo();
+    await b.service.setBrandCoordinator(brand.id, strategist.id);
+    const called = await b.service.callUpMember(work.id, strategist.id);
+    // Con historia se RETIRA (no se borra), y su convocatoria sigue ahí.
+    const roster = await b.service.retireBrandMember(strategist.id);
+    expect(roster.find((m) => m.id === strategist.id)!.coordinator).toBe(false);
+    expect((await b.service.listTeam(work.id)).some((m) => m.coordinatesBrand)).toBe(false);
+    await b.service.removeTeamMember(called.id);
+    await b.service.callUpMember(work.id, strategist.id);
+    expect((await b.service.listTeam(work.id)).some((m) => m.coordinatesBrand)).toBe(false);
+  });
+});

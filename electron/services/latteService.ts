@@ -2299,7 +2299,12 @@ export class LatteService implements BackendApi {
     const member = this.deps.repo.getBrandMember(requireId(brandMemberId, 'brandMemberId'));
     const convocations = this.deps.repo.brandMemberConvocations(member.brandId).get(member.id) ?? [];
     if (convocations.length === 0) this.deps.repo.deleteBrandMember(member.id);
-    else this.deps.repo.retireBrandMember(member.id, this.clock());
+    else {
+      // Quien se retira deja de ser el habitual: si alguien lo vuelve a
+      // convocar, vuelve como uno más, no con la coordinación de antes.
+      if (member.coordinator) this.deps.repo.setBrandCoordinator(member.brandId, null, this.clock());
+      this.deps.repo.retireBrandMember(member.id, this.clock());
+    }
     return this.deps.hub.listBrandTeam(member.brandId);
   }
 
@@ -2425,8 +2430,19 @@ export class LatteService implements BackendApi {
     return this.deps.hub.setMemberTier(member.id, tier, this.memberContext(member.workId));
   }
 
+  /**
+   * Desconvocar SIN HERENCIA: si el permiso de coordinar de su trabajo lo
+   * nombraba, se borra en la misma operación. El meta no queda apuntando a un
+   * id muerto, y volver a convocar a esa persona abre otra convocatoria (otro
+   * id) que no coordina salvo que sea el habitual de la marca.
+   */
   async removeTeamMember(memberId: string): Promise<void> {
-    this.deps.hub.removeMember(requireId(memberId, 'memberId'));
+    const id = requireId(memberId, 'memberId');
+    const workId = this.deps.repo.findMember(id)?.workId ?? null;
+    this.deps.hub.removeMember(id);
+    if (workId && this.deps.repo.getMeta('coordination_coordinator:' + workId) === id) {
+      this.deps.repo.setMeta('coordination_coordinator:' + workId, '');
+    }
   }
 
   /**
