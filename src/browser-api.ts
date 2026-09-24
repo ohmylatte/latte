@@ -210,7 +210,10 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   // refuses writes, exactly like getWorkPermissions/setWorkPermissions above.
   getCoordinationAuthority:async()=>'manual' as const,setCoordinationAuthority:unavailable,
   getCoordinationBudget:async()=>({state:'unset'}),setCoordinationBudget:unavailable,
-  getCoordinatorGrant:async()=>null,setCoordinatorGrant:unavailable,
+  // Quién coordina SÍ se guarda: es una elección de la persona, no un proceso,
+  // y sin esto el botón "Que coordine" no se podría probar en la vista previa.
+  getCoordinatorGrant:async workId=>localStorage.getItem('latte:coordinator-grant:'+workId)||null,
+  setCoordinatorGrant:async(workId,memberId)=>{localStorage.setItem('latte:coordinator-grant:'+workId,memberId??'');return memberId||null;},
   // Phase 3: run lifecycle, gates, bitácora, asks and the handoff bridge —
   // same desktop-only reasoning as above. No run ever exists in the preview.
   startCoordinationRun:unavailable,pauseCoordinationRun:unavailable,resumeCoordinationRun:unavailable,cancelCoordinationRun:unavailable,
@@ -343,7 +346,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   // pero el gesto tiene que existir igual para que la pantalla se pueda probar.
   setRoleAvatar:async(roleId,avatar)=>{const parsed=parseAvatar(avatar);if(avatar===null)roleAvatars.delete(roleId);else if(parsed)roleAvatars.set(roleId,serializeAvatar(parsed));else throw new Error('Avatar invalido');return browserAPI.listRoles();},
   saveProfile:async(input,expectedFingerprint)=>mutate(s=>{validateProfile(input);if(shippedRoles.some(r=>r.id===input.id))throw new Error('Los perfiles incluidos son de solo lectura');const existing=s.profiles.find(p=>p.id===input.id);if(expectedFingerprint===null?Boolean(existing):!existing||existing.fingerprint!==expectedFingerprint)throw new Error('El perfil cambió o ya existe. Tu borrador sigue intacto; recargá antes de reintentar.');const p:AgentProfile={...input,avatar:parseAvatar(input.avatar)===null?serializeAvatar(avatarFromSeed(input.id)):serializeAvatar(parseAvatar(input.avatar)!),builtin:false,tier:'balanced',source:'custom',directory:null,fingerprint:id()};s.profiles=s.profiles.filter(p=>p.id!==input.id);s.profiles.push(p);return p;}),
-  listTeam: async () => [], addTeamMember: unavailable, openTeamMember: unavailable, pauseTeamMember: unavailable, finishTeamMember: unavailable, restartTeamMember: unavailable, removeTeamMember: unavailable, setTeamMemberModel: unavailable, setTeamMemberTier: unavailable, draftContinuation: unavailable,
+  listTeam: async () => [], listBrandTeam: async () => [], addBrandMember: unavailable, retireBrandMember: unavailable, setBrandCoordinator: unavailable, callUpMember: unavailable, addTeamMember: unavailable, openTeamMember: unavailable, pauseTeamMember: unavailable, finishTeamMember: unavailable, restartTeamMember: unavailable, removeTeamMember: unavailable, setTeamMemberModel: unavailable, setTeamMemberTier: unavailable, draftContinuation: unavailable,
   // The web preview is always whatever ohmylatte.app is serving: there is
   // nothing to download and nothing to restart.
   checkForUpdate: async () => ({ phase: 'unsupported' as const, unsupportedKind: 'source' as const, version: null, percent: 0, message: 'Esta es la vista previa web: se actualiza sola al recargar la página.' }),

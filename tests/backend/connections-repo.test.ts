@@ -52,7 +52,7 @@ describe('connections repository', () => {
   });
 
   it('el esquema quedó en 13 y creó las dos tablas', () => {
-    expect(SCHEMA_VERSION).toBe('13');
+    expect(SCHEMA_VERSION).toBe('14');
     expect(driver!.get("SELECT name FROM sqlite_master WHERE type='table' AND name='connections'")?.name).toBe('connections');
     expect(driver!.get("SELECT name FROM sqlite_master WHERE type='table' AND name='connection_tokens'")?.name).toBe('connection_tokens');
   });

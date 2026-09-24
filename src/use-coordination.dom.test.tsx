@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   getCoordinationAuthority: vi.fn<(workId: string) => Promise<CoordinationAuthorityMode>>(),
   getCoordinationBudget: vi.fn<(workId: string) => Promise<CoordinationBudgetView>>(),
   getCoordinatorGrant: vi.fn<(workId: string) => Promise<CoordinatorGrant>>(),
+  setCoordinatorGrant: vi.fn<(workId: string, memberId: string | null) => Promise<CoordinatorGrant>>(),
   coordinationRuntimeSupport: vi.fn<(workId: string) => Promise<CoordinationMemberSupport[]>>(),
   getCoordinationRun: vi.fn<(workId: string) => Promise<CoordinationRunView | null>>(),
   listCoordinationGates: vi.fn<(runId: string) => Promise<CoordinationGateView[]>>(),
@@ -99,6 +100,16 @@ describe('useCoordination(workId): a Work is open', () => {
     expect(result.current.coordinatorGrant).toBe('m1');
     expect(result.current.support).toEqual([{ memberId: 'm1', canPropose: true, memoryInjected: true, reason: null, runtimeConfirmed: true, runtimeReportsInjection: true }]);
     expect(mocks.getCoordinationAuthority).toHaveBeenCalledWith('w1');
+  });
+
+  it('setCoordinator writes the grant of the OPEN Work and the new holder shows up without waiting for an event', async () => {
+    mocks.setCoordinatorGrant.mockImplementation(async (_workId, memberId) => { mocks.getCoordinatorGrant.mockResolvedValue(memberId); return memberId; });
+    const { result } = renderHook(() => useCoordination('w1'));
+    await waitFor(() => expect(mocks.getCoordinatorGrant).toHaveBeenCalledWith('w1'));
+    expect(result.current.coordinatorGrant).toBeNull();
+    await expect(result.current.setCoordinator('m2')).resolves.toBe(true);
+    expect(mocks.setCoordinatorGrant).toHaveBeenCalledWith('w1', 'm2');
+    await waitFor(() => expect(result.current.coordinatorGrant).toBe('m2'));
   });
 
   it('when a run exists, also fetches its gates and its bitácora', async () => {

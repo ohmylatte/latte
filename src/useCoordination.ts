@@ -96,6 +96,12 @@ export interface CoordinationState {
    */
   setBudget: (maxDispatches: number) => void;
   /**
+   * Elegir quién coordina el Trabajo abierto (el permiso del trabajo). Pasa por
+   * `mutate`: refresca, reporta el error por el canal de la app y nunca
+   * rechaza. `false` sin Trabajo abierto.
+   */
+  setCoordinator: (memberId: string | null) => Promise<boolean>;
+  /**
    * Deja constancia de que la persona está mirando la coordinación de ESTE
    * Trabajo ahora. Es lo que "Desde tu última visita" mide: antes no había
    * ninguna visita registrada en ningún lado, y la tarjeta mostraba el estado
@@ -326,6 +332,9 @@ export function useCoordination(
     resumeRun: (runId) => mutate(`run:${runId}`, api.resumeCoordinationRun(runId)),
     cancelRun: (runId) => mutate(`run:${runId}`, api.cancelCoordinationRun(runId)),
     setBudget: (maxDispatches) => { if (workId) mutate(`budget:${workId}`, api.setCoordinationBudget(workId, { maxDispatches })); },
+    setCoordinator: (memberId) => (workId
+      ? mutate(`coordinator:${workId}`, api.setCoordinatorGrant(workId, memberId))
+      : Promise.resolve(false)),
     /**
      * Anotar la visita es CONTABILIDAD DE FONDO, no una acción de la persona:
      * desde F13 corre sola con sólo abrir el Trabajo, en cualquier vista. Por

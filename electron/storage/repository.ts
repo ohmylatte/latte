@@ -6,6 +6,7 @@ import { hashGenerationContext } from '../generation/canon';
 import { newId } from '../core/ids';
 import { LatteError, NotFoundError, ValidationError } from '../core/errors';
 import { addUsage, parseUsage, serializeUsage } from '../core/usage';
+import { avatarFromSeed, serializeAvatar } from '../../shared/avatar';
 import type { SqlDriver, SqlRow } from './driver';
 import { BrandingRepository } from './brandingRepository';
 import { BRANDING_SCHEMA_SQL } from './brandingSchema';
@@ -30,7 +31,8 @@ interface BrandContextProposalRow extends SqlRow {
 }
 interface DocumentRow extends SqlRow { id: string; work_id: string; kind: string; title: string; file_name: string; status: string; funnel_stages: string; proposed_stages: string; base_doc_id: string | null; base_rev_id: string | null; base_print: string | null; last_print: string | null; created_at: string; updated_at: string }
 interface BrandContextRevisionRow extends SqlRow { id: string; brand_id: string; source: string; origin: string | null; content: string; fingerprint: string; created_at: string }
-interface MemberRow extends SqlRow { id: string; work_id: string; role_id: string; role_name: string; initial: string; runtime: string; model: string | null; account_id: string | null; session_id: string; done: number; continued_from: string | null; tier: string | null; usage_json: string | null; created_at: string; updated_at: string }
+interface MemberRow extends SqlRow { id: string; work_id: string; role_id: string; role_name: string; initial: string; runtime: string; model: string | null; account_id: string | null; session_id: string; done: number; continued_from: string | null; tier: string | null; usage_json: string | null; brand_member_id: string | null; created_at: string; updated_at: string }
+interface BrandMemberRow extends SqlRow { id: string; brand_id: string; role_id: string; role_name: string; initial: string; avatar: string | null; runtime: string; model: string | null; account_id: string | null; tier: string | null; coordinator: number; last_called_at: string; retired_at: string | null; created_at: string; updated_at: string }
 interface GenerationRow extends SqlRow { id: string; work_id: string; brand_id: string; context_json: string; context_hash: string; created_at: string }
 interface EvidenceRow extends SqlRow { id: string; generation_id: string; runtime: string; chat_id: string | null; projected_at: string; files_written: string }
 interface CheckRow extends SqlRow { id: string; generation_id: string; relative_path: string; file_hash: string | null; checks_json: string; brand_compliant: number | null; created_at: string }
@@ -81,6 +83,37 @@ export interface TeamMemberRecord {
   tier?: EffortTier;
   /** Lifetime consumption. Optional on insert: a new member has consumed nothing. */
   usage?: ChatUsage;
+  /**
+   * La persona del plantel de la marca de la que esta fila es la convocatoria
+   * (esquema 14). Opcional al insertar y NULL en una fila escrita por fuera del
+   * hub: `migrate()` la completa en el próximo arranque.
+   */
+  brandMemberId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Alguien del plantel de una marca (esquema 14): la identidad que un trabajo
+ * convoca. No es un proceso ni una conversación —eso es la convocatoria, una
+ * fila de `team_members`—, así que estar acá no corre nada.
+ */
+export interface BrandMemberRecord {
+  id: string;
+  brandId: string;
+  roleId: string;
+  roleName: string;
+  initial: string;
+  /** Cara propia, serializada. `null` = la del rol, calculada al leer. */
+  avatar: string | null;
+  runtime: ChatRuntime;
+  model: string | null;
+  accountId: string | null;
+  tier: EffortTier;
+  /** El coordinador habitual de la marca (brief 2.3): exclusivo, lo escribe `setBrandCoordinator`. */
+  coordinator: boolean;
+  lastCalledAt: string;
+  retiredAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -347,6 +380,26 @@ const toMember = (r: MemberRow): TeamMemberRecord => ({
   // reads as the default rather than propagating an unknown word upwards.
   tier: (EFFORT_TIERS as readonly string[]).includes(r.tier ?? '') ? (r.tier as EffortTier) : DEFAULT_EFFORT_TIER,
   usage: parseUsage(r.usage_json),
+  brandMemberId: r.brand_member_id ?? null,
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+});
+const readRuntime = (runtime: string): ChatRuntime => (runtime === 'claude' || runtime === 'codex' ? runtime : 'opencode');
+const readTier = (tier: string | null): EffortTier => ((EFFORT_TIERS as readonly string[]).includes(tier ?? '') ? (tier as EffortTier) : DEFAULT_EFFORT_TIER);
+const toBrandMember = (r: BrandMemberRow): BrandMemberRecord => ({
+  id: r.id,
+  brandId: r.brand_id,
+  roleId: r.role_id,
+  roleName: r.role_name,
+  initial: r.initial,
+  avatar: r.avatar,
+  runtime: readRuntime(r.runtime),
+  model: r.model,
+  accountId: r.account_id,
+  tier: readTier(r.tier),
+  coordinator: r.coordinator === 1,
+  lastCalledAt: r.last_called_at,
+  retiredAt: r.retired_at,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -442,6 +495,11 @@ const toCoordinationCostLedger = (r: CoordinationCostLedgerRow): CoordinationCos
   detailJson: r.detail_json,
   createdAt: r.created_at,
 });
+
+/** Id determinista de la persona del plantel que la migración 13 → 14 crea a partir de una convocatoria. */
+function migratedBrandMemberId(memberId: string): string {
+  return `bm_${createHash('sha1').update(`${memberId}\0brand-member`).digest('hex').slice(0, 20)}`;
+}
 
 /** Deterministic id for a member created by the v2 -> v3 migration (idempotent re-runs). */
 function legacyMemberSuffix(workId: string, runtime: string): string {
@@ -551,7 +609,68 @@ export class LatteRepository {
         [briefDocumentId(row.id), row.id, row.title, row.updated_at, row.updated_at],
       );
     }
+    // Esquema 14: la convocatoria nombra a su persona del plantel. Nullable y
+    // agregada acá, como continued_from, para que una base nueva y una vieja
+    // tomen el mismo camino. Va DESPUÉS de la conversión de chat_sessions, que
+    // todavía puede estar creando miembros.
+    const convocationColumns = this.db.all<{ name: string }>("SELECT name FROM pragma_table_info('team_members')").map((c) => c.name);
+    if (!convocationColumns.includes('brand_member_id')) this.db.run('ALTER TABLE team_members ADD COLUMN brand_member_id TEXT');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_team_members_brand_member ON team_members(brand_member_id)');
+    this.backfillBrandMembers();
     this.db.run('INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)', ['schema_version', SCHEMA_VERSION]);
+  }
+
+  /**
+   * La migración 13 → 14 (brief 3.2): CADA MIEMBRO DE HOY SE VUELVE PLANTEL
+   * DE SU MARCA, CONVOCADO EN SU TRABAJO.
+   *
+   * En orden de llegada, cada fila sin persona busca en el plantel de su marca
+   * a alguien con el mismo `(rol, runtime, cuenta)` que todavía NO esté
+   * convocado en ese mismo trabajo; si no hay, lo crea copiando la identidad
+   * de la fila. Así, la misma estratega en dos trabajos de una marca se funde
+   * en una persona, y dos del mismo rol en el MISMO trabajo siguen siendo dos.
+   *
+   * Idempotente por construcción: sólo mira filas con `brand_member_id` NULL,
+   * y el id de la persona creada se deriva del de la fila. Corre en cada
+   * arranque, así que una fila escrita por fuera del hub se completa sola. Una
+   * fila cuyo trabajo ya no existe queda como está: no se inventa una marca.
+   *
+   * La cara se conserva: la primera del rol en su trabajo mostraba la del rol
+   * (queda NULL, y sigue al override `role-avatar:`); las siguientes mostraban
+   * la derivada de su propio id, y ésa se copia tal cual.
+   */
+  private backfillBrandMembers(): void {
+    const pending = this.db.all<MemberRow & { brand_id: string }>(
+      'SELECT tm.*, w.brand_id AS brand_id FROM team_members tm JOIN works w ON w.id = tm.work_id WHERE tm.brand_member_id IS NULL ORDER BY tm.created_at ASC, tm.id ASC',
+    );
+    if (pending.length === 0) return;
+    this.db.transaction(() => {
+      for (const row of pending) {
+        const match = this.db.get<{ id: string; last_called_at: string }>(
+          `SELECT bm.id, bm.last_called_at FROM brand_members bm
+           WHERE bm.brand_id = ? AND bm.role_id = ? AND bm.runtime = ? AND IFNULL(bm.account_id, '') = IFNULL(?, '')
+             AND NOT EXISTS (SELECT 1 FROM team_members t WHERE t.work_id = ? AND t.brand_member_id = bm.id)
+           ORDER BY bm.created_at ASC, bm.id ASC LIMIT 1`,
+          [row.brand_id, row.role_id, row.runtime, row.account_id, row.work_id],
+        );
+        let brandMemberId: string;
+        if (match) {
+          brandMemberId = match.id;
+          if (row.updated_at > match.last_called_at) {
+            this.db.run('UPDATE brand_members SET last_called_at = ?, updated_at = ? WHERE id = ?', [row.updated_at, row.updated_at, match.id]);
+          }
+        } else {
+          brandMemberId = migratedBrandMemberId(row.id);
+          const first = this.db.get<{ id: string }>('SELECT id FROM team_members WHERE work_id = ? AND role_id = ? ORDER BY created_at ASC, id ASC LIMIT 1', [row.work_id, row.role_id]);
+          const avatar = first && first.id !== row.id ? serializeAvatar(avatarFromSeed(row.id)) : null;
+          this.db.run(
+            'INSERT OR IGNORE INTO brand_members(id, brand_id, role_id, role_name, initial, avatar, runtime, model, account_id, tier, coordinator, last_called_at, retired_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, ?, ?)',
+            [brandMemberId, row.brand_id, row.role_id, row.role_name, row.initial, avatar, row.runtime, row.model, row.account_id, readTier(row.tier), row.updated_at, row.created_at, row.updated_at],
+          );
+        }
+        this.db.run('UPDATE team_members SET brand_member_id = ? WHERE id = ?', [brandMemberId, row.id]);
+      }
+    });
   }
 
   // Meta (small app-level settings) --------------------------------------------
@@ -816,10 +935,10 @@ export class LatteRepository {
     const tier = member.tier ?? DEFAULT_EFFORT_TIER;
     const usage = member.usage ?? EMPTY_USAGE;
     this.db.run(
-      'INSERT INTO team_members(id, work_id, role_id, role_name, initial, runtime, model, account_id, session_id, done, continued_from, tier, usage_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [member.id, member.workId, member.roleId, member.roleName, member.initial, member.runtime, member.model, member.accountId, member.sessionId, member.done ? 1 : 0, member.continuedFrom ?? null, tier, serializeUsage(usage), member.createdAt, member.updatedAt],
+      'INSERT INTO team_members(id, work_id, role_id, role_name, initial, runtime, model, account_id, session_id, done, continued_from, tier, usage_json, brand_member_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [member.id, member.workId, member.roleId, member.roleName, member.initial, member.runtime, member.model, member.accountId, member.sessionId, member.done ? 1 : 0, member.continuedFrom ?? null, tier, serializeUsage(usage), member.brandMemberId ?? null, member.createdAt, member.updatedAt],
     );
-    return { ...member, continuedFrom: member.continuedFrom ?? null, tier, usage };
+    return { ...member, continuedFrom: member.continuedFrom ?? null, tier, usage, brandMemberId: member.brandMemberId ?? null };
   }
 
   /** Runtime-native session/thread id learned at start or, for Claude, with the first reply. */
@@ -860,6 +979,126 @@ export class LatteRepository {
 
   deleteMember(id: string): void {
     this.db.run('DELETE FROM team_members WHERE id = ?', [id]);
+  }
+
+  // El plantel de la marca (esquema 14) -----------------------------------------
+
+  /** La marca de un trabajo, sin sincronizar nada del disco. `null` si el trabajo no existe. */
+  brandIdOfWork(workId: string): string | null {
+    return this.db.get<{ brand_id: string }>('SELECT brand_id FROM works WHERE id = ?', [workId])?.brand_id ?? null;
+  }
+
+  /** Todo el plantel de una marca, retirados incluidos, en orden de llegada. */
+  listBrandMembers(brandId: string): BrandMemberRecord[] {
+    return this.db.all<BrandMemberRow>('SELECT * FROM brand_members WHERE brand_id = ? ORDER BY created_at ASC, id ASC', [brandId]).map(toBrandMember);
+  }
+
+  findBrandMember(id: string): BrandMemberRecord | null {
+    const row = this.db.get<BrandMemberRow>('SELECT * FROM brand_members WHERE id = ?', [id]);
+    return row ? toBrandMember(row) : null;
+  }
+
+  getBrandMember(id: string): BrandMemberRecord {
+    const found = this.findBrandMember(id);
+    if (!found) throw new NotFoundError('Brand member', id);
+    return found;
+  }
+
+  insertBrandMember(member: BrandMemberRecord): BrandMemberRecord {
+    this.db.run(
+      'INSERT INTO brand_members(id, brand_id, role_id, role_name, initial, avatar, runtime, model, account_id, tier, coordinator, last_called_at, retired_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [member.id, member.brandId, member.roleId, member.roleName, member.initial, member.avatar, member.runtime, member.model, member.accountId, member.tier, member.coordinator ? 1 : 0, member.lastCalledAt, member.retiredAt, member.createdAt, member.updatedAt],
+    );
+    return member;
+  }
+
+  deleteBrandMember(id: string): void {
+    this.db.run('DELETE FROM brand_members WHERE id = ?', [id]);
+  }
+
+  /** Lo convocaron (o abrieron uno de sus hilos): vuelve si estaba retirado. */
+  markBrandMemberCalled(id: string, at: string): void {
+    this.db.run('UPDATE brand_members SET last_called_at = ?, retired_at = NULL, updated_at = ? WHERE id = ?', [at, at, id]);
+  }
+
+  /**
+   * El coordinador habitual de la marca: EXCLUSIVO. Una sola sentencia marca a
+   * esa persona y desmarca a todas las demás de la marca, así que nunca hay dos
+   * ni un instante con dos. `null` desmarca a quien estuviera.
+   */
+  setBrandCoordinator(brandId: string, brandMemberId: string | null, at: string): void {
+    this.db.run(
+      'UPDATE brand_members SET coordinator = CASE WHEN id = ? THEN 1 ELSE 0 END, updated_at = ? WHERE brand_id = ? AND (coordinator = 1 OR id = ?)',
+      [brandMemberId ?? '', at, brandId, brandMemberId ?? ''],
+    );
+  }
+
+  /** Quién coordina por costumbre los trabajos de esta marca, si alguien. */
+  brandCoordinator(brandId: string): BrandMemberRecord | null {
+    const row = this.db.get<BrandMemberRow>('SELECT * FROM brand_members WHERE brand_id = ? AND coordinator = 1 ORDER BY created_at ASC, id ASC LIMIT 1', [brandId]);
+    return row ? toBrandMember(row) : null;
+  }
+
+  retireBrandMember(id: string, at: string): void {
+    this.db.run('UPDATE brand_members SET retired_at = ?, updated_at = ? WHERE id = ? AND retired_at IS NULL', [at, at, id]);
+  }
+
+  /**
+   * Retira a los que nadie llamó desde `cutoff`: ni una convocatoria ni un
+   * movimiento en ninguno de sus hilos (`team_members.updated_at` cambia con
+   * cada sesión y cada turno medido). `brandId` null = todas las marcas.
+   * Devuelve cuántos retiró.
+   */
+  retireIdleBrandMembers(brandId: string | null, cutoff: string, at: string): number {
+    const idle = this.db.all<{ id: string }>(
+      `SELECT bm.id FROM brand_members bm
+       WHERE (? IS NULL OR bm.brand_id = ?) AND bm.retired_at IS NULL AND bm.last_called_at < ?
+         AND NOT EXISTS (SELECT 1 FROM team_members t WHERE t.brand_member_id = bm.id AND t.updated_at >= ?)`,
+      [brandId, brandId, cutoff, cutoff],
+    );
+    for (const { id } of idle) this.retireBrandMember(id, at);
+    return idle.length;
+  }
+
+  /** En qué trabajos está convocada cada persona del plantel de esta marca. */
+  brandMemberConvocations(brandId: string): Map<string, string[]> {
+    const rows = this.db.all<{ brand_member_id: string; work_id: string }>(
+      'SELECT t.brand_member_id, t.work_id FROM team_members t JOIN brand_members bm ON bm.id = t.brand_member_id WHERE bm.brand_id = ? ORDER BY t.created_at ASC, t.id ASC',
+      [brandId],
+    );
+    const out = new Map<string, string[]>();
+    for (const row of rows) {
+      const list = out.get(row.brand_member_id) ?? [];
+      if (!list.includes(row.work_id)) list.push(row.work_id);
+      out.set(row.brand_member_id, list);
+    }
+    return out;
+  }
+
+  /** La convocatoria de esta persona en este trabajo, si ya la tiene. */
+  findConvocation(workId: string, brandMemberId: string): TeamMemberRecord | null {
+    const row = this.db.get<MemberRow>('SELECT * FROM team_members WHERE work_id = ? AND brand_member_id = ? ORDER BY created_at ASC, id ASC LIMIT 1', [workId, brandMemberId]);
+    return row ? toMember(row) : null;
+  }
+
+  /**
+   * A quién del plantel convocar para este rol en este trabajo: alguien de la
+   * marca con ese rol que todavía no esté convocado acá. Con `exact` se pide
+   * esa identidad (runtime y cuenta); sin él, cualquiera del rol. Los activos
+   * van antes que los retirados, y entre iguales el más antiguo.
+   */
+  findBrandMemberToCall(brandId: string, roleId: string, workId: string, exact: { runtime: ChatRuntime; accountId: string | null } | null): BrandMemberRecord | null {
+    const filter = exact ? " AND bm.runtime = ? AND IFNULL(bm.account_id, '') = IFNULL(?, '')" : '';
+    const params: Array<string | null> = [brandId, roleId, workId];
+    if (exact) params.push(exact.runtime, exact.accountId);
+    const row = this.db.get<BrandMemberRow>(
+      `SELECT bm.* FROM brand_members bm
+       WHERE bm.brand_id = ? AND bm.role_id = ?
+         AND NOT EXISTS (SELECT 1 FROM team_members t WHERE t.work_id = ? AND t.brand_member_id = bm.id)${filter}
+       ORDER BY (bm.retired_at IS NOT NULL) ASC, bm.created_at ASC, bm.id ASC LIMIT 1`,
+      params,
+    );
+    return row ? toBrandMember(row) : null;
   }
 
   // Decisions ---------------------------------------------------------------

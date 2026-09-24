@@ -2,9 +2,9 @@ import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, Home, MessageSquare, Minus, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, X } from 'lucide-react';
+import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, Home, MessageSquare, Minus, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, Users, X } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, HandoffTaskBridgeResult, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
+import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, BrandMember, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, HandoffTaskBridgeResult, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
 import { api, chatStore, isDesktop } from './browser-api';
 import { DocumentsView, NewDocumentDialog } from './DocumentsView';
 import { hasMetadataDrafts } from './DocumentMetadata';
@@ -19,6 +19,7 @@ import { UpdateBanner } from './UpdateBanner';
 import { ALL_BRAND_SCOPE, inKnowledgeScope, selectWorkBrief, workBrief, workTitles, type KnowledgeScope } from './brand-knowledge';
 import { KnowledgeScopeFilter } from './KnowledgeScope';
 import { ContextView } from './ContextView';
+import { BrandTeamView } from './BrandTeamView';
 import { HomeView } from './HomeView';
 import { ResumenView } from './ResumenView';
 import { TrabajoView } from './TrabajoView';
@@ -48,7 +49,7 @@ import { AvatarSprite } from './coordination/Avatar';
  * surface, reachable before any work is open. Opening a work still opens the
  * work (`selectWork`), so the two destinations never blur.
  */
-export const VIEWS = ['home', 'resumen', 'trabajo', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'decisions', 'resultados'] as const;
+export const VIEWS = ['home', 'resumen', 'trabajo', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'roster', 'decisions', 'resultados'] as const;
 type View = (typeof VIEWS)[number];
 type Modal = 'brand' | 'work' | 'document' | null;
 const date = (value: string) => new Date(value).toLocaleString(currentLocale(), { dateStyle: 'short', timeStyle: 'short' });
@@ -99,6 +100,9 @@ export const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
   NO_ACTIVE_RUN: 'error.coordination.noActiveRun',
   GLOBAL_BUDGET_INVALID: 'error.coordination.globalBudgetInvalid',
   TOO_MANY_ACTIVE_RUNS: 'error.coordination.tooManyActiveRuns',
+  // El tope de convocados por run (limits.ts): la persona lo alcanza
+  // aprobando un gate de despacho que tendría que traer a alguien más.
+  TOO_MANY_CALLED_UP: 'error.coordination.tooManyCalledUp',
   // `commitProposal` crea las tareas del plan aprobado, así que los topes del
   // DAG llegan a la persona por el botón "Aprobar" — no sólo al agente.
   TASK_CAP: 'error.coordination.taskCap',
@@ -422,6 +426,19 @@ export function App() {
   // acaba de contratar y spawnear no tiene pestaña, y no hay forma de abrirlo.
   // `loadTeam` ya está guardado por generación, así que una respuesta lenta no
   // puede pintar el equipo de otro Trabajo.
+  /**
+   * EL PLANTEL DE LA MARCA (esquema 14): lo lee Marca → Equipo y el "Sumar un
+   * rol" de un trabajo, que muestra primero a los de la marca. Se relee con
+   * cada cambio del equipo: una convocatoria —de la persona o del motor— mueve
+   * los trabajos de alguien y lo puede traer de vuelta de retirado.
+   */
+  const [roster, setRoster] = useState<BrandMember[]>([]);
+  useEffect(() => {
+    if (!brand) { setRoster([]); return; }
+    let live = true;
+    void api.listBrandTeam(brand.id).then(list => { if (live) setRoster(list); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [brand?.id, team]);
   const coordination = useCoordination(work?.id ?? null, (e) => setError(displayError(e)), (id) => { void loadTeam(id).catch(() => undefined); });
   // La visita a la coordinación se marca cuando la persona ABRE el panel de
   // coordinación de un Trabajo (Decisiones: gates, autoridad, presupuesto,
@@ -1176,6 +1193,8 @@ export function App() {
     finally { setStartingChat(false); }
   };
   const addMember = async (roleId: string, options: TeamMemberOptions | null) => { if (!work || startingChat) return; await openSession(() => api.addTeamMember(work.id, roleId, options), work.id).catch(() => undefined); };
+  /** Convoca a alguien del plantel al trabajo abierto: su hilo se abre como el de un alta. */
+  const callUpMember = async (brandMemberId: string) => { if (!work || startingChat) return; await openSession(() => api.callUpMember(work.id, brandMemberId), work.id).catch(() => undefined); };
   /**
    * B5.2: abrir una pestaña NO abre un segundo proceso —`hub.openMember`
    * devuelve la sesión viva si la hay, y la que spawneó el motor lo está—,
@@ -1400,7 +1419,7 @@ export function App() {
       {showArchived && <div className="archived-brands">{archivedBrands.length === 0 ? <p className="sidebar-hint">{t('brand.noneArchived')}</p> : archivedBrands.map(b => <div key={b.id} className="archived-brand-row"><span title={b.name}>{b.name}</span><button type="button" className="subtle" disabled={busy} onClick={() => run(() => restoreArchivedBrand(b.id))}>{t('brand.restore')}</button></div>)}</div>}
       <nav><button type="button" title={t('home.nav')} className={view === 'home' ? 'nav-active' : ''} onClick={() => setView('home')}><Home size={18} />{t('home.nav')}</button></nav>
       <div className="nav-label">{t('ui.auto.034')}</div>
-      <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button></nav>
+      <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button><button disabled={!brand} title={t('roster.nav')} className={view === 'roster' ? 'nav-active' : ''} onClick={() => setView('roster')}><Users size={18} />{t('roster.nav')}</button></nav>
       <div className="sidebar-rule" /><div className="nav-label">TRABAJOS <span>{works.length.toString().padStart(2, '0')}</span></div>
       <nav className="work-nav">{works.map(w => <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'funnel' || view === 'decisions' || view === 'resumen' || view === 'trabajo' || view === 'evidencia' || view === 'resultados') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{(workHasLiveChat(w.id) || sessions[w.id]) && <i className={sessions[w.id] && endedSessions.has(sessions[w.id].id) && !workHasLiveChat(w.id) ? 'ended-dot' : 'live-dot'} />}</button>)}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
       <div className="sidebar-bottom"><button disabled={!brand || transitioning} title={t('ui.auto.038')} onClick={() => { setName(''); setModal('work'); }}><Plus size={20} />{t('ui.auto.038')}</button><div className="sidebar-rule" /><nav><button onClick={() => setSettings('agents')} title={t('ui.auto.348')}><Settings2 size={17} />{t('ui.auto.348')}</button></nav><div className="profile"><span className="avatar">G</span><div>Tu estudio<small>{t('ui.auto.039')}</small></div></div></div>
@@ -1442,12 +1461,18 @@ export function App() {
         onReload={() => void reloadContext()}
         onOverride={() => void overrideContext()}
       />}
+      {view === 'roster' && brand && <BrandTeamView brandName={brand.name} roster={roster} work={work} busy={busy || startingChat}
+        onCallUp={isDesktop ? (id) => void callUpMember(id) : undefined}
+        onRetire={(id) => void run(async () => { setRoster(await api.retireBrandMember(id)); })}
+        onSetCoordinator={isDesktop ? (id) => void run(async () => { setRoster(await api.setBrandCoordinator(brand.id, id)); if (work) await loadTeam(work.id); }) : undefined}
+        onAdd={isDesktop ? async (roleId, options) => { await run(async () => { setRoster(await api.addBrandMember(brand.id, roleId, options)); }); } : undefined}
+        picker={{ roles, choices: runtimeChoices, primaryLabel, primaryDetail, primaryReady, checking: checkingAgents, isDesktop, onProviders: () => setSettings('agents'), onRecheck: () => void refreshChatStatus(), submitLabel: t('roster.addSubmit'), lead: null }} />}
       {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} onAcceptHandoff={acceptHandoffAsTask} />}
       {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice('Aprendizaje guardado en Engram'); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
       <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
     </main>
     <aside className="agent-panel">{focusChat && (error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}<button type="button" className={'panel-resizer' + (dragging ? ' dragging' : '')} aria-label={t('ui.auto.066')} title={t('ui.auto.067')} onPointerDown={startResize} />
-      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onAcceptHandoffAsTask={acceptHandoffAsTask} handoffHolds={openHandoffHolds} handoffProposal={pendingHandoffProposal} onOpenHandoffProposal={() => setCardsFromPending(true)} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} coordinationLog={work ? coordination.log : undefined} coordinationMessages={work ? coordination.messages : undefined} coordinationAsks={work ? coordination.openAsks : undefined} coordinationHires={work ? coordination.hires : undefined} coordinationGates={work ? coordination.gates : undefined} coordinationTasks={work ? coordination.tasks : undefined} formatTime={hour} formatDate={date} coordinationSupport={work ? coordination.support : undefined} coordinationAuthority={work ? coordination.authority : undefined} onSetCoordinationAuthority={changeCoordinationAuthority} coordinationBudget={work ? coordination.budget : undefined} onSetCoordinationBudget={coordination.setBudget} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} chatCoordination={{ coordinationRun: work ? coordination.run : undefined, gates: work ? coordination.gates : undefined, openAsks: work ? coordination.openAsks : undefined, roles, team, formatDate: date, onResolveGate: coordination.resolveGate, onAnswerAsk: coordination.answerAsk, coordinationPending: coordination.pending, onSelectMember: selectMember, initiallyExpanded: cardsFromPending, teamSeen: coordination.run ? teamSeenRuns.seen(coordination.run.id) : false, onTeamOpened: () => { const r = coordination.run; if (r?.planApproved) teamSeenRuns.markSeen(r.id); } }} />
+      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} roster={roster} onCallUp={callUpMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onAcceptHandoffAsTask={acceptHandoffAsTask} handoffHolds={openHandoffHolds} handoffProposal={pendingHandoffProposal} onOpenHandoffProposal={() => setCardsFromPending(true)} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} coordinationLog={work ? coordination.log : undefined} coordinationMessages={work ? coordination.messages : undefined} coordinationAsks={work ? coordination.openAsks : undefined} coordinationHires={work ? coordination.hires : undefined} coordinationGates={work ? coordination.gates : undefined} coordinationTasks={work ? coordination.tasks : undefined} formatTime={hour} formatDate={date} coordinationSupport={work ? coordination.support : undefined} coordinationAuthority={work ? coordination.authority : undefined} onSetCoordinationAuthority={changeCoordinationAuthority} coordinationBudget={work ? coordination.budget : undefined} onSetCoordinationBudget={coordination.setBudget} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} onSetCoordinator={work ? (memberId) => { void coordination.setCoordinator(memberId); } : undefined} chatCoordination={{ coordinationRun: work ? coordination.run : undefined, gates: work ? coordination.gates : undefined, openAsks: work ? coordination.openAsks : undefined, roles, team, formatDate: date, onResolveGate: coordination.resolveGate, onAnswerAsk: coordination.answerAsk, coordinationPending: coordination.pending, onSelectMember: selectMember, initiallyExpanded: cardsFromPending, teamSeen: coordination.run ? teamSeenRuns.seen(coordination.run.id) : false, onTeamOpened: () => { const r = coordination.run; if (r?.planApproved) teamSeenRuns.markSeen(r.id); } }} />
       <details className="active-context">
         <summary><Bookmark size={12} />{t('ui.auto.035')}<span>{[brand?.context ? 'marca' : null, work ? 'trabajo' : null, decisions.length ? `${decisions.length} decisiones` : null].filter(Boolean).join(' · ') || t('ui.auto.068')}</span></summary>
         <div className="active-context-body">

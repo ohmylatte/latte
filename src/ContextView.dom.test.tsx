@@ -88,6 +88,8 @@ const REGION: Record<(typeof VIEWS)[number], string> = {
   funnel: '.funnel-view',
   context: '.context-editor',
   memory: '.document-scroll',
+  // Marca → Equipo (esquema 14): el plantel de la marca.
+  roster: '.brand-team-view',
   decisions: '.document-scroll',
   resultados: '.resultados-view',
 };
@@ -101,6 +103,7 @@ const CONTROL: Record<(typeof VIEWS)[number], RegExp> = {
   funnel: /^Embudo/,
   context: /^Contexto/,
   memory: /^Memoria/,
+  roster: /^Equipo/,
   decisions: /^Decisiones/,
   resultados: /^Resultados/,
 };

@@ -6,6 +6,7 @@ import type {
   AgentModelList,
   AgentRole,
   AgentRuntimeInfo,
+  BrandMember,
   ChatEvent,
   ChatMessage,
   ChatRuntime,
@@ -27,7 +28,8 @@ import type { ChatManager } from '../opencode/chatManager';
 import type { CommandRunner } from '../runtime/commandRunner';
 import type { RuntimeDetector } from '../runtime/detect';
 import type { TerminalManager } from '../runtime/terminalManager';
-import type { LatteRepository, TeamMemberRecord } from '../storage/repository';
+import type { BrandMemberRecord, LatteRepository, TeamMemberRecord } from '../storage/repository';
+import { rosterFaces } from './roster';
 import { AccountStore, SYSTEM_ACCOUNT_ID, type AccountRuntime } from './accounts';
 import { ASSISTANT_ROLE_ID, RoleCatalog } from './roles';
 import { avatarFromSeed, serializeAvatar } from '../../shared/avatar';
@@ -86,6 +88,20 @@ export interface AddMemberInput extends MemberContext {
   continuedFrom?: string | null;
   /** Effort override; absent or null means the role's own default. */
   tier?: EffortTier | null;
+  /** Convocar a ESTA persona del plantel (el servicio valida que sea de la misma marca). */
+  brandMemberId?: string | null;
+  /** Sumar a una persona nueva al plantel aunque ya haya alguien de ese rol sin convocar. */
+  newInBrand?: boolean | null;
+}
+
+/** Quién entra al trabajo: alguien del plantel que ya existía, o una persona nueva que nace con esta convocatoria. */
+interface Call {
+  brandMember: BrandMemberRecord | null;
+  created: boolean;
+  runtime: ChatRuntime;
+  model: string | null;
+  accountId: string | null;
+  tier: EffortTier;
 }
 
 const PRIMARY_KEY = 'primary_agent';
@@ -371,20 +387,74 @@ export class AgentHub {
     // tendria que ir a buscar los hermanos de cada uno para saber si su cara
     // se repite, y eso serian N consultas para dibujar una lista.
     const members = this.deps.repo.listMembers(workId);
-    return members.map((record) => this.describe(record, members));
+    const faces = this.facesFor(workId, members);
+    return members.map((record) => this.describe(record, members, faces));
   }
 
   getMember(memberId: string): TeamMember {
-    return this.describe(this.deps.repo.getMember(memberId));
+    const record = this.deps.repo.getMember(memberId);
+    return this.describe(record, undefined, this.facesFor(record.workId, [record]));
+  }
+
+  /**
+   * El plantel de una marca, como lo ve la interfaz. Una lectura pura: el
+   * retiro por inactividad lo decide el servicio (`retireIdleBrandMembers`).
+   */
+  listBrandTeam(brandId: string): BrandMember[] {
+    const roster = this.deps.repo.listBrandMembers(brandId);
+    const faces = rosterFaces(roster, (roleId) => this.roleAvatar(roleId));
+    const convocations = this.deps.repo.brandMemberConvocations(brandId);
+    return roster.map((member) => ({
+      id: member.id,
+      brandId: member.brandId,
+      roleId: member.roleId,
+      roleName: member.roleName,
+      initial: member.initial,
+      avatar: faces.get(member.id) ?? this.roleAvatar(member.roleId),
+      runtime: member.runtime,
+      model: member.model,
+      accountId: member.accountId,
+      label: this.labelFor(member.runtime, member.model, member.accountId),
+      tier: member.tier,
+      workIds: convocations.get(member.id) ?? [],
+      coordinator: member.coordinator,
+      lastCalledAt: member.lastCalledAt,
+      retiredAt: member.retiredAt,
+      createdAt: member.createdAt,
+      updatedAt: member.updatedAt,
+    }));
+  }
+
+  /**
+   * Suma a alguien al plantel sin convocarlo: no abre ninguna conversación ni
+   * arranca ningún proceso. Con el agente principal salvo que se elija otro,
+   * igual que un alta en un trabajo.
+   */
+  addBrandMember(brandId: string, roleId: string, choice: { runtime?: ChatRuntime | null; model?: string | null; accountId?: string | null; tier?: EffortTier | null } = {}): BrandMemberRecord {
+    const role = this.deps.roles.get(roleId);
+    if (!role) throw new NotFoundError('Role', roleId);
+    const { runtime, model, accountId } = this.resolveChoice(choice);
+    this.adapterFor(runtime); // un runtime que este build no trae no puede ser de nadie
+    const now = this.clock();
+    return this.deps.repo.insertBrandMember({
+      id: newId('bm'), brandId, roleId: role.id, roleName: role.name, initial: role.initial, avatar: null,
+      runtime, model, accountId, tier: choice.tier ?? role.tier, coordinator: false,
+      lastCalledAt: now, retiredAt: null, createdAt: now, updatedAt: now,
+    });
   }
 
   /** Creates the member (primary agent unless overridden) and opens its conversation. */
   async addMember(input: AddMemberInput): Promise<ChatSession> {
     const role = this.deps.roles.get(input.roleId);
     if (!role) throw new NotFoundError('Role', input.roleId);
-    const { runtime, model, accountId } = this.resolveChoice(input);
+    const call = this.resolveCall(input, role);
+    const { runtime, model, accountId } = call;
     this.adapterFor(runtime); // fail early when the runtime is not in this build
     const now = this.clock();
+    // La persona primero: la convocatoria la nombra. Una que ya estaba vuelve
+    // si se había retirado; una nueva nace con esta convocatoria.
+    if (call.brandMember && call.created) this.deps.repo.insertBrandMember({ ...call.brandMember, lastCalledAt: now, createdAt: now, updatedAt: now });
+    else if (call.brandMember) this.deps.repo.markBrandMemberCalled(call.brandMember.id, now);
     const record: TeamMemberRecord = {
       id: newId('mem'),
       workId: input.workId,
@@ -399,8 +469,10 @@ export class AgentHub {
       continuedFrom: input.continuedFrom ?? null,
       // The role knows what its work usually needs; the human can override it
       // when adding the member, and change it later from the conversation.
-      tier: input.tier ?? role.tier,
+      // Con plantel, el esfuerzo de la persona; lo pedido explícito gana.
+      tier: call.tier,
       usage: EMPTY_USAGE,
+      brandMemberId: call.brandMember?.id ?? null,
       createdAt: now,
       updatedAt: now,
     };
@@ -413,8 +485,57 @@ export class AgentHub {
       this.injection?.release(record.id);
       this.connectionInjection?.release(record.id);
       this.deps.repo.deleteMember(record.id);
+      // Y la persona que nació con ESTA convocatoria tampoco existió nunca. A
+      // alguien que ya estaba en el plantel no se lo toca: lo que sobra es un
+      // hilo, no una persona.
+      if (call.brandMember && call.created) this.deps.repo.deleteBrandMember(call.brandMember.id);
       throw error;
     }
+  }
+
+  /**
+   * A QUIÉN SE CONVOCA (brief 2.2): primero el plantel de la marca, y sólo si
+   * no hay nadie, una persona nueva.
+   *
+   * - `brandMemberId`: esa persona, tal cual es.
+   * - Sin él, alguien del plantel con ese rol que todavía no esté en este
+   *   trabajo (un retirado también sirve: convocarlo lo devuelve). Si quien
+   *   llama eligió un runtime, sólo sirve quien corre en ese runtime y esa
+   *   cuenta: son parte de la identidad.
+   * - `newInBrand`, o nadie que sirva: una persona nueva con la elección de
+   *   siempre (el agente principal salvo que se elija otro).
+   *
+   * La identidad —runtime, cuenta, modelo, esfuerzo— la pone la persona; lo que
+   * quien llama pide explícito (un modelo, un esfuerzo) gana para ESTE hilo,
+   * igual que antes ganaba sobre el rol. Un trabajo que ya no existe no tiene
+   * marca: se sigue como antes y el insert lo rechaza.
+   */
+  private resolveCall(input: AddMemberInput, role: { id: string; name: string; initial: string; tier: EffortTier }): Call {
+    const brandId = this.deps.repo.brandIdOfWork(input.workId);
+    const choice = this.resolveChoice(input);
+    const explicit = input.runtime != null;
+    let existing: BrandMemberRecord | null = null;
+    if (brandId && input.brandMemberId) existing = this.deps.repo.getBrandMember(input.brandMemberId);
+    else if (brandId && !input.newInBrand) existing = this.deps.repo.findBrandMemberToCall(brandId, role.id, input.workId, explicit ? { runtime: choice.runtime, accountId: choice.accountId } : null);
+    if (existing) {
+      return {
+        brandMember: existing, created: false,
+        runtime: existing.runtime, accountId: existing.accountId,
+        model: input.model != null ? input.model : existing.model,
+        tier: input.tier ?? existing.tier,
+      };
+    }
+    const tier = input.tier ?? role.tier;
+    if (!brandId) return { brandMember: null, created: false, ...choice, tier };
+    const now = this.clock();
+    return {
+      brandMember: {
+        id: newId('bm'), brandId, roleId: role.id, roleName: role.name, initial: role.initial, avatar: null,
+        runtime: choice.runtime, model: choice.model, accountId: choice.accountId, tier, coordinator: false,
+        lastCalledAt: now, retiredAt: null, createdAt: now, updatedAt: now,
+      },
+      created: true, ...choice, tier,
+    };
   }
 
   /** Opens (or resumes) an existing member. Returns the live session when it is already open. */
@@ -423,6 +544,8 @@ export class AgentHub {
     const live = this.liveSession(memberId);
     if (live) return live;
     if (record.done) this.deps.repo.setMemberDone(record.id, false, this.clock());
+    // Abrir uno de sus hilos es convocarlo: si se había retirado, vuelve.
+    if (record.brandMemberId) this.deps.repo.markBrandMemberCalled(record.brandMemberId, this.clock());
     try {
       return await this.open({ ...record, done: false }, context);
     } catch (error) {
@@ -716,11 +839,13 @@ export class AgentHub {
    * fija `createdAt` y, si dos entraron en el mismo milisegundo, el id: el
    * primero conserva la cara del rol y no se la roba nadie despues.
    */
-  private avatarOf(record: TeamMemberRecord, siblings?: TeamMemberRecord[]): string | null {
-    let roleAvatar: string | null = null;
-    // Un rol borrado del disco no deja al miembro sin cara: la deriva de su id.
-    try { roleAvatar = this.deps.roles.get(record.roleId)?.avatar ?? null; } catch { roleAvatar = null; }
-    if (!roleAvatar) roleAvatar = serializeAvatar(avatarFromSeed(record.roleId));
+  private avatarOf(record: TeamMemberRecord, siblings?: TeamMemberRecord[], faces?: Map<string, string>): string | null {
+    // Esquema 14: la cara es de la PERSONA del plantel, calculada en su marca.
+    const face = record.brandMemberId ? faces?.get(record.brandMemberId) : undefined;
+    if (face) return face;
+    // Sin persona (una fila que todavía no pasó por `migrate()`): la regla de
+    // antes, dentro del trabajo.
+    const roleAvatar = this.roleAvatar(record.roleId);
     const peers = (siblings ?? this.deps.repo.listMembers(record.workId))
       .filter((m) => m.roleId === record.roleId)
       .sort((a, b) => (a.createdAt === b.createdAt ? a.id.localeCompare(b.id) : a.createdAt.localeCompare(b.createdAt)));
@@ -728,7 +853,22 @@ export class AgentHub {
     return index <= 0 ? roleAvatar : serializeAvatar(avatarFromSeed(record.id));
   }
 
-  private describe(record: TeamMemberRecord, siblings?: TeamMemberRecord[]): TeamMember {
+  /** La cara de un rol, con su override de Ajustes. Un rol borrado del disco no deja a nadie sin cara: la deriva de su id. */
+  private roleAvatar(roleId: string): string {
+    let avatar: string | null = null;
+    try { avatar = this.deps.roles.get(roleId)?.avatar ?? null; } catch { avatar = null; }
+    return avatar ?? serializeAvatar(avatarFromSeed(roleId));
+  }
+
+  /** Las caras del plantel de la marca de este trabajo, sólo si algún miembro tiene persona. */
+  private facesFor(workId: string, members: readonly TeamMemberRecord[]): Map<string, string> | undefined {
+    if (!members.some((m) => m.brandMemberId)) return undefined;
+    const brandId = this.deps.repo.brandIdOfWork(workId);
+    if (!brandId) return undefined;
+    return rosterFaces(this.deps.repo.listBrandMembers(brandId), (roleId) => this.roleAvatar(roleId));
+  }
+
+  private describe(record: TeamMemberRecord, siblings?: TeamMemberRecord[], faces?: Map<string, string>): TeamMember {
     let status: TeamMemberStatus;
     const adapter = this.adapters().find((a) => a.owns(record.id));
     if (adapter) status = adapter.isBusy(record.id) ? 'working' : 'idle';
@@ -740,7 +880,7 @@ export class AgentHub {
       roleId: record.roleId,
       roleName: record.roleName,
       initial: record.initial,
-      avatar: this.avatarOf(record, siblings),
+      avatar: this.avatarOf(record, siblings, faces),
       runtime: record.runtime,
       model: record.model,
       accountId: record.accountId,
@@ -749,6 +889,7 @@ export class AgentHub {
       tier: record.tier ?? DEFAULT_EFFORT_TIER,
       usage: record.usage ?? EMPTY_USAGE,
       continuedFrom: record.continuedFrom ?? null,
+      brandMemberId: record.brandMemberId ?? null,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
     };
@@ -781,7 +922,10 @@ export class AgentHub {
     const resolved = this.resolveChoice(input);
     const existing = this.deps.repo.listMembers(input.workId).find((m) => m.roleId === ASSISTANT_ROLE_ID && m.runtime === resolved.runtime && m.accountId === resolved.accountId && m.model === resolved.model);
     if (existing) return this.openMember(existing.id, input);
-    return this.addMember({ ...input, roleId: ASSISTANT_ROLE_ID });
+    // La conversación por defecto es la del agente PRINCIPAL: se pide con su
+    // runtime y su cuenta explícitos, así el plantel sólo aporta al Asistente
+    // de esa identidad y no uno de otro runtime que la marca tenga de antes.
+    return this.addMember({ ...input, roleId: ASSISTANT_ROLE_ID, runtime: resolved.runtime, accountId: resolved.accountId, model: resolved.model });
   }
 
   private resolveChoice(input: { runtime?: ChatRuntime | null; model?: string | null; accountId?: string | null }): { runtime: ChatRuntime; model: string | null; accountId: string | null } {

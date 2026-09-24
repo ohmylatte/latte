@@ -617,11 +617,62 @@ export interface TeamMember {
   usage: ChatUsage;
   /** Member of the same work this one took over from ("continuar con otro agente"); null when opened from scratch. A reference only: the origin is never changed. */
   continuedFrom: string | null;
+  /**
+   * La persona del plantel de la marca de la que este miembro es la
+   * convocatoria (esquema 14). Opcional sólo para no obligar a cada doble de
+   * prueba a inventarla: el hub la publica siempre, `null` si la fila todavía
+   * no tiene persona.
+   */
+  brandMemberId?: string | null;
+  /**
+   * Coordina ESTE trabajo: es el permiso del trabajo, ya fijado por
+   * `listTeam` (la elección de la persona, o el primero que resolvió el
+   * descarte). Sumar a alguien no lo mueve. Opcional: sólo `listTeam` lo
+   * publica.
+   */
+  coordinates?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+/**
+ * Alguien del plantel de una marca: la identidad que un trabajo convoca
+ * (brief `docs/briefs/2026-09-23-equipo-de-marca.md`). No es un proceso: estar
+ * acá no corre nada. Cada trabajo que lo convoca tiene su propio hilo, que es
+ * un `TeamMember` con `brandMemberId` apuntando acá.
+ */
+export interface BrandMember {
+  id: string;
+  brandId: string;
+  roleId: string;
+  roleName: string;
+  initial: string;
+  /** Su cara, ya resuelta y serializada: la elegida, la del rol o la derivada de su id. Nunca repetida dentro de la marca. */
+  avatar: string;
+  runtime: ChatRuntime;
+  model: string | null;
+  accountId: string | null;
+  label: string;
+  tier: EffortTier;
+  /** Los trabajos donde está convocado, en orden de convocatoria. */
+  workIds: string[];
+  /** Coordina por costumbre los trabajos de la marca. Una sola persona por marca, o nadie. */
+  coordinator: boolean;
+  lastCalledAt: string;
+  /** Cuándo se retiró (nadie lo convocó en un tiempo, o alguien lo quitó). `null` = activo. Convocarlo lo devuelve. */
+  retiredAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
 /** Advanced overrides when adding a member; empty = the primary agent. `continuedFrom` names the member of the same work it continues. `tier` overrides the role's default effort. */
-export interface TeamMemberOptions { runtime?: ChatRuntime | null; model?: string | null; accountId?: string | null; continuedFrom?: string | null; tier?: EffortTier | null }
+export interface TeamMemberOptions {
+  runtime?: ChatRuntime | null; model?: string | null; accountId?: string | null; continuedFrom?: string | null; tier?: EffortTier | null;
+  /**
+   * Sumar a una persona NUEVA al plantel aunque la marca ya tenga a alguien de
+   * ese rol. Sin esto, sumar un rol convoca primero a quien ya está en el
+   * plantel y todavía no trabaja en este trabajo.
+   */
+  newInBrand?: boolean | null;
+}
 /**
  * What a new member needs to continue another one's work, assembled by Latte
  * from its own records: no model summarises anything. The human edits it
@@ -975,6 +1026,12 @@ export interface CoordinationGateView {
    * the screen did not see coming.
    */
   roleCoverage?: CoordinationGateRoleCoverage[];
+  /**
+   * Only present on a legible `proposal` gate: the `membersToHire` roles the
+   * Brand's team already has someone for. Approving CALLS THEM UP; every other
+   * hire adds someone new to the Brand.
+   */
+  rosterHires?: string[];
   createdAt: string;
 }
 
@@ -1490,7 +1547,22 @@ export interface LatteAPI {
    * read. The new member is created with addTeamMember (`continuedFrom`).
    */
   draftContinuation(memberId: string): Promise<ContinuationDraft>;
+  /**
+   * Saca al miembro de ESTE trabajo (desconvocar): su hilo se va con él, y la
+   * persona sigue en el plantel de la marca.
+   */
   removeTeamMember(memberId: string): Promise<void>;
+  // El plantel de la marca (esquema 14)
+  /** Todo el plantel de una marca, retirados incluidos (con `retiredAt`), en orden de llegada. */
+  listBrandTeam(brandId: string): Promise<BrandMember[]>;
+  /** Suma a alguien al plantel SIN convocarlo a ningún trabajo: no arranca nada. Devuelve el plantel. */
+  addBrandMember(brandId: string, roleId: string, options?: TeamMemberOptions | null): Promise<BrandMember[]>;
+  /** Quita a alguien del plantel: se borra si nunca trabajó en nada; si tiene historia, se retira. Devuelve el plantel. */
+  retireBrandMember(brandMemberId: string): Promise<BrandMember[]>;
+  /** El coordinador habitual de la marca: exclusivo, `null` = nadie. Nunca alguien de otra marca. Devuelve el plantel. */
+  setBrandCoordinator(brandId: string, brandMemberId: string | null): Promise<BrandMember[]>;
+  /** Convoca a alguien del plantel a un trabajo de SU marca y abre su hilo ahí (lo reabre si ya estaba convocado). */
+  callUpMember(workId: string, brandMemberId: string): Promise<ChatSession>;
   listChatMessages(chatId: string): Promise<ChatMessage[]>;
   sendChat(chatId: string, text: string): Promise<void>;
   abortChat(chatId: string): Promise<void>;

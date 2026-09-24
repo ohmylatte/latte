@@ -36,7 +36,7 @@ import type {
 } from '../storage/repository';
 import { canAddTask, computeDoomedTasks, computeReadyTasks, computeTaskDepth, wouldCreateCycle, type DagEdge, type DagTask } from './dag';
 import { assertBudgetConfigured, BudgetUnsetError, readStoredCoordinationBudget, requireCoordinationBudget, reserveDispatch, type BudgetUsage, type StoredCoordinationBudgetRead } from './budget';
-import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, IN_FLIGHT_DISPATCH_STALE_MINUTES, LOG_PREVIEW, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK, MAX_PENDING_NOTICES, TASK_LIST_SPEC_PREVIEW } from './limits';
+import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, IN_FLIGHT_DISPATCH_STALE_MINUTES, LOG_PREVIEW, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK, MAX_CALLED_UP_MEMBERS_PER_RUN, MAX_PENDING_NOTICES, TASK_LIST_SPEC_PREVIEW } from './limits';
 
 /**
  * Los roles que la persona aprobo, por run. Una clave propia y no `plan_json`:
@@ -144,6 +144,13 @@ export interface CoordinationGate {
   aggregate?: CoordinationGateAggregate;
   /** Only present on a legible `proposal` gate: who can do each role the plan names. */
   roleCoverage?: CoordinationGateRoleCoverage[];
+  /**
+   * Only present on a legible `proposal` gate: the `membersToHire` roles the
+   * Brand's team already has someone for, not yet on this Work. Approving
+   * CALLS THEM UP ("Convoca a X"); every other hire is someone new to the
+   * Brand ("Suma a X").
+   */
+  rosterHires?: string[];
   createdAt: string;
 }
 
@@ -685,6 +692,11 @@ export class CoordinationEngine {
         // el único que sabe quién está en el equipo. La interfaz recorta con
         // ESTO y no con su propia foto.
         roleCoverage: proposal && Array.isArray(proposal.plan) ? this.computeRoleCoverage(run.workId, proposal) : undefined,
+        // Y de las altas, cuáles traen a alguien que la marca ya tiene: la
+        // tarjeta dice "Convoca a X" en vez de "Suma a X".
+        rosterHires: proposal && Array.isArray(proposal.membersToHire)
+          ? [...new Set(proposal.membersToHire.map((hire) => hire?.roleId).filter((roleId): roleId is string => typeof roleId === 'string' && this.rosterHas(run.workId, roleId)))]
+          : undefined,
         createdAt: run.createdAt,
       });
     }
@@ -1440,7 +1452,12 @@ export class CoordinationEngine {
     const proposal: CoordinationProposal = {
       plan,
       estimatedDispatches: configured ?? MAX_ATTEMPTS_PER_TASK,
-      membersToHire: covered ? [] : [{ roleId, why: `The request is for ${roleId} and nobody on the team does it yet.` }],
+      membersToHire: covered ? [] : [{
+        roleId,
+        why: this.rosterHas(workId, roleId)
+          ? `The request is for ${roleId}: someone on the Brand's team does it and is not on this Work yet, so approving calls them up.`
+          : `The request is for ${roleId} and nobody on the team does it yet.`,
+      }],
       rationale: coordinationRequestTitle({ rationale: '', plan }),
     };
     try {
@@ -1605,7 +1622,37 @@ export class CoordinationEngine {
   private assertRoleCreatable(run: CoordinationRunRecord, roleId: string): void {
     if (this.approvedRoleIds(run).has(roleId)) return;
     if (this.workHasMemberForRole(run.workId, roleId)) return;
-    throw new LatteError('ROLE_NOT_APPROVED', `Creating a task for ${roleId} was not part of the approved plan; it needs its own approval`);
+    throw new LatteError('ROLE_NOT_APPROVED', `Creating a task for ${roleId} was not part of the approved plan; it needs its own approval${this.rosterNote(run.workId, roleId)}`);
+  }
+
+  /**
+   * Si la marca tiene a alguien de este rol que todavía no está en este
+   * trabajo (activo o retirado: convocarlo lo devuelve). Una lectura; nunca
+   * tira, porque sólo cambia qué se le dice a alguien.
+   */
+  private rosterHas(workId: string, roleId: string): boolean {
+    return this.rosterPerson(workId, roleId) !== null;
+  }
+
+  private rosterPerson(workId: string, roleId: string): { id: string; roleId: string } | null {
+    try {
+      const brandId = this.deps.repo.brandIdOfWork(workId);
+      return brandId ? this.deps.repo.findBrandMemberToCall(brandId, roleId, workId, null) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * La salida, dicha al agente, cuando lo que pide es de alguien del plantel
+   * que nadie convocó: no se lo arranca por la espalda (sería un proceso que
+   * nadie pidió en un trabajo al que no pertenece); lo convoca la persona, al
+   * aprobar un alta.
+   */
+  private rosterNote(workId: string, roleId: string): string {
+    return this.rosterHas(workId, roleId)
+      ? `. «${roleId}» is on this Brand's team but not called up in this Work. Calling them up needs the person's approval: it goes in membersToHire of a coordination proposal (latte_request_coordination).`
+      : '';
   }
 
   teamList(workId: string) {
@@ -1841,7 +1888,7 @@ export class CoordinationEngine {
     // se está contratando (D10). Se suelta siempre en el `finally` de abajo.
     let reservationKey: string | null = null;
     try {
-      const target = this.reserveTargetMember(run.workId, task.roleId, this.approvedRoleIds(run));
+      const target = this.reserveTargetMember(run.workId, task.roleId, this.approvedRoleIds(run), this.listHires(run.id).length);
       reservedMemberId = target.reuseMemberId;
       reservationKey = target.reservationKey;
       session = await (target.reuseMemberId
@@ -2657,12 +2704,15 @@ export class CoordinationEngine {
   }
 
   /**
-   * El cierre, con las dos limpiezas que todo final necesita.
+   * El cierre.
    *
-   * `coordination_coordinator:<workId>` se BORRA: el permiso se concedió para
-   * ESTE run. Arrastrarlo al siguiente hacía que un miembro cualquiera
-   * amaneciera coordinador de un run que nadie le confió — `resolveGrant` lee
-   * ese meta fresco en cada request, sin mirar de qué run venía.
+   * `coordination_coordinator:<workId>` SE CONSERVA (decisión del dueño,
+   * 2026-09-24): quién coordina el trabajo lo elige la persona y dura; sólo se
+   * va cuando ese miembro se va o cuando la persona elige a otro. Lo que sí
+   * termina con el run son sus facultades: toda herramienta que exige ser
+   * coordinador exige ANTES un run activo (`NO_ACTIVE_RUN`), y un run nuevo
+   * fija su coordinador al nacer (`startRun` con el permiso, o el proponente
+   * al aprobar la propuesta).
    */
   private closeRun(runId: string, status: 'done' | 'cancelled', now: string): CoordinationRunRecord {
     const run = this.deps.repo.getCoordinationRun(runId);
@@ -2671,8 +2721,7 @@ export class CoordinationEngine {
     // nada que despachar, y su única salida era seguir sondeando
     // `latte_task_list` (o quedarse esperando para siempre).
     //
-    // El destinatario se lee ANTES de borrar el meta del permiso, que se borra
-    // justo abajo. Un run `planning` que se cancela NO avisa acá: eso es un
+    // Un run `planning` que se cancela NO avisa acá: eso es un
     // plan rechazado, y `resolveProposalGate` ya le manda su propio texto — dos
     // avisos por el mismo hecho son dos turnos de usuario por el mismo hecho.
     const coordinatorId = this.coordinatorOf(run);
@@ -2683,10 +2732,9 @@ export class CoordinationEngine {
           const tasks = this.deps.repo.listCoordinationTasks(runId);
           const done = tasks.filter((t) => t.status === 'done').length;
           return `Run finished: ${done} done, ${tasks.length - done} failed. Nothing left to dispatch.`
-            + ' The coordinator grant ends with the run: if more work turns out to be needed, propose it again with `latte_request_coordination`.';
+            + ' Planning and dispatching end with the run: if more work turns out to be needed, propose it again with `latte_request_coordination`.';
         })()
         : 'Run cancelled by the person. Nothing else will be dispatched; stop waiting for reports.';
-    this.deps.repo.setMeta('coordination_coordinator:' + run.workId, '');
     this.pendingClose.delete(runId);
     const closed = this.deps.repo.updateCoordinationRunStatus(runId, status, now, null);
     // B5.5: el último eslabón. Un run que cierra es el hecho que la persona
@@ -3502,13 +3550,34 @@ export class CoordinationEngine {
       }
       return member.id;
     }
+    // Esquema 14: el id de una PERSONA del plantel. Convocada acá, es su hilo
+    // en este trabajo; de otra marca, el mismo FORBIDDEN que otro trabajo; sin
+    // convocar, tampoco se le escribe: arrancaría un proceso que nadie pidió.
+    const person = this.deps.repo.findBrandMember(to);
+    if (person) {
+      if (person.brandId !== this.deps.repo.brandIdOfWork(run.workId)) {
+        throw new LatteError('FORBIDDEN', 'That person belongs to another Brand. A coordination message never leaves its own Work.');
+      }
+      const convocation = this.deps.repo.findConvocation(run.workId, person.id);
+      if (convocation) return convocation.id;
+      throw this.notCalledUp(person.roleId);
+    }
     const sameRole = team.filter((m) => m.roleId === to);
     if (sameRole.length > 0) {
       const working = new Set(this.deps.repo.listCoordinationDispatches(run.id)
         .filter((d) => d.status === 'dispatched' || d.status === 'running').map((d) => d.memberId));
       return (sameRole.find((m) => working.has(m.id)) ?? sameRole[0]).id;
     }
+    if (this.rosterHas(run.workId, to)) throw this.notCalledUp(to);
     throw new NotFoundError('CoordinationMember', to);
+  }
+
+  /** Alguien del plantel que nadie convocó a este trabajo: el límite, dicho con la salida. */
+  private notCalledUp(roleId: string): LatteError {
+    return new LatteError(
+      'FORBIDDEN',
+      `«${roleId}» is on this Brand's team but not called up in this Work, so a message would reach nobody. Calling them up needs the person's approval: it goes in membersToHire of a coordination proposal (latte_request_coordination).`,
+    );
   }
 
   /** El rol de un miembro, del equipo vivo o de su fila. Vacío cuando ya no hay ni una ni otra: nunca un rol inventado. */
@@ -4041,7 +4110,7 @@ export class CoordinationEngine {
     }
   }
 
-  private reserveTargetMember(workId: string, roleId: string, approvedRoles: Set<string> | null = null): { reuseMemberId: string | null; reservationKey: string; context: MemberContext } {
+  private reserveTargetMember(workId: string, roleId: string, approvedRoles: Set<string> | null = null, calledUpSoFar = 0): { reuseMemberId: string | null; reservationKey: string; context: MemberContext } {
     // LA RESERVA DE CONTRATACIÓN SE MIRA PRIMERO (D10). `hub.addMember` inserta
     // la fila ANTES de terminar de levantar el proceso, así que un segundo
     // despacho del mismo rol ya ve al recién contratado en `listTeam`, ocioso y
@@ -4062,7 +4131,13 @@ export class CoordinationEngine {
     const idle = candidates.find((m) => m.status !== 'working' && !this.assigning.has(m.id));
     if (candidates.length > 0 && !idle) throw new LatteError('MEMBER_BUSY', `Every ${roleId} member is already working`);
     if (candidates.length === 0 && approvedRoles && !approvedRoles.has(roleId) && !this.workHasMemberForRole(workId, roleId)) {
-      throw new LatteError('ROLE_NOT_APPROVED', `Hiring a ${roleId} was not part of the approved plan; it needs its own approval`);
+      throw new LatteError('ROLE_NOT_APPROVED', `Hiring a ${roleId} was not part of the approved plan; it needs its own approval${this.rosterNote(workId, roleId)}`);
+    }
+    // El tope de convocados por run (limits.ts): reutilizar no cuenta, traer
+    // a alguien más sí. La tarea vuelve intacta a `ready` (no es un fracaso de
+    // nadie) y el coordinador puede dársela a quien ya está.
+    if (candidates.length === 0 && calledUpSoFar >= MAX_CALLED_UP_MEMBERS_PER_RUN) {
+      throw new LatteError('TOO_MANY_CALLED_UP', `This run already called up ${calledUpSoFar} people, the most one run may; give the task to someone already on this Work`);
     }
     // La reserva de la contratación se TOMA acá, en el mismo tick de la
     // decisión: el argumento viejo de que "una contratación no se reserva

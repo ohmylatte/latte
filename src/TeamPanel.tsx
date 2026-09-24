@@ -1,7 +1,7 @@
 import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Check, CircleAlert, CircleCheck, FolderCheck, FolderLock, Forward, LoaderCircle, MessageSquare, MessageSquarePlus, Pause, Play, Plug, Plus, Settings2, Trash2, UserPlus, Users, X, Zap } from 'lucide-react';
-import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationAskView, type CoordinationAuthorityMode, type CoordinationBudgetView, type CoordinationDegradedReason, type CoordinationGateView, type CoordinationHireView, type CoordinationLogEntryView, type CoordinationMemberSupport, type CoordinationMessageView, type CoordinationRunTaskView, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
+import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type BrandMember, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationAskView, type CoordinationAuthorityMode, type CoordinationBudgetView, type CoordinationDegradedReason, type CoordinationGateView, type CoordinationHireView, type CoordinationLogEntryView, type CoordinationMemberSupport, type CoordinationMessageView, type CoordinationRunTaskView, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { ChatPane, type ChatCoordinationProps } from './ChatPane';
 import { useChatState } from './chat-store';
@@ -55,6 +55,13 @@ export interface TeamPanelProps {
   mode: LatteMode;
   onSelect: (memberId: string) => void;
   onAdd: (roleId: string, options: TeamMemberOptions | null) => Promise<void>;
+  /**
+   * El plantel de la marca (esquema 14). "Sumar un rol" en un trabajo muestra
+   * primero a los que todavía no están en él; elegir uno lo convoca con
+   * `onCallUp`. Sin esto, el diálogo de siempre.
+   */
+  roster?: readonly BrandMember[];
+  onCallUp?: (brandMemberId: string) => Promise<void>;
   onOpen: (memberId: string) => Promise<void>;
   onPause: (memberId: string) => Promise<void>;
   onFinish: (memberId: string) => Promise<void>;
@@ -186,6 +193,11 @@ export interface TeamPanelProps {
   coordinationBudget?: CoordinationBudgetView;
   onSetCoordinationBudget?: (maxDispatches: number) => void;
   coordinatorGrant?: string | null;
+  /**
+   * Elegir quién coordina este trabajo desde el modo Equipo: escribe el permiso
+   * del trabajo. Con un run activo el botón no se aprieta (manda el del run).
+   */
+  onSetCoordinator?: (memberId: string) => void;
 }
 
 const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex' };
@@ -200,7 +212,12 @@ const ASSISTANT_ROLE = 'assistant';
  * QUIÉN COORDINA ESTE TRABAJO — el que se lleva la tira y el modo Equipo.
  *
  * El del run si ese miembro EXISTE en el equipo; si no, el coordinador
- * designado del Trabajo, con la misma condición.
+ * designado del Trabajo, con la misma condición; y si la copia local del
+ * permiso todavía no llegó, el miembro que `listTeam` trae marcado
+ * (`coordinates`), que es ESE mismo permiso ya fijado en el backend
+ * (`LatteService.effectiveCoordinator`). Acá no se recalcula ningún descarte:
+ * recalcularlo en cada render es lo que hacía que sumar al Asistente le sacara
+ * la coordinación a quien la tenía.
  *
  * Ese "tiene que existir" es el bug entero: con un run cancelado cuyo
  * coordinador ya estaba borrado, la vista fijaba un coordinador fantasma. El
@@ -218,7 +235,7 @@ export function teamCoordinator(
   grant: string | null | undefined,
 ): string | null {
   const inTeam = (id: string | null | undefined) => (id && team.some(m => m.id === id) ? id : null);
-  return inTeam(run?.coordinatorMemberId) ?? inTeam(grant);
+  return inTeam(run?.coordinatorMemberId) ?? inTeam(grant) ?? team.find(m => m.coordinates)?.id ?? null;
 }
 
 /**
@@ -343,6 +360,14 @@ export function TeamPanel(props: TeamPanelProps) {
   // The first team is the empty state itself; after that, adding is a dialog.
   const firstTeam = team.length === 0 && Boolean(work);
   const showPicker = adding || firstTeam;
+  // Del plantel, sólo quien todavía no está en ESTE trabajo: a los demás ya
+  // se los ve en la lista y se les habla por su hilo.
+  const rosterPicker = work && props.onCallUp
+    ? {
+      roster: (props.roster ?? []).filter(m => !m.workIds.includes(work.id)),
+      onCallUp: async (brandMemberId: string) => { await props.onCallUp!(brandMemberId); setAdding(false); },
+    }
+    : {};
   const workTotal = useTeamUsageTotal(team);
   /**
    * Lo que el Trabajo entero está esperando. Las preguntas NATIVAS del
@@ -469,6 +494,7 @@ export function TeamPanel(props: TeamPanelProps) {
       formatDate={props.formatDate} coordinationAuthority={props.coordinationAuthority}
       onSetCoordinationAuthority={props.onSetCoordinationAuthority} coordinationBudget={props.coordinationBudget}
       onSetCoordinationBudget={props.onSetCoordinationBudget} coordinatorGrant={props.coordinatorGrant}
+      coordinatorMemberId={coordinatorId} onSetCoordinator={props.onSetCoordinator}
       chatCoordination={props.chatCoordination}
       coordinatorChat={coordinatorState.messages}
       teamChatTargetId={teamChatTargetId}
@@ -498,7 +524,7 @@ export function TeamPanel(props: TeamPanelProps) {
     {adding && !firstTeam && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setAdding(false); }}>
       <section role="dialog" aria-modal="true" aria-labelledby="add-member-title" className="modal">
         <div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="add-member-title">{t('ui.auto.275')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setAdding(false)}><X size={20} /></button></div>
-        <div className="modal-body"><RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={false} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} /></div>
+        <div className="modal-body"><RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={false} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} {...rosterPicker} /></div>
       </section></div>}
     {rail === 'chat' && <>
     {work && team.length > 0 && <>
@@ -530,7 +556,7 @@ export function TeamPanel(props: TeamPanelProps) {
       </div>
       {selected && <MemberUsage member={selected} />}
     </>}
-    {firstTeam && <RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={team.length > 0} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} />}
+    {firstTeam && <RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={team.length > 0} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} {...rosterPicker} />}
     {continuingMember && <ContinueDialog source={continuingMember} roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryReady={props.primaryReady} primaryRuntime={props.primaryRuntime} primaryAccountId={props.primaryAccountId} primaryModel={props.primaryModel} checking={props.checking} busy={busy} isDesktop={isDesktop} onClose={() => setContinuing(null)} onProviders={props.onProviders} onRecheck={props.onRecheck} onContinue={async (roleId, options, text) => { await props.onContinue(continuingMember.id, roleId, options, text); setContinuing(null); }} />}
     {!work && <div className="agent-idle"><div className="agent-symbol"><MessageSquare size={27} /></div><h3>{t('ui.auto.276')}<br />{t('ui.auto.277')}</h3><p className="footnote">{t('ui.auto.278')}</p></div>}
     {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} onAttachFiles={props.onAttachFiles} coordination={props.chatCoordination && { ...props.chatCoordination, formatTime: props.formatTime, onShowTeam: showTeam }} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}
@@ -917,8 +943,28 @@ function ResumeCard({ member, origin, busy, isDesktop, onOpen, onRestart, onRemo
   </div>;
 }
 
-function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady, checking, busy, isDesktop, canCancel, onCancel, onAdd, onProviders, onRecheck }: { roles: AgentRole[]; choices: RuntimeChoice[]; primaryLabel: string; primaryDetail: string; primaryReady: boolean; checking: boolean; busy: boolean; isDesktop: boolean; canCancel: boolean; onCancel: () => void; onAdd: (roleId: string, options: TeamMemberOptions | null) => Promise<void>; onProviders: () => void; onRecheck: () => void }) {
+export interface RolePickerProps {
+  roles: AgentRole[]; choices: RuntimeChoice[]; primaryLabel: string; primaryDetail: string; primaryReady: boolean; checking: boolean; busy: boolean; isDesktop: boolean; canCancel: boolean;
+  onCancel: () => void; onAdd: (roleId: string, options: TeamMemberOptions | null) => Promise<void>; onProviders: () => void; onRecheck: () => void;
+  /**
+   * EL PLANTEL PRIMERO (esquema 14): los de la marca que todavía no están en
+   * este trabajo. Van arriba, con su cara, y elegir uno lo CONVOCA tal cual es
+   * —su runtime y su esfuerzo son suyos—. Los roles de abajo suman a alguien
+   * NUEVO a la marca (`newInBrand`). Sin plantel, el diálogo de siempre.
+   */
+  roster?: readonly BrandMember[];
+  onCallUp?: (brandMemberId: string) => Promise<void>;
+  /** El verbo del botón y la frase de arriba, para cuando el diálogo no abre una conversación (Marca → Equipo). `null` no dibuja la frase. */
+  submitLabel?: string;
+  lead?: string | null;
+}
+
+export function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady, checking, busy, isDesktop, canCancel, onCancel, onAdd, onProviders, onRecheck, roster = [], onCallUp, submitLabel, lead }: RolePickerProps) {
   const [roleId, setRoleId] = useState('assistant');
+  const people = onCallUp ? roster : [];
+  // El plantel manda: si hay a quién convocar, arranca elegido el primero.
+  const [personId, setPersonId] = useState<string | null>(() => people[0]?.id ?? null);
+  const person = people.find(m => m.id === personId) ?? null;
   const [choice, setChoice] = useState('primary');
   const [opening, setOpening] = useState(false);
   // Follows the picked role's own default effort; picking another role resets it,
@@ -926,18 +972,32 @@ function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady,
   const [tier, setTier] = useState<EffortTier>(() => roles.find(r => r.id === roleId)?.tier ?? DEFAULT_EFFORT_TIER);
   useEffect(() => { setTier(roles.find(r => r.id === roleId)?.tier ?? DEFAULT_EFFORT_TIER); }, [roleId, roles]);
   const picked = choices.find(c => c.key === choice) ?? null;
-  const ready = choice === 'primary' ? primaryReady : Boolean(picked);
+  const ready = person ? true : choice === 'primary' ? primaryReady : Boolean(picked);
   const add = async () => {
     if (!ready || opening) return;
     setOpening(true);
-    try { await onAdd(roleId, picked ? { runtime: picked.runtime, accountId: picked.accountId, model: null, tier } : { tier }); } finally { setOpening(false); }
+    try {
+      if (person && onCallUp) { await onCallUp(person.id); return; }
+      const options: TeamMemberOptions = picked ? { runtime: picked.runtime, accountId: picked.accountId, model: null, tier } : { tier };
+      // Con el plantel a la vista, elegir un rol de abajo es pedir a alguien NUEVO.
+      await onAdd(roleId, people.length > 0 ? { ...options, newInBrand: true } : options);
+    } finally { setOpening(false); }
   };
+  const explanation = lead === undefined ? t('ui.auto.292') : lead;
   return <div className="role-picker">
     <div className="role-picker-head"><span className="field-label">{canCancel ? t('ui.auto.290') : t('ui.auto.291')}</span>{canCancel && <button className="icon-button" aria-label={t('ui.auto.241')} onClick={onCancel}><X size={15} /></button>}</div>
-    <p className="agent-explanation">{t('ui.auto.292')}</p>
+    {explanation && <p className="agent-explanation">{explanation}</p>}
+    {people.length > 0 && <>
+      <p className="field-label role-picker-section">{t('roster.picker.fromBrand')}</p>
+      <div className="role-list role-list-roster" role="radiogroup" aria-label={t('roster.picker.fromBrand')}>
+        {people.map(m => <button key={m.id} role="radio" aria-checked={personId === m.id} className={'role-card' + (personId === m.id ? ' selected' : '') + (m.retiredAt ? ' is-retired' : '')} onClick={() => setPersonId(m.id)}><Avatar params={parseAvatar(m.avatar)} roleId={m.roleId} name={m.roleName} size="lg" /><span><strong>{m.roleName}</strong><small>{m.retiredAt ? t('roster.retired') : m.label}</small></span>{personId === m.id && <Check size={14} />}</button>)}
+      </div>
+      <p className="field-label role-picker-section">{t('roster.picker.new')}</p>
+    </>}
     <div className="role-list" role="radiogroup" aria-label={t('team.rolePicker.group')}>
-      {roles.map(role => <button key={role.id} role="radio" aria-checked={roleId === role.id} className={'role-card' + (roleId === role.id ? ' selected' : '')} onClick={() => setRoleId(role.id)}><Avatar params={parseAvatar(role.avatar)} roleId={role.id} name={role.name} size="lg" /><span><strong>{role.name}</strong><small>{roleSummary(role)}</small></span>{roleId === role.id && <Check size={14} />}</button>)}
+      {roles.map(role => <button key={role.id} role="radio" aria-checked={!person && roleId === role.id} className={'role-card' + (!person && roleId === role.id ? ' selected' : '')} onClick={() => { setPersonId(null); setRoleId(role.id); }}><Avatar params={parseAvatar(role.avatar)} roleId={role.id} name={role.name} size="lg" /><span><strong>{role.name}</strong><small>{roleSummary(role)}</small></span>{!person && roleId === role.id && <Check size={14} />}</button>)}
     </div>
+    {!person && <>
     <TierPicker tier={tier} busy={busy || opening} onChange={setTier} />
     <label className="field-label" htmlFor="member-runtime">{t('ui.auto.293')}</label>
     {/*
@@ -954,8 +1014,9 @@ function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady,
         </>}
     </select>
     {choice === 'primary' && <small className="runtime-detail">{checking ? t('ui.auto.296') : primaryDetail}</small>}
+    </>}
     <div className="chat-card-actions">
-      <button className="primary" disabled={busy || opening || checking || !ready || !isDesktop} onClick={() => void add()}>{opening || checking ? <Loading size={16} /> : <Plus size={15} />}{opening ? t('team.opening') : checking ? t('team.checkingAgents') : t('ui.auto.297')}</button>
+      <button className="primary" disabled={busy || opening || (!person && checking) || !ready || !isDesktop} onClick={() => void add()}>{opening || (!person && checking) ? <Loading size={16} /> : <Plus size={15} />}{opening ? t('team.opening') : person ? t('roster.callUp') : checking ? t('team.checkingAgents') : submitLabel ?? t('ui.auto.297')}</button>
       {isDesktop && !checking && <button className="subtle" onClick={onProviders}><Plug size={13} />{primaryReady ? t('ui.auto.298') : t('ui.auto.299')}</button>}
       {isDesktop && !checking && !primaryReady && <button className="subtle" onClick={onRecheck}>{t('team.recheck')}</button>}
     </div>

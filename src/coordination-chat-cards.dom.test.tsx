@@ -122,8 +122,23 @@ describe('C6: la propuesta del equipo', () => {
     const { container } = mount(wired);
     const hire = container.querySelector('.coord-hire')!;
     expect(hire.querySelector('.coord-hire-name')!.textContent).toBe('Suma a Paid Media');
-    expect(hire.querySelector('.coord-hire-note')!.textContent).toBe('no está en el equipo');
+    // Esquema 14: sin nadie de ese rol en la marca, el alta suma a alguien
+    // NUEVO al plantel, y eso es lo que se dice.
+    expect(hire.querySelector('.coord-hire-note')!.textContent).toBe('nuevo en la marca');
     expect(hire.querySelector('.coord-hire-note')!.getAttribute('title')).toContain('pauta');
+    expect(hire.getAttribute('data-hire')).toBe('new');
+  });
+
+  it('si la marca ya tiene a alguien de ese rol, el alta lo CONVOCA', () => {
+    const { container } = mount({ ...wired, gates: [{ ...proposalGate, rosterHires: ['paid'] }] });
+    const hire = container.querySelector('.coord-hire')!;
+    expect(hire.querySelector('.coord-hire-name')!.textContent).toBe('Convoca a Paid Media');
+    expect(hire.querySelector('.coord-hire-note')!.textContent).toBe('ya es de la marca');
+    expect(hire.getAttribute('data-hire')).toBe('roster');
+    ui.locale = 'en-US';
+    const english = mount({ ...wired, gates: [{ ...proposalGate, rosterHires: ['paid'] }] }, 'en-US').container.querySelector('.coord-hire')!;
+    expect(english.querySelector('.coord-hire-name')!.textContent).toBe('Calls up Paid Media');
+    expect(english.querySelector('.coord-hire-note')!.textContent).toBe('already on the brand');
   });
 
   /** Lo que el ícono ya dice no se vuelve a escribir. */

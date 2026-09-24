@@ -135,6 +135,11 @@ const METHODS = [
   'finishTeamMember',
   'restartTeamMember',
   'removeTeamMember',
+  'listBrandTeam',
+  'addBrandMember',
+  'retireBrandMember',
+  'setBrandCoordinator',
+  'callUpMember',
   'draftContinuation',
 ];
 

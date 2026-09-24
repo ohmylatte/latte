@@ -159,7 +159,12 @@ describe('ninguna cara repetida en un equipo', () => {
     const avatarOf = (id: string) => team.find((m) => m.id === id)?.avatar;
 
     expect(avatarOf(first.id)).toBe('long.2.2.earring');
-    expect(avatarOf(second.id)).toBe(serializeAvatar(avatarFromSeed(second.id)));
+    // Esquema 14: la cara es de la PERSONA del plantel, así que el segundo
+    // Reviewer la deriva del id de su persona, no del de este hilo. Así es la
+    // misma en cada trabajo que lo convoque.
+    const secondPerson = team.find((m) => m.id === second.id)!.brandMemberId!;
+    expect(secondPerson).toMatch(/^bm_/);
+    expect(avatarOf(second.id)).toBe(serializeAvatar(avatarFromSeed(secondPerson)));
     expect(avatarOf(second.id)).not.toBe(avatarOf(first.id));
     expect(avatarOf(other.id)).toBe('bun.2.1.glasses-thick');
     // Ninguna cara repetida, punto.
