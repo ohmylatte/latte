@@ -409,6 +409,7 @@ export class CoordinationEngine {
    */
   private async deliverNotice(memberId: string, text: string): Promise<{ delivered: boolean; queued: boolean }> {
     if (!memberId || !text) return { delivered: false, queued: false };
+    if (this.holdForPausedCoordinator(memberId, text)) return { delivered: false, queued: true };
     // B5.5: se registra QUÉ pasó con el aviso, nunca su contenido. Un aviso
     // lleva resúmenes y nombres de archivo; la bitácora del proceso lleva ids
     // y estados.
@@ -429,6 +430,72 @@ export class CoordinationEngine {
       this.deps.log?.(`[latte] coordination notice queued after send failed (${memberId}): ${error instanceof Error ? error.message : String(error)}`);
       return { delivered: false, queued: true };
     }
+  }
+
+  /**
+   * O2: EL COORDINADOR EN PAUSA CON EL RUN ACTIVO NO ES SILENCIO.
+   *
+   * Lo que pasó (2026-09-24): un worker reportó y le escribió al coordinador,
+   * que la persona había pausado. El aviso se encolaba —la cola sólo se vacía
+   * en un fin de turno, y un proceso apagado no tiene turnos— y el run seguía
+   * `running` sin que nada se moviera ni nadie lo dijera.
+   *
+   * LA DECISIÓN: no se lo despierta solo. La pausa la hizo la persona, y un
+   * motor que la deshace por detrás la vacía de sentido (y gasta en su nombre).
+   * Lo que cambia es que la pausa SE VE: el aviso queda en la cola, el run pasa
+   * a `suspended:coordinator_paused` y la persona lo lee en el encabezado y en
+   * la tira de equipos. Reanudar al coordinador (`noteMemberOpened`) entrega la
+   * cola y devuelve el run a `running`.
+   *
+   * "En pausa" es lo que publica el hub (`paused`: la fila existe y ningún
+   * adaptador la posee). Sólo se pisa `running`: una suspensión anterior —la
+   * pausa del equipo, un tope, una pregunta— tiene su propio motivo y su
+   * propia salida, y el aviso igual queda en la cola.
+   */
+  private holdForPausedCoordinator(memberId: string, text: string): boolean {
+    let runs: CoordinationRunRecord[];
+    try { runs = this.deps.repo.listActiveCoordinationRuns().filter((run) => this.coordinatorOf(run) === memberId); } catch { return false; }
+    for (const run of runs) {
+      const member = this.teamOf(run.workId).find((m) => m.id === memberId);
+      if (!member || member.status !== 'paused') continue;
+      this.queueNotice(memberId, text);
+      this.deps.log?.(`[latte] coordination notice queued (member=${memberId} reason=coordinator_paused)`);
+      if (run.status === 'running') {
+        this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', this.deps.clock(), 'coordinator_paused');
+        this.deps.log?.(`[latte] coordination run suspended (run=${run.id} reason=coordinator_paused)`);
+      }
+      this.touch(run.workId, run.id);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * O2: el coordinador volvió (la persona lo reanudó). El run que estaba
+   * suspendido POR SU PAUSA vuelve a `running` —o a `coordination_disabled` si
+   * el interruptor está abajo: reanudar a un miembro no enciende el equipo—, y
+   * recién después se le entrega lo que esperaba, para que lo que haga con esos
+   * avisos (despachar, contestar) encuentre el run andando.
+   *
+   * Nunca tira: lo llama la apertura de un miembro, cuyo efecto ya ocurrió.
+   */
+  async noteMemberOpened(memberId: string): Promise<void> {
+    if (!memberId) return;
+    try {
+      const now = this.deps.clock();
+      const enabled = this.deps.isCoordinationEnabled ? this.deps.isCoordinationEnabled() : true;
+      for (const run of this.deps.repo.listActiveCoordinationRuns()) {
+        if (this.coordinatorOf(run) !== memberId) continue;
+        if (run.status !== 'suspended' || run.suspendReason !== 'coordinator_paused') continue;
+        if (enabled) this.deps.repo.updateCoordinationRunStatus(run.id, 'running', now, null);
+        else this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, 'coordination_disabled');
+        this.deps.log?.(`[latte] coordination run resumed with its coordinator (run=${run.id})`);
+        this.touch(run.workId, run.id);
+      }
+    } catch (error) {
+      this.deps.log?.(`[latte] coordination resume check failed (${memberId}): ${error instanceof Error ? error.message : String(error)}`);
+    }
+    await this.flushMemberNotices(memberId);
   }
 
   /** Un `isMemberBusy` que tira se lee como "ocupado": encolar de más sólo retrasa, mandar sobre un turno en vuelo pierde el aviso. */
@@ -720,6 +787,7 @@ export class CoordinationEngine {
     // decisión de presupuesto inventada en Decisiones.
     if (run.status === 'suspended' && run.suspendReason
       && run.suspendReason !== 'paused_by_human'
+      && run.suspendReason !== 'coordinator_paused'
       && run.suspendReason !== 'all_blocked_on_ask'
       && run.suspendReason !== 'coordination_disabled') {
       gates.push({ id: `budget:${run.id}`, kind: 'budget', runId: run.id, createdAt: run.updatedAt });

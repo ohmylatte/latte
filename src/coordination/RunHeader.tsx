@@ -161,6 +161,16 @@ export function RunHeader(props: RunHeaderProps) {
     coordinatorUnread: props.coordinatorUnread ?? 0,
   });
   const nameOf = (memberId: string | null, roleId?: string) => memberDisplayName(memberId, team, roleId ?? null, roles);
+  /**
+   * O2: un equipo suspendido PORQUE SU COORDINADOR ESTÁ EN PAUSA se reanuda
+   * reanudando al coordinador: es lo único que lo destraba (el motor entrega
+   * la cola y vuelve a `running`). Reanudar sólo el run lo dejaría andando con
+   * nadie que lea los avisos.
+   */
+  const resumeTeam = () => {
+    if (run.suspendReason === 'coordinator_paused' && run.coordinatorMemberId && props.onResumeCoordinator) props.onResumeCoordinator(run.coordinatorMemberId);
+    else props.onResume?.(run.id);
+  };
 
   return <div className="coord-head">
     <div className="coord-head-top">
@@ -213,7 +223,7 @@ export function RunHeader(props: RunHeaderProps) {
         ? props.onNewRequest && <button type="button" className="coord-btn coord-btn-primary" onClick={props.onNewRequest}><MessageSquare size={14} />{t('coord.done.newRequest')}</button>
         : <div className="coord-head-actions">
           {controls.pause && <button type="button" className="coord-btn coord-icon-btn team-pause-coordination" aria-label={t('coord.run.pause')} title={t('coord.run.pause')} disabled={inFlightAction} onClick={() => props.onPause?.(run.id)}><Pause size={14} /></button>}
-          {controls.resume && <button type="button" className="coord-btn coord-icon-btn team-resume-coordination" aria-label={t('coord.run.resume')} title={t('coord.run.resume')} disabled={inFlightAction} onClick={() => props.onResume?.(run.id)}><Play size={14} /></button>}
+          {controls.resume && <button type="button" className="coord-btn coord-icon-btn team-resume-coordination" aria-label={t('coord.run.resume')} title={t('coord.run.resume')} disabled={inFlightAction} onClick={resumeTeam}><Play size={14} /></button>}
           {controls.cancel && <button type="button" className="coord-btn coord-icon-btn team-cancel-coordination" aria-label={t('coord.run.cancel')} title={t('coord.run.cancel')} disabled={inFlightAction} onClick={() => props.onCancel?.(run.id)}><X size={14} /></button>}
         </div>}
     </div>

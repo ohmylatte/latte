@@ -73,7 +73,10 @@ export function ActiveTeamsStrip({ runs, onOpen, onOpenHome }: ActiveTeamsStripP
          * está vivo; uno suspendido no está haciendo nada ahora mismo y se
          * lee en gris. Tres tonos, ningún texto de estado ocupando renglón.
          */
-        const tone = run.pendingGates > 0 ? 'needs' : run.status === 'suspended' ? 'idle' : 'live';
+        // O2: un equipo quieto porque su coordinador está en pausa también te
+        // necesita: nada se mueve hasta que lo reanudes.
+        const coordinatorPaused = run.status === 'suspended' && run.suspendReason === 'coordinator_paused';
+        const tone = run.pendingGates > 0 || coordinatorPaused ? 'needs' : run.status === 'suspended' ? 'idle' : 'live';
         return <li key={run.runId}>
           <button type="button" className="active-teams-strip-row" data-status={run.status} data-live="true" title={run.workTitle} onClick={() => onOpen(run)}>
             <span className="active-teams-strip-dot" data-tone={tone} aria-hidden="true" />
@@ -88,6 +91,7 @@ export function ActiveTeamsStrip({ runs, onOpen, onOpenHome }: ActiveTeamsStripP
                 estado y lo pendiente siguen estando, en palabras, para quien
                 no ve el color. */}
             <span className="active-teams-strip-status visually-hidden">{t(`coordination.teams.status.${run.status}` as 'coordination.teams.status.running')}</span>
+            {coordinatorPaused && <span className="active-teams-strip-paused visually-hidden">{t('coordination.teams.coordinatorPaused')}</span>}
             {run.pendingGates > 0 && <span className="active-teams-strip-gates visually-hidden">{t('coordination.teams.gatesWaiting', { count: run.pendingGates })}</span>}
           </button>
         </li>;
