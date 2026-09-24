@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.4.0 — 2026-09-24
+
+El equipo deja de ser de cada trabajo y pasa a ser de la marca. Armás el plantel una vez, con sus caras y sus roles, y cada trabajo convoca a quién participa. Y vos elegís quién coordina.
+
+### El plantel de la marca
+
+- **Marca → Equipo.** Una entrada nueva en la barra lateral con el plantel de la marca: quiénes son, con qué cara, sumar un rol, quitar. Los que nadie convoca en treinta días se retiran solos, quedan en gris, y vuelven cuando los convocás.
+- **El trabajo convoca.** "Sumar un rol" en un trabajo te ofrece primero a los de la marca que todavía no están; los roles de abajo suman a alguien nuevo. Los procesos siguen siendo del trabajo: el plantel es identidad, no procesos.
+- **La coordinación convoca del plantel.** Cuando el coordinador propone un plan, la tarjeta dice "Convoca a Paid Media · ya es de la marca" o "Suma a Paid Media · nuevo en la marca". Tope de seis convocados por run.
+- **Migración automática** de tu base al arrancar, con backup previo: cada miembro que tenías pasa a ser una persona del plantel de su marca, convocada en su trabajo. Si la misma estratega estaba en varios trabajos, ahora es una sola. Un build anterior no abre la base nueva: para volver, se restaura el backup.
+
+### Quién coordina
+
+- **"Que coordine"** en el detalle de cualquier convocado, desde el modo Equipo. Con un run en marcha se bloquea hasta que termine.
+- **Coordinador habitual de la marca**, en Marca → Equipo: una sola persona por marca, que coordina por defecto los trabajos donde está convocada.
+- **Quien coordina un trabajo se fija una sola vez y dura.** Sumar a alguien, incluido el Asistente o el habitual, no le saca la coordinación a quien la tenía; cerrar un run tampoco. Sólo cambia si elegís a otro o si ese miembro se va.
+
+### Conocido
+
+- No se puede editar la cara ni el runtime de una persona desde Marca → Equipo todavía.
+- La herramienta que lista el equipo a los agentes no muestra el plantel, sólo a los convocados.
+- OpenCode sigue sin recibir conexiones, Meta sigue necesitando una app registrada, y el PNG del avatar y los archivos producidos por tarea siguen pendientes.
+
 ## 1.3.0 — 2026-09-23
 
 Latte se conecta por vos a los servidores MCP que piden login, y el equipo aprende a terminar: cerrar un trabajo apaga a quienes convocó, y el chat de equipo pasa a ser un solo lugar donde le hablás al coordinador y ves todo lo que pasa.
