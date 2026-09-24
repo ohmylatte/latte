@@ -127,6 +127,35 @@ CREATE TABLE IF NOT EXISTS team_members (
 );
 CREATE INDEX IF NOT EXISTS idx_team_members_work ON team_members(work_id, created_at);
 
+-- Schema 14: EL PLANTEL DE LA MARCA (brief docs/briefs/2026-09-23-equipo-de-marca.md,
+-- 3.1). La identidad -- rol, cara, runtime, cuenta, esfuerzo -- vive aca, en la
+-- marca; team_members pasa a ser la CONVOCATORIA de uno de estos en un trabajo
+-- (su hilo: sesion, uso, estado) y lo nombra por team_members.brand_member_id,
+-- que agrega migrate() por el mismo camino que continued_from. Sin tope: estar
+-- en el plantel no corre ningun proceso.
+CREATE TABLE IF NOT EXISTS brand_members (
+  id             TEXT PRIMARY KEY,
+  brand_id       TEXT NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+  role_id        TEXT NOT NULL,
+  role_name      TEXT NOT NULL,
+  initial        TEXT NOT NULL,
+  -- Cara propia, serializada. NULL = la del rol (y su override role-avatar:).
+  avatar         TEXT,
+  runtime        TEXT NOT NULL,
+  model          TEXT,
+  account_id     TEXT,
+  tier           TEXT NOT NULL DEFAULT 'balanced',
+  -- El coordinador habitual de la marca (brief 2.3). Reservado: hoy nadie lo escribe.
+  coordinator    INTEGER NOT NULL DEFAULT 0,
+  -- La ultima vez que alguien lo convoco o abrio uno de sus hilos.
+  last_called_at TEXT NOT NULL,
+  -- Se retira, no se borra: los runs viejos lo nombran. Convocarlo lo devuelve.
+  retired_at     TEXT,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_brand_members_brand ON brand_members(brand_id, created_at);
+
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -158,5 +187,11 @@ CREATE TABLE IF NOT EXISTS meta (
  * 12: todo viaja en el CREATE TABLE inicial de cada tabla, así que no hay
  * ningún ALTER que gatear. Los secretos viven en una tabla APARTE a propósito
  * -- ver `connectionsSchema.ts`.
+ * Schema 14 agrega brand_members (el plantel de la marca) y, por migrate(),
+ * team_members.brand_member_id con su back-fill: cada miembro de hoy se vuelve
+ * plantel de su marca convocado en su trabajo. ESTA VEZ el bump es obligatorio
+ * y no por prolijidad: una tabla nueva con back-fill no es una columna que un
+ * build viejo pueda ignorar, y el bump es lo unico que hace que
+ * `prepareForMigration` saque el respaldo antes de tocar nada.
  */
-export const SCHEMA_VERSION = '13';
+export const SCHEMA_VERSION = '14';
