@@ -2996,7 +2996,7 @@ export class CoordinationEngine {
       if (!tracked.nudged) {
         tracked.nudged = true;
         this.deps.log?.(`[latte] coordination turn ended without report (run=${run.id} dispatch=${dispatch.id} task=${task.id} member=${memberId}) nudged`);
-        void this.deliverNotice(memberId, this.noReportNudgeText(task));
+        void this.deliverNotice(memberId, this.noReportNudgeText(task, this.endedWithQuestion(memberId)));
         return;
       }
       this.sentDispatches.delete(memberId);
@@ -3028,9 +3028,37 @@ export class CoordinationEngine {
    * llamar y con qué argumentos, porque un aviso que sólo señala el error
    * gasta un turno y no arregla nada.
    */
-  private noReportNudgeText(task: CoordinationTaskRecord): string {
+  /**
+   * O3: ¿el último texto del miembro termina con una pregunta? Heurística a
+   * propósito simple: la última línea con contenido de su última respuesta
+   * lleva `?` o `¿`. Se equivoca hacia el lado barato —una línea de más en un
+   * aviso que igual se manda—, y un transcripto que no se puede leer es "no".
+   */
+  private endedWithQuestion(memberId: string): boolean {
+    try {
+      const last = [...this.deps.hub.listMessages(memberId)].reverse().find((m) => m.role === 'assistant' && m.parts.some((p) => p.type === 'text' && p.text.trim()));
+      if (!last) return false;
+      const text = last.parts.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n');
+      const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      const final = lines[lines.length - 1] ?? '';
+      return final.includes('?') || final.includes('¿');
+    } catch {
+      return false;
+    }
+  }
+
+  private noReportNudgeText(task: CoordinationTaskRecord, endedWithQuestion = false): string {
     const title = taskTitle(task.spec, task.title, 120) || task.id;
+    // O3: la pregunta en prosa al final de un turno no le llega a nadie: sin
+    // tarjeta, sin badge, sin "te necesita". Se le dice cuál es el canal.
+    const asking = endedWithQuestion
+      ? 'Your reply ended with a question for the person, and a question written in your reply reaches nobody. '
+        + 'If you need something from the person, ask it with `latte_ask` (that is what shows them a card), '
+        + 'then call `latte_report` with `"failed"` if the task cannot go on without the answer (say in the summary what you asked), or keep working and report once it is answered. '
+        + 'Never leave a question for the person only in your reply.\n\n'
+      : '';
     return `Your turn ended without reporting the task Latte gave you. Task ${task.id}: «${title}».\n\n`
+      + asking
       + `Call \`latte_report\` now: \`taskId: "${task.id}"\`, \`outcome: "succeeded"\` if you finished it or \`"failed"\` if you could not, `
       + 'and a `summary` of what you actually did.\n\n'
       + 'If you left work for another role — a file, a draft, a handoff — say so in the summary and name the file in `files`. '

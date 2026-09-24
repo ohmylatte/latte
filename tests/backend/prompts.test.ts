@@ -43,6 +43,9 @@ const BASE_MARKERS: Array<[string, RegExp]> = [
   ['no credentials in deliverables', /never write credentials/i],
   ['no borrowed credit', /Never present work as done by another member or role/i],
   ['propose coordinating instead of doing it all alone', /latte_request_coordination/],
+  // O3: una pregunta a la persona escrita al final de una respuesta no le
+  // llega a nadie en un run: sin tarjeta, sin badge. El canal es `latte_ask`.
+  ['questions for the person go through latte_ask', /questions for the person go through `latte_ask`/i],
 ];
 
 describe('Marketing base prompt composition', () => {

@@ -227,4 +227,57 @@ describe('B5.1: el turno que termina sin reportar', () => {
     expect(messagesTo(memberId)).toHaveLength(0);
     expect(b.repo.getCoordinationDispatch(dispatchId).outcome).not.toBe('no_report');
   });
+
+  /**
+   * O3: EL TURNO QUE TERMINA CON UNA PREGUNTA A LA PERSONA, EN PROSA.
+   *
+   * Lo que vio el dueño (2026-09-24): Paid Media cerró su chat con "El próximo
+   * paso sigue siendo que decidas cómo darme ese acceso: ¿un conector de Meta
+   * de sólo lectura o los exports?" sin `latte_ask`. Sin tarjeta, sin badge,
+   * sin "te necesita": la pregunta no le llegó a nadie. El aviso de "terminaste
+   * sin reportar" es el momento de decirle cuál es el canal.
+   */
+  function lastReply(memberId: string, text: string): void {
+    vi.spyOn(b.hub, 'listMessages').mockImplementation((chatId: string) => chatId !== memberId ? [] : [
+      { id: 'u1', chatId, role: 'user', parts: [{ type: 'text', id: 'p0', text: 'Tu tarea…' }], createdAt: '2026-09-24T10:00:00.000Z', completed: true, error: null },
+      { id: 'a1', chatId, role: 'assistant', parts: [{ type: 'text', id: 'p1', text }], createdAt: '2026-09-24T10:05:00.000Z', completed: true, error: null },
+    ]);
+  }
+
+  it('O3: si el turno terminó con una pregunta, el aviso le dice que la haga con `latte_ask` y que reporte', async () => {
+    const { memberId, taskId } = await setUp();
+    lastReply(memberId, 'Dejé el diagnóstico en el archivo.\r\n\r\nEl próximo paso sigue siendo que decidas cómo darme ese acceso: ¿un conector de Meta de sólo lectura o los exports de la sección 1.5?\r\n');
+
+    turnEnded(memberId);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const notice = messagesTo(memberId)[0] ?? '';
+    const lines = notice.split(/\r?\n/);
+    expect(lines.some((l) => /question for the person/i.test(l) && l.includes('`latte_ask`')), notice).toBe(true);
+    expect(lines.some((l) => /`"failed"`/.test(l) && /latte_ask/.test(l)), notice).toBe(true);
+    // Y sigue siendo el aviso de siempre: qué reportar y sobre qué tarea.
+    expect(notice).toContain('latte_report');
+    expect(notice).toContain(taskId);
+  });
+
+  it('O3: una pregunta con el signo de apertura solo (`¿`) también cuenta', async () => {
+    const { memberId } = await setUp();
+    lastReply(memberId, 'Listo el borrador.\n¿Lo querés con la tabla de pauta al final');
+    turnEnded(memberId);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(messagesTo(memberId)[0]).toContain('`latte_ask`');
+  });
+
+  it('O3: un turno que NO termina en pregunta recibe el aviso de siempre, sin la línea de `latte_ask`', async () => {
+    const { memberId } = await setUp();
+    lastReply(memberId, '¿Qué hice? Dejé el archivo listo.\nQuedó en la carpeta del Trabajo.');
+    turnEnded(memberId);
+    await Promise.resolve();
+    await Promise.resolve();
+    const notice = messagesTo(memberId)[0] ?? '';
+    expect(notice).toContain('latte_report');
+    expect(notice).not.toContain('latte_ask');
+  });
 });
