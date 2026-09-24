@@ -2704,12 +2704,15 @@ export class CoordinationEngine {
   }
 
   /**
-   * El cierre, con las dos limpiezas que todo final necesita.
+   * El cierre.
    *
-   * `coordination_coordinator:<workId>` se BORRA: el permiso se concedió para
-   * ESTE run. Arrastrarlo al siguiente hacía que un miembro cualquiera
-   * amaneciera coordinador de un run que nadie le confió — `resolveGrant` lee
-   * ese meta fresco en cada request, sin mirar de qué run venía.
+   * `coordination_coordinator:<workId>` SE CONSERVA (decisión del dueño,
+   * 2026-09-24): quién coordina el trabajo lo elige la persona y dura; sólo se
+   * va cuando ese miembro se va o cuando la persona elige a otro. Lo que sí
+   * termina con el run son sus facultades: toda herramienta que exige ser
+   * coordinador exige ANTES un run activo (`NO_ACTIVE_RUN`), y un run nuevo
+   * fija su coordinador al nacer (`startRun` con el permiso, o el proponente
+   * al aprobar la propuesta).
    */
   private closeRun(runId: string, status: 'done' | 'cancelled', now: string): CoordinationRunRecord {
     const run = this.deps.repo.getCoordinationRun(runId);
@@ -2718,8 +2721,7 @@ export class CoordinationEngine {
     // nada que despachar, y su única salida era seguir sondeando
     // `latte_task_list` (o quedarse esperando para siempre).
     //
-    // El destinatario se lee ANTES de borrar el meta del permiso, que se borra
-    // justo abajo. Un run `planning` que se cancela NO avisa acá: eso es un
+    // Un run `planning` que se cancela NO avisa acá: eso es un
     // plan rechazado, y `resolveProposalGate` ya le manda su propio texto — dos
     // avisos por el mismo hecho son dos turnos de usuario por el mismo hecho.
     const coordinatorId = this.coordinatorOf(run);
@@ -2730,10 +2732,9 @@ export class CoordinationEngine {
           const tasks = this.deps.repo.listCoordinationTasks(runId);
           const done = tasks.filter((t) => t.status === 'done').length;
           return `Run finished: ${done} done, ${tasks.length - done} failed. Nothing left to dispatch.`
-            + ' The coordinator grant ends with the run: if more work turns out to be needed, propose it again with `latte_request_coordination`.';
+            + ' Planning and dispatching end with the run: if more work turns out to be needed, propose it again with `latte_request_coordination`.';
         })()
         : 'Run cancelled by the person. Nothing else will be dispatched; stop waiting for reports.';
-    this.deps.repo.setMeta('coordination_coordinator:' + run.workId, '');
     this.pendingClose.delete(runId);
     const closed = this.deps.repo.updateCoordinationRunStatus(runId, status, now, null);
     // B5.5: el último eslabón. Un run que cierra es el hecho que la persona

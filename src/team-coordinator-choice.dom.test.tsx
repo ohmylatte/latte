@@ -139,11 +139,29 @@ describe('elegir quién coordina un trabajo', () => {
     ui.locale = 'es-AR';
   });
 
-  it('sin permiso propio coordina el habitual de la marca si está convocado; elegir a otro le gana', async () => {
+  it('convocar a alguien (el Asistente incluido) no cambia la fila marcada ni el destinatario del composer', async () => {
     ui.locale = 'es-AR';
     mocks.sendChat.mockReset();
     mocks.sendChat.mockResolvedValue(undefined);
-    const habitual = [member('asis', 'Asistente', 'assistant'), { ...member('cm', 'CM'), coordinatesBrand: true }];
+    const fixed = { ...member('cm', 'CM'), coordinates: true };
+    const { container, rerender } = render(createElement(TeamPanel, { ...basePanel, team: [fixed], formatTime: (v: string) => v, formatDate: (v: string) => v }));
+    // Llega el Asistente: el permiso del trabajo ya estaba fijado en CM.
+    rerender(createElement(TeamPanel, { ...basePanel, team: [fixed, member('asis', 'Asistente', 'assistant')], formatTime: (v: string) => v, formatDate: (v: string) => v }));
+    toTeam(container);
+    expect(rowOf(container, 'cm').querySelector('.coord-row-coordinator')).not.toBeNull();
+    expect(rowOf(container, 'asis').querySelector('.coord-row-coordinator')).toBeNull();
+    fireEvent.change(container.querySelector('.team-view .prompt-form textarea')!, { target: { value: 'hola' } });
+    fireEvent.submit(container.querySelector('.team-view .prompt-form')!);
+    await waitFor(() => expect(mocks.sendChat).toHaveBeenCalled());
+    expect(mocks.sendChat.mock.calls[0]![0]).toBe('cm');
+    cleanup();
+  });
+
+  it('el coordinador fijado del trabajo llega marcado en su miembro; elegir a otro le gana', async () => {
+    ui.locale = 'es-AR';
+    mocks.sendChat.mockReset();
+    mocks.sendChat.mockResolvedValue(undefined);
+    const habitual = [member('asis', 'Asistente', 'assistant'), { ...member('cm', 'CM'), coordinates: true }];
     const { container } = render(createElement(Harness, { team: habitual }));
     toTeam(container);
     expect(rowOf(container, 'cm').querySelector('.coord-row-coordinator')).not.toBeNull();

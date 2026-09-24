@@ -177,7 +177,14 @@ describe('el estado terminal de un run y sus tareas', () => {
     expect(engine.listGates(runId)).toEqual([]);
   });
 
-  it('D3: cerrar el run limpia el permiso de coordinador para que no se arrastre al siguiente', async () => {
+  /**
+   * Decisión del dueño (2026-09-24): QUIÉN COORDINA EL TRABAJO LO ELIGE LA
+   * PERSONA y dura. Cerrar un run ya no borra el permiso: sólo se va cuando ese
+   * miembro se va o cuando la persona elige a otro. Las facultades del run
+   * (despachar, planificar) igual terminan con él, porque esas herramientas
+   * piden un run activo antes de mirar el rol.
+   */
+  it('D3: cerrar el run CONSERVA quién coordina el trabajo', async () => {
     b.repo.setMeta('coordination_coordinator:' + workId, 'mem_coordinator');
     const task = engine.taskCreate(runId, { roleId: 'role_a', spec: 'a' });
     const memberId = await dispatchTo(task.id);
@@ -185,7 +192,7 @@ describe('el estado terminal de un run y sus tareas', () => {
     await engine.report(worker(memberId), task.id, 'succeeded', 'listo');
 
     expect(b.repo.getCoordinationRun(runId).status).toBe('done');
-    expect(b.repo.getMeta('coordination_coordinator:' + workId) || '').toBe('');
+    expect(b.repo.getMeta('coordination_coordinator:' + workId)).toBe('mem_coordinator');
   });
 
   it('D3: cancelar también cancela los gates de despacho pendientes, con outcome `run_cancelled`', async () => {

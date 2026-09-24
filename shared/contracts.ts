@@ -625,11 +625,12 @@ export interface TeamMember {
    */
   brandMemberId?: string | null;
   /**
-   * Es el coordinador habitual de la marca (Marca → Equipo). En un trabajo sin
-   * permiso propio, coordina él si está convocado. Opcional por la misma razón
-   * que `brandMemberId`: el hub lo publica siempre.
+   * Coordina ESTE trabajo: es el permiso del trabajo, ya fijado por
+   * `listTeam` (la elección de la persona, o el primero que resolvió el
+   * descarte). Sumar a alguien no lo mueve. Opcional: sólo `listTeam` lo
+   * publica.
    */
-  coordinatesBrand?: boolean;
+  coordinates?: boolean;
   createdAt: string;
   updatedAt: string;
 }

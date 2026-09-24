@@ -1677,17 +1677,30 @@ export class LatteService implements BackendApi {
   }
 
   /**
-   * QUIÉN COORDINA ESTE TRABAJO cuando nadie lo nombró en el run: el permiso
-   * propio del trabajo; sin él, el coordinador habitual de la marca SI está
-   * convocado acá. Es la misma cadena que el renderer (`teamCoordinator`), para
-   * que lo que la pantalla marca sea lo que un run arranca.
+   * QUIÉN COORDINA ESTE TRABAJO, y se FIJA la primera vez que se resuelve
+   * (decisión del dueño, 2026-09-24).
+   *
+   * Antes la cadena de descarte (habitual → Asistente → primero) se recalculaba
+   * en cada render, así que sumar al Asistente —o re-convocar a alguien que se
+   * había sacado— le sacaba la coordinación a quien la tenía, sin preguntar.
+   * Ahora, si el trabajo no tiene permiso, el resultado del descarte se escribe
+   * como permiso (el mismo meta que `setCoordinatorGrant`) y desde ahí sólo
+   * cambia por "Que coordine" o porque ese miembro se va. Convocar a alguien
+   * nunca toca un permiso que ya existe; el habitual de la marca sólo entra
+   * como default cuando todavía no hay nadie fijado.
    */
   private effectiveCoordinator(workId: string): string | null {
     const own = this.readCoordinatorGrant(workId);
     if (own) return own;
+    const members = this.deps.repo.listMembers(workId);
+    if (members.length === 0) return null;
     const brandId = this.deps.repo.brandIdOfWork(workId);
     const habitual = brandId ? this.deps.repo.brandCoordinator(brandId) : null;
-    return habitual ? this.deps.repo.findConvocation(workId, habitual.id)?.id ?? null : null;
+    const chosen = (habitual ? members.find((m) => m.brandMemberId === habitual.id) : undefined)
+      ?? members.find((m) => m.roleId === ASSISTANT_ROLE_ID)
+      ?? members[0];
+    this.deps.repo.setMeta('coordination_coordinator:' + workId, chosen.id);
+    return chosen.id;
   }
 
   async getCoordinatorGrant(workId: string): Promise<CoordinatorGrant> {
@@ -2215,7 +2228,9 @@ export class LatteService implements BackendApi {
 
   async startChat(workId: string, model: string | null = null, runtime: ChatRuntime | null = null, accountId: string | null = null): Promise<ChatSession> {
     const options = validateMemberOptions({ model, runtime, accountId });
-    return this.deps.hub.start({ ...this.memberContext(workId), ...options });
+    const session = await this.deps.hub.start({ ...this.memberContext(workId), ...options });
+    this.effectiveCoordinator(session.workId);
+    return session;
   }
 
   // Team (roles per work) ---------------------------------------------------------
@@ -2261,7 +2276,10 @@ export class LatteService implements BackendApi {
   async listTeam(workId: string): Promise<TeamMember[]> {
     const id = requireId(workId, 'workId');
     this.deps.repo.getWork(id);
-    return this.deps.hub.listTeam(id);
+    // Quien coordina viaja CON el equipo, ya fijado: la pantalla no vuelve a
+    // derivarlo del descarte (que es como sumar a alguien movía la marca).
+    const coordinator = this.effectiveCoordinator(id);
+    return this.deps.hub.listTeam(id).map((member) => ({ ...member, coordinates: member.id === coordinator }));
   }
 
   async addTeamMember(workId: string, roleId: string, options: TeamMemberOptions | null = null): Promise<ChatSession> {
@@ -2271,7 +2289,9 @@ export class LatteService implements BackendApi {
     // A continuation only points at its origin, and only within the same work:
     // the origin's conversation, runtime and account are never touched.
     if (overrides.continuedFrom !== null && this.deps.repo.findMember(overrides.continuedFrom)?.workId !== id) throw new ValidationError('El miembro que se continúa no es de este trabajo');
-    return this.deps.hub.addMember({ ...this.memberContext(id), roleId, ...overrides });
+    const session = await this.deps.hub.addMember({ ...this.memberContext(id), roleId, ...overrides });
+    this.effectiveCoordinator(id);
+    return session;
   }
 
   async listBrandTeam(brandId: string): Promise<BrandMember[]> {
@@ -2334,8 +2354,11 @@ export class LatteService implements BackendApi {
     const member = this.deps.repo.getBrandMember(requireId(brandMemberId, 'brandMemberId'));
     if (member.brandId !== work.brandId) throw new ValidationError('No se convoca a alguien de otra marca');
     const existing = this.deps.repo.findConvocation(id, member.id);
-    if (existing) return this.deps.hub.openMember(existing.id, this.memberContext(id));
-    return this.deps.hub.addMember({ ...this.memberContext(id), roleId: member.roleId, brandMemberId: member.id });
+    const session = existing
+      ? await this.deps.hub.openMember(existing.id, this.memberContext(id))
+      : await this.deps.hub.addMember({ ...this.memberContext(id), roleId: member.roleId, brandMemberId: member.id });
+    this.effectiveCoordinator(id);
+    return session;
   }
 
   async openTeamMember(memberId: string): Promise<ChatSession> {
@@ -2442,6 +2465,8 @@ export class LatteService implements BackendApi {
     this.deps.hub.removeMember(id);
     if (workId && this.deps.repo.getMeta('coordination_coordinator:' + workId) === id) {
       this.deps.repo.setMeta('coordination_coordinator:' + workId, '');
+      // Y el que sigue queda fijado ya, no en el próximo render.
+      this.effectiveCoordinator(workId);
     }
   }
 

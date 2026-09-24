@@ -68,26 +68,23 @@ describe('el coordinador habitual de la marca', () => {
     expect((await b.service.listBrandTeam(other.id))[0].coordinator).toBe(true);
   });
 
-  it('en un trabajo sin permiso propio, coordina el habitual SI está convocado; con permiso propio, manda el permiso', async () => {
+  it('un trabajo sin coordinador fija al habitual si entra primero; si el trabajo ya tiene uno, convocar al habitual no se lo saca', async () => {
     const { brand, strategist, reviewer } = await brandWithTwo();
     await b.service.setBrandCoordinator(brand.id, strategist.id);
-    const work = await b.service.createWork(brand.id, 'Uno');
 
-    // Sin él convocado, nadie coordina por ser habitual.
-    await b.service.callUpMember(work.id, reviewer.id);
-    expect((await b.service.listTeam(work.id)).map((m) => m.coordinatesBrand)).toEqual([false]);
-
-    const session = await b.service.callUpMember(work.id, strategist.id);
-    const team = await b.service.listTeam(work.id);
-    expect(team.filter((m) => m.coordinatesBrand).map((m) => m.id)).toEqual([session.id]);
-    // El permiso del TRABAJO sigue vacío: el habitual es un default, no un permiso escrito.
-    expect(await b.service.getCoordinatorGrant(work.id)).toBeNull();
-
-    // Y un run que arranca sin permiso propio lo toma a él.
-    await b.service.setCoordinationBudget(work.id, { maxDispatches: 5 });
+    const uno = await b.service.createWork(brand.id, 'Uno');
+    const habitual = await b.service.callUpMember(uno.id, strategist.id);
+    await b.service.callUpMember(uno.id, reviewer.id);
+    expect(await b.service.getCoordinatorGrant(uno.id)).toBe(habitual.id);
+    await b.service.setCoordinationBudget(uno.id, { maxDispatches: 5 });
     b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON);
-    const run = await b.service.startCoordinationRun(work.id);
-    expect(run.coordinatorMemberId).toBe(session.id);
+    expect((await b.service.startCoordinationRun(uno.id)).coordinatorMemberId).toBe(habitual.id);
+
+    const dos = await b.service.createWork(brand.id, 'Dos');
+    const first = await b.service.callUpMember(dos.id, reviewer.id);
+    await b.service.callUpMember(dos.id, strategist.id);
+    expect(await b.service.getCoordinatorGrant(dos.id)).toBe(first.id);
+    expect((await b.service.listTeam(dos.id)).filter((m) => m.coordinates).map((m) => m.id)).toEqual([first.id]);
   });
 
   it('un permiso propio del trabajo gana sobre el habitual al arrancar un run', async () => {
@@ -137,22 +134,21 @@ describe('sin herencia: quitar a quien coordina se lleva su permiso', () => {
   }
   const storedGrant = (workId: string) => b.repo.getMeta('coordination_coordinator:' + workId) ?? '';
 
-  it('desconvocar al coordinador borra el permiso, y re-convocarlo NO se lo devuelve', async () => {
+  it('desconvocar al coordinador le saca el permiso, el siguiente queda fijado, y re-convocarlo NO se lo devuelve', async () => {
     const { work, strategist, reviewer } = await workWithTwo();
     const first = await b.service.callUpMember(work.id, strategist.id);
-    await b.service.callUpMember(work.id, reviewer.id);
+    const second = await b.service.callUpMember(work.id, reviewer.id);
     await b.service.setCoordinatorGrant(work.id, first.id);
 
     await b.service.removeTeamMember(first.id);
-    // Borrado en la misma operación: el meta no queda apuntando a un id muerto.
-    expect(storedGrant(work.id)).toBe('');
-    expect(await b.service.getCoordinatorGrant(work.id)).toBeNull();
+    // En la misma operación: el meta no queda apuntando a un id muerto, y el que sigue queda fijado.
+    expect(storedGrant(work.id)).toBe(second.id);
 
     const again = await b.service.callUpMember(work.id, strategist.id);
     // La convocatoria nueva es OTRA fila: el id de `team_members` no se reutiliza.
     expect(again.id).not.toBe(first.id);
-    expect(await b.service.getCoordinatorGrant(work.id)).toBeNull();
-    expect((await b.service.listTeam(work.id)).some((m) => m.coordinatesBrand)).toBe(false);
+    expect(await b.service.getCoordinatorGrant(work.id)).toBe(second.id);
+    expect((await b.service.listTeam(work.id)).filter((m) => m.coordinates).map((m) => m.id)).toEqual([second.id]);
   });
 
   it('desconvocar a otro no toca el permiso de quien coordina', async () => {
@@ -164,28 +160,74 @@ describe('sin herencia: quitar a quien coordina se lleva su permiso', () => {
     expect(storedGrant(work.id)).toBe(coordinator.id);
   });
 
-  it('el habitual de la marca SÍ coordina al volver a ser convocado', async () => {
+  it('al irse quien coordina, el habitual convocado es el primero en la cadena; si vuelve más tarde, no le saca el lugar a nadie', async () => {
     const { brand, work, strategist, reviewer } = await workWithTwo();
+    const first = await b.service.callUpMember(work.id, reviewer.id);
+    const habitual = await b.service.callUpMember(work.id, strategist.id);
     await b.service.setBrandCoordinator(brand.id, strategist.id);
-    const first = await b.service.callUpMember(work.id, strategist.id);
-    await b.service.callUpMember(work.id, reviewer.id);
+    expect(storedGrant(work.id)).toBe(first.id);
     await b.service.removeTeamMember(first.id);
-    expect((await b.service.listTeam(work.id)).some((m) => m.coordinatesBrand)).toBe(false);
+    expect(storedGrant(work.id)).toBe(habitual.id);
 
-    const again = await b.service.callUpMember(work.id, strategist.id);
-    expect((await b.service.listTeam(work.id)).filter((m) => m.coordinatesBrand).map((m) => m.id)).toEqual([again.id]);
+    await b.service.removeTeamMember(habitual.id);
+    const back = await b.service.callUpMember(work.id, reviewer.id);
+    expect(storedGrant(work.id)).toBe(back.id);
+    await b.service.callUpMember(work.id, strategist.id);
+    expect(storedGrant(work.id)).toBe(back.id);
   });
 
-  it('quitar del plantel al habitual le saca la marca: si vuelve, vuelve sin coordinar', async () => {
+  it('quitar del plantel al habitual le saca la marca', async () => {
     const { brand, work, strategist } = await workWithTwo();
     await b.service.setBrandCoordinator(brand.id, strategist.id);
-    const called = await b.service.callUpMember(work.id, strategist.id);
+    await b.service.callUpMember(work.id, strategist.id);
     // Con historia se RETIRA (no se borra), y su convocatoria sigue ahí.
     const roster = await b.service.retireBrandMember(strategist.id);
     expect(roster.find((m) => m.id === strategist.id)!.coordinator).toBe(false);
-    expect((await b.service.listTeam(work.id)).some((m) => m.coordinatesBrand)).toBe(false);
-    await b.service.removeTeamMember(called.id);
-    await b.service.callUpMember(work.id, strategist.id);
-    expect((await b.service.listTeam(work.id)).some((m) => m.coordinatesBrand)).toBe(false);
+  });
+});
+
+describe('quien coordina no cambia porque alguien se sume', () => {
+  let fake: FakeOpenCode;
+  let b: TestBackend;
+
+  beforeEach(async () => {
+    fake = await startFakeOpenCode();
+    b = await makeBackend({
+      chatEndpoint: fake.endpoint,
+      runner: fakeRunner((file, args) => {
+        if (file === 'where.exe' || file === 'which') return { code: 0, stdout: `C:\\bin\\${args[0]}.exe\n` };
+        if (args[0] === 'auth' && args[1] === 'status') return { code: 0, stdout: JSON.stringify({ loggedIn: true, subscriptionType: 'max' }) };
+        return { code: 0, stdout: '1.0.0\n' };
+      }),
+      emitChat: () => {},
+    });
+  });
+
+  afterEach(async () => {
+    b.cleanup();
+    await fake.close();
+  });
+
+  it('A coordina por descarte; sumar al Asistente no se lo saca; quitar a A fija al siguiente; "Que coordine" B → B', async () => {
+    const brand = await b.service.createBrand('Casa');
+    const work = await b.service.createWork(brand.id, 'Uno');
+    const a = await b.service.addTeamMember(work.id, 'strategist');
+    expect(await b.service.getCoordinatorGrant(work.id)).toBe(a.id);
+
+    const assistant = await b.service.addTeamMember(work.id, 'assistant');
+    const reviewer = await b.service.addTeamMember(work.id, 'reviewer');
+    expect(await b.service.getCoordinatorGrant(work.id)).toBe(a.id);
+    expect((await b.service.listTeam(work.id)).filter((m) => m.coordinates).map((m) => m.id)).toEqual([a.id]);
+
+    // Se va A: el siguiente por la cadena (el Asistente) queda FIJADO, no recalculado.
+    await b.service.removeTeamMember(a.id);
+    expect(await b.service.getCoordinatorGrant(work.id)).toBe(assistant.id);
+    const back = await b.service.addTeamMember(work.id, 'strategist');
+    expect(back.id).not.toBe(a.id);
+    expect(await b.service.getCoordinatorGrant(work.id)).toBe(assistant.id);
+
+    await b.service.setCoordinatorGrant(work.id, reviewer.id);
+    await b.service.addTeamMember(work.id, 'analyst');
+    expect(await b.service.getCoordinatorGrant(work.id)).toBe(reviewer.id);
   });
 });
