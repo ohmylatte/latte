@@ -58,7 +58,7 @@ import type { CoordinationAuthorityMode } from '../../shared/contracts';
 import { LatteError, UnavailableError } from '../core/errors';
 import { LIMITS } from '../services/validation';
 import type { CoordinationBudgetBlock, CoordinationEngine } from './engine';
-import { MAX_TASKS_PER_RUN } from './limits';
+import { MAX_CALLED_UP_MEMBERS_PER_RUN, MAX_TASKS_PER_RUN } from './limits';
 import { validateAgainstSchema } from './schemaGuard';
 import { createCoordinationTools, type ToolEnvelope } from './tools';
 import type { CoordinationTokenRegistry } from './tokens';
@@ -286,6 +286,9 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
         estimatedDispatches: { type: 'integer', minimum: 1, description: 'How many dispatches this plan is estimated to need. A positive integer; an unlimited budget is a human choice made when approving, never something a plan can ask for.' },
         membersToHire: {
           type: 'array',
+          // El tope de convocados por run, publicado igual que `maxLength`.
+          maxItems: MAX_CALLED_UP_MEMBERS_PER_RUN,
+          description: `Roles this Work has nobody for. If the Brand's team already has someone with that role, approving calls them up (same face, same history with this Brand); only a role the Brand has nobody for adds someone new. At most ${MAX_CALLED_UP_MEMBERS_PER_RUN} per run.`,
           items: {
             type: 'object',
             // R6: el tope se PUBLICA, y por eso se puede hacer cumplir en la

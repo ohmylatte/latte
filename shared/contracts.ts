@@ -1017,6 +1017,12 @@ export interface CoordinationGateView {
    * the screen did not see coming.
    */
   roleCoverage?: CoordinationGateRoleCoverage[];
+  /**
+   * Only present on a legible `proposal` gate: the `membersToHire` roles the
+   * Brand's team already has someone for. Approving CALLS THEM UP; every other
+   * hire adds someone new to the Brand.
+   */
+  rosterHires?: string[];
   createdAt: string;
 }
 

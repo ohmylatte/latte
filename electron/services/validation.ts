@@ -4,7 +4,7 @@ import { isValidId } from '../core/ids';
 // Constantes puras, sin I/O: el MISMO número que `canAddTask`/`createTaskRow`
 // aplican cuando la propuesta ya se aprobó. Una segunda copia del tope acá
 // sería exactamente la forma de que los dos se separen.
-import { MAX_DEPENDENCY_DEPTH, MAX_TASKS_PER_RUN } from '../coordination/limits';
+import { MAX_CALLED_UP_MEMBERS_PER_RUN, MAX_DEPENDENCY_DEPTH, MAX_TASKS_PER_RUN } from '../coordination/limits';
 
 export const LIMITS = {
   name: 120,
@@ -242,6 +242,11 @@ export function assertCoordinationProposal(parsed: unknown): void {
       // El "por qué" de un alta es lo ÚNICO que la persona lee para decidir si
       // la aprueba: tiene que ser texto, y texto que diga algo.
       requireText((item as Record<string, unknown>).why, `membersToHire ${index} why`, LIMITS.decision);
+    }
+    // El tope de convocados por run (limits.ts), antes de convocar a nadie: la
+    // frase dice el número, así el agente sabe cuánto recortar.
+    if (hires.length > MAX_CALLED_UP_MEMBERS_PER_RUN) {
+      throw new ValidationError(`membersToHire has ${hires.length} people; one run may call up at most ${MAX_CALLED_UP_MEMBERS_PER_RUN}. Reuse who is already on this Work, or split the request.`);
     }
   }
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowRight, Check, ChevronRight, CircleCheck, CircleHelp, Pencil, Send, UserPlus, Users } from 'lucide-react';
+import { ArrowRight, Check, ChevronRight, CircleCheck, CircleHelp, Pencil, Send, UserCheck, UserPlus, Users } from 'lucide-react';
 import { translate as t } from '../i18n';
 import { memberDisplayName, roleDisplayName } from './names';
 import { CoordAvatar } from './anatomy';
@@ -506,16 +506,20 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
           es —la sacó ella— y sin tachado. La comparación es por ÍNDICE. */}
       {hires.map((hire, i) => {
         const name = roleDisplayName(hire.roleId, roles, team);
-        const row = <><UserPlus size={13} className="coord-ic-idle" />
-          <span className="coord-hire-name">{t('coord.proposal.hire', { role: name })}</span>
-          <span className="coord-hire-note" title={hire.why}>{t('coord.proposal.hireNote')}</span></>;
+        // Esquema 14: el motor dice qué altas traen a alguien que la marca ya
+        // tiene. Ésas CONVOCAN; las demás suman a alguien nuevo al plantel.
+        const fromRoster = (gate.rosterHires ?? []).includes(hire.roleId);
+        const kind = fromRoster ? 'roster' : 'new';
+        const row = <>{fromRoster ? <UserCheck size={13} className="coord-ic-idle" /> : <UserPlus size={13} className="coord-ic-idle" />}
+          <span className="coord-hire-name">{t(fromRoster ? 'coord.proposal.callUp' : 'coord.proposal.hire', { role: name })}</span>
+          <span className="coord-hire-note" title={hire.why}>{t(fromRoster ? 'coord.proposal.callUpNote' : 'coord.proposal.hireNote')}</span></>;
         if (!included[i]) {
-          return <li key={i} className="team-card-hire-unticked coord-hire">
+          return <li key={i} className="team-card-hire-unticked coord-hire" data-hire={kind}>
             {row}<small>{t('coordination.proposal.hireUntickedLabel')}</small>
           </li>;
         }
-        if (hiresToSendIndexes.has(i)) return <li key={i} className="coord-hire">{row}</li>;
-        return <li key={i} className="team-card-hire-dropped coord-hire">
+        if (hiresToSendIndexes.has(i)) return <li key={i} className="coord-hire" data-hire={kind}>{row}</li>;
+        return <li key={i} className="team-card-hire-dropped coord-hire" data-hire={kind}>
           <s>{row}</s><small>{t('coordination.proposal.hireDroppedLabel')}</small>
         </li>;
       })}

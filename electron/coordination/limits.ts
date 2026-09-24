@@ -73,6 +73,26 @@ export const DEFAULT_MAX_CONCURRENT = 3;
  */
 export const IN_FLIGHT_DISPATCH_STALE_MINUTES = 30;
 
+/**
+ * EL TOPE DE CONVOCADOS, POR RUN (brief `docs/briefs/2026-09-23-equipo-de-marca.md`, 4).
+ *
+ * Cuántas personas puede traer UN run a su trabajo: las altas de su propuesta
+ * juntas, y las que sus despachos convocan después (`coordination_hires`).
+ *
+ * Por run y no por marca, a propósito. El plantel de la marca no lleva tope:
+ * estar ahí no corre nada, y un tope ahí sería inventar escasez. Lo que cuesta
+ * son los procesos, y un proceso es siempre de un trabajo —su directorio es el
+ * del trabajo— y hay a lo sumo un run activo por trabajo. Con el plantel se
+ * vuelve trivial pedir "los ocho de la marca" de una: este número hace que eso
+ * sea una negativa explícita y no una consecuencia del techo de `app-server`.
+ *
+ * 6: el doble de `DEFAULT_MAX_CONCURRENT` (hay a quién darle la tanda siguiente
+ * mientras la primera trabaja) e igual a `MAX_COORDINATED_CODEX_PROCESSES` (un
+ * equipo entero de Codex todavía entra en el techo de la app). Reutilizar a
+ * alguien que ya está en el trabajo no cuenta: no trae a nadie.
+ */
+export const MAX_CALLED_UP_MEMBERS_PER_RUN = 6;
+
 /** `latte_ask` TTL when the caller omits one. */
 export const ASK_TTL_DEFAULT_MINUTES = 30;
 

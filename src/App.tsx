@@ -99,6 +99,9 @@ export const COORDINATION_ERROR_KEYS: Record<string, MessageKey> = {
   NO_ACTIVE_RUN: 'error.coordination.noActiveRun',
   GLOBAL_BUDGET_INVALID: 'error.coordination.globalBudgetInvalid',
   TOO_MANY_ACTIVE_RUNS: 'error.coordination.tooManyActiveRuns',
+  // El tope de convocados por run (limits.ts): la persona lo alcanza
+  // aprobando un gate de despacho que tendría que traer a alguien más.
+  TOO_MANY_CALLED_UP: 'error.coordination.tooManyCalledUp',
   // `commitProposal` crea las tareas del plan aprobado, así que los topes del
   // DAG llegan a la persona por el botón "Aprobar" — no sólo al agente.
   TASK_CAP: 'error.coordination.taskCap',
