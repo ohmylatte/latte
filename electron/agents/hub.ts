@@ -921,7 +921,10 @@ export class AgentHub {
     const resolved = this.resolveChoice(input);
     const existing = this.deps.repo.listMembers(input.workId).find((m) => m.roleId === ASSISTANT_ROLE_ID && m.runtime === resolved.runtime && m.accountId === resolved.accountId && m.model === resolved.model);
     if (existing) return this.openMember(existing.id, input);
-    return this.addMember({ ...input, roleId: ASSISTANT_ROLE_ID });
+    // La conversación por defecto es la del agente PRINCIPAL: se pide con su
+    // runtime y su cuenta explícitos, así el plantel sólo aporta al Asistente
+    // de esa identidad y no uno de otro runtime que la marca tenga de antes.
+    return this.addMember({ ...input, roleId: ASSISTANT_ROLE_ID, runtime: resolved.runtime, accountId: resolved.accountId, model: resolved.model });
   }
 
   private resolveChoice(input: { runtime?: ChatRuntime | null; model?: string | null; accountId?: string | null }): { runtime: ChatRuntime; model: string | null; accountId: string | null } {

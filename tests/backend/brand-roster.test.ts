@@ -171,6 +171,25 @@ describe('El plantel de la marca', () => {
     expect(await b.service.listTeam(work.id)).toMatchObject([{ brandMemberId: worked.id }]);
   });
 
+  it('la conversación por defecto sigue siendo del agente principal: no convoca a un Asistente de otro runtime', async () => {
+    const brand = await b.service.createBrand('Casa');
+    const work = await b.service.createWork(brand.id, 'Uno');
+    const now = new Date().toISOString();
+    b.repo.insertBrandMember({
+      id: 'bm_codex_assistant', brandId: brand.id, roleId: 'assistant', roleName: 'Asistente', initial: 'A', avatar: null,
+      runtime: 'codex', model: null, accountId: 'system', tier: 'balanced', coordinator: false,
+      lastCalledAt: now, retiredAt: null, createdAt: now, updatedAt: now,
+    });
+    const session = await b.service.startChat(work.id);
+    const [member] = await b.service.listTeam(work.id);
+    expect(member).toMatchObject({ id: session.id, roleId: 'assistant', runtime: 'opencode' });
+    expect(member.brandMemberId).not.toBe('bm_codex_assistant');
+    // Y la segunda vez en otro trabajo, la MISMA persona del agente principal.
+    const other = await b.service.createWork(brand.id, 'Dos');
+    await b.service.startChat(other.id);
+    expect((await b.service.listTeam(other.id))[0].brandMemberId).toBe(member.brandMemberId);
+  });
+
   it('la cara del rol elegida en Ajustes sigue mandando sobre la del plantel', async () => {
     const brand = await b.service.createBrand('Casa');
     const work = await b.service.createWork(brand.id, 'Uno');
