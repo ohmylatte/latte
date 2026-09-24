@@ -9,6 +9,7 @@ import type { MemberSignal } from './member-line';
 import { memberDisplayName } from './names';
 import { bodyOf, fileNames, titleOf } from './text';
 import { minutesUntil } from './time';
+import { taskTitle, TASK_TITLE_LONG } from '../../shared/taskTitle';
 import type { AgentRole, CoordinationAskView, CoordinationRunTaskView, CoordinationRunView, TeamMember } from '../../shared/contracts';
 
 /**
@@ -248,7 +249,7 @@ export function MemberDetail(props: MemberDetailProps) {
     {/* C4: la pregunta abierta, arriba de todo: es lo unico del detalle que te
         esta esperando, y por eso es lo unico que lleva el acento. */}
     {(props.openAsks ?? []).filter((ask) => !ask.answeredAt).map((ask) => <AskCard key={ask.id} ask={ask}
-      taskTitle={titleOf(taskOf(ask.taskId ?? undefined)?.spec)} name={name}
+      taskTitle={taskTitle(taskOf(ask.taskId ?? undefined)?.spec, taskOf(ask.taskId ?? undefined)?.title)} name={name}
       onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now ?? Date.now()} />)}
     {props.children}
     <ol className="team-thread coord-timeline" aria-label={t('coord.timeline.label')}>
@@ -264,7 +265,7 @@ export function MemberDetail(props: MemberDetailProps) {
            * puente, donde nace, Y acá: una fila vieja, ya guardada con su
            * numeral, sigue leyéndose bien.
            */
-          const heading = task ? titleOf(task.spec) : titleOf(event.detail || event.text);
+          const heading = task ? taskTitle(task.spec, task.title, TASK_TITLE_LONG) : taskTitle(event.detail || event.text, null, TASK_TITLE_LONG);
           const body = task ? bodyOf(task.spec) : bodyOf(event.detail || '');
           /**
            * C3 BUG (b): UN REPORTE MUESTRA SU RESUMEN.

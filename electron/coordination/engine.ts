@@ -17,6 +17,7 @@
 import type { AgentHub, MemberContext } from '../agents/hub';
 import type { CoordinationAuthorityMode, CoordinationBudget } from '../../shared/contracts';
 import { isAskSuspendReason } from '../../shared/contracts';
+import { taskTitle, TASK_TITLE_LONG, TASK_TITLE_STORED } from '../../shared/taskTitle';
 import type { CoordinationSuspendReason } from '../../shared/contracts';
 
 /** Lo que un despacho denegado puede alegar: todo motivo de suspensión, más el "ahora no" de la concurrencia, que NO suspende. */
@@ -73,8 +74,11 @@ export function coordinationRequestMetaKey(runId: string): string {
  * guarda nada, porque un pedido inventado es peor que ninguno.
  */
 export function coordinationRequestTitle(proposal: Pick<CoordinationProposal, 'rationale' | 'plan'>): string {
-  const source = [proposal.rationale, proposal.plan?.[0]?.spec].find((text) => typeof text === 'string' && text.trim() !== '') ?? '';
-  const line = firstLine(source);
+  // N2: con la MISMA regla que el título de una tarea: el bloque de contexto
+  // con el que el coordinador arranca no es el pedido.
+  const rationale = typeof proposal.rationale === 'string' ? taskTitle(proposal.rationale, null, Number.MAX_SAFE_INTEGER) : '';
+  const first = proposal.plan?.[0];
+  const line = rationale || (first && typeof first.spec === 'string' ? taskTitle(first.spec, first.title, Number.MAX_SAFE_INTEGER) : '');
   if (line.length <= COORDINATION_REQUEST_MAX) return line;
   // El recorte deja lugar para el puntito: el tope es del texto que se
   // guarda, no del texto antes de adornarlo.
@@ -174,6 +178,8 @@ export interface CoordinationGateRoleCoverage {
  */
 export interface CoordinationProposalTask {
   roleId: string;
+  /** N2: el título corto de la tarea, si el coordinador lo manda. */
+  title?: string;
   spec: string;
   dependsOn?: number[];
 }
@@ -304,12 +310,6 @@ export interface CoordinationEngineDeps {
 
 function isDagStatus(status: CoordinationTaskRecord['status']): DagTask['status'] {
   return status;
-}
-
-/** La primera línea de un texto: un `spec` de doce párrafos no puede volver ilegible la lista de tareas de un aviso. */
-function firstLine(text: string): string {
-  const line = text.split('\n', 1)[0]?.trim() ?? '';
-  return line.length > 0 ? line : text.trim();
 }
 
 export class CoordinationEngine {
@@ -1096,7 +1096,7 @@ export class CoordinationEngine {
           if (!dep) throw new ValidationError(`Plan task dependsOn index ${idx} is out of range`);
           return dep.id;
         });
-        const task = this.createTaskRow(run.id, item.roleId, item.spec, dependsOnIds);
+        const task = this.createTaskRow(run.id, item.roleId, item.spec, dependsOnIds, item.title);
         // K7: la pertenencia al plan se marca sin tocar el reloj de la tarea,
         // igual que en el gate de plan. Acá la tarea acaba de nacer y no puede
         // estar reclamada, pero es la misma forma y no hay dos.
@@ -1547,7 +1547,7 @@ export class CoordinationEngine {
 
   // -- Tool-facing engine methods (wrapped by tools.ts) ------------------------
 
-  planSubmit(runId: string, tasks: Array<{ roleId: string; spec: string; dependsOn?: number[] }>): CoordinationTaskRecord[] {
+  planSubmit(runId: string, tasks: Array<{ roleId: string; spec: string; title?: string; dependsOn?: number[] }>): CoordinationTaskRecord[] {
     const run = this.deps.repo.getCoordinationRun(runId);
     // `running`, no "cualquier cosa menos terminal" (D3). Sobre un run
     // `planning` esto pisaba `plan_json` —que ahí adentro guarda la PROPUESTA
@@ -1580,7 +1580,7 @@ export class CoordinationEngine {
           if (!dep) throw new ValidationError(`Plan task dependsOn index ${idx} is out of range`);
           return dep.id;
         });
-        rows.push(this.createTaskRow(run.id, spec.roleId, spec.spec, dependsOnIds));
+        rows.push(this.createTaskRow(run.id, spec.roleId, spec.spec, dependsOnIds, spec.title));
       }
       this.deps.repo.setCoordinationPlan(run.id, JSON.stringify(rows.map((t) => t.id)), this.deps.clock());
       return rows;
@@ -1589,7 +1589,7 @@ export class CoordinationEngine {
     return created;
   }
 
-  taskCreate(runId: string, input: { roleId: string; spec: string; dependsOn?: string[] }): CoordinationTaskRecord {
+  taskCreate(runId: string, input: { roleId: string; spec: string; title?: string; dependsOn?: string[] }): CoordinationTaskRecord {
     const run = this.assertRunMutable(this.deps.repo.getCoordinationRun(runId));
     // `running`, el MISMO umbral que `planSubmit` (F6). Sin esto, con el
     // permiso de coordinador escrito por IPC y un run todavía en `planning`,
@@ -1599,7 +1599,7 @@ export class CoordinationEngine {
     // propuesta.
     if (run.status !== 'running') throw new LatteError('RUN_NOT_ACTIVE', `Run is ${run.status}`);
     this.assertRoleCreatable(run, input.roleId);
-    const task = this.createTaskRow(runId, input.roleId, input.spec, input.dependsOn ?? []);
+    const task = this.createTaskRow(runId, input.roleId, input.spec, input.dependsOn ?? [], input.title);
     this.touch(run.workId, runId);
     return task;
   }
@@ -1675,7 +1675,7 @@ export class CoordinationEngine {
    */
   taskList(runId: string): Array<{
     id: string; roleId: string; status: CoordinationTaskRecord['status']; inPlan: boolean;
-    dependsOn: string[]; attempts: number; assignedMemberId: string | null; spec: string;
+    dependsOn: string[]; attempts: number; assignedMemberId: string | null; spec: string; title: string;
   }> {
     const deps = new Map<string, string[]>();
     for (const edge of this.deps.repo.listCoordinationTaskDeps(runId)) {
@@ -1690,6 +1690,9 @@ export class CoordinationEngine {
       attempts: task.attempts,
       assignedMemberId: task.assignedMemberId,
       spec: task.spec.length > TASK_LIST_SPEC_PREVIEW ? `${task.spec.slice(0, TASK_LIST_SPEC_PREVIEW)}…` : task.spec,
+      // N2: del spec ENTERO, no del recorte: el pedido puede venir después de
+      // un bloque de contexto más largo que el recorte.
+      title: taskTitle(task.spec, task.title, TASK_TITLE_LONG),
     }));
   }
 
@@ -1719,7 +1722,7 @@ export class CoordinationEngine {
     lines.push('Tasks that already exist:');
     for (const task of tasks) {
       const depends = task.dependsOn.length > 0 ? ` (depends on: ${task.dependsOn.join(', ')})` : '';
-      lines.push(`- ${task.id} [${task.roleId}] ${task.status}${depends}: ${firstLine(task.spec)}`);
+      lines.push(`- ${task.id} [${task.roleId}] ${task.status}${depends}: ${task.title}`);
     }
     if (hired.length > 0) {
       lines.push('');
@@ -2958,7 +2961,7 @@ export class CoordinationEngine {
    * gasta un turno y no arregla nada.
    */
   private noReportNudgeText(task: CoordinationTaskRecord): string {
-    const title = task.spec.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim().slice(0, 120) ?? task.id;
+    const title = taskTitle(task.spec, task.title, 120) || task.id;
     return `Your turn ended without reporting the task Latte gave you. Task ${task.id}: «${title}».\n\n`
       + `Call \`latte_report\` now: \`taskId: "${task.id}"\`, \`outcome: "succeeded"\` if you finished it or \`"failed"\` if you could not, `
       + 'and a `summary` of what you actually did.\n\n'
@@ -3840,7 +3843,7 @@ export class CoordinationEngine {
     );
   }
 
-  private createTaskRow(runId: string, roleId: string, spec: string, dependsOnIds: string[]): CoordinationTaskRecord {
+  private createTaskRow(runId: string, roleId: string, spec: string, dependsOnIds: string[], title?: unknown): CoordinationTaskRecord {
     const existing = this.deps.repo.listCoordinationTasks(runId);
     // Las dependencias tienen que ser de ESTE run: `getCoordinationTask` sola
     // acepta cualquier id de la app, así que un coordinador podía colgar una
@@ -3861,6 +3864,9 @@ export class CoordinationEngine {
     const now = this.deps.clock();
     const task = this.deps.repo.insertCoordinationTask({
       id: newId('ctk'), runId, seq: existing.length + 1, roleId, spec,
+      // N2: el título es opcional y de adorno: uno que no es texto no rompe
+      // la tarea, se ignora. Y se guarda acotado.
+      title: typeof title === 'string' && title.trim() ? title.trim().slice(0, TASK_TITLE_STORED) : null,
       status: dependsOnIds.length === 0 ? 'ready' : 'pending', depth, attempts: 0, inPlan: false,
       assignedMemberId: null, resultSummary: null, resultFilesJson: null, createdAt: now, updatedAt: now,
     });

@@ -988,6 +988,8 @@ export interface CoordinationGateAggregate {
  */
 export interface CoordinationProposalTask {
   roleId: string;
+  /** N2: el título corto de la tarea, si el coordinador lo manda. Sin esto se deriva del spec (`shared/taskTitle`). */
+  title?: string;
   spec: string;
   dependsOn?: number[];
 }
@@ -1156,6 +1158,12 @@ export interface CoordinationRunTaskView {
   roleId: string;
   /** Recortado a 200 caracteres por el motor, igual que para un agente. */
   spec: string;
+  /**
+   * N2: el título de la tarea: el que mandó el coordinador o, si no, el que
+   * `taskTitle` deriva del spec ENTERO (el `spec` de acá viene recortado y
+   * el pedido puede estar después del bloque de contexto).
+   */
+  title?: string | null;
   status: CoordinationTaskStatus;
   /** Si la tarea es parte del plan aprobado o nació después, de un despacho. */
   inPlan: boolean;

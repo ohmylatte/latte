@@ -3,7 +3,7 @@ import { translate as t } from '../i18n';
 import { CoordAvatar } from './anatomy';
 import { avatarOfRole } from './avatar-of';
 import { roleDisplayName } from './names';
-import { titleOf } from './text';
+import { taskTitle, TASK_TITLE_LONG } from '../../shared/taskTitle';
 import { hourOf } from './time';
 import type {
   AgentRole, CoordinationAskView, CoordinationRunTaskView, CoordinationRunView, TeamMember,
@@ -175,9 +175,9 @@ export function RunHeader(props: RunHeaderProps) {
       {props.tasks!.map((task) => {
         const state = taskChipState(task, askedTaskIds);
         const owner = roleDisplayName(task.roleId, roles, team);
-        return <li key={task.id} className={'coord-task is-' + state} data-task-state={state} title={taskLabel(state) + ' · ' + titleOf(task.spec)}>
+        return <li key={task.id} className={'coord-task is-' + state} data-task-state={state} title={taskLabel(state) + ' · ' + taskTitle(task.spec, task.title, TASK_TITLE_LONG)}>
           <TaskIcon state={state} />
-          <span className="coord-task-title">{titleOf(task.spec)}</span>
+          <span className="coord-task-title">{taskTitle(task.spec, task.title)}</span>
           <CoordAvatar name={owner} small roleId={task.roleId} avatar={avatarOfRole(task.roleId, roles, team)} />
           <span className="visually-hidden">{taskLabel(state)}</span>
         </li>;

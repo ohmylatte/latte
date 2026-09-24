@@ -17,7 +17,7 @@ import { avatarOfMember } from './coordination/avatar-of';
 import { parseAvatar } from '../shared/avatar';
 import { memberSignal, type MemberDot } from './coordination/member-line';
 import { hourOf } from './coordination/time';
-import { titleOf } from './coordination/text';
+import { taskTitle as taskTitleOf } from '../shared/taskTitle';
 import { TeamView } from './TeamView';
 
 /** A runtime the user can pick for a new member instead of the primary agent. */
@@ -430,7 +430,7 @@ export function TeamPanel(props: TeamPanelProps) {
    * cuentan el mismo hecho; si cada una lo derivara por su cuenta, "la misma
    * anatomia" seria una intencion y no un hecho.
    */
-  const taskTitle = (taskId: string) => titleOf((props.coordinationTasks ?? []).find(task => task.id === taskId)?.spec);
+  const taskTitle = (taskId: string) => { const task = (props.coordinationTasks ?? []).find(item => item.id === taskId); return taskTitleOf(task?.spec, task?.title); };
   const memberTabSignal = (memberId: string) => {
     const signal = memberSignal({ ...inbox, team, roles: props.roles, run: props.coordinationRun ?? null, taskTitle }, memberId);
     return {

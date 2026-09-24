@@ -19,7 +19,7 @@ import { EmptyTeam, RunOutput } from './coordination/TeamOutcome';
 import { memberSignal } from './coordination/member-line';
 import { activityLine, dispatchSteps, type ConnectionLabel } from './coordination/activity';
 import { hourOf } from './coordination/time';
-import { titleOf } from './coordination/text';
+import { taskTitle as taskTitleOf } from '../shared/taskTitle';
 import { memberDisplayName } from './coordination/names';
 
 /**
@@ -210,7 +210,7 @@ export function TeamView(props: TeamViewProps) {
    * lo que la persona pidio. Sin tareas cableadas, la fila cae en el prompt,
    * que es lo que ya habia.
    */
-  const taskTitle = (taskId: string) => titleOf((props.coordinationTasks ?? []).find((task) => task.id === taskId)?.spec);
+  const taskTitle = (taskId: string) => { const task = (props.coordinationTasks ?? []).find((t) => t.id === taskId); return taskTitleOf(task?.spec, task?.title); };
   /**
    * LO QUE ESTÁ PASANDO AHORA MISMO GANA.
    *
