@@ -48,6 +48,8 @@ const FILES = [
   'TeamPanel.tsx', 'DecisionsView.tsx', 'ChatPane.tsx', 'coordination/TeamCards.tsx',
   'ResumenView.tsx', 'HomeView.tsx', 'ActiveTeamsStrip.tsx',
   'TeamView.tsx', 'coordination/inbox.ts',
+  // N1: el verbo de cada paso sale de los diccionarios, no de la derivación.
+  'coordination/activity.ts', 'coordination/MemberDetail.tsx',
 ];
 
 /** Las líneas de código, sin comentarios: un comentario en castellano es documentación, no copy. */

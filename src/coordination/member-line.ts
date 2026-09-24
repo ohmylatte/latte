@@ -2,8 +2,9 @@ import { translate as t } from '../i18n';
 import { firstLine, inboxEvents, type InboxInput } from './inbox';
 import { memberDisplayName } from './names';
 import { titleOf } from './text';
+import { activityLine, type ConnectionLabel } from './activity';
 import type {
-  AgentRole, CoordinationAskView, CoordinationDispatchLogEntryView,
+  AgentRole, ChatMessage, CoordinationAskView, CoordinationDispatchLogEntryView,
   CoordinationLogEntryView, CoordinationRunView, TeamMember,
 } from '../../shared/contracts';
 
@@ -83,6 +84,15 @@ export interface MemberSignalInput extends InboxInput {
   run?: CoordinationRunView | null;
   /** El título de la tarea de un despacho. Sin esto se usa el texto del despacho, que es lo que ya había. */
   taskTitle?: TaskTitle;
+  /**
+   * N1: la conversación de cada miembro, del store del chat, por id. Con esto
+   * la fila de un miembro con un despacho en vuelo dice qué hace AHORA (su
+   * última herramienta) en vez del título de la tarea; sin su sesión dice
+   * "Trabajando", a secas. Sin el mapa, lo que había.
+   */
+  chats?: Readonly<Record<string, readonly ChatMessage[]>>;
+  /** El nombre legible de una Conexión, para "Consulta The Agentcy". */
+  connectionLabel?: ConnectionLabel;
 }
 
 /**
@@ -114,7 +124,11 @@ export function memberSignal(input: MemberSignalInput, memberId: string): Member
   const mine = live ? inFlightFor(input.log, memberId) : [];
   if (mine.length > 0) {
     const entry = mine[mine.length - 1]!;
-    return { dot: 'live', line: title(entry), at: entry.startedAt ?? entry.createdAt, asks: 0, urgent: false };
+    const since = entry.startedAt ?? entry.createdAt;
+    const line = input.chats
+      ? activityLine(input.chats[memberId] ?? [], since, input.connectionLabel) ?? t('coord.member.working')
+      : title(entry);
+    return { dot: 'live', line, at: since, asks: 0, urgent: false };
   }
 
   // El coordinador no tiene despacho propio: lo suyo es esperar los ajenos.

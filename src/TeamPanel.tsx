@@ -1,10 +1,10 @@
 import { currentLocale, translate as t, type MessageKey } from './i18n';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Check, CircleAlert, CircleCheck, FolderCheck, FolderLock, Forward, LoaderCircle, MessageSquare, MessageSquarePlus, Pause, Play, Plug, Plus, Settings2, Trash2, UserPlus, Users, X, Zap } from 'lucide-react';
 import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type BrandMember, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationAskView, type CoordinationAuthorityMode, type CoordinationBudgetView, type CoordinationDegradedReason, type CoordinationGateView, type CoordinationHireView, type CoordinationLogEntryView, type CoordinationMemberSupport, type CoordinationMessageView, type CoordinationRunTaskView, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { ChatPane, type ChatCoordinationProps } from './ChatPane';
-import { useChatState } from './chat-store';
+import { useChatMessagesOf, useChatState } from './chat-store';
 import { canChangePermission } from './permission-ux';
 import { continuationModel, continuationOptions, type ContinuationTarget } from './provider-models';
 import { contextWeight, describeUsage, formatTokens, totalTokens } from './usage-format';
@@ -357,6 +357,42 @@ export function TeamPanel(props: TeamPanelProps) {
     if (rail !== 'team' || !teamChatTargetId || liveCoordinator) return;
     void chatStore.sync(teamChatTargetId).catch(() => undefined);
   }, [rail, teamChatTargetId, liveCoordinator, runStatus]);
+  /**
+   * N1: QUÉ ESTÁ HACIENDO CADA MIEMBRO, EN EL MODO EQUIPO.
+   *
+   * El store del chat recibe los eventos de TODAS las sesiones —la
+   * suscripción es global y no filtra por chats abiertos—, incluidos los
+   * miembros que el motor levantó y la persona nunca abrió. Lo que no tiene es
+   * lo que pasó ANTES de que el renderer existiera (una recarga en medio de un
+   * run): por eso, al entrar al modo Equipo, a cada miembro vivo que el store
+   * todavía no conoce se le pide su historia UNA vez. Sin spawn:
+   * `listChatMessages` contesta con el adaptador vivo o el transcripto, y
+   * vacío si no hay ninguno. Y nunca sobre uno que ya tiene mensajes:
+   * re-sincronizar encima de un turno en vuelo le pisaría lo que escribe.
+   */
+  const memberChats = useChatMessagesOf(chatStore, team.map(m => m.id));
+  const activitySynced = useRef(new Set<string>());
+  useEffect(() => {
+    if (rail !== 'team') return;
+    for (const member of team) {
+      if (member.status !== 'working' && member.status !== 'idle') continue;
+      if (chats[member.id] || activitySynced.current.has(member.id)) continue;
+      if (chatStore.get(member.id).messages.length > 0) continue;
+      activitySynced.current.add(member.id);
+      void chatStore.sync(member.id).catch(() => undefined);
+    }
+  }, [rail, team, chats]);
+  /** Los nombres de las Conexiones, para "Consulta The Agentcy" en vez del slug. */
+  const [connectionLabels, setConnectionLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (rail !== 'team') return;
+    let alive = true;
+    Promise.resolve().then(() => api.listAllConnections()).then((list) => {
+      if (!alive || !Array.isArray(list)) return;
+      setConnectionLabels(Object.fromEntries(list.map(c => [c.name, c.label || c.name])));
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [rail]);
   // The first team is the empty state itself; after that, adding is a dialog.
   const firstTeam = team.length === 0 && Boolean(work);
   const showPicker = adding || firstTeam;
@@ -500,6 +536,7 @@ export function TeamPanel(props: TeamPanelProps) {
       teamChatTargetId={teamChatTargetId}
       teamChatStatus={coordinatorState.status} teamChatStatusDetail={coordinatorState.statusDetail}
       teamChatQuestions={coordinatorState.questions}
+      memberChats={memberChats} connectionLabel={(slug) => connectionLabels[slug]}
       onError={props.onError}
       composer={teamChatTargetId ? {
         sessionId: teamChatTargetId,

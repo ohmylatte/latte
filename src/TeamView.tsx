@@ -17,6 +17,7 @@ import { CoordAvatar, CoordRow } from './coordination/anatomy';
 import { avatarOfMember } from './coordination/avatar-of';
 import { EmptyTeam, RunOutput } from './coordination/TeamOutcome';
 import { memberSignal } from './coordination/member-line';
+import { activityLine, dispatchSteps, type ConnectionLabel } from './coordination/activity';
 import { hourOf } from './coordination/time';
 import { titleOf } from './coordination/text';
 import { memberDisplayName } from './coordination/names';
@@ -148,6 +149,15 @@ export interface TeamViewProps {
    * conversacion. Es el MISMO paquete que recibe `ChatPane`.
    */
   chatCoordination?: ChatCoordinationProps;
+  /**
+   * N1: LO QUE CADA MIEMBRO ESTÁ HACIENDO, de su propia sesión. La
+   * conversación de cada uno, por id, del store del chat. Con esto su fila
+   * dice qué hace ahora y su hilo lista los pasos de cada despacho. Sin esto,
+   * lo que había.
+   */
+  memberChats?: Readonly<Record<string, readonly ChatMessage[]>>;
+  /** El nombre legible de una Conexión a partir de su slug. */
+  connectionLabel?: ConnectionLabel;
 }
 
 /**
@@ -211,13 +221,22 @@ export function TeamView(props: TeamViewProps) {
    * más fuerte que una fila puede contar, así que se dice primero.
    */
   const signalOf = (memberId: string) => {
-    const signal = memberSignal({ ...input, team, roles, run, taskTitle }, memberId);
+    const signal = memberSignal({ ...input, team, roles, run, taskTitle, chats: props.memberChats, connectionLabel: props.connectionLabel }, memberId);
     if (memberId !== coordinatorId) return signal;
     // Lo que TE ESPERA gana sobre lo que está pasando: la escala de urgencia
     // es la misma que la de las preguntas de coordinación.
     if (targetQuestions > 0) return { ...signal, dot: 'live' as const, line: t('coord.member.askingYou'), urgent: true };
-    if (targetWorking) return { ...signal, dot: 'live' as const, line: t('coord.member.working'), urgent: false };
+    if (targetWorking) return { ...signal, dot: 'live' as const, line: coordinatorActivity() ?? t('coord.member.working'), urgent: false };
     return signal;
+  };
+  /**
+   * N1: el destinatario contestando también dice QUÉ hace: su turno empieza
+   * con el último mensaje de la persona, y lo que vino después es lo suyo.
+   */
+  const coordinatorActivity = (): string | null => {
+    const chat = props.coordinatorChat ?? (coordinatorId ? props.memberChats?.[coordinatorId] : undefined) ?? [];
+    const lastAsk = [...chat].reverse().find((m) => m.role === 'user');
+    return lastAsk ? activityLine(chat, lastAsk.createdAt, props.connectionLabel) : null;
   };
   const readingCoordinator = Boolean(selected && selected === coordinatorId);
   /** El destinatario está escribiendo: lo dicen su fila y el final de su hilo, con las mismas palabras que la conversación. */
@@ -316,6 +335,7 @@ export function TeamView(props: TeamViewProps) {
             persona vuelve a buscarla, y ahora esta pantalla ES esa charla. */}
         {(run?.active || openedMember || readingCoordinator) && selected && <MemberDetail memberId={selected} team={team} roles={roles} run={run}
           events={thread} tasks={props.coordinationTasks}
+          steps={props.memberChats ? dispatchSteps(props.coordinationLog, selected, props.memberChats[selected], props.connectionLabel) : undefined}
           signal={signalOf(selected)}
           formatTime={hour} onOpenChat={readingCoordinator ? undefined : props.onOpenChat}
           openAsks={(props.coordinationAsks ?? []).filter((ask) => ask.memberId === selected && (run == null || run.active))}

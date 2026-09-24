@@ -1399,3 +1399,16 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 /* El coordinador habitual de la marca: el mismo ícono que marca al coordinador; apretado, en tinta y con fondo, sin gastar el acento. */
 .roster-coordinate{color:var(--muted-soft)}
 .roster-coordinate[aria-pressed="true"]{color:var(--ink);background:var(--paper-deep);border-color:var(--line-strong)}
+/* N1: LOS PASOS DE UN DESPACHO. Una linea por herramienta, chica y en gris:
+   icono, verbo y objeto, hora en mono. El ultimo en curso lleva el punto del
+   acento; al reportar se pliegan en "N pasos". */
+.coord-steps{list-style:none;margin:2px 0 0;padding:0;display:flex;flex-direction:column;gap:3px;min-width:0}
+.coord-step{display:flex;align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:var(--text-sm)}
+.coord-step-icon{display:inline-flex;flex:0 0 auto;color:var(--muted-soft)}
+.coord-step-text{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.coord-step.is-live{color:var(--ink-soft)}
+.coord-step.is-failed .coord-step-text{color:var(--danger)}
+.coord-step-dot{width:7px;height:7px;flex:0 0 7px;border-radius:var(--radius-pill);background:var(--rust);box-shadow:0 0 0 3px var(--rust-wash)}
+.coord-steps-more{color:var(--muted-soft);font-size:var(--text-sm)}
+.coord-steps-fold{min-width:0}
+.coord-steps-summary{cursor:pointer;color:var(--muted);font-size:var(--text-sm);width:max-content}
