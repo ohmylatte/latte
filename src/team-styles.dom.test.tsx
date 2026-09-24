@@ -73,6 +73,8 @@ const NEW_CLASSES = [
   'home-row-finished',
   // Marca → Equipo (esquema 14): el plantel, y los dos rótulos del diálogo.
   'roster-list', 'roster-row', 'roster-actions', 'roster-call', 'roster-empty', 'role-picker-section',
+  // El coordinador habitual de la marca.
+  'roster-coordinate',
 ];
 
 describe('B1.5: el CSS del equipo', () => {

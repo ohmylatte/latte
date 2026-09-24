@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Trash2, UserPlus, X } from 'lucide-react';
+import { Trash2, UserPlus, Users, X } from 'lucide-react';
 import { parseAvatar } from '../shared/avatar';
 import type { BrandMember, TeamMemberOptions, Work } from '../shared/contracts';
 import { translate as t } from './i18n';
@@ -27,6 +27,12 @@ export interface BrandTeamViewProps {
   busy: boolean;
   onCallUp?: (brandMemberId: string) => void;
   onRetire?: (brandMemberId: string) => void;
+  /**
+   * El coordinador habitual de la marca: quien coordina los trabajos donde
+   * está convocado y que no eligieron a otro. `null` = nadie. Sin esto no se
+   * ofrece.
+   */
+  onSetCoordinator?: (brandMemberId: string | null) => void;
   /** Sumar al plantel sin convocar: el mismo diálogo que "Sumar un rol". Sin esto no se ofrece. */
   onAdd?: (roleId: string, options: TeamMemberOptions | null) => Promise<void>;
   /** Lo que el diálogo de alta necesita saber de los agentes. */
@@ -49,13 +55,20 @@ export function BrandTeamView(props: BrandTeamViewProps) {
     return <li key={member.id} className={'coord-row roster-row' + (member.retiredAt !== null ? ' is-retired' : '')} data-member-id={member.id}>
       <CoordAvatar name={member.roleName} roleId={member.roleId} avatar={parseAvatar(member.avatar)} />
       <span className="coord-row-text">
-        <span className="coord-row-top"><span className="coord-row-name">{member.roleName}</span></span>
+        <span className="coord-row-top"><span className="coord-row-name">{member.roleName}</span>
+          {member.coordinator && <Users size={12} className="coord-row-coordinator" aria-label={t('roster.coordinator')} />}</span>
         <span className="coord-row-line" title={line}>{line}</span>
       </span>
       <span className="roster-actions">
         {props.onCallUp && !here && <button type="button" className="subtle roster-call" disabled={props.busy || workId === null}
           title={props.work ? t('roster.callUpTo', { work: props.work.title }) : t('roster.callUpNeedsWork')}
           onClick={() => props.onCallUp!(member.id)}>{t('roster.callUp')}</button>}
+        {/* Un verbo por botón: apretado es el habitual; tocarlo otra vez deja a la marca sin habitual. */}
+        {props.onSetCoordinator && member.retiredAt === null && <button type="button" className="icon-button roster-coordinate"
+          disabled={props.busy} aria-pressed={member.coordinator}
+          aria-label={member.coordinator ? t('roster.coordinating', { name: member.roleName }) : t('roster.coordinate', { name: member.roleName })}
+          title={member.coordinator ? t('roster.coordinating', { name: member.roleName }) : t('roster.coordinate', { name: member.roleName })}
+          onClick={() => props.onSetCoordinator!(member.coordinator ? null : member.id)}><Users size={14} /></button>}
         {props.onRetire && member.retiredAt === null && <button type="button" className="icon-button" disabled={props.busy}
           aria-label={t('roster.remove', { name: member.roleName })} title={t('roster.remove', { name: member.roleName })}
           onClick={() => props.onRetire!(member.id)}><Trash2 size={14} /></button>}

@@ -1396,3 +1396,6 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 /* Elegir quién coordina: el botón del detalle. Ya elegido (o con un run activo) se lee, no se aprieta. */
 .coord-detail-coordinate{flex-shrink:0}
 .coord-detail-coordinate:disabled{cursor:default;color:var(--ink-soft);background:transparent}
+/* El coordinador habitual de la marca: el mismo ícono que marca al coordinador; apretado, en tinta y con fondo, sin gastar el acento. */
+.roster-coordinate{color:var(--muted-soft)}
+.roster-coordinate[aria-pressed="true"]{color:var(--ink);background:var(--paper-deep);border-color:var(--line-strong)}

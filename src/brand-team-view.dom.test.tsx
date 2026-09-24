@@ -26,7 +26,7 @@ import type { AgentRole, BrandMember, Work } from '../shared/contracts';
 
 const person = (id: string, roleId: string, roleName: string, patch: Partial<BrandMember> = {}): BrandMember => ({
   id, brandId: 'b1', roleId, roleName, initial: roleName[0]!, avatar: 'bob.2.4.phones', runtime: 'claude', model: null, accountId: null,
-  label: 'Claude Code', tier: 'balanced', workIds: [], lastCalledAt: '2026-09-01T00:00:00.000Z', retiredAt: null,
+  label: 'Claude Code', tier: 'balanced', workIds: [], coordinator: false, lastCalledAt: '2026-09-01T00:00:00.000Z', retiredAt: null,
   createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', ...patch,
 });
 const work = { id: 'w1', brandId: 'b1', title: 'Lanzamiento' } as Work;
@@ -112,6 +112,47 @@ describe('Marca → Equipo', () => {
     expect(container.querySelector('h1')!.textContent).toBe('The Casa team');
     expect(container.querySelector('[data-member-id="bm_two"] .coord-row-line')!.textContent).toBe('Claude Code · on 2 works');
     expect(container.querySelector('[data-member-id="bm_old"] .roster-call')!.textContent).toBe('Call up');
+  });
+});
+
+describe('Marca → Equipo: el coordinador habitual', () => {
+  const withHabitual = roster.map((m) => (m.id === 'bm_here' ? { ...m, coordinator: true } : m));
+  const button = (c: HTMLElement, id: string) => c.querySelector(`[data-member-id="${id}"] .roster-coordinate`) as HTMLButtonElement | null;
+
+  it('un botón por persona activa; el habitual lo tiene apretado y lleva el ícono al lado del nombre', () => {
+    ui.locale = 'es-AR';
+    const { container } = render(createElement(BrandTeamView, { brandName: 'Casa', roster: withHabitual, work, busy: false, onSetCoordinator: () => {} }));
+    expect(button(container, 'bm_here')!.getAttribute('aria-pressed')).toBe('true');
+    expect(button(container, 'bm_here')!.getAttribute('aria-label')).toBe('Strategist coordina los trabajos de la marca');
+    expect(button(container, 'bm_two')!.getAttribute('aria-pressed')).toBe('false');
+    expect(button(container, 'bm_two')!.getAttribute('aria-label')).toBe('Que Reviewer coordine los trabajos de la marca');
+    // Un retirado no coordina nada: primero hay que convocarlo.
+    expect(button(container, 'bm_old')).toBeNull();
+    expect(container.querySelector('[data-member-id="bm_here"] .coord-row-coordinator')).not.toBeNull();
+    expect(container.querySelector('[data-member-id="bm_two"] .coord-row-coordinator')).toBeNull();
+  });
+
+  it('elegir a otra persona la nombra; volver a tocar al habitual deja a la marca sin habitual', () => {
+    ui.locale = 'es-AR';
+    const chosen: Array<string | null> = [];
+    const { container } = render(createElement(BrandTeamView, { brandName: 'Casa', roster: withHabitual, work, busy: false, onSetCoordinator: (id: string | null) => { chosen.push(id); } }));
+    fireEvent.click(button(container, 'bm_two')!);
+    fireEvent.click(button(container, 'bm_here')!);
+    expect(chosen).toEqual(['bm_two', null]);
+  });
+
+  it('sin handler no se ofrece', () => {
+    ui.locale = 'es-AR';
+    const { container } = render(createElement(BrandTeamView, { brandName: 'Casa', roster: withHabitual, work, busy: false }));
+    expect(container.querySelector('.roster-coordinate')).toBeNull();
+  });
+
+  it('en inglés', () => {
+    ui.locale = 'en-US';
+    const { container } = render(createElement(BrandTeamView, { brandName: 'Casa', roster: withHabitual, work, busy: false, onSetCoordinator: () => {} }));
+    expect(button(container, 'bm_here')!.getAttribute('aria-label')).toBe("Strategist coordinates this brand's works");
+    expect(button(container, 'bm_two')!.getAttribute('aria-label')).toBe("Make Reviewer coordinate this brand's works");
+    ui.locale = 'es-AR';
   });
 });
 

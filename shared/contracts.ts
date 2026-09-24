@@ -624,6 +624,12 @@ export interface TeamMember {
    * no tiene persona.
    */
   brandMemberId?: string | null;
+  /**
+   * Es el coordinador habitual de la marca (Marca → Equipo). En un trabajo sin
+   * permiso propio, coordina él si está convocado. Opcional por la misma razón
+   * que `brandMemberId`: el hub lo publica siempre.
+   */
+  coordinatesBrand?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -648,6 +654,8 @@ export interface BrandMember {
   tier: EffortTier;
   /** Los trabajos donde está convocado, en orden de convocatoria. */
   workIds: string[];
+  /** Coordina por costumbre los trabajos de la marca. Una sola persona por marca, o nadie. */
+  coordinator: boolean;
   lastCalledAt: string;
   /** Cuándo se retiró (nadie lo convocó en un tiempo, o alguien lo quitó). `null` = activo. Convocarlo lo devuelve. */
   retiredAt: string | null;
@@ -1550,6 +1558,8 @@ export interface LatteAPI {
   addBrandMember(brandId: string, roleId: string, options?: TeamMemberOptions | null): Promise<BrandMember[]>;
   /** Quita a alguien del plantel: se borra si nunca trabajó en nada; si tiene historia, se retira. Devuelve el plantel. */
   retireBrandMember(brandMemberId: string): Promise<BrandMember[]>;
+  /** El coordinador habitual de la marca: exclusivo, `null` = nadie. Nunca alguien de otra marca. Devuelve el plantel. */
+  setBrandCoordinator(brandId: string, brandMemberId: string | null): Promise<BrandMember[]>;
   /** Convoca a alguien del plantel a un trabajo de SU marca y abre su hilo ahí (lo reabre si ya estaba convocado). */
   callUpMember(workId: string, brandMemberId: string): Promise<ChatSession>;
   listChatMessages(chatId: string): Promise<ChatMessage[]>;

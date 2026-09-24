@@ -110,7 +110,7 @@ export interface BrandMemberRecord {
   model: string | null;
   accountId: string | null;
   tier: EffortTier;
-  /** Reservado para "el coordinador habitual de la marca" (brief 2.3); nadie lo escribe todavía. */
+  /** El coordinador habitual de la marca (brief 2.3): exclusivo, lo escribe `setBrandCoordinator`. */
   coordinator: boolean;
   lastCalledAt: string;
   retiredAt: string | null;
@@ -1019,6 +1019,24 @@ export class LatteRepository {
   /** Lo convocaron (o abrieron uno de sus hilos): vuelve si estaba retirado. */
   markBrandMemberCalled(id: string, at: string): void {
     this.db.run('UPDATE brand_members SET last_called_at = ?, retired_at = NULL, updated_at = ? WHERE id = ?', [at, at, id]);
+  }
+
+  /**
+   * El coordinador habitual de la marca: EXCLUSIVO. Una sola sentencia marca a
+   * esa persona y desmarca a todas las demás de la marca, así que nunca hay dos
+   * ni un instante con dos. `null` desmarca a quien estuviera.
+   */
+  setBrandCoordinator(brandId: string, brandMemberId: string | null, at: string): void {
+    this.db.run(
+      'UPDATE brand_members SET coordinator = CASE WHEN id = ? THEN 1 ELSE 0 END, updated_at = ? WHERE brand_id = ? AND (coordinator = 1 OR id = ?)',
+      [brandMemberId ?? '', at, brandId, brandMemberId ?? ''],
+    );
+  }
+
+  /** Quién coordina por costumbre los trabajos de esta marca, si alguien. */
+  brandCoordinator(brandId: string): BrandMemberRecord | null {
+    const row = this.db.get<BrandMemberRow>('SELECT * FROM brand_members WHERE brand_id = ? AND coordinator = 1 ORDER BY created_at ASC, id ASC LIMIT 1', [brandId]);
+    return row ? toBrandMember(row) : null;
   }
 
   retireBrandMember(id: string, at: string): void {

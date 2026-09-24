@@ -1676,6 +1676,20 @@ export class LatteService implements BackendApi {
     return member && member.workId === workId ? raw : null;
   }
 
+  /**
+   * QUIÉN COORDINA ESTE TRABAJO cuando nadie lo nombró en el run: el permiso
+   * propio del trabajo; sin él, el coordinador habitual de la marca SI está
+   * convocado acá. Es la misma cadena que el renderer (`teamCoordinator`), para
+   * que lo que la pantalla marca sea lo que un run arranca.
+   */
+  private effectiveCoordinator(workId: string): string | null {
+    const own = this.readCoordinatorGrant(workId);
+    if (own) return own;
+    const brandId = this.deps.repo.brandIdOfWork(workId);
+    const habitual = brandId ? this.deps.repo.brandCoordinator(brandId) : null;
+    return habitual ? this.deps.repo.findConvocation(workId, habitual.id)?.id ?? null : null;
+  }
+
   async getCoordinatorGrant(workId: string): Promise<CoordinatorGrant> {
     const id = requireId(workId, 'workId');
     this.deps.repo.getWork(id);
@@ -1777,7 +1791,7 @@ export class LatteService implements BackendApi {
   async startCoordinationRun(workId: string): Promise<CoordinationRunView> {
     const id = requireId(workId, 'workId');
     this.deps.repo.getWork(id);
-    const coordinatorMemberId = this.readCoordinatorGrant(id);
+    const coordinatorMemberId = this.effectiveCoordinator(id);
     const run = await this.coordination.startRun(id, coordinatorMemberId);
     return this.toCoordinationRunView(run);
   }
@@ -1962,7 +1976,7 @@ export class LatteService implements BackendApi {
       try { return wroteFile(this.deps.hub.recentMessages(m.id).messages, fileName); } catch { return false; }
     });
     if (writers.length === 1) return writers[0].id;
-    const grant = this.readCoordinatorGrant(workId);
+    const grant = this.effectiveCoordinator(workId);
     return (grant && team.some((m) => m.id === grant) ? grant : null)
       ?? team.find((m) => m.roleId === ASSISTANT_ROLE_ID)?.id
       ?? team[0]?.id
@@ -2287,6 +2301,21 @@ export class LatteService implements BackendApi {
     if (convocations.length === 0) this.deps.repo.deleteBrandMember(member.id);
     else this.deps.repo.retireBrandMember(member.id, this.clock());
     return this.deps.hub.listBrandTeam(member.brandId);
+  }
+
+  /**
+   * El coordinador habitual de la marca: una sola persona del plantel (o
+   * nadie, con `null`). Nunca alguien de otra marca. Devuelve el plantel.
+   */
+  async setBrandCoordinator(brandId: string, brandMemberId: string | null): Promise<BrandMember[]> {
+    const id = requireId(brandId, 'brandId');
+    this.deps.repo.getBrand(id);
+    if (brandMemberId !== null) {
+      const member = this.deps.repo.getBrandMember(requireId(brandMemberId, 'brandMemberId'));
+      if (member.brandId !== id) throw new ValidationError('El coordinador habitual tiene que ser del equipo de esta marca');
+    }
+    this.deps.repo.setBrandCoordinator(id, brandMemberId, this.clock());
+    return this.deps.hub.listBrandTeam(id);
   }
 
   /**

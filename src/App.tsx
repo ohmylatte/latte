@@ -1464,6 +1464,7 @@ export function App() {
       {view === 'roster' && brand && <BrandTeamView brandName={brand.name} roster={roster} work={work} busy={busy || startingChat}
         onCallUp={isDesktop ? (id) => void callUpMember(id) : undefined}
         onRetire={(id) => void run(async () => { setRoster(await api.retireBrandMember(id)); })}
+        onSetCoordinator={isDesktop ? (id) => void run(async () => { setRoster(await api.setBrandCoordinator(brand.id, id)); if (work) await loadTeam(work.id); }) : undefined}
         onAdd={isDesktop ? async (roleId, options) => { await run(async () => { setRoster(await api.addBrandMember(brand.id, roleId, options)); }); } : undefined}
         picker={{ roles, choices: runtimeChoices, primaryLabel, primaryDetail, primaryReady, checking: checkingAgents, isDesktop, onProviders: () => setSettings('agents'), onRecheck: () => void refreshChatStatus(), submitLabel: t('roster.addSubmit'), lead: null }} />}
       {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} onAcceptHandoff={acceptHandoffAsTask} />}

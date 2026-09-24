@@ -138,6 +138,7 @@ export const API_METHODS = [
   'listBrandTeam',
   'addBrandMember',
   'retireBrandMember',
+  'setBrandCoordinator',
   'callUpMember',
   'draftContinuation',
 ] as const satisfies readonly (keyof BackendApi)[];
@@ -283,6 +284,7 @@ export const API_ARITY: Record<ApiMethod, number> = {
   listBrandTeam: 1,
   addBrandMember: 3,
   retireBrandMember: 1,
+  setBrandCoordinator: 2,
   callUpMember: 2,
   draftContinuation: 1,
 };

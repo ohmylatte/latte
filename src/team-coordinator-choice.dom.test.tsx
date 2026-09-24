@@ -139,6 +139,26 @@ describe('elegir quién coordina un trabajo', () => {
     ui.locale = 'es-AR';
   });
 
+  it('sin permiso propio coordina el habitual de la marca si está convocado; elegir a otro le gana', async () => {
+    ui.locale = 'es-AR';
+    mocks.sendChat.mockReset();
+    mocks.sendChat.mockResolvedValue(undefined);
+    const habitual = [member('asis', 'Asistente', 'assistant'), { ...member('cm', 'CM'), coordinatesBrand: true }];
+    const { container } = render(createElement(Harness, { team: habitual }));
+    toTeam(container);
+    expect(rowOf(container, 'cm').querySelector('.coord-row-coordinator')).not.toBeNull();
+    fireEvent.change(container.querySelector('.team-view .prompt-form textarea')!, { target: { value: 'hola' } });
+    fireEvent.submit(container.querySelector('.team-view .prompt-form')!);
+    await waitFor(() => expect(mocks.sendChat).toHaveBeenCalled());
+    expect(mocks.sendChat.mock.calls[0]![0]).toBe('cm');
+
+    openRow(container, 'asis');
+    fireEvent.click(coordinateButton(container)!);
+    expect(rowOf(container, 'asis').querySelector('.coord-row-coordinator')).not.toBeNull();
+    expect(rowOf(container, 'cm').querySelector('.coord-row-coordinator')).toBeNull();
+    cleanup();
+  });
+
   it('sin handler no se ofrece un botón que no escribe nada', () => {
     ui.locale = 'es-AR';
     const { container } = render(createElement(TeamPanel, { ...basePanel, formatTime: (v: string) => v, formatDate: (v: string) => v }));

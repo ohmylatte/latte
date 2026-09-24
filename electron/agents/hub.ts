@@ -388,7 +388,9 @@ export class AgentHub {
     // se repite, y eso serian N consultas para dibujar una lista.
     const members = this.deps.repo.listMembers(workId);
     const faces = this.facesFor(workId, members);
-    return members.map((record) => this.describe(record, members, faces));
+    const brandId = members.some((m) => m.brandMemberId) ? this.deps.repo.brandIdOfWork(workId) : null;
+    const habitual = brandId ? this.deps.repo.brandCoordinator(brandId)?.id ?? null : null;
+    return members.map((record) => this.describe(record, members, faces, habitual));
   }
 
   getMember(memberId: string): TeamMember {
@@ -417,6 +419,7 @@ export class AgentHub {
       label: this.labelFor(member.runtime, member.model, member.accountId),
       tier: member.tier,
       workIds: convocations.get(member.id) ?? [],
+      coordinator: member.coordinator,
       lastCalledAt: member.lastCalledAt,
       retiredAt: member.retiredAt,
       createdAt: member.createdAt,
@@ -867,7 +870,11 @@ export class AgentHub {
     return rosterFaces(this.deps.repo.listBrandMembers(brandId), (roleId) => this.roleAvatar(roleId));
   }
 
-  private describe(record: TeamMemberRecord, siblings?: TeamMemberRecord[], faces?: Map<string, string>): TeamMember {
+  /**
+   * `habitual` es el coordinador habitual de la marca, ya leído por quien
+   * describe a todo el equipo; sin él (describir a uno solo) se lee acá.
+   */
+  private describe(record: TeamMemberRecord, siblings?: TeamMemberRecord[], faces?: Map<string, string>, habitual?: string | null): TeamMember {
     let status: TeamMemberStatus;
     const adapter = this.adapters().find((a) => a.owns(record.id));
     if (adapter) status = adapter.isBusy(record.id) ? 'working' : 'idle';
@@ -889,6 +896,9 @@ export class AgentHub {
       usage: record.usage ?? EMPTY_USAGE,
       continuedFrom: record.continuedFrom ?? null,
       brandMemberId: record.brandMemberId ?? null,
+      coordinatesBrand: record.brandMemberId
+        ? (habitual !== undefined ? habitual === record.brandMemberId : this.deps.repo.findBrandMember(record.brandMemberId)?.coordinator === true)
+        : false,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
     };

@@ -212,7 +212,10 @@ const ASSISTANT_ROLE = 'assistant';
  * QUIÉN COORDINA ESTE TRABAJO — el que se lleva la tira y el modo Equipo.
  *
  * El del run si ese miembro EXISTE en el equipo; si no, el coordinador
- * designado del Trabajo, con la misma condición.
+ * designado del Trabajo, con la misma condición; y si el Trabajo no designó a
+ * nadie, el coordinador habitual de la marca SI está convocado acá
+ * (`coordinatesBrand`). Es la misma cadena que el backend usa al arrancar un
+ * run (`LatteService.effectiveCoordinator`).
  *
  * Ese "tiene que existir" es el bug entero: con un run cancelado cuyo
  * coordinador ya estaba borrado, la vista fijaba un coordinador fantasma. El
@@ -230,7 +233,7 @@ export function teamCoordinator(
   grant: string | null | undefined,
 ): string | null {
   const inTeam = (id: string | null | undefined) => (id && team.some(m => m.id === id) ? id : null);
-  return inTeam(run?.coordinatorMemberId) ?? inTeam(grant);
+  return inTeam(run?.coordinatorMemberId) ?? inTeam(grant) ?? team.find(m => m.coordinatesBrand)?.id ?? null;
 }
 
 /**

@@ -138,6 +138,7 @@ const METHODS = [
   'listBrandTeam',
   'addBrandMember',
   'retireBrandMember',
+  'setBrandCoordinator',
   'callUpMember',
   'draftContinuation',
 ];
