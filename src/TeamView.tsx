@@ -86,6 +86,16 @@ export interface TeamViewProps {
   onSetCoordinationBudget?: (maxDispatches: number) => void;
   coordinatorGrant?: string | null;
   /**
+   * QUIÉN COORDINA, resuelto por `TeamPanel` (`teamCoordinator`): el del run,
+   * si no el del permiso del trabajo, si no el habitual de la marca. Es el que
+   * lleva el ícono en su fila. NO es el destinatario por descarte (el
+   * Asistente, el primero): ése recibe lo que se escribe, pero no coordina.
+   * Sin esto se cae a lo que había: el coordinador del run.
+   */
+  coordinatorMemberId?: string | null;
+  /** Elegir quién coordina este trabajo (escribe el permiso). Sin handler no se ofrece. */
+  onSetCoordinator?: (memberId: string) => void;
+  /**
    * EL CHAT DE EQUIPO: a quien le llega lo que se escribe abajo.
    *
    * Es el coordinador del run; sin run, el coordinador designado del trabajo o
@@ -182,6 +192,7 @@ export function TeamView(props: TeamViewProps) {
     ? props.teamChatTargetId
     : (run?.coordinatorMemberId ?? props.coordinatorGrant ?? null);
   const selected = selectedThreadMember(team, props.selectedMemberId, run, coordinatorId);
+  const markedCoordinator = props.coordinatorMemberId !== undefined ? props.coordinatorMemberId : (run?.coordinatorMemberId ?? null);
   const hour = (at: string) => (props.formatTime ? props.formatTime(at) : hourOf(at));
   /**
    * C2: el titulo de una tarea sale del PLAN, no del prompt del despacho.
@@ -260,7 +271,7 @@ export function TeamView(props: TeamViewProps) {
           // decisiones que espera de la persona igual que un gate.
           const waiting = pendingForMember(member.id, props.coordinationGates, props.coordinationAsks, run)
             + (member.id === coordinatorId ? targetQuestions : 0);
-          const isCoordinator = run?.coordinatorMemberId === member.id;
+          const isCoordinator = markedCoordinator === member.id;
           return <li key={member.id} className={'team-inbox-row' + (member.id === selected ? ' is-selected' : '')} data-member-id={member.id}>
             <CoordRow
               name={member.roleName}
@@ -308,7 +319,9 @@ export function TeamView(props: TeamViewProps) {
           signal={signalOf(selected)}
           formatTime={hour} onOpenChat={readingCoordinator ? undefined : props.onOpenChat}
           openAsks={(props.coordinationAsks ?? []).filter((ask) => ask.memberId === selected && (run == null || run.active))}
-          onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now}>
+          onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now}
+          onCoordinate={props.onSetCoordinator} coordinating={selected === markedCoordinator}
+          coordinateLocked={Boolean(run?.active)}>
           {/* El final del hilo: el MISMO indicador que la conversación de un
               miembro, no una segunda forma de decir lo mismo. La línea de
               tiempo es descendente —lo último arriba—, así que el final del

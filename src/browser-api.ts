@@ -210,7 +210,10 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   // refuses writes, exactly like getWorkPermissions/setWorkPermissions above.
   getCoordinationAuthority:async()=>'manual' as const,setCoordinationAuthority:unavailable,
   getCoordinationBudget:async()=>({state:'unset'}),setCoordinationBudget:unavailable,
-  getCoordinatorGrant:async()=>null,setCoordinatorGrant:unavailable,
+  // Quién coordina SÍ se guarda: es una elección de la persona, no un proceso,
+  // y sin esto el botón "Que coordine" no se podría probar en la vista previa.
+  getCoordinatorGrant:async workId=>localStorage.getItem('latte:coordinator-grant:'+workId)||null,
+  setCoordinatorGrant:async(workId,memberId)=>{localStorage.setItem('latte:coordinator-grant:'+workId,memberId??'');return memberId||null;},
   // Phase 3: run lifecycle, gates, bitácora, asks and the handoff bridge —
   // same desktop-only reasoning as above. No run ever exists in the preview.
   startCoordinationRun:unavailable,pauseCoordinationRun:unavailable,resumeCoordinationRun:unavailable,cancelCoordinationRun:unavailable,

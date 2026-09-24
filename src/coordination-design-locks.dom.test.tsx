@@ -235,7 +235,7 @@ describe('C7 (g): el CSS del bloque coord-', () => {
       'coord-bar-done', 'coord-bar-live', 'coord-bar-failed', 'coord-pill', 'coord-pill-live',
       'coord-btn', 'coord-btn-primary', 'coord-btn-ghost', 'coord-icon-btn',
       'coord-tasks', 'coord-task', 'coord-task-title', 'coord-tic', 'coord-tic-ok', 'coord-tic-live',
-      'coord-detail', 'coord-detail-head', 'coord-detail-sub', 'coord-timeline', 'coord-event',
+      'coord-detail', 'coord-detail-head', 'coord-detail-sub', 'coord-detail-coordinate', 'coord-timeline', 'coord-event',
       'coord-event-title', 'coord-event-card', 'coord-event-task', 'coord-event-spec',
       'coord-files', 'coord-file', 'coord-ask-card', 'coord-ask-question', 'coord-ask-due',
       'coord-ask-form', 'coord-ask-input', 'coord-ask-send',

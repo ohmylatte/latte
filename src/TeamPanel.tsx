@@ -193,6 +193,11 @@ export interface TeamPanelProps {
   coordinationBudget?: CoordinationBudgetView;
   onSetCoordinationBudget?: (maxDispatches: number) => void;
   coordinatorGrant?: string | null;
+  /**
+   * Elegir quién coordina este trabajo desde el modo Equipo: escribe el permiso
+   * del trabajo. Con un run activo el botón no se aprieta (manda el del run).
+   */
+  onSetCoordinator?: (memberId: string) => void;
 }
 
 const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex' };
@@ -484,6 +489,7 @@ export function TeamPanel(props: TeamPanelProps) {
       formatDate={props.formatDate} coordinationAuthority={props.coordinationAuthority}
       onSetCoordinationAuthority={props.onSetCoordinationAuthority} coordinationBudget={props.coordinationBudget}
       onSetCoordinationBudget={props.onSetCoordinationBudget} coordinatorGrant={props.coordinatorGrant}
+      coordinatorMemberId={coordinatorId} onSetCoordinator={props.onSetCoordinator}
       chatCoordination={props.chatCoordination}
       coordinatorChat={coordinatorState.messages}
       teamChatTargetId={teamChatTargetId}

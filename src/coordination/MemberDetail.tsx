@@ -1,4 +1,4 @@
-import { ArrowUpRight, CircleCheck, CircleHelp, CircleX, CornerDownLeft, FileText, Flag, MessageSquare, Send, UserPlus } from 'lucide-react';
+import { ArrowUpRight, CircleCheck, CircleHelp, CircleX, CornerDownLeft, FileText, Flag, MessageSquare, Send, UserPlus, Users } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { translate as t } from '../i18n';
 import { CoordAvatar, CoordTime } from './anatomy';
@@ -41,6 +41,16 @@ export interface MemberDetailProps {
   pending?: Record<string, boolean>;
   /** El instante contra el que se cuenta "vence en N min". Inyectable para los tests. */
   now?: number;
+  /**
+   * ELEGIR QUE ESTE MIEMBRO COORDINE EL TRABAJO (escribe el permiso del
+   * trabajo). Sin handler no se ofrece: un botón que no escribe nada es peor
+   * que un botón que no está.
+   */
+  onCoordinate?: (memberId: string) => void;
+  /** Ya coordina: el botón dice lo que es y no se aprieta. */
+  coordinating?: boolean;
+  /** Hay un run activo: manda su coordinador, y el botón dice por qué no se puede. */
+  coordinateLocked?: boolean;
   /** Lo que el contenedor quiera meter entre el encabezado y la línea de tiempo. */
   children?: ReactNode;
 }
@@ -162,6 +172,14 @@ export function MemberDetail(props: MemberDetailProps) {
           ? t('coord.detail.since', { what: props.signal.line, time: time(props.signal.at) })
           : props.signal.line}</div>
       </div>
+      {/* Un verbo por botón, con ícono: el MISMO ícono que marca al coordinador en la lista. */}
+      {props.onCoordinate && <button type="button" className="coord-btn coord-detail-coordinate"
+        disabled={props.coordinating || props.coordinateLocked}
+        title={props.coordinating ? t('coord.detail.coordinatingHelp', { name })
+          : props.coordinateLocked ? t('coord.detail.coordinateLocked') : t('coord.detail.coordinateHelp', { name })}
+        onClick={() => props.onCoordinate!(props.memberId)}>
+        <Users size={14} />{props.coordinating ? t('coord.detail.coordinating') : t('coord.detail.coordinate')}
+      </button>}
       {/* Criterio 4: UN verbo, con ícono. Sin handler no se ofrece un botón que no abre nada. */}
       {props.onOpenChat && <button type="button" className="coord-btn coord-detail-chat"
         title={t('coord.detail.conversationHelp', { name })}

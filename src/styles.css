@@ -1393,3 +1393,6 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .roster-empty{color:var(--muted);font-size:var(--text-base);padding:9px 10px}
 /* El dialogo de sumar un rol, con el plantel arriba: dos rotulos, dos listas. */
 .role-picker-section{margin-top:4px}
+/* Elegir quién coordina: el botón del detalle. Ya elegido (o con un run activo) se lee, no se aprieta. */
+.coord-detail-coordinate{flex-shrink:0}
+.coord-detail-coordinate:disabled{cursor:default;color:var(--ink-soft);background:transparent}
