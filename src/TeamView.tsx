@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { translate as t } from './i18n';
 import { MessageSquare, UserPlus, Users } from 'lucide-react';
 import type {
-  AgentRole, ChatMessage, ChatQuestion, ChatStatus, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
+  AgentRole, ChatMessage, ChatPermission, ChatQuestion, ChatStatus, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
   CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport,
   CoordinationMessageView, CoordinationRunTaskView, CoordinationRunView, TeamMember, Work,
 } from '../shared/contracts';
-import { ChatQuestions, ChatWorking, type ChatCoordinationProps } from './ChatPane';
+import { ChatPermissions, ChatQuestions, ChatWorking, type ChatCoordinationProps } from './ChatPane';
 import { ChatComposer } from './ChatComposer';
 import { TeamCardsCollapsible } from './coordination/TeamCards';
 import { describeCoordinationSupport, describeMemorySupport, memberCoordinationState, type LatteMode } from './TeamPanel';
@@ -141,6 +141,12 @@ export interface TeamViewProps {
    * este hilo ES su conversación.
    */
   teamChatQuestions?: readonly ChatQuestion[];
+  /**
+   * N4: los permisos NATIVOS que el destinatario dejó pendientes. Mismo
+   * motivo que las preguntas: este hilo es su conversación, y un permiso que
+   * sólo se ve en su chat completo deja el turno trabado a ciegas.
+   */
+  teamChatPermissions?: readonly ChatPermission[];
   /** Para reportar un fallo al responderla. Sin esto la lista no se dibuja. */
   onError?: (error: string) => void;
   /**
@@ -242,7 +248,7 @@ export function TeamView(props: TeamViewProps) {
   /** El destinatario está escribiendo: lo dicen su fila y el final de su hilo, con las mismas palabras que la conversación. */
   const targetWorking = props.teamChatStatus === 'busy' || props.teamChatStatus === 'retry';
   /** Preguntas nativas del destinatario sin responder: cuentan como pendiente, igual que una `latte_ask`. */
-  const targetQuestions = (props.teamChatQuestions ?? []).length;
+  const targetQuestions = (props.teamChatQuestions ?? []).length + (props.teamChatPermissions ?? []).length;
   // La conversacion entra SOLO en el hilo del coordinador: los demas la tienen
   // en su propia pestana, y meterla en los dos seria la misma charla dos veces.
   const thread = selected ? inboxEvents(readingCoordinator ? { ...input, chat: props.coordinatorChat } : input, selected) : [];
@@ -337,7 +343,7 @@ export function TeamView(props: TeamViewProps) {
           events={thread} tasks={props.coordinationTasks}
           steps={props.memberChats ? dispatchSteps(props.coordinationLog, selected, props.memberChats[selected], props.connectionLabel) : undefined}
           signal={signalOf(selected)}
-          formatTime={hour} onOpenChat={readingCoordinator ? undefined : props.onOpenChat}
+          formatTime={hour} onOpenChat={props.onOpenChat}
           openAsks={(props.coordinationAsks ?? []).filter((ask) => ask.memberId === selected && (run == null || run.active))}
           onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now}
           onCoordinate={props.onSetCoordinator} coordinating={selected === markedCoordinator}
@@ -349,6 +355,9 @@ export function TeamView(props: TeamViewProps) {
           {/* Su pregunta nativa, respondible acá mismo: este hilo ES su
               conversación, y mandarla a otra pantalla sería pedirle a la
               persona que la busque. */}
+          {readingCoordinator && props.onError && coordinatorId
+            && <ChatPermissions chatId={coordinatorId} runtime={team.find((m) => m.id === coordinatorId)?.runtime ?? 'opencode'}
+              permissions={props.teamChatPermissions ?? []} onError={props.onError} />}
           {readingCoordinator && props.onError && coordinatorId
             && <ChatQuestions chatId={coordinatorId} questions={props.teamChatQuestions ?? []} onError={props.onError} />}
           {readingCoordinator && <ChatWorking status={props.teamChatStatus ?? 'idle'} detail={props.teamChatStatusDetail} />}

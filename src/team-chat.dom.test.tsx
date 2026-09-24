@@ -185,10 +185,17 @@ describe('una sola lista: la conversacion del coordinador vive en la linea de ti
     expect(container.textContent).not.toContain('armame el calendario');
   });
 
-  /** Ya estas en la conversacion del coordinador: no hay a donde saltar. */
-  it('el hilo del coordinador no ofrece "Conversacion"; el de otro miembro si', () => {
-    const own = mountView({ selectedMemberId: 'coord', onOpenChat: () => {} });
-    expect(own.container.querySelector('.coord-detail-chat')).toBeNull();
+  /**
+   * N4: el hilo del coordinador ES su conversacion, pero no su chat COMPLETO
+   * (herramientas, razonamiento, permisos). Antes no ofrecia "Conversacion" y
+   * con el coordinador pausado su chat no aparecia en ninguna parte: ahora lo
+   * ofrece, igual que el de cualquier otro miembro.
+   */
+  it('el hilo del coordinador tambien ofrece "Conversacion", como el de otro miembro', () => {
+    const onOpenChat = vi.fn();
+    const own = mountView({ selectedMemberId: 'coord', onOpenChat });
+    fireEvent.click(own.container.querySelector('.coord-detail-chat')!);
+    expect(onOpenChat).toHaveBeenCalledWith('coord');
     cleanup();
     const other = mountView({ selectedMemberId: 'cm', onOpenChat: () => {} });
     expect(other.container.querySelector('.coord-detail-chat')).not.toBeNull();
