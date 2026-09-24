@@ -546,6 +546,7 @@ export function TeamPanel(props: TeamPanelProps) {
       coordinationRun={props.coordinationRun} pending={props.pending}
       onPauseCoordination={props.onPauseCoordination} onResumeCoordination={props.onResumeCoordination}
       onCancelCoordination={props.onCancelCoordination}
+      onResumeMember={isDesktop ? (memberId) => { void props.onOpen(memberId).catch(() => undefined); } : undefined}
       coordinationLog={props.coordinationLog} coordinationMessages={props.coordinationMessages}
       coordinationAsks={props.coordinationAsks} coordinationHires={props.coordinationHires}
       coordinationGates={props.coordinationGates} coordinationTasks={props.coordinationTasks}

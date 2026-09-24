@@ -61,6 +61,12 @@ export interface TeamViewProps {
   onPauseCoordination?: (runId: string) => void;
   onResumeCoordination?: (runId: string) => void;
   onCancelCoordination?: (runId: string) => void;
+  /**
+   * O1: reanudar a un miembro en pausa (abrir su conversación de nuevo). Es el
+   * mismo camino que la tarjeta de pausa; sin handler la línea "Ahora" no
+   * ofrece el botón.
+   */
+  onResumeMember?: (memberId: string) => void;
   coordinationLog?: readonly CoordinationLogEntryView[];
   coordinationMessages?: readonly CoordinationMessageView[];
   coordinationAsks?: readonly CoordinationAskView[];
@@ -280,7 +286,11 @@ export function TeamView(props: TeamViewProps) {
       tasks={props.coordinationTasks} asks={props.coordinationAsks} team={team} roles={roles}
       busy={props.busy} pending={props.pending} formatTime={props.formatTime}
       onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination}
-      onNewRequest={props.onNewRequest} />}
+      onNewRequest={props.onNewRequest}
+      coordinatorPaused={team.find((m) => m.id === run.coordinatorMemberId)?.status === 'paused'}
+      coordinatorWaiting={(coordinatorId && coordinatorId === run.coordinatorMemberId ? targetQuestions : 0) + (props.coordinationGates ?? []).length}
+      coordinatorUnread={(props.coordinationMessages ?? []).filter((m) => m.to.memberId === run.coordinatorMemberId && !m.readAt).length}
+      onOpenMember={props.onSelectMember} onResumeCoordinator={props.onResumeMember} />}
     <div className="team-view-columns">
       {/* C2: LA MISMA ANATOMÍA QUE TODA FILA DEL PRODUCTO.
           Avatar con punto · nombre · qué hace ahora · cuándo. La fila ES la

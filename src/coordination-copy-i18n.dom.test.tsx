@@ -50,6 +50,8 @@ const FILES = [
   'TeamView.tsx', 'coordination/inbox.ts',
   // N1: el verbo de cada paso sale de los diccionarios, no de la derivación.
   'coordination/activity.ts', 'coordination/MemberDetail.tsx',
+  // O1: la línea "Ahora" y el encabezado que la dibuja.
+  'coordination/RunHeader.tsx', 'coordination/now-line.ts',
 ];
 
 /** Las líneas de código, sin comentarios: un comentario en castellano es documentación, no copy. */
@@ -142,6 +144,10 @@ describe('U8: el copy de coordinación vive en los diccionarios', () => {
     'coordination.cards.kind.mixed',
     'team.inbox.dispatchedBare', 'team.inbox.reportedBare', 'team.inbox.dispatchFailedBare',
     'team.inbox.sentBare', 'team.inbox.receivedBare', 'team.inbox.askBare', 'team.inbox.answerBare',
+    // O1: la línea "Ahora".
+    'coord.now.label', 'coord.now.waitingOne', 'coord.now.waitingMany', 'coord.now.paused',
+    'coord.now.pausedUnreadOne', 'coord.now.pausedUnreadMany', 'coord.now.resume', 'coord.now.missing',
+    'coord.now.missingNoBudget', 'coord.now.workingOne', 'coord.now.workingMany', 'coord.now.calm', 'coord.now.and',
   ];
 
   /**
