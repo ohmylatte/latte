@@ -1377,3 +1377,19 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .coord-output.is-line{flex:0 0 auto}
 /* M3: el detalle de un puente que no se hizo va en gris, detrás de la frase. */
 .handoff-reason-detail{color:var(--muted)}
+/* MARCA -> EQUIPO: EL PLANTEL (esquema 14).
+   La fila es la del equipo (`.coord-row`): avatar, nombre y que es ahora.
+   Aca la fila no abre nada --no hay hilo de marca que leer--, asi que no es
+   un boton: es la anatomia con sus dos acciones al costado. El retirado va
+   en gris, con la cara desaturada: sigue siendo alguien, no esta trabajando.
+   Un solo acento en la pantalla: el de siempre, el foco. */
+.roster-list{list-style:none;display:flex;flex-direction:column;gap:2px;margin:14px 0 0;padding:0;max-width:640px}
+.roster-row{cursor:default;min-width:0}
+.roster-row:hover{background:transparent}
+.roster-row.is-retired .coord-row-name,.roster-row.is-retired .coord-row-line{color:var(--muted-soft)}
+.roster-row.is-retired .coord-av,.role-card.is-retired .av{filter:grayscale(1)}
+.roster-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.roster-call{font-size:var(--text-sm);padding:5px 10px}
+.roster-empty{color:var(--muted);font-size:var(--text-base);padding:9px 10px}
+/* El dialogo de sumar un rol, con el plantel arriba: dos rotulos, dos listas. */
+.role-picker-section{margin-top:4px}

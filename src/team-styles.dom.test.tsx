@@ -71,6 +71,8 @@ const NEW_CLASSES = [
   'active-teams-strip-work', 'active-teams-strip-status', 'active-teams-strip-budget',
   'active-teams-strip-gates', 'active-teams-strip-dot', 'active-teams-strip-more',
   'home-row-finished',
+  // Marca → Equipo (esquema 14): el plantel, y los dos rótulos del diálogo.
+  'roster-list', 'roster-row', 'roster-actions', 'roster-call', 'roster-empty', 'role-picker-section',
 ];
 
 describe('B1.5: el CSS del equipo', () => {
