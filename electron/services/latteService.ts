@@ -75,6 +75,7 @@ import type {
   SkillReviewInput,
   TeamMember,
   TeamMemberOptions,
+  BrandMember,
   UntrackedFile,
   Work,
   WorkDocument,
@@ -114,6 +115,7 @@ import type { Connection, ConnectionInput, ImportableConnection } from '../../sh
 import type { ConnectionsService } from '../connections/service';
 import type { McpCatalog } from '../agents/mcp';
 import { ASSISTANT_ROLE_ID, ROLE_AVATAR_KEY, RoleCatalog } from '../agents/roles';
+import { retirementCutoff } from '../agents/roster';
 import { parseAvatar, serializeAvatar } from '../../shared/avatar';
 import { isEffortTier } from '../agents/tiers';
 import type { ChatManager } from '../opencode/chatManager';
@@ -284,9 +286,10 @@ function requireProviderId(value: unknown): string {
 }
 
 /** Advanced overrides for a new member; every field is optional and strictly typed. */
-function validateMemberOptions(options: unknown): { runtime: ChatRuntime | null; model: string | null; accountId: string | null; continuedFrom: string | null; tier: EffortTier | null } {
+function validateMemberOptions(options: unknown): { runtime: ChatRuntime | null; model: string | null; accountId: string | null; continuedFrom: string | null; tier: EffortTier | null; newInBrand: boolean } {
   if (typeof options !== 'object' || options === null || Array.isArray(options)) throw new TypeError('Invalid options');
-  const { runtime, model, accountId, continuedFrom, tier } = options as Record<string, unknown>;
+  const { runtime, model, accountId, continuedFrom, tier, newInBrand } = options as Record<string, unknown>;
+  if (newInBrand !== undefined && newInBrand !== null && typeof newInBrand !== 'boolean') throw new TypeError('Invalid newInBrand');
   const cleanRuntime = runtime === undefined || runtime === null ? null : runtime;
   if (cleanRuntime !== null && !isChatRuntime(cleanRuntime)) throw new TypeError('Unknown runtime');
   const cleanModel = model === undefined || model === null ? null : model;
@@ -299,7 +302,7 @@ function validateMemberOptions(options: unknown): { runtime: ChatRuntime | null;
   // in the caller, not something to silently round to the default.
   const cleanTier = tier === undefined || tier === null ? null : tier;
   if (cleanTier !== null && !isEffortTier(cleanTier)) throw new TypeError('Invalid effort tier');
-  return { runtime: cleanRuntime, model: cleanModel as string | null, accountId: cleanAccount as string | null, continuedFrom: cleanOrigin as string | null, tier: cleanTier };
+  return { runtime: cleanRuntime, model: cleanModel as string | null, accountId: cleanAccount as string | null, continuedFrom: cleanOrigin as string | null, tier: cleanTier, newInBrand: newInBrand === true };
 }
 
 /**
@@ -355,7 +358,9 @@ export class LatteService implements BackendApi {
     const startTimer = deps.sweepTimer ?? defaultSweepTimer;
     this.stopSweepTimer = startTimer(() => {
       try { this.sweepCoordination(); } catch { /* el próximo tick lo reintenta */ }
+      try { this.retireIdleBrandMembers(); } catch { /* ídem: un retiro que falla no tumba el loop */ }
     }, COORDINATION_SWEEP_INTERVAL_MS);
+    try { this.retireIdleBrandMembers(); } catch { /* el primer tick lo reintenta */ }
   }
 
   /**
@@ -372,6 +377,19 @@ export class LatteService implements BackendApi {
    */
   sweepCoordination(): void {
     this.coordination.sweepActiveRuns();
+  }
+
+  /**
+   * DECISIÓN 3 DEL DUEÑO: quien nadie convoca se retira solo.
+   *
+   * Corre al arrancar y en el mismo tick periódico que el barrido de
+   * coordinación, así las lecturas del plantel siguen siendo puras. Retirarse
+   * no borra nada ni toca un solo hilo: la persona se ve en gris en Marca →
+   * Equipo y vuelve en cuanto alguien la convoca. `now` sólo para los tests.
+   * Devuelve cuántos retiró.
+   */
+  retireIdleBrandMembers(now: string = this.clock()): number {
+    return this.deps.repo.retireIdleBrandMembers(null, retirementCutoff(now), now);
   }
 
   /**
@@ -2240,6 +2258,50 @@ export class LatteService implements BackendApi {
     // the origin's conversation, runtime and account are never touched.
     if (overrides.continuedFrom !== null && this.deps.repo.findMember(overrides.continuedFrom)?.workId !== id) throw new ValidationError('El miembro que se continúa no es de este trabajo');
     return this.deps.hub.addMember({ ...this.memberContext(id), roleId, ...overrides });
+  }
+
+  async listBrandTeam(brandId: string): Promise<BrandMember[]> {
+    const id = requireId(brandId, 'brandId');
+    this.deps.repo.getBrand(id);
+    return this.deps.hub.listBrandTeam(id);
+  }
+
+  async addBrandMember(brandId: string, roleId: string, options: TeamMemberOptions | null = null): Promise<BrandMember[]> {
+    if (!RoleCatalog.isValidId(roleId)) throw new TypeError('Invalid role id');
+    const { runtime, model, accountId, tier } = validateMemberOptions(options ?? {});
+    const id = requireId(brandId, 'brandId');
+    this.deps.repo.getBrand(id);
+    this.deps.hub.addBrandMember(id, roleId, { runtime, model, accountId, tier });
+    return this.deps.hub.listBrandTeam(id);
+  }
+
+  /**
+   * Quitar del plantel. Quien nunca trabajó en nada se borra: no hay run que lo
+   * nombre. Quien tiene historia se RETIRA —se ve en gris y vuelve si alguien lo
+   * convoca—, porque sus convocatorias y los runs viejos lo siguen nombrando
+   * (brief 3.1: "se retira, no se borra").
+   */
+  async retireBrandMember(brandMemberId: string): Promise<BrandMember[]> {
+    const member = this.deps.repo.getBrandMember(requireId(brandMemberId, 'brandMemberId'));
+    const convocations = this.deps.repo.brandMemberConvocations(member.brandId).get(member.id) ?? [];
+    if (convocations.length === 0) this.deps.repo.deleteBrandMember(member.id);
+    else this.deps.repo.retireBrandMember(member.id, this.clock());
+    return this.deps.hub.listBrandTeam(member.brandId);
+  }
+
+  /**
+   * Convoca a alguien del plantel a un trabajo y abre su hilo ahí. Si ya estaba
+   * convocado, reabre esa misma convocatoria: una persona tiene UN hilo por
+   * trabajo. Decisión 4 del dueño: nunca a alguien de otra marca.
+   */
+  async callUpMember(workId: string, brandMemberId: string): Promise<ChatSession> {
+    const id = requireId(workId, 'workId');
+    const work = this.deps.repo.getWork(id);
+    const member = this.deps.repo.getBrandMember(requireId(brandMemberId, 'brandMemberId'));
+    if (member.brandId !== work.brandId) throw new ValidationError('No se convoca a alguien de otra marca');
+    const existing = this.deps.repo.findConvocation(id, member.id);
+    if (existing) return this.deps.hub.openMember(existing.id, this.memberContext(id));
+    return this.deps.hub.addMember({ ...this.memberContext(id), roleId: member.roleId, brandMemberId: member.id });
   }
 
   async openTeamMember(memberId: string): Promise<ChatSession> {

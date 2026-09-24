@@ -135,6 +135,10 @@ export const API_METHODS = [
   'finishTeamMember',
   'restartTeamMember',
   'removeTeamMember',
+  'listBrandTeam',
+  'addBrandMember',
+  'retireBrandMember',
+  'callUpMember',
   'draftContinuation',
 ] as const satisfies readonly (keyof BackendApi)[];
 
@@ -276,6 +280,10 @@ export const API_ARITY: Record<ApiMethod, number> = {
   finishTeamMember: 1,
   restartTeamMember: 1,
   removeTeamMember: 1,
+  listBrandTeam: 1,
+  addBrandMember: 3,
+  retireBrandMember: 1,
+  callUpMember: 2,
   draftContinuation: 1,
 };
 

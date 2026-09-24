@@ -1028,14 +1028,15 @@ export class LatteRepository {
   /**
    * Retira a los que nadie llamó desde `cutoff`: ni una convocatoria ni un
    * movimiento en ninguno de sus hilos (`team_members.updated_at` cambia con
-   * cada sesión y cada turno medido). Devuelve cuántos retiró.
+   * cada sesión y cada turno medido). `brandId` null = todas las marcas.
+   * Devuelve cuántos retiró.
    */
-  retireIdleBrandMembers(brandId: string, cutoff: string, at: string): number {
+  retireIdleBrandMembers(brandId: string | null, cutoff: string, at: string): number {
     const idle = this.db.all<{ id: string }>(
       `SELECT bm.id FROM brand_members bm
-       WHERE bm.brand_id = ? AND bm.retired_at IS NULL AND bm.last_called_at < ?
+       WHERE (? IS NULL OR bm.brand_id = ?) AND bm.retired_at IS NULL AND bm.last_called_at < ?
          AND NOT EXISTS (SELECT 1 FROM team_members t WHERE t.brand_member_id = bm.id AND t.updated_at >= ?)`,
-      [brandId, cutoff, cutoff],
+      [brandId, brandId, cutoff, cutoff],
     );
     for (const { id } of idle) this.retireBrandMember(id, at);
     return idle.length;

@@ -12,7 +12,9 @@ export type IdPrefix =
   // Coordination (autonomous runs, schema 12): run/task/dispatch/message/ask/cost rows.
   | 'crn' | 'ctk' | 'cdp' | 'cms' | 'cak' | 'crs' | 'cld'
   // Conexiones MCP (esquema 13): una fila por cuenta con un servidor externo.
-  | 'con';
+  | 'con'
+  // El plantel de la marca (esquema 14): una persona que los trabajos convocan.
+  | 'bm';
 
 export function newId(prefix: IdPrefix): string {
   return `${prefix}_${randomBytes(10).toString('hex')}`;
