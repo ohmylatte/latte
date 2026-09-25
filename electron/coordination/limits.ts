@@ -197,6 +197,36 @@ export const MAX_COORDINATED_OPENCODE_PROCESSES = 6;
 export const MAX_BOOTSTRAP_OPENCODE_MEMBERS_PER_WORK = 1;
 
 /**
+ * TECHO DE PROCESOS DE GROK Y DE HERMES EN TODA LA APP, CADA UNO EL SUYO
+ * (brief `docs/briefs/2026-09-25-runtimes-acp.md`, 3.3).
+ *
+ * Como en OpenCode, cada miembro abierto de un agente ACP ES un proceso: el
+ * bearer de coordinación viaja en `session/new.mcpServers` y es del miembro,
+ * así que no hay procesos que compartir. `AcpChatAdapter.start` lo hace
+ * cumplir rechazando el siguiente ("Too many open Grok chats"), contando las
+ * aperturas en vuelo. Es por runtime: un equipo de Grok no le come el techo a
+ * uno de Hermes. Más bajo que el de Codex/OpenCode porque Hermes es un proceso
+ * de Python que pesa bastante más (arranque de 6-16 s, 53 s en frío).
+ */
+export const MAX_ACP_PROCESSES_TOTAL = 8;
+
+/**
+ * Cuántos miembros de Grok (o de Hermes) llevan `latte_coordination` en UN
+ * run: el gemelo de `MAX_COORDINATED_OPENCODE_MEMBERS_PER_RUN`, cumplido por
+ * `CoordinationInjectionPlanner` con un ledger por runtime. Pasado el tope el
+ * miembro abre igual, con su memoria y sus conexiones, y degrada con
+ * `grok_run_cap` / `hermes_run_cap`. Como en OpenCode, no ahorra un proceso:
+ * acota cuántos procesos coordinados maneja un run, igual para todo runtime.
+ */
+export const MAX_COORDINATED_ACP_MEMBERS_PER_RUN = 3;
+
+/** Coordinados de Grok (o de Hermes) en toda la app. Pasado, `grok_global_cap` / `hermes_global_cap`. */
+export const MAX_COORDINATED_ACP_PROCESSES = 6;
+
+/** Un Trabajo sin run puede tener UN coordinado de Grok (y uno de Hermes), el que propone. */
+export const MAX_BOOTSTRAP_ACP_MEMBERS_PER_WORK = 1;
+
+/**
  * Cuántos avisos sin entregar puede acumular un miembro. Un aviso es un turno
  * de usuario que no se le pudo mandar porque estaba en medio de otro: se
  * guarda en memoria hasta su próximo `idle`. Un miembro que se murió sin

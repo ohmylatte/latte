@@ -1214,6 +1214,11 @@ export type CoordinationDegradedReason =
   /** OpenCode: los gemelos de los dos topes de Codex (cada miembro de OpenCode tiene su propio proceso). */
   | 'opencode_run_cap'
   | 'opencode_global_cap'
+  /** Grok y Hermes: los mismos dos topes, con un ledger por runtime (`MAX_COORDINATED_ACP_*`). */
+  | 'grok_run_cap'
+  | 'grok_global_cap'
+  | 'hermes_run_cap'
+  | 'hermes_global_cap'
   | 'engram_not_installed'
   /**
    * El adaptador entregó MENOS de lo que el planificador había reclamado: el

@@ -356,8 +356,10 @@ Lo que cambió respecto de la sección 3, por lo que se midió en 7.1:
 - **Grok, carpeta confiada**: no se traduce a su "accept edits", que no está acotado a la carpeta.
 - **`injectedMcpServers`**: el adaptador NO devuelve los nombres que mandó (eso sería la tautología
   del juicio #1 de la ronda 4). Grok confirma después, con `_x.ai/mcp/server_status`; Hermes nunca.
-- **Topes**: `MAX_ACP_AGENT_PROCESSES_TOTAL = 8` por adaptador, en `acpAdapter.ts`, con un TODO para
-  llevarlo a `coordination/limits.ts` cuando mergee la tanda de OpenCode.
+- **Topes** (`coordination/limits.ts`, el patrón de Codex y OpenCode): `MAX_ACP_PROCESSES_TOTAL = 8`
+  procesos por runtime, que cumple el adaptador; `MAX_COORDINATED_ACP_MEMBERS_PER_RUN = 3`,
+  `MAX_COORDINATED_ACP_PROCESSES = 6` y `MAX_BOOTSTRAP_ACP_MEMBERS_PER_WORK = 1`, que cumple el
+  planificador con un ledger por runtime y los motivos `grok_run_cap`/`grok_global_cap`/`hermes_run_cap`/`hermes_global_cap`.
 
 ### 8.1 Paridad con Claude Code
 

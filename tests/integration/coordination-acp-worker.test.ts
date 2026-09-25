@@ -83,15 +83,16 @@ describe.each([
 
     // El coordinador y el worker, del mismo runtime y la misma cuenta, cada uno en su proceso.
     const coordinator = await b.service.addTeamMember(work.id, 'assistant', { runtime, accountId: account.id });
+    await b.service.setCoordinationBudget(work.id, { maxDispatches: 5 });
+    await b.service.setCoordinationAuthority(work.id, 'auto');
+    const run = await b.service.startCoordinationRun(work.id);
+    // El worker entra con el run andando: sin run, un trabajo coordina a uno solo (MAX_BOOTSTRAP_ACP_MEMBERS_PER_WORK).
     const worker = await b.service.addTeamMember(work.id, 'sales-copywriter', { runtime, accountId: account.id });
+    approveCoordinationRoles(b, run.id, 'sales-copywriter');
     // Grok confirma por su cuenta los servidores que levantó (llega mientras arranca); Hermes no lo dice
     // por ACP, y Latte no lo afirma por él. Se mira ahora: al terminar el run, el equipo se cierra.
     const support = await b.service.coordinationRuntimeSupport(work.id);
     expect(support.find((row) => row.memberId === worker.id)).toMatchObject({ canPropose: true, runtimeConfirmed: confirms });
-    await b.service.setCoordinationBudget(work.id, { maxDispatches: 5 });
-    await b.service.setCoordinationAuthority(work.id, 'auto');
-    const run = await b.service.startCoordinationRun(work.id);
-    approveCoordinationRoles(b, run.id, 'sales-copywriter');
 
     const tools = createCoordinationTools(b.service.coordinationEngine);
     const grant = { workId: work.id, runId: run.id, memberId: coordinator.id, role: 'coordinator' as const };

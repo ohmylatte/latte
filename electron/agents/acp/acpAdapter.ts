@@ -7,25 +7,12 @@ import { killProcessTree, spawnInOwnProcessGroup } from '../../core/processTree'
 import { addUsage, tokenCount } from '../../core/usage';
 import { spawnSpecFor } from '../../runtime/commandRunner';
 import { scrubEnv } from '../../runtime/terminalManager';
+import { MAX_ACP_PROCESSES_TOTAL } from '../../coordination/limits';
 import type { TranscriptStore } from '../transcripts';
 import { sessionFrom, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../types';
 import { AcpConnection, AcpRpcError, REQUEST_CANCELLED } from './connection';
 import { toAcpMcpServers, type AcpEnvContext, type AcpProfile, type AcpUsageReading } from './profiles';
 import { ACP_PROTOCOL_VERSION, isRecord, type AcpMcpServer, type AcpPermissionOption, type AcpSessionUpdate } from './types';
-
-/**
- * EL TOPE DE PROCESOS ACP DE LA APP (brief 2026-09-25, 3.3: `MAX_ACP_AGENT_PROCESSES_TOTAL = 8`).
- *
- * Estructural, como `MAX_OPENCODE_SERVERS_TOTAL`: no acota lo que la persona
- * gasta, acota cuántos procesos de agente tiene Latte vivos a la vez. Uno por
- * miembro, y cada adaptador (Grok, Hermes) lleva su propia cuenta.
- *
- * TODO(limits): vive acá y no en `electron/coordination/limits.ts` porque ese
- * archivo tiene cambios abiertos de la tanda de OpenCode. Cuando esa tanda
- * mergee, mover esta constante a `limits.ts` junto a los otros techos de
- * procesos y leerla desde ahí.
- */
-export const MAX_ACP_AGENT_PROCESSES_TOTAL = 8;
 
 export interface AcpAdapterDeps {
   profile: AcpProfile;
@@ -50,6 +37,7 @@ export interface AcpAdapterDeps {
   platform?: NodeJS.Platform;
   spawnImpl?: typeof spawn;
   log?: (line: string) => void;
+  /** Procesos vivos de este runtime. Default: `MAX_ACP_PROCESSES_TOTAL` (`coordination/limits.ts`). */
   maxProcesses?: number;
   /** Versión de Latte que se anuncia en `initialize`. */
   clientVersion?: string;
@@ -126,7 +114,7 @@ export class AcpChatAdapter implements RuntimeAdapter {
     this.confirmsMcpInjection = deps.profile.confirmsMcpInjection;
     this.env = deps.env ?? process.env;
     this.platform = deps.platform ?? process.platform;
-    this.maxProcesses = deps.maxProcesses ?? MAX_ACP_AGENT_PROCESSES_TOTAL;
+    this.maxProcesses = deps.maxProcesses ?? MAX_ACP_PROCESSES_TOTAL;
   }
 
   owns(chatId: string): boolean {

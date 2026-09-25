@@ -39,7 +39,10 @@ import type { AdapterMcpServer } from '../agents/types';
 import type { ChatRuntime } from '../../shared/contracts';
 import { memoryMcpServerFor } from '../memory/engram';
 import {
+  MAX_BOOTSTRAP_ACP_MEMBERS_PER_WORK,
   MAX_BOOTSTRAP_CODEX_MEMBERS_PER_WORK,
+  MAX_COORDINATED_ACP_MEMBERS_PER_RUN,
+  MAX_COORDINATED_ACP_PROCESSES,
   MAX_BOOTSTRAP_OPENCODE_MEMBERS_PER_WORK,
   MAX_CODEX_APP_SERVERS_TOTAL,
   MAX_COORDINATED_CODEX_MEMBERS_PER_RUN,
@@ -57,6 +60,11 @@ export type CoordinationDegradedReason =
   /** Los gemelos de `codex_run_cap`/`codex_global_cap` para OpenCode (ver `MAX_COORDINATED_OPENCODE_*`). */
   | 'opencode_run_cap'
   | 'opencode_global_cap'
+  /** Grok y Hermes: los mismos dos topes, con un ledger por runtime (`MAX_COORDINATED_ACP_*`). */
+  | 'grok_run_cap'
+  | 'grok_global_cap'
+  | 'hermes_run_cap'
+  | 'hermes_global_cap'
   | 'engram_not_installed'
   /** El adaptador entregó menos de lo que este planificador reclamó (ver `confirmInjection`). */
   | 'runtime_refused_injection'
@@ -150,7 +158,7 @@ function memorySlotKeyFor(accountId: string | null, brandId: string): string {
 }
 
 /** The runtimes whose coordinated members are counted against a ceiling. Claude spawns nothing extra and has none. */
-type CountedRuntime = 'codex' | 'opencode';
+type CountedRuntime = 'codex' | 'opencode' | 'grok' | 'hermes';
 
 export class CoordinationInjectionPlanner {
   /**
@@ -158,7 +166,7 @@ export class CoordinationInjectionPlanner {
    * One ledger per runtime, so an OpenCode team never eats a Codex slot or
    * the other way around: each ceiling measures its own processes.
    */
-  private readonly coordinatedByRuntime: Record<CountedRuntime, Map<string, Set<string>>> = { codex: new Map(), opencode: new Map() };
+  private readonly coordinatedByRuntime: Record<CountedRuntime, Map<string, Set<string>>> = { codex: new Map(), opencode: new Map(), grok: new Map(), hermes: new Map() };
   /** `accountId|brandId` -> memberIds currently sharing that memory-only Codex process. */
   private readonly memorySlots = new Map<string, Set<string>>();
   private readonly claims = new Map<string, Claim>();
@@ -471,16 +479,19 @@ export class CoordinationInjectionPlanner {
       };
     }
 
-    // Grok y Hermes (ACP): un proceso por miembro, como Claude, sin piso de
-    // versión y sin el ledger de `codex app-server`. Su techo de procesos lo
-    // lleva el propio adaptador (`MAX_ACP_AGENT_PROCESSES_TOTAL`), que se niega
-    // a arrancar el noveno: ahí `addMember`/`openMember` sueltan el reclamo.
+    // Grok y Hermes (ACP): un proceso por miembro, como OpenCode. La memoria
+    // viaja siempre; la coordinación bajo `MAX_COORDINATED_ACP_*`, con un
+    // ledger por runtime. El techo de procesos lo cumple el adaptador
+    // (`MAX_ACP_PROCESSES_TOTAL`): ahí `addMember`/`openMember` sueltan el reclamo.
     if (input.runtime === 'grok' || input.runtime === 'hermes') {
-      return {
-        coordinationEligible: coordinationFeatureOn,
-        memoryServer: resolved.memoryServer,
-        reason: resolved.memoryServer ? null : 'engram_not_installed',
-      };
+      const memoryServer = resolved.memoryServer;
+      const coordination = coordinationFeatureOn
+        ? this.evaluateAcpCoordination(input.runtime, input)
+        : { eligible: false, reason: null as CoordinationDegradedReason | null };
+      if (coordination.eligible) {
+        return { coordinationEligible: true, memoryServer, reason: memoryServer ? null : 'engram_not_installed' };
+      }
+      return { coordinationEligible: false, memoryServer, reason: coordination.reason ?? (memoryServer ? null : 'engram_not_installed') };
     }
 
     // Codex: memory and coordination are evaluated independently, then
@@ -538,10 +549,20 @@ export class CoordinationInjectionPlanner {
     return { eligible: true, reason: null };
   }
 
+  /** El gemelo de OpenCode para Grok y Hermes, cada uno con su ledger y sus motivos. */
+  private evaluateAcpCoordination(runtime: 'grok' | 'hermes', input: MemberInjectionInput): { eligible: boolean; reason: CoordinationDegradedReason | null } {
+    const hasRun = this.deps.repo.findActiveCoordinationRun(input.workId) != null;
+    const perWorkCap = hasRun ? MAX_COORDINATED_ACP_MEMBERS_PER_RUN : MAX_BOOTSTRAP_ACP_MEMBERS_PER_WORK;
+    const coordinatedHere = this.coordinatedByRuntime[runtime].get(input.workId)?.size ?? 0;
+    if (coordinatedHere >= perWorkCap) return { eligible: false, reason: runtime === 'grok' ? 'grok_run_cap' : 'hermes_run_cap' };
+    if (this.totalCoordinated(runtime) >= MAX_COORDINATED_ACP_PROCESSES) return { eligible: false, reason: runtime === 'grok' ? 'grok_global_cap' : 'hermes_global_cap' };
+    return { eligible: true, reason: null };
+  }
+
   // -- Ledger bookkeeping -----------------------------------------------------
 
   private ledgerFor(runtime: ChatRuntime): Map<string, Set<string>> | null {
-    return runtime === 'codex' || runtime === 'opencode' ? this.coordinatedByRuntime[runtime] : null;
+    return runtime === 'claude' ? null : this.coordinatedByRuntime[runtime];
   }
 
   private markCoordinated(runtime: ChatRuntime, workId: string, memberId: string): void {

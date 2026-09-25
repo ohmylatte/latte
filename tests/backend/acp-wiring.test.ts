@@ -9,6 +9,7 @@ import { acpTierModelDefaults, readAcpTierModels, tierModelReader, writeAcpTierM
 import { HERMES_DEFAULT_TIER_MODELS } from '../../electron/agents/tiers';
 import { CoordinationTokenRegistry } from '../../electron/coordination/tokens';
 import { CoordinationInjectionPlanner } from '../../electron/coordination/injection';
+import { MAX_ACP_PROCESSES_TOTAL, MAX_COORDINATED_ACP_MEMBERS_PER_RUN, MAX_COORDINATED_ACP_PROCESSES } from '../../electron/coordination/limits';
 import { fakePtyLoader, fakeRunner, makeBackend, makeTempDir, removeDir, type TestBackend } from './helpers';
 import { FAKE_ACP, waitFor } from './acpHelpers';
 
@@ -84,26 +85,52 @@ describe('model per effort level (Settings)', () => {
   });
 });
 
-describe('coordination eligibility for ACP runtimes', () => {
-  it('gives Grok and Hermes coordination and memory like Claude, outside the codex app-server ledger', async () => {
+describe('coordination eligibility for ACP runtimes (limits.ts)', () => {
+  function planner(activeRuns: Set<string>) {
     const server = { ensureStarted: vi.fn(async () => {}), stopIfIdle: vi.fn(), boundPort: 50123 };
-    const planner = new CoordinationInjectionPlanner({
-      repo: { findActiveCoordinationRun: () => null },
+    return new CoordinationInjectionPlanner({
+      repo: { findActiveCoordinationRun: (workId: string) => (activeRuns.has(workId) ? ({ id: 'crn_' + workId } as never) : null) },
       tokens: new CoordinationTokenRegistry(() => '2026-01-01T00:00:00.000Z'),
       server,
       resolveClaudeVersion: async () => null,
       resolveEngramBinary: async () => '/usr/bin/engram',
     });
-    // Primero Codex llena su techo en este trabajo: el que sigue ya no recibe coordinación.
-    await planner.assign({ memberId: 'mem_c1', workId: 'wrk_1', brandId: 'brd_1', runtime: 'codex', accountId: 'system' });
-    const refused = await planner.assign({ memberId: 'mem_c2', workId: 'wrk_1', brandId: 'brd_1', runtime: 'codex', accountId: 'system' });
-    expect(refused.status.coordinationInjected).toBe(false);
-    // Grok y Hermes no viven en ese ledger: más miembros que cualquier techo de Codex, y todos coordinan.
-    for (let i = 0; i < 8; i += 1) {
-      const { servers, status } = await planner.assign({ memberId: `mem_g${i}`, workId: 'wrk_1', brandId: 'brd_1', runtime: i % 2 ? 'grok' : 'hermes', accountId: 'acc_0123456789abcdef' });
-      expect(servers?.map((s) => s.name)).toEqual(['latte_coordination', 'latte_memory']);
-      expect(status).toMatchObject({ coordinationInjected: true, memoryInjected: true, reason: null });
+  }
+  const member = (memberId: string, workId: string, runtime: 'grok' | 'hermes' | 'codex') => ({ memberId, workId, brandId: 'brd_1', runtime, accountId: 'acc_0123456789abcdef' });
+
+  it.each(['grok', 'hermes'] as const)('%s: a work without a run coordinates one member; the next keeps its memory and says why', async (runtime) => {
+    const p = planner(new Set());
+    expect((await p.assign(member('mem_1', 'wrk_1', runtime))).status).toMatchObject({ coordinationInjected: true, memoryInjected: true, reason: null });
+    const second = await p.assign(member('mem_2', 'wrk_1', runtime));
+    expect(second.servers?.map((s) => s.name)).toEqual(['latte_memory']);
+    expect(second.status).toMatchObject({ coordinationInjected: false, memoryInjected: true, reason: `${runtime}_run_cap` });
+  });
+
+  it.each(['grok', 'hermes'] as const)('%s: MAX_COORDINATED_ACP_MEMBERS_PER_RUN per run, MAX_COORDINATED_ACP_PROCESSES app-wide', async (runtime) => {
+    const works = ['wrk_a', 'wrk_b', 'wrk_c'];
+    const p = planner(new Set(works));
+    for (let i = 0; i < MAX_COORDINATED_ACP_MEMBERS_PER_RUN; i += 1) {
+      expect((await p.assign(member(`mem_a${i}`, 'wrk_a', runtime))).status.coordinationInjected).toBe(true);
     }
+    expect((await p.assign(member('mem_a_extra', 'wrk_a', runtime))).status.reason).toBe(`${runtime}_run_cap`);
+    for (let i = 0; i < MAX_COORDINATED_ACP_PROCESSES - MAX_COORDINATED_ACP_MEMBERS_PER_RUN; i += 1) {
+      expect((await p.assign(member(`mem_b${i}`, 'wrk_b', runtime))).status.coordinationInjected).toBe(true);
+    }
+    expect((await p.assign(member('mem_c0', 'wrk_c', runtime))).status.reason).toBe(`${runtime}_global_cap`);
+    // Soltar a uno devuelve el cupo.
+    p.release('mem_b0');
+    expect((await p.assign(member('mem_c1', 'wrk_c', runtime))).status.coordinationInjected).toBe(true);
+  });
+
+  it('each runtime has its own ledger: Grok, Hermes and Codex never eat each other slots', async () => {
+    const p = planner(new Set());
+    expect((await p.assign(member('mem_c', 'wrk_1', 'codex'))).status.coordinationInjected).toBe(true);
+    expect((await p.assign(member('mem_g', 'wrk_1', 'grok'))).status.coordinationInjected).toBe(true);
+    expect((await p.assign(member('mem_h', 'wrk_1', 'hermes'))).status.coordinationInjected).toBe(true);
+  });
+
+  it('the adapter ceiling is MAX_ACP_PROCESSES_TOTAL', () => {
+    expect(MAX_ACP_PROCESSES_TOTAL).toBe(8);
   });
 });
 
