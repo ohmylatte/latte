@@ -5,6 +5,7 @@ import { ArrowRight, Check, ChevronRight, CircleCheck, CircleHelp, Pencil, Send,
 import { translate as t } from '../i18n';
 import { memberDisplayName, roleDisplayName } from './names';
 import { CoordAvatar } from './anatomy';
+import { AudienceBadge } from './audience';
 import { avatarOfRole } from './avatar-of';
 import { taskTitle } from '../../shared/taskTitle';
 import { hourOf, minutesSince } from './time';
@@ -153,10 +154,10 @@ export function routeTeamCards(
  * porque son posiciones en ESTE array y correrlos sin remapear apuntaría a otra
  * tarea.
  */
-export function trimPlanWithoutRoles(
-  plan: readonly { roleId: string; spec: string; dependsOn?: number[] }[],
+export function trimPlanWithoutRoles<T extends { roleId: string; spec: string; dependsOn?: number[] }>(
+  plan: readonly T[],
   removedRoleIds: ReadonlySet<string>,
-): { plan: { roleId: string; spec: string; dependsOn?: number[] }[]; removed: number; dropped: boolean[] } {
+): { plan: T[]; removed: number; dropped: boolean[] } {
   // Sólo lo que la persona SACÓ, nunca lo que la propuesta ya traía. Recortar
   // por "qué roles quedan disponibles" haría que una propuesta que nadie editó
   // —cuyos roles el motor igual va a juzgar— apareciera recortada sola: la
@@ -366,10 +367,13 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
   // cancelar tiene que dejar el formulario exactamente como lo encontró.
   const initialDispatches = () => proposal?.estimatedDispatches != null ? String(proposal.estimatedDispatches) : '';
   const initialIncluded = () => (proposal?.membersToHire ?? []).map(() => true);
+  // E1: para quién es cada tarea, por ÍNDICE del plan original.
+  const initialClient = () => proposal.plan.map((task) => task.audience === 'client');
   const [editing, setEditing] = useState(false);
   const [dispatches, setDispatches] = useState(initialDispatches);
   const [included, setIncluded] = useState<boolean[]>(initialIncluded);
   const [unlimitedConfirmed, setUnlimitedConfirmed] = useState(false);
+  const [clientTasks, setClientTasks] = useState<boolean[]>(initialClient);
   const hires = proposal.membersToHire ?? [];
   const busy = Boolean(pending?.[`gate:${gate.id}`]);
 
@@ -392,7 +396,14 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
   // dejarlos no ofrecía ninguna acción que funcionara, sólo "Rechazar".
   const orphanRoleIds = new Set([...coverage].filter(([, c]) => c === 'orphan').map(([roleId]) => roleId));
   const removedRoleIds = new Set([...orphanRoleIds, ...untickedRoleIds]);
-  const trimmed = trimPlanWithoutRoles(proposal.plan, removedRoleIds);
+  // E1: el plan que se aprueba lleva la audiencia que la persona dejó marcada.
+  // Sólo se escribe lo que cambia: una tarea interna que sigue interna viaja
+  // tal cual la propuso el coordinador.
+  const planToApprove = proposal.plan.map((task, i) => {
+    if (clientTasks[i]) return task.audience === 'client' ? task : { ...task, audience: 'client' as const };
+    return task.audience === 'client' ? { ...task, audience: 'internal' as const } : task;
+  });
+  const trimmed = trimPlanWithoutRoles(planToApprove, removedRoleIds);
   // Cuánto de lo que se cae es culpa de los huérfanos: su propia frase, porque
   // no es lo mismo "esto se va porque lo sacaste" que "esto no lo puede hacer nadie".
   const orphanDropped = orphanRoleIds.size > 0 ? trimPlanWithoutRoles(proposal.plan, orphanRoleIds).removed : 0;
@@ -444,12 +455,14 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
 
   // O1/N8: el "Aprobar" simple manda la propuesta GUARDADA, así que sólo existe
   // mientras el formulario esté como nació — la casilla de ilimitado incluida.
-  const formPristine = included.every(Boolean) && dispatches === initialDispatches() && !unlimitedConfirmed;
+  const formPristine = included.every(Boolean) && dispatches === initialDispatches() && !unlimitedConfirmed
+    && initialClient().every((client, i) => clientTasks[i] === client);
 
   const editCancel = () => {
     setDispatches(initialDispatches());
     setIncluded(initialIncluded());
     setUnlimitedConfirmed(false);
+    setClientTasks(initialClient());
     setEditing(false);
   };
 
@@ -482,6 +495,7 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
         return <li key={i} className="coord-plan-task">
           <span className="coord-plan-n">{numberOf.get(i)}</span>
           <span className="coord-plan-title" title={task.spec}>{taskTitle(task.spec, task.title)}</span>
+          {clientTasks[i] && <AudienceBadge />}
           {after.length > 0 && <span className="coord-plan-after">{t('coord.proposal.after', { n: after.join(', ') })}</span>}
           <CoordAvatar name={owner} small roleId={task.roleId} avatar={avatarOfRole(task.roleId, roles, team)} />
         </li>;
@@ -553,6 +567,12 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
           <span>{roleDisplayName(hire.roleId, roles, team)}</span>
         </label>)}
       </>}
+      {/* E1: la audiencia de cada tarea, que la persona puede cambiar. */}
+      <p className="field-label">{t('coord.proposal.editAudience')}</p>
+      {proposal.plan.map((task, i) => trimmed.dropped[i] ? null : <label key={i} className="team-card-edit-audience">
+        <input type="checkbox" checked={clientTasks[i] ?? false} onChange={() => setClientTasks((prev) => prev.map((v, idx) => idx === i ? !v : v))} />
+        <span>{taskTitle(task.spec, task.title)}</span>
+      </label>)}
       {trimmed.plan.length === 0 && <p className="team-card-edit-dropped team-card-edit-empty">{t('coordination.proposal.editDropsAll')}</p>}
       <div className="team-card-edit-actions">
         <button className="primary" disabled={busy || trimmed.plan.length === 0} onClick={confirmEdit}>{t('coordination.proposal.editConfirm')}</button>

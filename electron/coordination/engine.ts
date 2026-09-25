@@ -15,7 +15,7 @@
  * dispatches to others, it is never dispatched to).
  */
 import type { AgentHub, MemberContext } from '../agents/hub';
-import type { CoordinationAuthorityMode, CoordinationBudget } from '../../shared/contracts';
+import type { CoordinationAuthorityMode, CoordinationBudget, CoordinationTaskAudience } from '../../shared/contracts';
 import { isAskSuspendReason } from '../../shared/contracts';
 import { taskTitle, TASK_TITLE_LONG, TASK_TITLE_STORED } from '../../shared/taskTitle';
 import type { CoordinationSuspendReason } from '../../shared/contracts';
@@ -60,6 +60,11 @@ const HANDOFF_RUN_META = 'coordination_handoff_run:';
  * esquema para algo que es un título.
  */
 const REQUEST_META = 'coordination_request:';
+/**
+ * E1: la primera línea del prompt de una tarea para el cliente. En inglés,
+ * como todo lo que Latte le dice a un agente.
+ */
+export const CLIENT_AUDIENCE_LINE = 'Audience: the client. The client reads this to decide; follow the rules for client deliverables.';
 /** Un título, no el pedido entero: entra en una línea de encabezado. */
 export const COORDINATION_REQUEST_MAX = 100;
 
@@ -182,6 +187,8 @@ export interface CoordinationProposalTask {
   title?: string;
   spec: string;
   dependsOn?: number[];
+  /** E1: para quién es. Ausente es `internal`. */
+  audience?: CoordinationTaskAudience;
 }
 
 export interface CoordinationProposalHire {
@@ -1164,7 +1171,7 @@ export class CoordinationEngine {
           if (!dep) throw new ValidationError(`Plan task dependsOn index ${idx} is out of range`);
           return dep.id;
         });
-        const task = this.createTaskRow(run.id, item.roleId, item.spec, dependsOnIds, item.title);
+        const task = this.createTaskRow(run.id, item.roleId, item.spec, dependsOnIds, item.title, item.audience);
         // K7: la pertenencia al plan se marca sin tocar el reloj de la tarea,
         // igual que en el gate de plan. Acá la tarea acaba de nacer y no puede
         // estar reclamada, pero es la misma forma y no hay dos.
@@ -1615,7 +1622,7 @@ export class CoordinationEngine {
 
   // -- Tool-facing engine methods (wrapped by tools.ts) ------------------------
 
-  planSubmit(runId: string, tasks: Array<{ roleId: string; spec: string; title?: string; dependsOn?: number[] }>): CoordinationTaskRecord[] {
+  planSubmit(runId: string, tasks: Array<{ roleId: string; spec: string; title?: string; dependsOn?: number[]; audience?: CoordinationTaskAudience }>): CoordinationTaskRecord[] {
     const run = this.deps.repo.getCoordinationRun(runId);
     // `running`, no "cualquier cosa menos terminal" (D3). Sobre un run
     // `planning` esto pisaba `plan_json` —que ahí adentro guarda la PROPUESTA
@@ -1648,7 +1655,7 @@ export class CoordinationEngine {
           if (!dep) throw new ValidationError(`Plan task dependsOn index ${idx} is out of range`);
           return dep.id;
         });
-        rows.push(this.createTaskRow(run.id, spec.roleId, spec.spec, dependsOnIds, spec.title));
+        rows.push(this.createTaskRow(run.id, spec.roleId, spec.spec, dependsOnIds, spec.title, spec.audience));
       }
       this.deps.repo.setCoordinationPlan(run.id, JSON.stringify(rows.map((t) => t.id)), this.deps.clock());
       return rows;
@@ -1657,7 +1664,7 @@ export class CoordinationEngine {
     return created;
   }
 
-  taskCreate(runId: string, input: { roleId: string; spec: string; title?: string; dependsOn?: string[] }): CoordinationTaskRecord {
+  taskCreate(runId: string, input: { roleId: string; spec: string; title?: string; dependsOn?: string[]; audience?: CoordinationTaskAudience }): CoordinationTaskRecord {
     const run = this.assertRunMutable(this.deps.repo.getCoordinationRun(runId));
     // `running`, el MISMO umbral que `planSubmit` (F6). Sin esto, con el
     // permiso de coordinador escrito por IPC y un run todavía en `planning`,
@@ -1667,7 +1674,7 @@ export class CoordinationEngine {
     // propuesta.
     if (run.status !== 'running') throw new LatteError('RUN_NOT_ACTIVE', `Run is ${run.status}`);
     this.assertRoleCreatable(run, input.roleId);
-    const task = this.createTaskRow(runId, input.roleId, input.spec, input.dependsOn ?? [], input.title);
+    const task = this.createTaskRow(runId, input.roleId, input.spec, input.dependsOn ?? [], input.title, input.audience);
     this.touch(run.workId, runId);
     return task;
   }
@@ -1744,6 +1751,7 @@ export class CoordinationEngine {
   taskList(runId: string): Array<{
     id: string; roleId: string; status: CoordinationTaskRecord['status']; inPlan: boolean;
     dependsOn: string[]; attempts: number; assignedMemberId: string | null; spec: string; title: string;
+    audience: CoordinationTaskAudience;
   }> {
     const deps = new Map<string, string[]>();
     for (const edge of this.deps.repo.listCoordinationTaskDeps(runId)) {
@@ -1761,6 +1769,7 @@ export class CoordinationEngine {
       // N2: del spec ENTERO, no del recorte: el pedido puede venir después de
       // un bloque de contexto más largo que el recorte.
       title: taskTitle(task.spec, task.title, TASK_TITLE_LONG),
+      audience: task.audience === 'client' ? 'client' : 'internal',
     }));
   }
 
@@ -1790,7 +1799,7 @@ export class CoordinationEngine {
     lines.push('Tasks that already exist:');
     for (const task of tasks) {
       const depends = task.dependsOn.length > 0 ? ` (depends on: ${task.dependsOn.join(', ')})` : '';
-      lines.push(`- ${task.id} [${task.roleId}] ${task.status}${depends}: ${task.title}`);
+      lines.push(`- ${task.id} [${task.roleId}] ${task.status}${depends}${task.audience === 'client' ? ' (for the client)' : ''}: ${task.title}`);
     }
     if (hired.length > 0) {
       lines.push('');
@@ -3780,14 +3789,24 @@ export class CoordinationEngine {
    * Sólo las CONTESTADAS: una vencida se cerró con `answer` en `null` y nadie
    * dijo nada, así que no hay nada que pasarle.
    */
+  /**
+   * E1: la tarea para el cliente se lo dice a quien la hace, arriba de todo.
+   * Una interna va sin adorno: es el caso de siempre y no necesita una línea.
+   */
+  private withAudience(task: CoordinationTaskRecord): string {
+    if (task.audience !== 'client') return task.spec;
+    return `${CLIENT_AUDIENCE_LINE}\n\n${task.spec}`;
+  }
+
   private withAnsweredAsks(task: CoordinationTaskRecord): string {
+    const spec = this.withAudience(task);
     let answered: CoordinationAskRecord[] = [];
     try {
       answered = this.deps.repo.listCoordinationAsksForTask(task.id).filter((ask) => ask.answer !== null);
-    } catch { return task.spec; } // una bitácora de preguntas ilegible no puede impedir el despacho
-    if (answered.length === 0) return task.spec;
+    } catch { return spec; } // una bitácora de preguntas ilegible no puede impedir el despacho
+    if (answered.length === 0) return spec;
     const lines = answered.map((ask) => `- You asked: ${ask.question}\n  The human answered: ${ask.answer}`);
-    return `${task.spec}\n\n## Answers to your questions\n\nYou asked about this task and the human answered. These answers are binding: follow them, and do not ask the same thing again.\n\n${lines.join('\n')}`;
+    return `${spec}\n\n## Answers to your questions\n\nYou asked about this task and the human answered. These answers are binding: follow them, and do not ask the same thing again.\n\n${lines.join('\n')}`;
   }
 
   /**
@@ -3939,7 +3958,7 @@ export class CoordinationEngine {
     );
   }
 
-  private createTaskRow(runId: string, roleId: string, spec: string, dependsOnIds: string[], title?: unknown): CoordinationTaskRecord {
+  private createTaskRow(runId: string, roleId: string, spec: string, dependsOnIds: string[], title?: unknown, audience?: unknown): CoordinationTaskRecord {
     const existing = this.deps.repo.listCoordinationTasks(runId);
     // Las dependencias tienen que ser de ESTE run: `getCoordinationTask` sola
     // acepta cualquier id de la app, así que un coordinador podía colgar una
@@ -3963,6 +3982,10 @@ export class CoordinationEngine {
       // N2: el título es opcional y de adorno: uno que no es texto no rompe
       // la tarea, se ignora. Y se guarda acotado.
       title: typeof title === 'string' && title.trim() ? title.trim().slice(0, TASK_TITLE_STORED) : null,
+      // E1: lo que no es `client` es interno. La frontera (esquema MCP y
+      // validador de la propuesta) ya rechazó cualquier otro valor; esto es la
+      // defensa de fondo para el camino que no pasa por ahí (el puente).
+      audience: audience === 'client' ? 'client' : 'internal',
       status: dependsOnIds.length === 0 ? 'ready' : 'pending', depth, attempts: 0, inPlan: false,
       assignedMemberId: null, resultSummary: null, resultFilesJson: null, createdAt: now, updatedAt: now,
     });

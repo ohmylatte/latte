@@ -1012,6 +1012,9 @@ const es = {
   'coord.proposal.approve': 'Aprobar',
   'coord.proposal.edit': 'Editar',
   'coord.proposal.reject': 'Rechazar',
+  // E1: para quién es cada tarea. Lo interno no lleva marca.
+  'coord.audience.client': 'Para el cliente',
+  'coord.proposal.editAudience': 'Para el cliente',
   'coord.approved.line': 'Plan aprobado · el equipo trabaja',
   'coord.approved.seeTeam': 'Ver equipo',
   'coordination.short.claudeBelowFloor': 'versión de Claude anterior a la mínima',
@@ -1973,6 +1976,8 @@ const en: Record<MessageKey, string> = {
   'coord.proposal.approve': 'Approve',
   'coord.proposal.edit': 'Edit',
   'coord.proposal.reject': 'Reject',
+  'coord.audience.client': 'For the client',
+  'coord.proposal.editAudience': 'For the client',
   'coord.approved.line': 'Plan approved · the team is working',
   'coord.approved.seeTeam': 'See the team',
   'coordination.short.claudeBelowFloor': 'Claude version below the minimum',

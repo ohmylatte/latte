@@ -1422,3 +1422,10 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .coord-now-sep{color:var(--muted-soft)}
 .coord-now-action{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:transparent;color:var(--ink);font:inherit;font-weight:600;cursor:pointer}
 .coord-now-action:disabled{cursor:default;color:var(--muted)}
+/* E1: "PARA EL CLIENTE". Una marca en tinta, sin acento: no es un estado vivo ni
+   una acción, es para quién es la tarea. En la ficha va sólo el ícono. */
+.coord-audience{display:inline-flex;align-items:center;gap:4px;flex-shrink:0;padding:1px 6px;border:1px solid var(--line);border-radius:var(--radius-pill);background:var(--paper-deep);color:var(--ink-soft);font-size:var(--text-sm);white-space:nowrap}
+.coord-audience.is-compact{padding:1px 4px}
+.team-card-edit-audience span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team-card-edit-audience{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--text-sm)}
+.team-card-edit-audience input{width:auto;padding:0}

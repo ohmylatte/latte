@@ -995,6 +995,8 @@ export interface CoordinationProposalTask {
   title?: string;
   spec: string;
   dependsOn?: number[];
+  /** E1: para quién es. Ausente es `internal`. */
+  audience?: CoordinationTaskAudience;
 }
 
 export interface CoordinationProposalHire {
@@ -1132,6 +1134,17 @@ export type CoordinationLogEntryView = CoordinationDispatchLogEntryView | Coordi
 
 export type CoordinationTaskStatus = 'pending' | 'ready' | 'dispatched' | 'running' | 'done' | 'failed' | 'blocked';
 
+/**
+ * E1: PARA QUIÉN ES LA TAREA, DECLARADO Y NO ADIVINADO.
+ *
+ * `internal` (el default) es trabajo del equipo: análisis, borradores, notas
+ * con sus rótulos. `client` es lo que el cliente lee para decidir, y por eso
+ * pasa por la revisión antes de llegar a `entregables/`. Lo decide el
+ * coordinador al proponer; la persona lo cambia al editar la propuesta.
+ */
+export type CoordinationTaskAudience = 'internal' | 'client';
+export const COORDINATION_TASK_AUDIENCES: readonly CoordinationTaskAudience[] = ['internal', 'client'];
+
 /** A task's own state after `settleCoordinationDispatch` (task 3.19) settles its current dispatch. */
 export interface CoordinationTaskView {
   id: string;
@@ -1168,6 +1181,8 @@ export interface CoordinationRunTaskView {
    */
   title?: string | null;
   status: CoordinationTaskStatus;
+  /** E1: para quién es. Opcional para que una vista vieja se lea como antes: ausente es `internal`. */
+  audience?: CoordinationTaskAudience;
   /** Si la tarea es parte del plan aprobado o nació después, de un despacho. */
   inPlan: boolean;
   /** Los ids de las tareas que tienen que terminar antes que ésta. */

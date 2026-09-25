@@ -2,6 +2,7 @@ import { ArrowUpRight, Brain, CircleCheck, CircleHelp, CircleX, CornerDownLeft, 
 import { useState, type ReactNode } from 'react';
 import { translate as t } from '../i18n';
 import { CoordAvatar, CoordTime } from './anatomy';
+import { AudienceBadge, isClientTask } from './audience';
 import { avatarOfMember } from './avatar-of';
 import type { DispatchSteps, StepKind } from './activity';
 import type { InboxEvent } from './inbox';
@@ -287,6 +288,7 @@ export function MemberDetail(props: MemberDetailProps) {
               </div>
               {event.kind === 'dispatched' && heading && <div className="coord-event-card">
                 <div className="coord-event-task">{heading}</div>
+                {isClientTask(task) && <AudienceBadge />}
                 {body && <div className="coord-event-spec">{body}</div>}
               </div>}
               {event.kind === 'dispatched' && props.steps?.[event.id] && <StepList data={props.steps[event.id]!} time={time} />}
