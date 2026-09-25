@@ -238,3 +238,100 @@ Todo quedó en
     `hub.ts` (`isChatRuntime`, `adapterFor`, `liveMemberIds`), `connections/injection.ts`,
     `coordination/limits.ts`, `runtime/providers.ts`, `agents/tiers.ts`, `agents/accounts.ts`
     (`PROFILE_ENV`) y `src/browser-api.ts`. No toqué código del repo ni `electron/opencode/*`.
+
+### 7.1 B1: lo que faltó ver (2026-09-25, tarde)
+
+Todo con el aislamiento que va a usar Latte, no con el perfil del dueño. Scripts y logs en
+`scratchpad\acp-research\b1\` (`probe.mjs`, `setmodel*.mjs`, `deadlock*.{py,mjs}`, `log-*.jsonl`).
+Las credenciales se copiaron a homes de prueba sólo mientras duró la prueba (los tokens vencían
+horas o días después, así que ningún refresh rotó nada) y se borraron al terminar.
+
+**Grok ya no es 1.0.30.** `grok --version` dice `1.0.41 (4220f3b224a6)`: se actualizó solo antes de
+que el primer probe pusiera `GROK_DISABLE_AUTOUPDATER=1`. Todo lo de abajo es 1.0.41.
+
+1. **Aislamiento de verdad.** `GROK_HOME`/`HERMES_HOME` y las variables `GROK_*_ENABLED=0` no
+   alcanzan: con eso solo, `grok inspect` seguía cargando 8 reglas de permiso de
+   `~/.claude/settings.json`, 28 skills de `~/.agents`, y la sesión levantaba el MCP `engram` de un
+   plugin de Claude. Lo que sí aísla es apuntar además `USERPROFILE` y `HOME` a un directorio propio de
+   la cuenta: `grok inspect` queda en 0 instrucciones, 0 permisos, 0 plugins, 0 MCP, 0 hooks, sólo las
+   skills `bundled`, y `session/new` levanta sólo el MCP que manda Latte (`mcpToolCount: 1`). En Hermes
+   el home nuevo arranca con su propio `SOUL.md` de fábrica (la personalidad de Hermes, sin nada del
+   dueño), sin plugins ni memorias. Costo: el agente ve un `~` vacío (sin `.gitconfig` global, por
+   ejemplo). Para miembros de marketing no pesa; queda anotado.
+2. **Permisos en Grok (medido).** Sin `always-approve`, un `write` pide `session/request_permission`
+   con `kind: edit`, `rawInput{variant:'Write', file_path, content}` y tres opciones: `allow-once`
+   (`allow_once`), `allow-edits-session` (`allow_always`, "allow all edits during this session") y
+   `reject-once` (`reject_once`). `echo latte-shell` corrió **sin preguntar**: está en la lista de
+   comandos de sólo lectura de Grok (sus docs, `22-permissions-and-safety.md`). Las lecturas tampoco
+   preguntan. `_meta.yoloMode:false` se acepta. No hubo un solo `hook_execution`. `_meta.rules` se
+   respetó (`…LATTE-OK`). Grok no expone modos por `session/new` (`modes: null`);
+   `session/set_mode acceptEdits` responde `{}` pero no medí qué hace, y el "accept edits" de Grok no
+   está acotado a la carpeta, así que **Latte no lo usa**: con carpeta confiada, Grok sigue preguntando.
+3. **Preguntas en Grok (medido).** Llegan como request `_x.ai/ask_user_question` (con guion bajo, no
+   `x.ai/…`): `{sessionId, toolCallId, questions:[{question, options:[{label, description}],
+   multiSelect}], mode}`. La respuesta que acepta es `{outcome:'accepted', answers:{"<pregunta>":
+   "<etiqueta>"}, annotations:{}}`; el modelo leyó `"Which color?"="Blue"` y siguió. Las otras dos
+   variantes del enum (`ChatAboutThis`, `SkipInterview`) existen en el binario; no las probé. Timeout
+   por defecto: 30 min (`toolset.ask_user_question.timeout_secs`).
+4. **Cancel en Grok (medido).** `session/cancel` con un permiso pendiente: el prompt volvió en 6 ms con
+   `stopReason: cancelled`, `_meta.cancellationCategory: MidTurnAbort` y el `usage` del turno (se cobra
+   lo gastado). `a.txt`, escrito antes en el mismo turno, **quedó**: el cancel no rebobina archivos. El
+   permiso pendiente se contestó `cancelled`, como pide ACP.
+5. **`session/load` en Grok aislado (medido).** 430 ms en un proceso nuevo, con replay (1
+   `user_message_chunk`, 3 `agent_thought_chunk`, 2 `agent_message_chunk`, 2 `tool_call`).
+6. **Confirmación de MCP en Grok (medido).** Grok publica `_x.ai/mcp/server_status {name, status:
+   'ready'}` y `_x.ai/mcp_initialized {mcpToolCount}` durante `session/new`. Latte confirma la
+   inyección con eso, como con el `system/init` de Claude.
+7. **Esfuerzo en Grok (medido).** `session/set_config_option {configId:'reasoning_effort', value:'low'}`
+   funciona con el valor como **string**; la forma `{value:{value:'low'}}` de los docs da `-32602`.
+   Una sesión nueva arranca en `high`.
+8. **Hermes se colgaba en Windows al primer archivo (medido y resuelto).** Después de aprobar el
+   permiso, Hermes se quedaba para siempre en "Creating new local environment". Volcado de hilos
+   (`faulthandler`): `tools/environments/local.py:_bash_starts` corre `subprocess.run([bash,…],
+   capture_output=True)` **sin `stdin`**, así que el `bash.exe` de Git hereda el pipe de ACP mientras el
+   hilo lector de Hermes tiene un `ReadFile` sincrónico pendiente sobre ese mismo pipe: Windows serializa
+   las dos operaciones y el hijo no arranca nunca. Reproducido sin modelo (`deadlock.py`). Con
+   `stdio: 'overlapped'` el hijo arranca, pero el lector de Hermes recibe un EOF falso y el proceso se
+   apaga a mitad de turno ("cannot schedule new futures after interpreter shutdown"). Lo que funciona:
+   un `sitecustomize.py` de Latte (por `PYTHONPATH`) que hace `SetStdHandle(STD_INPUT_HANDLE, NUL)` al
+   arrancar. El descriptor 0 de Python sigue siendo el pipe de ACP; los hijos que no piden stdin heredan
+   `NUL`. Con eso el turno completo anduvo: ping por MCP (`pong-7731`), `perm.txt` escrito después del
+   permiso, y fin con `end_turn`. Es un bug de Hermes; hay que reportarlo upstream.
+9. **Permisos en Hermes (medido).** En modo `default`, `write_file` pide `session/request_permission`
+   con `kind: edit`, `toolCallId: edit-approval-N`, un `diff` en `content` y dos opciones: `allow_once`
+   (`allow_once`) y `deny` (`reject_once`). El `rm -rf ./nothing_here_xyz` **no preguntó**: Hermes lo
+   marcó como peligroso y lo aprobó su "smart approval", un LLM auxiliar ("Command was flagged
+   (recursive delete) and auto-approved by smart approval"). Es el default de `approvals.mode`; Latte
+   escribe `approvals: {mode: manual}` en el `config.yaml` de la cuenta para que los comandos peligrosos
+   lleguen a la persona. Ojo: Hermes deniega solo un permiso sin respuesta a los **60 s**
+   (`permissions.py` y `edit_approval.py`, fijo en el código).
+10. **Modelo de Hermes: un segundo bug (medido, gratis).** `session/set_model` a un modelo del **mismo**
+    proveedor falla con "No LLM provider configured" cuando el modelo no está en el catálogo estático de
+    Hermes: `detect_provider_for_model` lo reencamina a OpenRouter (`openai/gpt-6-sol`), donde no hay
+    clave. `gpt-6-luna|sol|astra` fallan; `gpt-5.6-luna|terra|sol` y `gpt-5.5` cambian bien. Cambiar de
+    proveedor (`deepseek:deepseek-v4-flash`) también anda. En un home nuevo sin `config.yaml` con
+    `model.provider`, `session/new` crea la sesión pero ningún modelo responde: la cuenta tiene que pasar
+    por `hermes model` (el login de Latte lo corre). `session/load` después de `set_model` sigue siendo
+    necesario (sin él, `/tools` baja de 4 a 3 herramientas diferidas).
+11. **Arranque en frío de Hermes.** `session/new` en un home recién creado: 53,7 s; los siguientes, 6-16 s.
+    El perfil de Latte espera hasta 120 s.
+12. **Uso de Hermes.** El `PromptResponse` trae `usage{inputTokens:53804, cachedReadTokens:42496,
+    outputTokens:303, thoughtTokens:0}` y hubo tres `usage_update{size:272000, used:…}`; el último
+    (`used: 11437`) es el contexto. Sin costo, como antes. La tool MCP nunca recibe su
+    `tool_call_update` de cierre en Hermes: queda "corriendo" hasta que termina el turno.
+
+**Prompts pagos de B1.** Grok: 2 (`perm`, US$ 0,084, y `ask`+cancel, US$ 0,087, según su
+`costUsdTicks`; la cuenta está en el plan gratis con la promo, así que probablemente no se cobró).
+Hermes: 4 con `openai-codex:gpt-6-luna`, la suscripción de ChatGPT del dueño (sin costo por token):
+dos se colgaron por el bug del punto 8 (el segundo con el volcado de hilos), uno se cortó con el EOF
+falso de `overlapped` y el cuarto completó. `/model`, `/tools`, `set_model` y `session/load` son
+locales: no llaman al modelo.
+
+**Cómo medir cuánto sobrevive el preámbulo de rol a la compactación de Hermes (decisión 3).** Hermes
+comprime por umbral (`compression.threshold`, 0,5 del contexto en la config del dueño) y protege los
+primeros `compression.protect_first_n` mensajes (3 por defecto), así que el primer mensaje, que lleva
+el preámbulo, en principio no se resume. Para verificarlo: (1) poner en el preámbulo una marca que el
+modelo no pueda deducir (`LATTE-ROL-<id del miembro>`); (2) llevar la conversación hasta que
+`session_info_update._meta.hermes.sessionProvenance.compressionDepth` pase de 0 (o forzarlo con el
+comando local `/compress`); (3) preguntar "¿cuál es tu marca de rol?" y comparar; (4) repetir con
+`protect_first_n: 0` para confirmar que la protección es lo que la sostiene.
