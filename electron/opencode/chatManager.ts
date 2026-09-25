@@ -3,7 +3,7 @@ import { DEFAULT_EFFORT_TIER, EMPTY_USAGE, type ChatEvent, type ChatMessage, typ
 import { forgetServerPid, recordServerPid } from '../agents/codex/staleServers';
 import { opencodeVariantForTier } from '../agents/tiers';
 import { MAX_OPENCODE_SERVERS_TOTAL } from '../coordination/limits';
-import { sessionFrom, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../agents/types';
+import { sessionFrom, type AdapterMcpServer, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../agents/types';
 import { NotFoundError, UnavailableError, ValidationError } from '../core/errors';
 import { newId } from '../core/ids';
 import { addUsage, tokenCount } from '../core/usage';
@@ -116,13 +116,13 @@ function strayKey(runtimeKey: string): string {
  */
 export class ChatManager implements RuntimeAdapter {
   readonly runtime = 'opencode' as const;
-  // One shared server for every member of a Work; MCP config there is per-Work
-  // at best, never per-member, so it can't isolate coordination tools by grant.
-  readonly mcpInjection = 'none' as const;
-  // El servidor de OpenCode no expone NINGUN endpoint que liste servidores MCP
-  // (ver `client.ts`: sesion, mensajes, permisos, preguntas, proveedores). No
-  // hay forma de que confirme una inyeccion, ni ahora ni esperando mas.
-  readonly confirmsMcpInjection = false;
+  // Un proceso por miembro: el config inline (`OPENCODE_CONFIG_CONTENT`) y los
+  // bearers viajan en el entorno de SU proceso y de ningún otro.
+  readonly mcpInjection = 'per-member' as const;
+  // `GET /mcp` devuelve el estado de cada servidor MCP de ESE proceso
+  // (verificado contra opencode 1.18.32), así que el runtime sí puede decir
+  // qué levantó. Ver `reportInjected`.
+  readonly confirmsMcpInjection = true;
   private readonly runtimes = new Map<string, ServerRuntime>();
   /** Runtime key -> launch in flight, so two callers never spawn two processes for one key. */
   private readonly launching = new Map<string, Promise<ServerRuntime>>();
@@ -318,7 +318,48 @@ export class ChatManager implements RuntimeAdapter {
     }
 
     this.ensureStream(runtime);
-    return { session, runtimeSessionId: ocSessionId };
+    const requested = input.mcpServers ?? [];
+    // El endpoint compartido de las pruebas no es un proceso de este miembro:
+    // su config no la escribió Latte y no puede llevar la de nadie. Es una
+    // negativa de LATTE (D7c), no algo que el runtime haya dicho.
+    if (runtime.server === null && requested.length > 0) {
+      this.deps.log?.(`[chat ${chatId}] MCP not injected: this OpenCode endpoint is shared, not the member's own process`);
+      return { session, runtimeSessionId: ocSessionId, injectionRefusedByLatte: true };
+    }
+    return { session, runtimeSessionId: ocSessionId, injectedMcpServers: await this.reportInjected(client, input.directory, requested) };
+  }
+
+  /**
+   * Lo que este proceso CONECTÓ, según él (`GET /mcp`), nunca lo que Latte le
+   * pidió. Las mismas dos reglas que Codex:
+   *
+   * 1. Sin nada pedido, o si no se puede preguntar (un OpenCode sin ese
+   *    endpoint, un timeout), la respuesta es `undefined`: NO SÉ. Un array
+   *    —aunque sea vacío— es "el runtime habló" y prende `runtimeConfirmed`.
+   * 2. Estar en la lista no es estar conectado: sólo cuenta `connected`
+   *    (allowlist). `failed`, `needs_auth`, `disabled` o un estado que
+   *    OpenCode agregue mañana caen del lado seguro.
+   *
+   * Un OpenCode viejo que ignore el config inline no lista nuestros servidores:
+   * eso degrada el reclamo con `runtime_refused_injection`, que es la verdad,
+   * sin tener que adivinar un piso de versión.
+   */
+  private async reportInjected(client: OpenCodeClient, directory: string, requested: AdapterMcpServer[]): Promise<string[] | undefined> {
+    if (requested.length === 0) return undefined;
+    let status: Record<string, unknown>;
+    try {
+      status = await client.mcpStatus(directory);
+    } catch (error) {
+      this.deps.log?.(`[chat] could not read OpenCode MCP status: ${describe(error)}`);
+      return undefined;
+    }
+    if (!isRecord(status)) return undefined;
+    return requested
+      .map((server) => server.name)
+      .filter((name) => {
+        const entry = status[name];
+        return isRecord(entry) && entry.status === 'connected';
+      });
   }
 
   owns(chatId: string): boolean {

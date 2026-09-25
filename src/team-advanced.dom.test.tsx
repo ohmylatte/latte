@@ -141,10 +141,10 @@ describe('el estado compacto por miembro', () => {
     expect(badge(container).title).toBe('Este equipo llegó al tope de miembros de Codex coordinados por corrida: despacha en modo manual.');
   });
 
-  it('cada uno de los ocho motivos trae su propia frase corta, sin repetirse', () => {
+  it('cada uno de los nueve motivos trae su propia frase corta, sin repetirse', () => {
     const reasons: CoordinationDegradedReason[] = [
       'claude_below_floor', 'codex_run_cap', 'codex_global_cap', 'codex_process_ceiling',
-      'opencode_shared_server', 'engram_not_installed', 'runtime_refused_injection', 'coordination_server_unavailable',
+      'opencode_run_cap', 'opencode_global_cap', 'engram_not_installed', 'runtime_refused_injection', 'coordination_server_unavailable',
     ];
     const labels = reasons.map((reason) => {
       const { container, unmount } = wired(support({ canPropose: false, reason }));
@@ -300,7 +300,8 @@ describe('coordination support badges (additive, autonomous-coordination Phase 7
       ['codex_run_cap', 'tope de miembros de Codex coordinados por corrida'],
       ['codex_global_cap', 'tope de procesos de Codex coordinados en toda la app'],
       ['codex_process_ceiling', 'tope total de procesos de Codex en toda la app'],
-      ['opencode_shared_server', 'OpenCode comparte un solo servidor'],
+      ['opencode_run_cap', 'tope de miembros de OpenCode coordinados por corrida'],
+      ['opencode_global_cap', 'tope de procesos de OpenCode coordinados en toda la app'],
       ['engram_not_installed', 'Falta el binario de Engram'],
     ];
     for (const [reason, phrase] of reasons) {
@@ -430,10 +431,10 @@ describe('coordination support badges (additive, autonomous-coordination Phase 7
       // informa", y decir las dos a la vez sería ruido.
       const { container } = renderAdvanced('es-AR', {
         team: [member({ id: 'm1', roleName: 'Estratega' })],
-        coordinationSupport: [support({ memberId: 'm1', canPropose: false, reason: 'opencode_shared_server', memoryInjected: false, runtimeConfirmed: false, runtimeReportsInjection: false })],
+        coordinationSupport: [support({ memberId: 'm1', canPropose: false, reason: 'codex_process_ceiling', memoryInjected: false, runtimeConfirmed: false, runtimeReportsInjection: false })],
       });
       const row = container.querySelector('.team-support-row')!;
-      expect(row.textContent).toContain('OpenCode comparte un solo servidor');
+      expect(row.textContent).toContain('tope total de procesos de Codex');
       expect(row.textContent).not.toContain('Este runtime no informa la conexión');
     });
   });

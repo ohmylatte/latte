@@ -3,8 +3,9 @@
  * decides which `AdapterMcpServer[]` a member's runtime receives on every
  * open, under TWO INDEPENDENT policies --
  *
- *   `latte_memory` (stdio, engram): every member of every Work, wherever the
- *   runtime supports per-member injection (Claude, Codex -- never OpenCode).
+ *   `latte_memory` (stdio, engram): every member of every Work, on every
+ *   runtime (Claude, Codex and -- since each OpenCode member got its own
+ *   process -- OpenCode).
  *   NOT gated by a run, NOT gated by any coordination flag, NOT subject to
  *   any coordination ceiling -- only `MAX_CODEX_APP_SERVERS_TOTAL` (a member
  *   may share an existing brand+account process with other engram-only
@@ -14,7 +15,8 @@
  *   coordination ceilings (Claude always, once above its version floor;
  *   Codex only with an active run under `MAX_COORDINATED_CODEX_MEMBERS_PER_RUN`,
  *   or the Work's one bootstrap slot, and only while the app-wide
- *   `MAX_COORDINATED_CODEX_PROCESSES` has room).
+ *   `MAX_COORDINATED_CODEX_PROCESSES` has room; OpenCode under the twin
+ *   `MAX_COORDINATED_OPENCODE_*` caps, counted in its own ledger).
  *
  * A member may therefore carry engram and no coordination server (the
  * ordinary case) -- NEVER the reverse.
@@ -38,9 +40,12 @@ import type { ChatRuntime } from '../../shared/contracts';
 import { memoryMcpServerFor } from '../memory/engram';
 import {
   MAX_BOOTSTRAP_CODEX_MEMBERS_PER_WORK,
+  MAX_BOOTSTRAP_OPENCODE_MEMBERS_PER_WORK,
   MAX_CODEX_APP_SERVERS_TOTAL,
   MAX_COORDINATED_CODEX_MEMBERS_PER_RUN,
   MAX_COORDINATED_CODEX_PROCESSES,
+  MAX_COORDINATED_OPENCODE_MEMBERS_PER_RUN,
+  MAX_COORDINATED_OPENCODE_PROCESSES,
 } from './limits';
 import type { CoordinationTokenRegistry } from './tokens';
 
@@ -49,7 +54,9 @@ export type CoordinationDegradedReason =
   | 'codex_run_cap'
   | 'codex_global_cap'
   | 'codex_process_ceiling'
-  | 'opencode_shared_server'
+  /** Los gemelos de `codex_run_cap`/`codex_global_cap` para OpenCode (ver `MAX_COORDINATED_OPENCODE_*`). */
+  | 'opencode_run_cap'
+  | 'opencode_global_cap'
   | 'engram_not_installed'
   /** El adaptador entregó menos de lo que este planificador reclamó (ver `confirmInjection`). */
   | 'runtime_refused_injection'
@@ -142,9 +149,16 @@ function memorySlotKeyFor(accountId: string | null, brandId: string): string {
   return `${accountId ?? 'system'}|${brandId}`;
 }
 
+/** The runtimes whose coordinated members are counted against a ceiling. Claude spawns nothing extra and has none. */
+type CountedRuntime = 'codex' | 'opencode';
+
 export class CoordinationInjectionPlanner {
-  /** workId -> memberIds currently carrying `latte_coordination` (Codex only; Claude has no ceiling to count against). */
-  private readonly coordinatedByWork = new Map<string, Set<string>>();
+  /**
+   * runtime -> workId -> memberIds currently carrying `latte_coordination`.
+   * One ledger per runtime, so an OpenCode team never eats a Codex slot or
+   * the other way around: each ceiling measures its own processes.
+   */
+  private readonly coordinatedByRuntime: Record<CountedRuntime, Map<string, Set<string>>> = { codex: new Map(), opencode: new Map() };
   /** `accountId|brandId` -> memberIds currently sharing that memory-only Codex process. */
   private readonly memorySlots = new Map<string, Set<string>>();
   private readonly claims = new Map<string, Claim>();
@@ -197,7 +211,7 @@ export class CoordinationInjectionPlanner {
     // ninguno: contarlo acá le comía el cupo a Codex sin gastar nada, y con
     // seis miembros Claude app-wide `totalSlots()` llegaba a frenar hasta la
     // rama de sólo-memoria. Sólo Codex entra al ledger.
-    if (coordinated && input.runtime === 'codex') this.markCoordinated(input.workId, input.memberId);
+    if (coordinated) this.markCoordinated(input.runtime, input.workId, input.memberId);
     // A coordinated member's memory rides the SAME process (the shared
     // http token already forces its own fingerprint) -- only a genuinely
     // memory-only member needs its own brand+account slot.
@@ -224,7 +238,7 @@ export class CoordinationInjectionPlanner {
         // (4) COMPENSACIÓN. El cupo reservado se suelta enseguida: dejarlo
         // marcado por un servidor que no arrancó se lo come a otra Marca para
         // siempre. Se degrada SÓLO la coordinación; la memoria sigue viajando.
-        if (input.runtime === 'codex') this.coordinatedByWork.get(input.workId)?.delete(input.memberId);
+        this.ledgerFor(input.runtime)?.get(input.workId)?.delete(input.memberId);
         coordinated = false;
         reason = 'coordination_server_unavailable';
         if (decision.memoryServer && input.runtime === 'codex') {
@@ -277,7 +291,7 @@ export class CoordinationInjectionPlanner {
    * esto `preview()` — la fuente de `coordinationRuntimeSupport` — seguía
    * devolviendo el reclamo viejo y la UI afirmaba "Sin restricciones para
    * coordinar" sobre un proceso sin ningún servidor. `undefined` (un adaptador
-   * que no reporta, como OpenCode) deja el reclamo intacto.
+   * que no pudo preguntar, o sin nada que preguntar) deja el reclamo intacto.
    */
   confirmInjection(memberId: string, injectedServerNames: string[] | undefined): void {
     if (!injectedServerNames) return;
@@ -293,7 +307,7 @@ export class CoordinationInjectionPlanner {
     const refused = (claim.status.coordinationInjected && !coordination) || (claim.status.memoryInjected && !memory);
     if (!refused) return;
     if (claim.coordinated && !coordination) {
-      this.coordinatedByWork.get(claim.workId)?.delete(memberId);
+      this.ledgerFor(claim.runtime)?.get(claim.workId)?.delete(memberId);
       claim.coordinated = false;
       // Y el cupo de MEMORIA se toma, exactamente como lo toma `assign()` al
       // degradar (ver su rama de compensación). Un miembro de Codex que pierde
@@ -338,7 +352,7 @@ export class CoordinationInjectionPlanner {
     const claim = this.claims.get(memberId);
     if (!claim) return;
     if (claim.coordinated) {
-      this.coordinatedByWork.get(claim.workId)?.delete(memberId);
+      this.ledgerFor(claim.runtime)?.get(claim.workId)?.delete(memberId);
       claim.coordinated = false;
       this.deps.tokens.revokeMember(claim.workId, memberId);
       this.deps.server.stopIfIdle();
@@ -368,8 +382,8 @@ export class CoordinationInjectionPlanner {
    * dispara desde `memberContext()` justo cuando `liveMemberCount(work.id) ===
    * 0`, así que en la práctica ese fallback era SIEMPRE el que decidía: con la
    * Marca A ya resuelta, el primer miembro de un Trabajo de la Marca B — un
-   * OpenCode, o un Codex pasado el `codex_process_ceiling`, ninguno de los dos
-   * recibe `latte_memory` — leía "ya tenés las herramientas de Engram,
+   * Codex pasado el `codex_process_ceiling`, o (entonces) un OpenCode, que no
+   * recibían `latte_memory` — leía "ya tenés las herramientas de Engram,
    * scopeadas a esta marca… guardá y buscá sin pasar `project`". Con su propio
    * engram configurado globalmente, eso escribe la estrategia de la Marca B en
    * un proyecto autodetectado: una escritura cruzada entre Marcas. El
@@ -394,7 +408,7 @@ export class CoordinationInjectionPlanner {
     this.claims.delete(memberId);
     this.deps.tokens.revokeMember(claim.workId, memberId);
     if (claim.coordinated) {
-      this.coordinatedByWork.get(claim.workId)?.delete(memberId);
+      this.ledgerFor(claim.runtime)?.get(claim.workId)?.delete(memberId);
       this.deps.server.stopIfIdle();
     }
     if (claim.memorySlotKey) {
@@ -416,7 +430,6 @@ export class CoordinationInjectionPlanner {
    * que leer los cupos y marcarlos no puedan quedar a ambos lados de un await.
    */
   private async resolveSlowInputs(input: MemberInjectionInput): Promise<SlowInputs> {
-    if (input.runtime === 'opencode') return { claudeVersion: null, memoryServer: null };
     if (input.runtime === 'claude') {
       const claudeVersion = await this.deps.resolveClaudeVersion();
       // Por debajo del piso no hay inyección de ninguna clase, ni siquiera
@@ -435,7 +448,16 @@ export class CoordinationInjectionPlanner {
     const coordinationFeatureOn = this.deps.isCoordinationEnabled ? this.deps.isCoordinationEnabled() : true;
 
     if (input.runtime === 'opencode') {
-      return { coordinationEligible: false, memoryServer: null, reason: 'opencode_shared_server' };
+      // Un proceso por miembro: la memoria viaja siempre (no hay procesos
+      // compartidos que acotar), la coordinación bajo sus topes gemelos.
+      const memoryServer = resolved.memoryServer;
+      const coordination = coordinationFeatureOn
+        ? this.evaluateOpenCodeCoordination(input)
+        : { eligible: false, reason: null as CoordinationDegradedReason | null };
+      if (coordination.eligible) {
+        return { coordinationEligible: true, memoryServer, reason: memoryServer ? null : 'engram_not_installed' };
+      }
+      return { coordinationEligible: false, memoryServer, reason: coordination.reason ?? (memoryServer ? null : 'engram_not_installed') };
     }
 
     if (input.runtime === 'claude') {
@@ -483,19 +505,39 @@ export class CoordinationInjectionPlanner {
   private evaluateCodexCoordination(input: MemberInjectionInput): { eligible: boolean; reason: CoordinationDegradedReason | null } {
     const hasRun = this.deps.repo.findActiveCoordinationRun(input.workId) != null;
     const perWorkCap = hasRun ? MAX_COORDINATED_CODEX_MEMBERS_PER_RUN : MAX_BOOTSTRAP_CODEX_MEMBERS_PER_WORK;
-    const coordinatedHere = this.coordinatedByWork.get(input.workId)?.size ?? 0;
+    const coordinatedHere = this.coordinatedByRuntime.codex.get(input.workId)?.size ?? 0;
     if (coordinatedHere >= perWorkCap) return { eligible: false, reason: 'codex_run_cap' };
-    if (this.totalCoordinated() >= MAX_COORDINATED_CODEX_PROCESSES) return { eligible: false, reason: 'codex_global_cap' };
+    if (this.totalCoordinated('codex') >= MAX_COORDINATED_CODEX_PROCESSES) return { eligible: false, reason: 'codex_global_cap' };
     if (this.totalSlots() >= MAX_CODEX_APP_SERVERS_TOTAL) return { eligible: false, reason: 'codex_process_ceiling' };
+    return { eligible: true, reason: null };
+  }
+
+  /**
+   * Calcado de Codex, sin el techo de procesos totales: ése lo hace cumplir
+   * `ChatManager` (`MAX_OPENCODE_SERVERS_TOTAL`), porque en OpenCode el
+   * proceso ES el miembro y no hay forma de degradarlo a "sin proceso".
+   */
+  private evaluateOpenCodeCoordination(input: MemberInjectionInput): { eligible: boolean; reason: CoordinationDegradedReason | null } {
+    const hasRun = this.deps.repo.findActiveCoordinationRun(input.workId) != null;
+    const perWorkCap = hasRun ? MAX_COORDINATED_OPENCODE_MEMBERS_PER_RUN : MAX_BOOTSTRAP_OPENCODE_MEMBERS_PER_WORK;
+    const coordinatedHere = this.coordinatedByRuntime.opencode.get(input.workId)?.size ?? 0;
+    if (coordinatedHere >= perWorkCap) return { eligible: false, reason: 'opencode_run_cap' };
+    if (this.totalCoordinated('opencode') >= MAX_COORDINATED_OPENCODE_PROCESSES) return { eligible: false, reason: 'opencode_global_cap' };
     return { eligible: true, reason: null };
   }
 
   // -- Ledger bookkeeping -----------------------------------------------------
 
-  private markCoordinated(workId: string, memberId: string): void {
-    const set = this.coordinatedByWork.get(workId) ?? new Set<string>();
+  private ledgerFor(runtime: ChatRuntime): Map<string, Set<string>> | null {
+    return runtime === 'claude' ? null : this.coordinatedByRuntime[runtime];
+  }
+
+  private markCoordinated(runtime: ChatRuntime, workId: string, memberId: string): void {
+    const ledger = this.ledgerFor(runtime);
+    if (!ledger) return;
+    const set = ledger.get(workId) ?? new Set<string>();
     set.add(memberId);
-    this.coordinatedByWork.set(workId, set);
+    ledger.set(workId, set);
   }
 
   private markMemorySlot(key: string, memberId: string): void {
@@ -504,9 +546,9 @@ export class CoordinationInjectionPlanner {
     this.memorySlots.set(key, set);
   }
 
-  private totalCoordinated(): number {
+  private totalCoordinated(runtime: CountedRuntime): number {
     let total = 0;
-    for (const set of this.coordinatedByWork.values()) total += set.size;
+    for (const set of this.coordinatedByRuntime[runtime].values()) total += set.size;
     return total;
   }
 
@@ -514,6 +556,6 @@ export class CoordinationInjectionPlanner {
   private totalSlots(): number {
     let memorySlotCount = 0;
     for (const set of this.memorySlots.values()) if (set.size > 0) memorySlotCount += 1;
-    return this.totalCoordinated() + memorySlotCount;
+    return this.totalCoordinated('codex') + memorySlotCount;
   }
 }
