@@ -113,6 +113,29 @@ function strayKey(runtimeKey: string): string {
  * from the runtime's own store on disk (shared by every process of the user).
  * Provider management (keys, OAuth) runs on a separate lazy process, because
  * an OAuth login must start and finish on the same one.
+ *
+ * PARIDAD CON CLAUDE CODE Y CODEX (verificada con `tests/backend/opencode-parity.test.ts`
+ * y, donde dice, contra opencode 1.18.32 real):
+ *  - Inyección MCP por miembro y confirmación por `GET /mcp`: a la par.
+ *  - Preguntas (`question.asked` → la misma QuestionCard), pausa/reanudar
+ *    (proceso nuevo, sesión reanudada del store de OpenCode con su historia),
+ *    consumo por mensaje y un run de coordinación completo: a la par.
+ *  - Permisos: NO a la par con Claude, sí parecido a Codex. El agente `build`
+ *    de OpenCode trae `{"permission":"*","action":"allow"}` y sólo pregunta por
+ *    `external_directory` y `doom_loop` (medido en `GET /agent`): editar o
+ *    correr comandos DENTRO de la carpeta del trabajo no pide permiso, y
+ *    `trustedFolder` no cambia nada acá. Lo que sí pide llega como tarjeta de
+ *    permiso igual que en los otros runtimes. Latte no escribe `permission` en
+ *    el config inline a propósito: cambiar lo que OpenCode deja hacer por
+ *    defecto es una decisión de producto, no de paridad.
+ *  - Historial de un miembro PAUSADO: vive en el runtime, así que
+ *    `recentMessages` responde `exposed:false` sin levantar un proceso (Claude
+ *    tiene transcripto propio de Latte; Codex tampoco lo tiene).
+ *  - Proveedores: una clave conectada mientras hay miembros abiertos se guarda
+ *    en el store de OpenCode por el proceso de proveedores; que un proceso de
+ *    miembro YA abierto la vea sin reabrirse no está verificado.
+ *  - Esfuerzo: el tier viaja como `variant` por prompt; el modelo no sale del
+ *    tier (ver `agents/tiers.ts`).
  */
 export class ChatManager implements RuntimeAdapter {
   readonly runtime = 'opencode' as const;

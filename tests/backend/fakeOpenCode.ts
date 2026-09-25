@@ -46,7 +46,13 @@ export async function startFakeOpenCode(options: { username?: string; password?:
   const requests: FakeOpenCode['requests'] = [];
   let counter = 0;
 
+  // Which session asked each permission/question, on THIS process. With a
+  // store shared by several fakes, "the first session" may be someone else's.
+  const askedBy = new Map<string, string>();
   const emit = (directory: string, type: string, properties: Record<string, unknown>) => {
+    if ((type === 'permission.asked' || type === 'question.asked') && typeof properties.id === 'string' && typeof properties.sessionID === 'string') {
+      askedBy.set(properties.id, properties.sessionID);
+    }
     const frame = `data: ${JSON.stringify({ directory, payload: { id: `evt_${++counter}`, type, properties } })}\n\n`;
     for (const res of streams) res.write(frame);
   };
@@ -160,7 +166,7 @@ export async function startFakeOpenCode(options: { username?: string; password?:
         }
       }
       if (parts[0] === 'permission' && parts[2] === 'reply') {
-        const session = [...sessions.values()][0];
+        const session = sessions.get(askedBy.get(parts[1]) ?? '') ?? [...sessions.values()][0];
         const reply = String((body as { reply?: string })?.reply);
         emit(directory, 'permission.replied', { sessionID: session?.id, requestID: parts[1], reply });
         if (session) {
@@ -171,7 +177,7 @@ export async function startFakeOpenCode(options: { username?: string; password?:
         return json(200, true);
       }
       if (parts[0] === 'question' && (parts[2] === 'reply' || parts[2] === 'reject')) {
-        const session = [...sessions.values()][0];
+        const session = sessions.get(askedBy.get(parts[1]) ?? '') ?? [...sessions.values()][0];
         emit(directory, parts[2] === 'reply' ? 'question.replied' : 'question.rejected', { sessionID: session?.id, requestID: parts[1], answers: (body as { answers?: unknown })?.answers });
         return json(200, true);
       }
