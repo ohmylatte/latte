@@ -159,7 +159,9 @@ describe('renderInstructionBundle: hard cap', () => {
     // Compacted, not merely capped by luck: comfortably below the unbounded size
     // this fixture would have produced (brand + every decision + the skill body inlined).
     // The protocol stays available under compaction; inherited brand memory adds a bounded summary on 0.5+.
-    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60 + 600);
+    // E2/E4: the working rules grew by the deliverables boundary (drafts vs ./entregables/) and
+    // the identity line; rules are never trimmed, so the margin grows with them, not the brand.
+    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60 + 1000);
     // The cap is a target, not an absolute: a short footer may push it slightly over,
     // but never by much once decisions and brand context are both at their floor.
     expect(bundle.text.length).toBeLessThan(INSTRUCTIONS_MAX_CHARS + 500);

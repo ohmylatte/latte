@@ -190,6 +190,9 @@ export interface TeamPanelProps {
    */
   coordinationAuthority?: CoordinationAuthorityMode;
   onSetCoordinationAuthority?: (mode: CoordinationAuthorityMode) => void;
+  /** E2: "revisión antes de publicar". */
+  coordinationReview?: boolean;
+  onSetCoordinationReview?: (on: boolean) => void;
   coordinationBudget?: CoordinationBudgetView;
   onSetCoordinationBudget?: (maxDispatches: number) => void;
   coordinatorGrant?: string | null;
@@ -555,6 +558,7 @@ export function TeamPanel(props: TeamPanelProps) {
       onAddMember={isDesktop && !busy ? () => setAdding(true) : undefined}
       formatDate={props.formatDate} coordinationAuthority={props.coordinationAuthority}
       onSetCoordinationAuthority={props.onSetCoordinationAuthority} coordinationBudget={props.coordinationBudget}
+      coordinationReview={props.coordinationReview} onSetCoordinationReview={props.onSetCoordinationReview}
       onSetCoordinationBudget={props.onSetCoordinationBudget} coordinatorGrant={props.coordinatorGrant}
       coordinatorMemberId={coordinatorId} onSetCoordinator={props.onSetCoordinator}
       chatCoordination={props.chatCoordination}

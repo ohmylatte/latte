@@ -58,12 +58,27 @@ import type { CoordinationAuthorityMode } from '../../shared/contracts';
 import { LatteError, UnavailableError } from '../core/errors';
 import { LIMITS } from '../services/validation';
 import { TASK_TITLE_STORED } from '../../shared/taskTitle';
+import { COORDINATION_TASK_AUDIENCES } from '../../shared/contracts';
+import { MAX_REPORTED_FILES, REPORTED_FILE_MAX } from '../../shared/reportFiles';
 import type { CoordinationBudgetBlock, CoordinationEngine } from './engine';
 import { MAX_CALLED_UP_MEMBERS_PER_RUN, MAX_TASKS_PER_RUN } from './limits';
 import { validateAgainstSchema } from './schemaGuard';
 import { createCoordinationTools, type ToolEnvelope } from './tools';
 import type { CoordinationTokenRegistry } from './tokens';
 import type { LatteRepository } from '../storage/repository';
+
+/**
+ * E1: la audiencia de una tarea, publicada igual en las tres herramientas que
+ * crean tareas. Cerrada a dos valores: decide si el resultado pasa por la
+ * revisión antes de llegar a `entregables/`.
+ */
+const AUDIENCE_SCHEMA = {
+  type: 'string',
+  maxLength: 16,
+  enum: [...COORDINATION_TASK_AUDIENCES],
+  description: 'Who reads the result. "client": the client reads it to decide (a proposal, a report, a piece they approve); it is reviewed before it is published. "internal" (the default): the team uses it (analysis, research, drafts).',
+};
+const AUDIENCE_HINT = ' Set `audience` to "client" on every task whose result the client reads; leave it out for internal work.';
 
 /** The one MCP protocol version this server speaks (see the module header for why). */
 export const MCP_PROTOCOL_VERSION = '2025-06-18';
@@ -93,7 +108,7 @@ export interface McpToolDefinition {
 export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
     name: 'latte_plan_submit',
-    description: 'Coordinator only. Submits the tasks of an already-approved plan into the active coordination run. Give every task a short `title` (what the person reads in the task strip); keep context in the `spec`.',
+    description: 'Coordinator only. Submits the tasks of an already-approved plan into the active coordination run. Give every task a short `title` (what the person reads in the task strip); keep context in the `spec`.' + AUDIENCE_HINT,
     inputSchema: {
       type: 'object',
       properties: {
@@ -114,6 +129,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
               title: { type: 'string', maxLength: TASK_TITLE_STORED, description: 'A short title for the task (under 60 characters): what the person reads in the task strip. Send it; without it Latte derives one from the spec, skipping a leading CONTEXT block.' },
               spec: { type: 'string', maxLength: LIMITS.chatMessage, description: 'What the task asks for.' },
               dependsOn: { type: 'array', items: { type: 'integer' }, description: 'Indexes into this same tasks array that must finish first.' },
+              audience: AUDIENCE_SCHEMA,
             },
             required: ['roleId', 'spec'],
           },
@@ -124,7 +140,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'latte_task_create',
-    description: 'Coordinator only. Creates one new task in the active coordination run. Give it a short `title` (what the person reads in the task strip); keep context in the `spec`.',
+    description: 'Coordinator only. Creates one new task in the active coordination run. Give it a short `title` (what the person reads in the task strip); keep context in the `spec`.' + AUDIENCE_HINT,
     inputSchema: {
       type: 'object',
       properties: {
@@ -132,6 +148,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
         title: { type: 'string', maxLength: TASK_TITLE_STORED, description: 'A short title for the task (under 60 characters): what the person reads in the task strip. Send it; without it Latte derives one from the spec, skipping a leading CONTEXT block.' },
         spec: { type: 'string', maxLength: LIMITS.chatMessage, description: 'What the task asks for.' },
         dependsOn: { type: 'array', items: { type: 'string', maxLength: LIMITS.name }, description: 'Existing task ids this task depends on.' },
+        audience: AUDIENCE_SCHEMA,
       },
       required: ['roleId', 'spec'],
     },
@@ -171,7 +188,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'latte_report',
-    description: 'Reports the outcome of a task this member was dispatched to do.',
+    description: 'Reports the outcome of a task this member was dispatched to do. List the files you produced or changed in `files`, as paths relative to this work. A review task also says `verdict`: "pass" or "fail".',
     inputSchema: {
       type: 'object',
       // Q2: `summary` y `files` entraban SIN tope hasta la base. `report()` los
@@ -183,7 +200,22 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
         taskId: { type: 'string', maxLength: LIMITS.name },
         outcome: { type: 'string', maxLength: LIMITS.name, enum: ['succeeded', 'failed'] },
         summary: { type: 'string', minLength: 1, maxLength: LIMITS.decision },
-        files: { type: ['string', 'null'], maxLength: LIMITS.chatMessage, description: 'Relative paths of files this task produced or changed, if any.' },
+        // E2: una LISTA de rutas relativas. El texto libre de antes se sigue
+        // aceptando (y se lee como antes); la lista es lo que la interfaz y la
+        // publicación entienden.
+        files: {
+          type: ['array', 'string', 'null'],
+          maxItems: MAX_REPORTED_FILES,
+          maxLength: LIMITS.chatMessage,
+          items: { type: 'string', maxLength: REPORTED_FILE_MAX },
+          description: 'The files this task produced or changed, as paths relative to this work (for example ["borradores/propuesta.pdf"]). A client deliverable is reviewed and then published from here.',
+        },
+        verdict: {
+          type: 'string',
+          maxLength: 8,
+          enum: ['pass', 'fail'],
+          description: 'Only for a review task, and required there: "pass" publishes the reviewed file; "fail" sends it back to its author with the reasons in `summary`.',
+        },
       },
       required: ['taskId', 'outcome', 'summary'],
     },
@@ -254,7 +286,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'latte_request_coordination',
-    description: 'Any member may call this. Proposes a concrete plan — tasks, who does each, who is missing and why, and the estimated budget — for a human to approve in one gesture. Give every task a short `title` (what the person reads in the task strip); keep context in the `spec`. This is how a worker becomes the coordinator.',
+    description: 'Any member may call this. Proposes a concrete plan — tasks, who does each, who is missing and why, and the estimated budget — for a human to approve in one gesture. Give every task a short `title` (what the person reads in the task strip); keep context in the `spec`.' + AUDIENCE_HINT + ' This is how a worker becomes the coordinator.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -276,6 +308,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
               title: { type: 'string', maxLength: TASK_TITLE_STORED, description: 'A short title for the task (under 60 characters): what the person reads in the task strip. Send it; without it Latte derives one from the spec, skipping a leading CONTEXT block.' },
               spec: { type: 'string', maxLength: LIMITS.chatMessage },
               dependsOn: { type: 'array', items: { type: 'integer' } },
+              audience: AUDIENCE_SCHEMA,
             },
             required: ['roleId', 'spec'],
           },

@@ -167,6 +167,28 @@ export class BrandingRepository {
     );
   }
 
+  /**
+   * E4: la versión más alta que existe de un kit, con head o sin él. Revocar
+   * suelta el head; volver a aprobar tiene que publicar la SIGUIENTE, no
+   * chocar contra la versión revocada que sigue en la tabla (y en disco).
+   */
+  latestVersion(kitId: string): number {
+    const row = this.db.get<{ v: number | null }>('SELECT MAX(version) AS v FROM brand_kit_versions WHERE kit_id = ?', [kitId]);
+    return Number(row?.v ?? 0);
+  }
+
+  /** E4: la última revocación de un kit de esta marca, para decir "revocado" cuando ya no hay head. */
+  latestRevocationForBrand(brandId: string): { kitId: string; version: number; createdAt: string } | null {
+    const row = this.db.get<{ kit_id: string; version: number; created_at: string }>(
+      `SELECT r.kit_id, r.version, r.created_at FROM brand_kit_revocations r
+         JOIN brand_kit_versions v ON v.kit_id = r.kit_id AND v.version = r.version
+        WHERE v.owner_kind = 'brand' AND v.owner_brand_id = ?
+        ORDER BY r.created_at DESC, r.version DESC LIMIT 1`,
+      [brandId],
+    );
+    return row ? { kitId: row.kit_id, version: Number(row.version), createdAt: row.created_at } : null;
+  }
+
   isRevoked(kitId: string, version: number): boolean {
     return Boolean(this.db.get('SELECT kit_id FROM brand_kit_revocations WHERE kit_id = ? AND version = ?', [kitId, version]));
   }

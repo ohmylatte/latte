@@ -15,9 +15,11 @@
  * dispatches to others, it is never dispatched to).
  */
 import type { AgentHub, MemberContext } from '../agents/hub';
-import type { CoordinationAuthorityMode, CoordinationBudget } from '../../shared/contracts';
+import type { CoordinationAuthorityMode, CoordinationBudget, CoordinationTaskAudience } from '../../shared/contracts';
 import { isAskSuspendReason } from '../../shared/contracts';
 import { taskTitle, TASK_TITLE_LONG, TASK_TITLE_STORED } from '../../shared/taskTitle';
+import { reportedFiles } from '../../shared/reportFiles';
+import { DELIVERABLES_DIR } from '../workspace/deliverables';
 import type { CoordinationSuspendReason } from '../../shared/contracts';
 
 /** Lo que un despacho denegado puede alegar: todo motivo de suspensión, más el "ahora no" de la concurrencia, que NO suspende. */
@@ -60,6 +62,74 @@ const HANDOFF_RUN_META = 'coordination_handoff_run:';
  * esquema para algo que es un título.
  */
 const REQUEST_META = 'coordination_request:';
+/**
+ * E1: la primera línea del prompt de una tarea para el cliente. En inglés,
+ * como todo lo que Latte le dice a un agente.
+ */
+export const CLIENT_AUDIENCE_LINE = 'Audience: the client. The client reads this to decide; follow the rules for client deliverables. Write the file in ./borradores/ (never in ./entregables/: Latte publishes it after the review) and report its path in `files`.';
+
+/**
+ * E2: LA REVISIÓN ANTES DE PUBLICAR.
+ *
+ * Una tarea `client` que sale bien no llega a `entregables/` sola: nace una
+ * tarea del rol `reviewer` que dice `pass` o `fail`. Todo en `meta`, como las
+ * demás marcas por run y por tarea: la opción del Trabajo, de qué tarea es
+ * revisión cada revisión, y cuántas veces falló la revisión de cada tarea.
+ */
+export type ReviewVerdict = 'pass' | 'fail';
+const REVIEW_SETTING_META = 'coordination_review:';
+const REVIEW_OF_META = 'coordination_review_of:';
+const REVIEW_FAILS_META = 'coordination_review_fails:';
+export const REVIEWER_ROLE_ID = 'reviewer';
+/** Una revisión fallida se reintenta sola UNA vez; la segunda se le pregunta a la persona. */
+export const MAX_AUTO_REVIEW_RETRIES = 1;
+const DELIVERABLES_DIR_NAME = DELIVERABLES_DIR;
+
+interface ReportFollowUp {
+  /** Lo que se le agrega al aviso del reporte al coordinador. */
+  note: string | null;
+  /** La tarea que se despacha después del reporte (la revisión, o el reintento). */
+  dispatchTaskId: string | null;
+}
+
+/**
+ * E2: el acceso a los archivos del trabajo que el motor necesita para
+ * publicar. Lo cablea el servicio; un motor armado a mano en un test no lo
+ * tiene, y entonces no publica (y lo dice).
+ */
+export interface CoordinationDeliveries {
+  publish(workId: string, relativePath: string): { published: string; archived: string[] };
+  /** E4: la evidencia de una entrega que pasó la revisión (o que se publicó sin ella). */
+  recordEvidence?(input: { workId: string; runId: string; taskId: string; reviewTaskId: string | null; reviewerId: string | null; published: string; at: string }): void;
+  /** E4: un reporte que salió bien con su lista de archivos (el `IDENTIDAD.md` que el equipo extrajo entra al kit por acá). */
+  onReported?(input: { workId: string; taskId: string; files: string[] }): void;
+}
+
+/**
+ * E2: el pedido de la revisión. En inglés, como todo lo que Latte le dice a un
+ * agente, salvo la línea del cliente, que va en el idioma del trabajo: es la
+ * frase con la que el revisor tiene que leer el documento.
+ */
+export function reviewSpec(input: { title: string; locale: 'es-AR' | 'en-US'; originalSpec: string; files: string[]; summary: string }): string {
+  const clientLine = input.locale === 'en-US'
+    ? `The client reads this to decide: ${input.title}`
+    : `El cliente lo lee para decidir: ${input.title}`;
+  const ask = input.originalSpec.length > 1500 ? `${input.originalSpec.slice(0, 1500)}…` : input.originalSpec;
+  return [
+    `Task: review before publishing. ${clientLine}`,
+    '',
+    `Files to review: ${input.files.length > 0 ? input.files.map((f) => `./${f}`).join(', ') : 'none were reported. Fail the review unless the summary below is itself the whole deliverable.'}`,
+    '',
+    `What the author reported: ${input.summary.trim()}`,
+    '',
+    'What the task asked for:',
+    ask,
+    '',
+    'Go through the client-deliverable checklist of your role: audience and register, length, internal contradictions (a cap that the estimates break), tables split across pages, internal labels or agency notes that leaked, and the identity applied (logo, palette, type of the approved kit) or a cover that says there is no approved identity. For a PDF, extract its text (pdftotext, pypdf or whatever is available) and check accents and tables.',
+    '',
+    'Do not edit the files yourself. Report with latte_report: outcome "succeeded" and verdict "pass" or "fail". With "fail", the summary lists the reasons, one per line, concrete enough to fix. With "pass", Latte publishes the file to ./entregables/ as the only current version.',
+  ].join('\n');
+}
 /** Un título, no el pedido entero: entra en una línea de encabezado. */
 export const COORDINATION_REQUEST_MAX = 100;
 
@@ -182,6 +252,8 @@ export interface CoordinationProposalTask {
   title?: string;
   spec: string;
   dependsOn?: number[];
+  /** E1: para quién es. Ausente es `internal`. */
+  audience?: CoordinationTaskAudience;
 }
 
 export interface CoordinationProposalHire {
@@ -217,6 +289,8 @@ export interface CoordinationDispatchLogEntry {
   /** Los primeros `LOG_PREVIEW` caracteres del prompt y del resumen: lo que entra en un renglon del buzon. */
   promptPreview: string;
   summaryPreview: string | null;
+  /** E2: las rutas relativas que el reporte trajo como lista. Ausente: no hubo lista. */
+  files?: string[];
   createdAt: string;
   startedAt: string | null;
   settledAt: string | null;
@@ -306,6 +380,8 @@ export interface CoordinationEngineDeps {
    * nada.
    */
   log?: (line: string) => void;
+  /** E2: publicar en `entregables/` después de la revisión. Opcional: sin él no se publica nada. */
+  deliveries?: CoordinationDeliveries;
 }
 
 function isDagStatus(status: CoordinationTaskRecord['status']): DagTask['status'] {
@@ -1164,7 +1240,7 @@ export class CoordinationEngine {
           if (!dep) throw new ValidationError(`Plan task dependsOn index ${idx} is out of range`);
           return dep.id;
         });
-        const task = this.createTaskRow(run.id, item.roleId, item.spec, dependsOnIds, item.title);
+        const task = this.createTaskRow(run.id, item.roleId, item.spec, dependsOnIds, item.title, item.audience);
         // K7: la pertenencia al plan se marca sin tocar el reloj de la tarea,
         // igual que en el gate de plan. Acá la tarea acaba de nacer y no puede
         // estar reclamada, pero es la misma forma y no hay dos.
@@ -1220,6 +1296,10 @@ export class CoordinationEngine {
       outcome: d.outcome,
       promptPreview: d.prompt.slice(0, LOG_PREVIEW),
       summaryPreview: d.summary == null ? null : d.summary.slice(0, LOG_PREVIEW),
+      // E2: los archivos que el reporte trajo COMO LISTA. Un texto libre (los
+      // reportes de antes) no se adivina: queda afuera y la pantalla lee el
+      // resumen como siempre.
+      ...(reportedFiles(d.filesJson) ? { files: reportedFiles(d.filesJson)! } : {}),
       createdAt: d.createdAt, startedAt: d.startedAt, settledAt: d.settledAt,
     }));
     const run = this.deps.repo.getCoordinationRun(runId);
@@ -1512,8 +1592,46 @@ export class CoordinationEngine {
    * que no hay un segundo validador ni un segundo lugar donde una propuesta se
    * vuelve fila: lo que ese camino rechaza, acá también, con el mismo código.
    */
-  private async proposeFromHandoff(workId: string, roleId: string, spec: string, coordinatorMemberId: string | null): Promise<{ bridged: false; reason: string } | { bridged: true; proposed: CoordinationRunRecord }> {
-    const plan = [{ roleId, spec }];
+  /**
+   * E4: UNA TAREA QUE PIDIÓ LA PERSONA DESDE UNA PANTALLA (hoy: "Extraer
+   * identidad con el equipo").
+   *
+   * El mismo camino que un traspaso: sin run, nace una propuesta de una tarea
+   * que la persona aprueba en el chat del coordinador y se despacha sola al
+   * aprobarla; con el run corriendo, la tarea entra al plan y se despacha. El
+   * clic de la persona ES la aprobación del rol para ese run: no hace falta
+   * una segunda. Con el run en otro estado, no se escribe nada y se dice por
+   * qué.
+   */
+  async requestPersonTask(workId: string, input: { roleId: string; spec: string; title: string }, coordinatorMemberId: string | null): Promise<{
+    outcome: 'proposed' | 'dispatched' | 'pending_approval' | 'not_dispatched' | 'blocked'; taskId: string | null; reason: string | null;
+  }> {
+    this.requireCoordinationEnabled();
+    const run = this.deps.repo.findActiveCoordinationRun(workId);
+    if (!run) {
+      const proposed = await this.proposeFromHandoff(workId, input.roleId, input.spec, coordinatorMemberId, input.title);
+      return proposed.bridged ? { outcome: 'proposed', taskId: null, reason: null } : { outcome: 'blocked', taskId: null, reason: proposed.reason };
+    }
+    if (run.status !== 'running') return { outcome: 'blocked', taskId: null, reason: run.status === 'planning' ? 'RUN_ALREADY_ACTIVE' : 'RUN_NOT_ACTIVE' };
+    const approved = this.approvedRoleIds(run);
+    if (!approved.has(input.roleId) && !this.workHasMemberForRole(workId, input.roleId)) {
+      approved.add(input.roleId);
+      this.deps.repo.setMeta(APPROVED_ROLES_META + run.id, JSON.stringify([...approved]));
+    }
+    const task = this.createTaskRow(run.id, input.roleId, input.spec, [], input.title, 'internal');
+    this.deps.repo.markCoordinationTaskInPlan(task.id);
+    try {
+      const outcome = await this.startDispatch({ grant: { workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id });
+      this.touch(workId, run.id);
+      return { outcome: outcome.status, taskId: task.id, reason: null };
+    } catch (error) {
+      this.touch(workId, run.id);
+      return { outcome: 'not_dispatched', taskId: task.id, reason: error instanceof LatteError ? error.code : 'INTERNAL' };
+    }
+  }
+
+  private async proposeFromHandoff(workId: string, roleId: string, spec: string, coordinatorMemberId: string | null, title?: string): Promise<{ bridged: false; reason: string } | { bridged: true; proposed: CoordinationRunRecord }> {
+    const plan: CoordinationProposalTask[] = [{ roleId, spec, ...(title ? { title } : {}) }];
     const covered = this.computeRoleCoverage(workId, { plan, membersToHire: [], estimatedDispatches: 1, rationale: '' })[0]?.coverage === 'member';
     let configured: number | null = null;
     try { configured = this.requireReadableBudget(workId)?.maxDispatches ?? null; } catch { configured = null; }
@@ -1615,7 +1733,7 @@ export class CoordinationEngine {
 
   // -- Tool-facing engine methods (wrapped by tools.ts) ------------------------
 
-  planSubmit(runId: string, tasks: Array<{ roleId: string; spec: string; title?: string; dependsOn?: number[] }>): CoordinationTaskRecord[] {
+  planSubmit(runId: string, tasks: Array<{ roleId: string; spec: string; title?: string; dependsOn?: number[]; audience?: CoordinationTaskAudience }>): CoordinationTaskRecord[] {
     const run = this.deps.repo.getCoordinationRun(runId);
     // `running`, no "cualquier cosa menos terminal" (D3). Sobre un run
     // `planning` esto pisaba `plan_json` —que ahí adentro guarda la PROPUESTA
@@ -1648,7 +1766,7 @@ export class CoordinationEngine {
           if (!dep) throw new ValidationError(`Plan task dependsOn index ${idx} is out of range`);
           return dep.id;
         });
-        rows.push(this.createTaskRow(run.id, spec.roleId, spec.spec, dependsOnIds, spec.title));
+        rows.push(this.createTaskRow(run.id, spec.roleId, spec.spec, dependsOnIds, spec.title, spec.audience));
       }
       this.deps.repo.setCoordinationPlan(run.id, JSON.stringify(rows.map((t) => t.id)), this.deps.clock());
       return rows;
@@ -1657,7 +1775,7 @@ export class CoordinationEngine {
     return created;
   }
 
-  taskCreate(runId: string, input: { roleId: string; spec: string; title?: string; dependsOn?: string[] }): CoordinationTaskRecord {
+  taskCreate(runId: string, input: { roleId: string; spec: string; title?: string; dependsOn?: string[]; audience?: CoordinationTaskAudience }): CoordinationTaskRecord {
     const run = this.assertRunMutable(this.deps.repo.getCoordinationRun(runId));
     // `running`, el MISMO umbral que `planSubmit` (F6). Sin esto, con el
     // permiso de coordinador escrito por IPC y un run todavía en `planning`,
@@ -1667,7 +1785,7 @@ export class CoordinationEngine {
     // propuesta.
     if (run.status !== 'running') throw new LatteError('RUN_NOT_ACTIVE', `Run is ${run.status}`);
     this.assertRoleCreatable(run, input.roleId);
-    const task = this.createTaskRow(runId, input.roleId, input.spec, input.dependsOn ?? [], input.title);
+    const task = this.createTaskRow(runId, input.roleId, input.spec, input.dependsOn ?? [], input.title, input.audience);
     this.touch(run.workId, runId);
     return task;
   }
@@ -1744,6 +1862,7 @@ export class CoordinationEngine {
   taskList(runId: string): Array<{
     id: string; roleId: string; status: CoordinationTaskRecord['status']; inPlan: boolean;
     dependsOn: string[]; attempts: number; assignedMemberId: string | null; spec: string; title: string;
+    audience: CoordinationTaskAudience;
   }> {
     const deps = new Map<string, string[]>();
     for (const edge of this.deps.repo.listCoordinationTaskDeps(runId)) {
@@ -1761,6 +1880,7 @@ export class CoordinationEngine {
       // N2: del spec ENTERO, no del recorte: el pedido puede venir después de
       // un bloque de contexto más largo que el recorte.
       title: taskTitle(task.spec, task.title, TASK_TITLE_LONG),
+      audience: task.audience === 'client' ? 'client' : 'internal',
     }));
   }
 
@@ -1790,7 +1910,7 @@ export class CoordinationEngine {
     lines.push('Tasks that already exist:');
     for (const task of tasks) {
       const depends = task.dependsOn.length > 0 ? ` (depends on: ${task.dependsOn.join(', ')})` : '';
-      lines.push(`- ${task.id} [${task.roleId}] ${task.status}${depends}: ${task.title}`);
+      lines.push(`- ${task.id} [${task.roleId}] ${task.status}${depends}${task.audience === 'client' ? ' (for the client)' : ''}: ${task.title}`);
     }
     if (hired.length > 0) {
       lines.push('');
@@ -2570,7 +2690,13 @@ export class CoordinationEngine {
   }
 
   /** `outcome:'succeeded'` unblocks dependents; `'failed'` returns the task to `ready`, or `blocked` at the attempt cap. Idempotent on an already-`done` task. */
-  async report(grant: CoordinationGrant, taskId: string, outcome: 'succeeded' | 'failed', summary: string, filesJson: string | null = null): Promise<CoordinationTaskRecord> {
+  /**
+   * `review`: lo que trae el reporte por MCP sobre una revisión (E2). Sólo el
+   * camino del agente lo manda —y ahí una tarea de revisión EXIGE veredicto—;
+   * la liquidación a mano de la persona (`settleDispatch`) no lo trae, y una
+   * revisión cerrada así no publica ni devuelve nada: nadie dijo pass o fail.
+   */
+  async report(grant: CoordinationGrant, taskId: string, outcome: 'succeeded' | 'failed', summary: string, filesJson: string | null = null, review: { verdict: ReviewVerdict | null } | null = null): Promise<CoordinationTaskRecord> {
     if (grant.runId == null) throw new LatteError('NO_ACTIVE_RUN', 'This Work has no active coordination run');
     // R2: un reporte sin resumen no es un reporte.
     //
@@ -2619,6 +2745,13 @@ export class CoordinationEngine {
     if (!current || current.memberId !== grant.memberId) {
       throw new LatteError('FORBIDDEN', 'Only the member this task is currently dispatched to may report it');
     }
+    // E2: una revisión dice pass o fail. Sin veredicto no hay qué hacer con
+    // ella —ni publicar ni devolver—, así que el reporte no entra y el agente
+    // puede volver a mandarlo bien. Antes de tocar nada, como el resumen vacío.
+    const reviewOf = this.reviewOriginOf(taskId);
+    if (reviewOf && review && outcome === 'succeeded' && review.verdict == null) {
+      throw new ValidationError('This is a review task: report it with verdict "pass" or "fail", and with "fail" put the reasons in the summary, one per line.');
+    }
     const now = this.deps.clock();
     // Cerrar la reserva y asentar el gasto son UNA escritura: entre las dos,
     // una caída dejaba la reserva cerrada sin asiento y el despacho se volvía
@@ -2652,6 +2785,11 @@ export class CoordinationEngine {
         this.deps.repo.updateCoordinationTask(taskId, { status: 'ready', attempts, assignedMemberId: null }, now);
       }
     }
+    // E2: LO QUE SIGUE A UN REPORTE PARA EL CLIENTE, escrito ANTES del cierre:
+    // la revisión que se crea (o la tarea que vuelve a la cola) tiene que
+    // existir cuando `finishRunIfComplete` cuente, o el run se cerraría con la
+    // entrega sin revisar.
+    const followUp = this.afterReport(task, outcome, summary, filesJson, reviewOf, review?.verdict ?? null, now);
     // B5.5: el reporte, en `agents.log`. Sin contenido: el resumen y los
     // archivos ya viven en la fila del despacho y en el aviso al coordinador.
     this.deps.log?.(`[latte] coordination report (run=${task.runId} dispatch=${current?.id ?? 'none'} task=${taskId} member=${grant.memberId} outcome=${outcome})`);
@@ -2681,8 +2819,160 @@ export class CoordinationEngine {
     //
     // `void`: el aviso no es parte del reporte. `deliverNotice` nunca tira, y
     // un reporte ya asentado no se deshace porque un agente no se entere.
-    void this.noticeReport(task.runId, grant.memberId, task.roleId, taskId, outcome, summary, filesJson);
+    void this.noticeReport(task.runId, grant.memberId, task.roleId, taskId, outcome, summary, filesJson, followUp.note);
+    // E2: y el despacho que sigue (la revisión, o el reintento con los
+    // motivos), por el MISMO punto que cualquier otro: autoridad, presupuesto
+    // y concurrencia valen igual. `void`: levantar al revisor puede tardar
+    // segundos y el reporte de quien terminó no tiene por qué esperarlo.
+    if (followUp.dispatchTaskId) void this.dispatchFollowUp(grant.workId, task.runId, followUp.dispatchTaskId);
     return this.deps.repo.getCoordinationTask(taskId);
+  }
+
+  /** E2: si esta tarea es la revisión de otra, el id de la otra. */
+  private reviewOriginOf(taskId: string): string | null {
+    return this.deps.repo.getMeta(REVIEW_OF_META + taskId) || null;
+  }
+
+  /** E2: la opción del Trabajo "revisión antes de publicar". Prendida salvo que la persona la apague. */
+  reviewEnabled(workId: string): boolean {
+    return this.deps.repo.getMeta(REVIEW_SETTING_META + workId) !== 'off';
+  }
+
+  setReviewEnabled(workId: string, on: boolean): boolean {
+    this.deps.repo.setMeta(REVIEW_SETTING_META + workId, on ? 'on' : 'off');
+    return this.reviewEnabled(workId);
+  }
+
+  private contentLocale(workId: string): 'es-AR' | 'en-US' {
+    return this.deps.repo.getMeta(`work_content_locale:${workId}`) === 'en-US' ? 'en-US' : 'es-AR';
+  }
+
+  /**
+   * E2: qué pasa después de un reporte, decidido en el mismo tick y escrito en
+   * la base. Nunca tira: el reporte ya está asentado, y lo que no se pudo
+   * hacer se le dice al coordinador en la nota.
+   *
+   *  - Una tarea `client` que salió bien: con la revisión prendida, nace la
+   *    revisión (y se despacha después); apagada, Latte publica directo.
+   *  - Una revisión con `pass`: Latte publica los archivos de la original.
+   *  - Una revisión con `fail`: la original vuelve a la cola con los motivos
+   *    en el spec. La primera vez se re-despacha sola; la segunda se le
+   *    pregunta a la persona y la tarea queda esperando la respuesta.
+   */
+  private afterReport(
+    task: CoordinationTaskRecord, outcome: 'succeeded' | 'failed', summary: string, filesJson: string | null,
+    reviewOf: string | null, verdict: ReviewVerdict | null, now: string,
+  ): ReportFollowUp {
+    const none: ReportFollowUp = { note: null, dispatchTaskId: null };
+    if (outcome !== 'succeeded') return none;
+    let run: CoordinationRunRecord;
+    try { run = this.deps.repo.getCoordinationRun(task.runId); } catch { return none; }
+    const listed = reportedFiles(filesJson);
+    if (listed && listed.length > 0) {
+      try { this.deps.deliveries?.onReported?.({ workId: run.workId, taskId: task.id, files: listed }); }
+      catch (error) { this.deps.log?.(`[latte] reported files hook failed (task=${task.id}): ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    try {
+      if (reviewOf) return verdict ? this.settleReview(run, task, reviewOf, verdict, summary, now) : none;
+      if (task.audience !== 'client') return none;
+      const files = reportedFiles(filesJson) ?? [];
+      if (!this.reviewEnabled(run.workId)) {
+        return { note: this.publishFiles(run, task, files, now, 'Published without review (review before publishing is off for this Work)'), dispatchTaskId: null };
+      }
+      const review = this.createReviewTask(run, task, files, summary);
+      return {
+        note: `This task is for the client, so Latte sent it to review before publishing (task ${review.id}, ${REVIEWER_ROLE_ID}). Do not copy it to ./${DELIVERABLES_DIR_NAME}/ yourself: Latte publishes it when the review passes, and sends it back with the reasons when it does not.`,
+        dispatchTaskId: review.id,
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.deps.log?.(`[latte] client review step failed (run=${task.runId} task=${task.id}): ${reason}`);
+      return { note: `Latte could not start the review of this client task (${reason}); nothing was published.`, dispatchTaskId: null };
+    }
+  }
+
+  /** E2: la tarea de revisión: rol `reviewer`, interna, del plan, con la lista y la línea del cliente. */
+  private createReviewTask(run: CoordinationRunRecord, task: CoordinationTaskRecord, files: string[], summary: string): CoordinationTaskRecord {
+    const title = taskTitle(task.spec, task.title, TASK_TITLE_LONG);
+    const locale = this.contentLocale(run.workId);
+    const reviewTitle = (locale === 'en-US' ? 'Review: ' : 'Revisión: ') + title;
+    const review = this.createTaskRow(run.id, REVIEWER_ROLE_ID, reviewSpec({ title, locale, originalSpec: task.spec, files, summary }), [], reviewTitle, 'internal');
+    // Es parte del plan que la persona aprobó: la opción "revisión antes de
+    // publicar" está prendida, así que bajo autoridad `plan` no se gatea.
+    this.deps.repo.markCoordinationTaskInPlan(review.id);
+    this.deps.repo.setMeta(REVIEW_OF_META + review.id, task.id);
+    // Y el rol queda aprobado para ESTE run: si la marca tiene un reviewer se
+    // lo convoca; si no, se da de alta (el rol trae `tier: light`).
+    const approved = this.approvedRoleIds(run);
+    if (!approved.has(REVIEWER_ROLE_ID)) {
+      approved.add(REVIEWER_ROLE_ID);
+      this.deps.repo.setMeta(APPROVED_ROLES_META + run.id, JSON.stringify([...approved]));
+    }
+    return review;
+  }
+
+  /** E2: el veredicto de una revisión sobre la tarea original. */
+  private settleReview(run: CoordinationRunRecord, reviewTask: CoordinationTaskRecord, originalId: string, verdict: ReviewVerdict, summary: string, now: string): ReportFollowUp {
+    const original = this.deps.repo.getCoordinationTask(originalId);
+    if (verdict === 'pass') {
+      const files = reportedFiles(original.resultFilesJson) ?? [];
+      return { note: this.publishFiles(run, original, files, now, 'Review passed', reviewTask), dispatchTaskId: null };
+    }
+    const fails = (Number(this.deps.repo.getMeta(REVIEW_FAILS_META + original.id)) || 0) + 1;
+    this.deps.repo.setMeta(REVIEW_FAILS_META + original.id, String(fails));
+    const reasons = summary.trim();
+    const spec = `${original.spec}\n\n## Review ${fails}: not passed\n\n${reasons}\n\nFix every point above. Write the corrected file in ./borradores/ (never in ./${DELIVERABLES_DIR_NAME}/) and report it again with its path in \`files\`.`;
+    this.deps.repo.updateCoordinationTaskSpec(original.id, spec, now);
+    this.deps.repo.updateCoordinationTask(original.id, { status: 'ready', assignedMemberId: null }, now);
+    if (fails <= MAX_AUTO_REVIEW_RETRIES) {
+      return { note: `Review failed: ${reasons}\nLatte sent task ${original.id} back to its author with these reasons (the one automatic retry).`, dispatchTaskId: original.id };
+    }
+    const title = taskTitle(original.spec, original.title, TASK_TITLE_LONG);
+    const question = this.contentLocale(run.workId) === 'en-US'
+      ? `The review of «${title}» failed twice. Reasons: ${reasons} — What should change before the next version?`
+      : `La revisión de «${title}» falló dos veces. Motivos: ${reasons} — ¿Qué cambiamos antes de la próxima versión?`;
+    const coordinatorId = this.coordinatorOf(run);
+    const ask = this.ask({ workId: run.workId, runId: run.id, memberId: coordinatorId, role: 'coordinator' }, question.slice(0, LIMITS.decision), ASK_TTL_MAX_MINUTES, original.id);
+    return { note: `Review failed again: ${reasons}\nLatte asked the person how to continue (ask ${ask.id}); task ${original.id} waits for the answer. Do not dispatch it before then.`, dispatchTaskId: null };
+  }
+
+  /**
+   * E2: publicar los archivos de una tarea para el cliente. Sin puerto de
+   * archivos (un motor armado a mano en un test) no se publica nada y se dice.
+   */
+  private publishFiles(run: CoordinationRunRecord, task: CoordinationTaskRecord, files: string[], now: string, lead: string, reviewTask: CoordinationTaskRecord | null = null): string {
+    if (files.length === 0) return `${lead}, but the client task reported no file in \`files\`, so nothing was published to ./${DELIVERABLES_DIR_NAME}/.`;
+    const deliveries = this.deps.deliveries;
+    if (!deliveries) return `${lead}; this Latte has no file access here, so nothing was published.`;
+    const published: string[] = [];
+    let archived = 0;
+    const failed: string[] = [];
+    for (const file of files) {
+      try {
+        const result = deliveries.publish(run.workId, file);
+        published.push(result.published);
+        archived += result.archived.length;
+        deliveries.recordEvidence?.({ workId: run.workId, runId: run.id, taskId: task.id, reviewTaskId: reviewTask?.id ?? null, reviewerId: reviewTask?.assignedMemberId ?? null, published: result.published, at: now });
+      } catch (error) {
+        failed.push(`${file} (${error instanceof Error ? error.message : String(error)})`);
+      }
+    }
+    const parts: string[] = [];
+    if (published.length > 0) {
+      parts.push(`${lead}: Latte published ${published.join(', ')} as the current version${archived > 0 ? ` and moved ${archived} earlier version${archived === 1 ? '' : 's'} to ${DELIVERABLES_DIR_NAME}/.versiones/` : ''}.`);
+    }
+    if (failed.length > 0) parts.push(`${published.length > 0 ? 'Not' : `${lead}, but nothing was`} published: ${failed.join('; ')}.`);
+    return parts.join(' ');
+  }
+
+  private async dispatchFollowUp(workId: string, runId: string, taskId: string): Promise<void> {
+    try {
+      await this.startDispatch({ grant: { workId, runId, memberId: '', role: 'coordinator' }, taskId });
+    } catch (error) {
+      // La tarea quedó `ready` (o con su gate): el coordinador la ve en
+      // `latte_task_list` y puede despacharla él. No se pierde nada.
+      this.deps.log?.(`[latte] follow-up dispatch failed (run=${runId} task=${taskId}): ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**
@@ -2698,22 +2988,23 @@ export class CoordinationEngine {
    */
   private async noticeReport(
     runId: string, reporterId: string, roleId: string, taskId: string,
-    outcome: 'succeeded' | 'failed', summary: string, filesJson: string | null,
+    outcome: 'succeeded' | 'failed', summary: string, filesJson: string | null, note: string | null = null,
   ): Promise<void> {
     try {
       const run = this.deps.repo.getCoordinationRun(runId);
       const coordinatorId = this.coordinatorOf(run);
       if (!coordinatorId || coordinatorId === reporterId) return;
+      const files = reportedFiles(filesJson)?.join(', ') ?? (filesJson ?? '').trim();
       const tasks = this.deps.repo.listCoordinationTasks(runId);
       const count = (status: CoordinationTaskRecord['status']) => tasks.filter((t) => t.status === status).length;
       const done = count('done');
       const inFlight = count('dispatched') + count('running');
-      const files = (filesJson ?? '').trim();
       await this.deliverNotice(
         coordinatorId,
         `«${roleId}» (${reporterId}) reported task ${taskId} as ${outcome}: ${summary}. `
         + `Files: ${files.length > 0 ? files : 'none'}. `
-        + `Run: ${done}/${tasks.length} done, ${count('ready')} ready, ${inFlight} in flight.`,
+        + `Run: ${done}/${tasks.length} done, ${count('ready')} ready, ${inFlight} in flight.`
+        + (note ? `\n\n${note}` : ''),
       );
     } catch (error) {
       // Redactar el aviso lee filas, y una lectura puede fallar. El reporte ya
@@ -3780,14 +4071,24 @@ export class CoordinationEngine {
    * Sólo las CONTESTADAS: una vencida se cerró con `answer` en `null` y nadie
    * dijo nada, así que no hay nada que pasarle.
    */
+  /**
+   * E1: la tarea para el cliente se lo dice a quien la hace, arriba de todo.
+   * Una interna va sin adorno: es el caso de siempre y no necesita una línea.
+   */
+  private withAudience(task: CoordinationTaskRecord): string {
+    if (task.audience !== 'client') return task.spec;
+    return `${CLIENT_AUDIENCE_LINE}\n\n${task.spec}`;
+  }
+
   private withAnsweredAsks(task: CoordinationTaskRecord): string {
+    const spec = this.withAudience(task);
     let answered: CoordinationAskRecord[] = [];
     try {
       answered = this.deps.repo.listCoordinationAsksForTask(task.id).filter((ask) => ask.answer !== null);
-    } catch { return task.spec; } // una bitácora de preguntas ilegible no puede impedir el despacho
-    if (answered.length === 0) return task.spec;
+    } catch { return spec; } // una bitácora de preguntas ilegible no puede impedir el despacho
+    if (answered.length === 0) return spec;
     const lines = answered.map((ask) => `- You asked: ${ask.question}\n  The human answered: ${ask.answer}`);
-    return `${task.spec}\n\n## Answers to your questions\n\nYou asked about this task and the human answered. These answers are binding: follow them, and do not ask the same thing again.\n\n${lines.join('\n')}`;
+    return `${spec}\n\n## Answers to your questions\n\nYou asked about this task and the human answered. These answers are binding: follow them, and do not ask the same thing again.\n\n${lines.join('\n')}`;
   }
 
   /**
@@ -3939,7 +4240,7 @@ export class CoordinationEngine {
     );
   }
 
-  private createTaskRow(runId: string, roleId: string, spec: string, dependsOnIds: string[], title?: unknown): CoordinationTaskRecord {
+  private createTaskRow(runId: string, roleId: string, spec: string, dependsOnIds: string[], title?: unknown, audience?: unknown): CoordinationTaskRecord {
     const existing = this.deps.repo.listCoordinationTasks(runId);
     // Las dependencias tienen que ser de ESTE run: `getCoordinationTask` sola
     // acepta cualquier id de la app, así que un coordinador podía colgar una
@@ -3963,6 +4264,10 @@ export class CoordinationEngine {
       // N2: el título es opcional y de adorno: uno que no es texto no rompe
       // la tarea, se ignora. Y se guarda acotado.
       title: typeof title === 'string' && title.trim() ? title.trim().slice(0, TASK_TITLE_STORED) : null,
+      // E1: lo que no es `client` es interno. La frontera (esquema MCP y
+      // validador de la propuesta) ya rechazó cualquier otro valor; esto es la
+      // defensa de fondo para el camino que no pasa por ahí (el puente).
+      audience: audience === 'client' ? 'client' : 'internal',
       status: dependsOnIds.length === 0 ? 'ready' : 'pending', depth, attempts: 0, inPlan: false,
       assignedMemberId: null, resultSummary: null, resultFilesJson: null, createdAt: now, updatedAt: now,
     });
