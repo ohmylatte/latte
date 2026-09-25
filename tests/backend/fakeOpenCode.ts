@@ -17,18 +17,42 @@ export interface FakeOpenCode {
   subscribers: number;
 }
 
-export async function startFakeOpenCode(options: { username?: string; password?: string; scriptedReply?: boolean } = {}): Promise<FakeOpenCode> {
+/**
+ * What real OpenCode keeps on disk (its data dir), shared by every server
+ * process of the same user: a session created by one process can be resumed
+ * by another. Verified against opencode 1.18.32: `GET /session/:id` on a
+ * second `opencode serve` returns a session the first one created.
+ */
+export interface FakeOpenCodeStore {
+  sessions: Map<string, { id: string; directory: string; title: string }>;
+  messages: Map<string, Array<{ info: Record<string, unknown>; parts: Array<Record<string, unknown>> }>>;
+}
+
+let sessionCounter = 0;
+
+export function fakeOpenCodeStore(): FakeOpenCodeStore {
+  return { sessions: new Map(), messages: new Map() };
+}
+
+export async function startFakeOpenCode(options: { username?: string; password?: string; scriptedReply?: boolean; store?: FakeOpenCodeStore; mcpStatus?: Record<string, unknown>; providers?: unknown } = {}): Promise<FakeOpenCode> {
   const username = options.username ?? 'latte';
   const password = options.password ?? 'secret-test-password';
   const expectedAuth = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
-  const sessions = new Map<string, { id: string; directory: string; title: string }>();
-  const messages = new Map<string, Array<{ info: Record<string, unknown>; parts: Array<Record<string, unknown>> }>>();
+  const store = options.store ?? fakeOpenCodeStore();
+  const sessions = store.sessions;
+  const messages = store.messages;
   const streams = new Set<http.ServerResponse>();
   const credentials = new Map<string, Record<string, unknown>>();
   const requests: FakeOpenCode['requests'] = [];
   let counter = 0;
 
+  // Which session asked each permission/question, on THIS process. With a
+  // store shared by several fakes, "the first session" may be someone else's.
+  const askedBy = new Map<string, string>();
   const emit = (directory: string, type: string, properties: Record<string, unknown>) => {
+    if ((type === 'permission.asked' || type === 'question.asked') && typeof properties.id === 'string' && typeof properties.sessionID === 'string') {
+      askedBy.set(properties.id, properties.sessionID);
+    }
     const frame = `data: ${JSON.stringify({ directory, payload: { id: `evt_${++counter}`, type, properties } })}\n\n`;
     for (const res of streams) res.write(frame);
   };
@@ -61,6 +85,7 @@ export async function startFakeOpenCode(options: { username?: string; password?:
         res.on('close', () => streams.delete(res));
         return;
       }
+      if (url.pathname === '/config/providers' && options.providers) return json(200, options.providers);
       if (url.pathname === '/config/providers') {
         return json(200, {
           providers: [{ id: 'fake-provider', name: 'Fake', source: 'api', env: [], options: {}, models: { 'fake-model': { id: 'fake-model', providerID: 'fake-provider', name: 'Fake Model' } } }],
@@ -68,6 +93,9 @@ export async function startFakeOpenCode(options: { username?: string; password?:
         });
       }
       if (url.pathname === '/permission') return json(200, []);
+      // `GET /mcp`: what THIS process connected. Only answered when a test scripts it,
+      // so a fake without it behaves like a server that cannot say (404).
+      if (url.pathname === '/mcp' && req.method === 'GET' && options.mcpStatus) return json(200, options.mcpStatus);
       // Provider catalog + credential store (in memory, never touches disk).
       if (url.pathname === '/provider' && req.method === 'GET') {
         return json(200, {
@@ -104,7 +132,7 @@ export async function startFakeOpenCode(options: { username?: string; password?:
         return json(200, true);
       }
       if (url.pathname === '/session' && req.method === 'POST') {
-        const id = `ses_fake${++counter}`;
+        const id = `ses_fake${++sessionCounter}`;
         sessions.set(id, { id, directory, title: String((body as { title?: string })?.title ?? '') });
         messages.set(id, []);
         return json(200, { id, title: sessions.get(id)!.title, directory, time: { created: Date.now(), updated: Date.now() } });
@@ -139,7 +167,7 @@ export async function startFakeOpenCode(options: { username?: string; password?:
         }
       }
       if (parts[0] === 'permission' && parts[2] === 'reply') {
-        const session = [...sessions.values()][0];
+        const session = sessions.get(askedBy.get(parts[1]) ?? '') ?? [...sessions.values()][0];
         const reply = String((body as { reply?: string })?.reply);
         emit(directory, 'permission.replied', { sessionID: session?.id, requestID: parts[1], reply });
         if (session) {
@@ -150,7 +178,7 @@ export async function startFakeOpenCode(options: { username?: string; password?:
         return json(200, true);
       }
       if (parts[0] === 'question' && (parts[2] === 'reply' || parts[2] === 'reject')) {
-        const session = [...sessions.values()][0];
+        const session = sessions.get(askedBy.get(parts[1]) ?? '') ?? [...sessions.values()][0];
         emit(directory, parts[2] === 'reply' ? 'question.replied' : 'question.rejected', { sessionID: session?.id, requestID: parts[1], answers: (body as { answers?: unknown })?.answers });
         return json(200, true);
       }

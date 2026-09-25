@@ -119,7 +119,7 @@ describe('U8: el copy de coordinación vive en los diccionarios', () => {
     'team.advanced.authority', 'team.run.counts', 'team.run.budget',
     'coordination.short.claudeBelowFloor', 'coordination.short.codexRunCap',
     'coordination.short.codexGlobalCap', 'coordination.short.codexProcessCeiling',
-    'coordination.short.opencodeSharedServer', 'coordination.short.engramMissing',
+    'coordination.short.opencodeRunCap', 'coordination.short.opencodeGlobalCap', 'coordination.short.engramMissing',
     'coordination.short.runtimeRefused', 'coordination.short.coordinationServerDown',
     'coordination.short.disabled',
     'chat.resumed', 'chat.retrying', 'chat.newMessages', 'chat.permission.group',

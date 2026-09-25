@@ -1199,7 +1199,9 @@ export type CoordinationDegradedReason =
   | 'codex_run_cap'
   | 'codex_global_cap'
   | 'codex_process_ceiling'
-  | 'opencode_shared_server'
+  /** OpenCode: los gemelos de los dos topes de Codex (cada miembro de OpenCode tiene su propio proceso). */
+  | 'opencode_run_cap'
+  | 'opencode_global_cap'
   | 'engram_not_installed'
   /**
    * El adaptador entregó MENOS de lo que el planificador había reclamado: el

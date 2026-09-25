@@ -77,11 +77,19 @@ describe('memoryToolsInjectedForWork sólo afirma lo que este Trabajo lleva de v
     expect(planner.memoryToolsInjectedForWork('wrk_a')).toBe(false);
   });
 
-  it('un miembro SIN memoria (opencode) hace `false` al Trabajo entero', async () => {
+  it('un miembro SIN memoria (el runtime no la levantó) hace `false` al Trabajo entero', async () => {
     const planner = makePlanner();
     await planner.assign({ memberId: 'mem_a1', workId: 'wrk_a', brandId: 'brd_a', runtime: 'claude', accountId: null });
     await planner.assign({ memberId: 'mem_a2', workId: 'wrk_a', brandId: 'brd_a', runtime: 'opencode', accountId: null });
+    planner.confirmInjection('mem_a2', ['latte_coordination']);
     expect(planner.memoryToolsInjectedForWork('wrk_a')).toBe(false);
+  });
+
+  it('un miembro de OpenCode ahora lleva memoria como los demás (un proceso por miembro)', async () => {
+    const planner = makePlanner();
+    await planner.assign({ memberId: 'mem_a1', workId: 'wrk_a', brandId: 'brd_a', runtime: 'claude', accountId: null });
+    await planner.assign({ memberId: 'mem_a2', workId: 'wrk_a', brandId: 'brd_a', runtime: 'opencode', accountId: null });
+    expect(planner.memoryToolsInjectedForWork('wrk_a')).toBe(true);
   });
 });
 

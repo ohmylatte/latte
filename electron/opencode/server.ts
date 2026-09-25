@@ -17,6 +17,16 @@ export interface OpenCodeServerOptions {
   log?: (line: string) => void;
   /** Injectable process launcher for bounded tests. */
   spawnImpl?: typeof spawn;
+  /**
+   * Environment for THIS process only, applied after scrubbing: the member's
+   * own variables, the inline MCP config and its bearers. Never argv. It
+   * cannot override the server credentials, which are set last.
+   */
+  extraEnv?: Record<string, string>;
+  /** Called with the pid as soon as the child exists (the stray-process record). */
+  onSpawn?: (pid: number) => void;
+  /** Tests: how the process tree is killed (default: `killProcessTree`). */
+  killProcess?: (child: ChildProcess) => void;
 }
 
 export interface OpenCodeEndpoint {
@@ -43,8 +53,8 @@ export function resolveOpenCodeBinary(executable: string, platform: NodeJS.Platf
 /**
  * Runs `opencode serve` as a child: loopback only, random port, random Basic
  * auth credentials passed through the environment (never on the command
- * line, never logged), no external plugins. One instance serves every work
- * directory through the protocol's per-request `directory` parameter.
+ * line, never logged), no external plugins. Latte runs one per member (see
+ * `ChatManager`), because the inline MCP config lives in the process env.
  */
 export class OpenCodeServer {
   private child: ChildProcess | null = null;
@@ -53,6 +63,11 @@ export class OpenCodeServer {
   private exitReason: string | null = null;
   private readonly platform: NodeJS.Platform;
   private readonly env: NodeJS.ProcessEnv;
+  /**
+   * The process died on its own after it was up (never called after `stop()`).
+   * The owner uses it to close the chats that lived on it.
+   */
+  onExit: ((reason: string) => void) | null = null;
 
   constructor(private readonly options: OpenCodeServerOptions) {
     this.platform = options.platform ?? process.platform;
@@ -67,6 +82,10 @@ export class OpenCodeServer {
     return this.exitReason;
   }
 
+  get pid(): number | null {
+    return typeof this.child?.pid === 'number' ? this.child.pid : null;
+  }
+
   async ensure(): Promise<OpenCodeEndpoint> {
     if (this.running && this.endpoint) return this.endpoint;
     if (this.starting) return this.starting;
@@ -78,7 +97,9 @@ export class OpenCodeServer {
     const child = this.child;
     this.child = null;
     this.endpoint = null;
-    if (child) killProcessTree(child, this.platform);
+    if (!child) return;
+    if (this.options.killProcess) this.options.killProcess(child);
+    else killProcessTree(child, this.platform);
   }
 
   private launch(): Promise<OpenCodeEndpoint> {
@@ -86,7 +107,7 @@ export class OpenCodeServer {
     const password = randomBytes(24).toString('hex');
     const binary = resolveOpenCodeBinary(this.options.executable, this.platform);
     const spec = spawnSpecFor(binary, ['serve', '--pure', '--port', '0', '--hostname', '127.0.0.1'], this.platform, this.env);
-    const env = scrubEnv(this.env);
+    const env = { ...scrubEnv(this.env), ...(this.options.extraEnv ?? {}) };
     env.OPENCODE_SERVER_USERNAME = username;
     env.OPENCODE_SERVER_PASSWORD = password;
     const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
@@ -104,6 +125,7 @@ export class OpenCodeServer {
         return;
       }
       this.child = child;
+      if (typeof child.pid === 'number') this.options.onSpawn?.(child.pid);
 
       const timer = setTimeout(() => {
         if (settled) return;
@@ -136,7 +158,10 @@ export class OpenCodeServer {
       });
       child.on('exit', (code, signal) => {
         this.exitReason = `OpenCode server exited (code ${code ?? 'null'}${signal ? `, signal ${signal}` : ''})`;
-        if (this.child === child) {
+        // `stop()` clears `this.child` BEFORE killing, so only a death nobody
+        // asked for reaches the owner.
+        const unexpected = this.child === child;
+        if (unexpected) {
           this.child = null;
           this.endpoint = null;
         }
@@ -144,7 +169,9 @@ export class OpenCodeServer {
           settled = true;
           clearTimeout(timer);
           reject(new Error(`${this.exitReason}: ${redact(output, password).trim().slice(-400)}`));
+          return;
         }
+        if (unexpected) this.onExit?.(this.exitReason);
       });
     });
   }

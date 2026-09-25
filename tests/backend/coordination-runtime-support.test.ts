@@ -69,26 +69,23 @@ describe('LatteService.coordinationRuntimeSupport (task 6.33)', () => {
 
   /**
    * La capacidad viaja desde el ADAPTADOR hasta la fila, sin listas paralelas
-   * en el medio. Claude reporta lo que conectó en su `system/init` y Codex lo
-   * pregunta por `mcpStatus`; el servidor de OpenCode no expone ningún
-   * endpoint que liste servidores MCP, así que para él la confirmación no
-   * llega nunca — y "sin confirmar" (que promete que va a llegar) sería una
-   * espera eterna disfrazada de transitorio.
+   * en el medio. Claude reporta lo que conectó en su `system/init`, Codex lo
+   * pregunta por `mcpStatus` y OpenCode por `GET /mcp` (cada miembro tiene su
+   * propio proceso desde la paridad de OpenCode, S1/S2).
    */
   describe('la fila dice si el runtime PUEDE confirmar, no sólo si confirmó', () => {
-    it('OpenCode declara que no informa la conexión; Claude y Codex, que sí', async () => {
+    it('los tres runtimes declaran que informan la conexión, e inyectan por miembro', async () => {
       b = await makeBackend({ runner: claudeResolvable('2.1.263') });
       // `b.chat` ES el adaptador de OpenCode (el `ChatManager`).
-      expect(b.chat.confirmsMcpInjection).toBe(false);
+      expect(b.chat.confirmsMcpInjection).toBe(true);
       expect(b.claude.confirmsMcpInjection).toBe(true);
       expect(b.codex).not.toBeNull();
       expect(b.codex!.confirmsMcpInjection).toBe(true);
-      // Y es una capacidad DISTINTA de poder inyectar: OpenCode tampoco
-      // inyecta, pero las dos cosas se declaran por separado a propósito.
-      expect(b.chat.mcpInjection).toBe('none');
+      // Y son capacidades distintas, declaradas por separado a propósito.
+      expect(b.chat.mcpInjection).toBe('per-member');
     });
 
-    it('un miembro de OpenCode llega a la UI con `runtimeReportsInjection:false`', async () => {
+    it('un miembro de OpenCode llega a la UI con `runtimeReportsInjection:true`, sin confirmar todavía', async () => {
       b = await makeBackend({ runner: claudeResolvable('2.1.263') });
       // Sin spawnear: OpenCode no está instalado en este worktree, y lo que se
       // prueba es la fila, no el proceso.
@@ -99,8 +96,9 @@ describe('LatteService.coordinationRuntimeSupport (task 6.33)', () => {
 
       const rows = await b.service.coordinationRuntimeSupport(work.id);
       expect(rows).toHaveLength(1);
-      expect(rows[0].runtimeReportsInjection).toBe(false);
-      // Y nunca confirmado: no hay quien confirme.
+      expect(rows[0].runtimeReportsInjection).toBe(true);
+      // El `start` simulado no reportó nada (`injectedMcpServers` ausente):
+      // "no sé" no es una confirmación.
       expect(rows[0].runtimeConfirmed).toBe(false);
     });
 

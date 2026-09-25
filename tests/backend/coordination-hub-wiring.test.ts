@@ -69,11 +69,12 @@ describe('CoordinationInjectionPlanner — mint for every member (task 6.28)', (
     expect(tokens.size).toBe(1);
   });
 
-  it('mints even for a runtime that never receives the token (OpenCode)', async () => {
+  it('mints even for a member that never receives the token (a second OpenCode member past its bootstrap slot)', async () => {
     const { planner, tokens } = makePlanner();
-    const { servers } = await planner.assign(member({ runtime: 'opencode' }));
-    expect(servers).toBeUndefined();
-    expect(tokens.size).toBe(1); // minted, just never delivered
+    await planner.assign(member({ runtime: 'opencode', memberId: 'mem_first' }));
+    const { servers } = await planner.assign(member({ runtime: 'opencode', memberId: 'mem_second' }));
+    expect(servers?.some((s) => s.kind === 'http')).toBe(false);
+    expect(tokens.size).toBe(2); // minted, just never delivered to the second
   });
 
   it('release() revokes the token', async () => {
@@ -196,14 +197,18 @@ describe('CoordinationInjectionPlanner — ceilings degrade, never starve silent
   });
 });
 
-describe('CoordinationInjectionPlanner — OpenCode never gets either kind (task 6.32)', () => {
-  it('OpenCode never receives an AdapterMcpServer of either kind, reason opencode_shared_server, even for memory alone', async () => {
-    const { planner } = makePlanner({ activeRuns: new Set(['wrk_1']) /* coordination flag concept does not exist yet; the point holds regardless of run state too */ });
-    const { servers, status } = await planner.assign(member({ runtime: 'opencode' }));
-    expect(servers).toBeUndefined();
-    expect(status.coordinationInjected).toBe(false);
-    expect(status.memoryInjected).toBe(false);
-    expect(status.reason).toBe('opencode_shared_server');
+// Task 6.32 said OpenCode got neither kind, because Latte ran ONE OpenCode
+// server for every member and the inline config is per process. Each member
+// now has its own process (`opencode-per-member.test.ts`), so OpenCode gets
+// both, under its own twin caps (`opencode-mcp-injection.test.ts`).
+describe('CoordinationInjectionPlanner — OpenCode gets both kinds, like Codex', () => {
+  it('an OpenCode member with an active run receives coordination and memory', async () => {
+    const { planner } = makePlanner({ activeRuns: new Set(['wrk_1']) });
+    const { servers, status } = await planner.assign(member({ runtime: 'opencode', accountId: null }));
+    expect(servers?.map((s) => s.name)).toEqual(['latte_coordination', 'latte_memory']);
+    expect(status.coordinationInjected).toBe(true);
+    expect(status.memoryInjected).toBe(true);
+    expect(status.reason).toBeNull();
   });
 });
 
