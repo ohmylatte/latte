@@ -541,7 +541,7 @@ export type ChatPart =
   | { type: 'tool'; id: string; tool: string; status: ChatToolStatus; title: string; input: string; output: string; error: string };
 export interface ChatMessage { id: string; chatId: string; role: ChatRole; parts: ChatPart[]; createdAt: string; completed: boolean; error: string | null }
 /** Which local runtime drives a chat: OpenCode (API-key providers), Claude Code or Codex (their own subscription logins). */
-export type ChatRuntime = 'opencode' | 'claude' | 'codex';
+export type ChatRuntime = 'opencode' | 'claude' | 'codex' | 'grok' | 'hermes';
 /**
  * A live conversation. Its id is the team member's id, so it stays stable
  * across pause/resume and app restarts.

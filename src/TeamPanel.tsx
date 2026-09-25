@@ -200,7 +200,7 @@ export interface TeamPanelProps {
   onSetCoordinator?: (memberId: string) => void;
 }
 
-const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex' };
+const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex', grok: 'Grok', hermes: 'Hermes' };
 /**
  * El rol neutral que siempre esta (`electron/agents/roles.ts`): sin run y sin
  * permiso de coordinacion, es a quien le llega lo que se escribe en el modo
@@ -1096,7 +1096,7 @@ const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e)
 
 /** An agent that can take the work over right now: the primary agent when it is ready, or a logged-in alternative. */
 interface ContinueOption extends ContinuationTarget { label: string }
-const RUNTIME_NAME: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude Code', codex: 'Codex' };
+const RUNTIME_NAME: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude Code', codex: 'Codex', grok: 'Grok', hermes: 'Hermes' };
 
 /**
  * Continue a member's work with another agent or account.
@@ -1239,7 +1239,9 @@ function modelListFor(runtime: ChatRuntime, accountId: string | null): Promise<A
       detail: t('team.model.openCodeDetail', { suffix: status.defaultModel ? t('team.model.openCodeDefault', { model: status.defaultModel }) : '' }),
       models: status.models.map(id => ({ id, label: id, description: '', isDefault: id === status.defaultModel })),
     }))
-    : api.listAccountModels(runtime, accountId ?? 'system');
+    : runtime === 'claude' || runtime === 'codex'
+      ? api.listAccountModels(runtime, accountId ?? 'system')
+      : Promise.resolve({ source: 'suggested', models: [], detail: '' });
 }
 
 function ModelPicker({ member, busy, onModel }: { member: TeamMember; busy: boolean; onModel: (memberId: string, model: string | null) => void }) {

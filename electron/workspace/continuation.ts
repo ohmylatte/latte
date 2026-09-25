@@ -54,7 +54,7 @@ export interface ContinuationInput {
   asks: Array<{ roleName: string; request: string }>;
 }
 
-const RUNTIME_NAME: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude Code', codex: 'Codex' };
+const RUNTIME_NAME: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude Code', codex: 'Codex', grok: 'Grok', hermes: 'Hermes' };
 const DECISION_BLOCK = /```latte-decision\s*\r?\n[\s\S]*?```/g;
 const BRAND_CONTEXT_BLOCK = /```latte-brand-context\s*\r?\n[\s\S]*?```/g;
 const HEADING = /^#{1,6}\s/;

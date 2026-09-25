@@ -105,7 +105,7 @@ interface Call {
 }
 
 const PRIMARY_KEY = 'primary_agent';
-const RUNTIME_LABEL: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude Code', codex: 'Codex' };
+const RUNTIME_LABEL: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude Code', codex: 'Codex', grok: 'Grok', hermes: 'Hermes' };
 
 export function isChatRuntime(value: unknown): value is ChatRuntime {
   return value === 'opencode' || value === 'claude' || value === 'codex';
@@ -255,7 +255,7 @@ export class AgentHub {
   private labelFor(runtime: ChatRuntime, model: string | null, accountId: string | null): string {
     const parts: string[] = [RUNTIME_LABEL[runtime]];
     if (runtime !== 'opencode' && accountId) {
-      const account = accountId === SYSTEM_ACCOUNT_ID ? null : this.deps.accounts.list(runtime).find((a) => a.id === accountId);
+      const account = accountId === SYSTEM_ACCOUNT_ID || !isAccountRuntime(runtime) ? null : this.deps.accounts.list(runtime).find((a) => a.id === accountId);
       parts.push(accountId === SYSTEM_ACCOUNT_ID ? 'mi sesión' : account?.label ?? accountId);
     }
     if (model) parts.push(model);

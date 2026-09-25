@@ -20,7 +20,7 @@ import type { Brand, ChatRuntime, Decision, DocumentState, HandoffRequest, TeamM
  * next-step rung below reuses `orientationSummary`).
  */
 
-const RUNTIME_NAME: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude Code', codex: 'Codex' };
+const RUNTIME_NAME: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude Code', codex: 'Codex', grok: 'Grok', hermes: 'Hermes' };
 
 export interface TrabajoViewProps {
   /** Null before a brand resolves; the surface must still be honest. */
