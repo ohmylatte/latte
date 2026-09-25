@@ -34,7 +34,7 @@ export function fakeOpenCodeStore(): FakeOpenCodeStore {
   return { sessions: new Map(), messages: new Map() };
 }
 
-export async function startFakeOpenCode(options: { username?: string; password?: string; scriptedReply?: boolean; store?: FakeOpenCodeStore; mcpStatus?: Record<string, unknown> } = {}): Promise<FakeOpenCode> {
+export async function startFakeOpenCode(options: { username?: string; password?: string; scriptedReply?: boolean; store?: FakeOpenCodeStore; mcpStatus?: Record<string, unknown>; providers?: unknown } = {}): Promise<FakeOpenCode> {
   const username = options.username ?? 'latte';
   const password = options.password ?? 'secret-test-password';
   const expectedAuth = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
@@ -85,6 +85,7 @@ export async function startFakeOpenCode(options: { username?: string; password?:
         res.on('close', () => streams.delete(res));
         return;
       }
+      if (url.pathname === '/config/providers' && options.providers) return json(200, options.providers);
       if (url.pathname === '/config/providers') {
         return json(200, {
           providers: [{ id: 'fake-provider', name: 'Fake', source: 'api', env: [], options: {}, models: { 'fake-model': { id: 'fake-model', providerID: 'fake-provider', name: 'Fake Model' } } }],

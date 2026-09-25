@@ -1,7 +1,7 @@
 import type { ChildProcess, spawn } from 'node:child_process';
 import { DEFAULT_EFFORT_TIER, EMPTY_USAGE, type ChatEvent, type ChatMessage, type ChatPart, type ChatRuntimeStatus, type ChatSession, type ChatUsage, type PermissionReply, type ProviderAuthMethod, type ProviderInfo, type ProviderOAuthStart } from '../../shared/contracts';
 import { forgetServerPid, recordServerPid } from '../agents/codex/staleServers';
-import { opencodeVariantForTier } from '../agents/tiers';
+import { opencodeVariantFor } from '../agents/tiers';
 import { MAX_OPENCODE_SERVERS_TOTAL } from '../coordination/limits';
 import { sessionFrom, type AdapterMcpServer, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../agents/types';
 import { NotFoundError, UnavailableError, ValidationError } from '../core/errors';
@@ -297,8 +297,10 @@ export class ChatManager implements RuntimeAdapter {
     }
 
     let summary: { models: string[]; defaultModel: string | null } = { models: [], defaultModel: null };
+    let providers: OcProvidersResponse | null = null;
     try {
-      summary = summariseProviders(await client.providers(input.directory));
+      providers = await client.providers(input.directory);
+      summary = summariseProviders(providers);
     } catch {
       summary = { models: [], defaultModel: null };
     }
@@ -316,7 +318,7 @@ export class ChatManager implements RuntimeAdapter {
     const label = input.label ?? `OpenCode · ${chosenModel ?? 'modelo por defecto'}`;
     const session: ChatSession = { ...sessionFrom({ ...input, label }, 'opencode', chosenModel, null, label, resumed), id: chatId };
     const instructions = input.instructions?.trim() ?? '';
-    const live: LiveChat = { session, runtimeKey: runtime.key, ocSessionId, directory: input.directory, model, system: instructions || null, busy: false, messages: new Map(), order: [], pendingPermissions: new Set(), pendingQuestions: new Set(), variant: opencodeVariantForTier(input.tier ?? DEFAULT_EFFORT_TIER), usage: EMPTY_USAGE, usageSeen: new Set() };
+    const live: LiveChat = { session, runtimeKey: runtime.key, ocSessionId, directory: input.directory, model, system: instructions || null, busy: false, messages: new Map(), order: [], pendingPermissions: new Set(), pendingQuestions: new Set(), variant: opencodeVariantFor(input.tier ?? DEFAULT_EFFORT_TIER, modelVariants(providers, chosenModel)), usage: EMPTY_USAGE, usageSeen: new Set() };
     this.chats.set(session.id, live);
     this.byOcSession.set(ocSessionId, session.id);
 
@@ -708,8 +710,16 @@ export class ChatManager implements RuntimeAdapter {
    *
    * The numbers only settle when the message is finished, and
    * `message.updated` fires several times per message, so the count is taken
-   * once, on the first finished copy. `reasoning` is a breakdown of `output`
-   * in the SDK the server uses, so adding it would charge those tokens twice.
+   * once, on the first finished copy.
+   *
+   * One assistant message is ONE model call (measured on 1.18.32: a turn with
+   * a tool is two messages), so `contextTokens` from each message is already
+   * "the last call" (N3), never a sum across the turn.
+   *
+   * `reasoning` is NOT inside `output`: the server's own `total` is
+   * input + output + reasoning + cache.read + cache.write (measured:
+   * 21318 = 19103 + 108 + 179 + 1928). What the model generated is output plus
+   * reasoning; counting `output` alone hid most of a thinking model's work.
    */
   private reportUsage(live: LiveChat, info: Record<string, unknown>): void {
     const id = typeof info.id === 'string' ? info.id : '';
@@ -726,7 +736,7 @@ export class ChatManager implements RuntimeAdapter {
     const cost = typeof info.cost === 'number' && Number.isFinite(info.cost) && info.cost > 0 ? info.cost : null;
     const turn: ChatUsage = {
       inputTokens,
-      outputTokens: tokenCount(tokens.output),
+      outputTokens: tokenCount(tokens.output) + tokenCount(tokens.reasoning),
       cacheReadTokens,
       cacheWriteTokens,
       turns: 1,
@@ -788,6 +798,22 @@ export function translateAuthMethods(methods: OcAuthMethod[] | undefined): Provi
         options: (Array.isArray(p.options) ? p.options : []).filter(isRecord).map((o) => ({ label: str(o.label), value: str(o.value), hint: str(o.hint) })),
       })),
     }));
+}
+
+/**
+ * The effort variants a model offers (`models[id].variants`), or `null` when
+ * the catalog could not say: no catalog, an unknown model, or a server that
+ * does not publish variants at all. `[]` is a real answer ("no knob").
+ */
+export function modelVariants(response: OcProvidersResponse | null | undefined, model: string | null): string[] | null {
+  if (!response || !model || !Array.isArray(response.providers)) return null;
+  const slash = model.indexOf('/');
+  if (slash <= 0) return null;
+  const provider = response.providers.find((p) => isRecord(p) && p.id === model.slice(0, slash));
+  if (!provider || !isRecord(provider.models)) return null;
+  const entry = provider.models[model.slice(slash + 1)];
+  if (!isRecord(entry) || !isRecord(entry.variants)) return null;
+  return Object.keys(entry.variants);
 }
 
 export function summariseProviders(response: OcProvidersResponse | null | undefined): { models: string[]; defaultModel: string | null } {

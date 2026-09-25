@@ -74,6 +74,15 @@ describe('contextWeight', () => {
 });
 
 describe('describeUsage', () => {
+  // The total `ChatManager` reports for a REAL opencode 1.18.32 turn with one
+  // tool (two model calls, free model, cost 0): see
+  // tests/backend/opencode-usage-tier.test.ts for how it is added up.
+  it('an OpenCode member reads "Contexto: X · Y generados", context from the last call', () => {
+    const opencodeTurn = usage({ inputTokens: 19_216, outputTokens: 310, cacheReadTokens: 23_244, cacheWriteTokens: 0, turns: 2, costUsd: null, contextTokens: 21_429 });
+    expect(describeUsage(opencodeTurn, 'es-AR')).toBe('Contexto: 21,4 mil · 19,5 mil generados');
+    expect(describeUsage(opencodeTurn, 'en-US')).toBe('Context: 21.4K · 19.5K generated');
+  });
+
   it('says nothing before the first turn', () => {
     expect(describeUsage(EMPTY_USAGE, 'es-AR')).toBe('');
     expect(describeUsage(usage({ turns: 0, inputTokens: 500 }), 'en-US')).toBe('');

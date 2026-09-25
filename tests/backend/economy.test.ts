@@ -345,15 +345,16 @@ describe('OpenCode usage and variant, through the hub', () => {
     fake.emit('', 'message.updated', reply('msg_done_1'));
     await waitFor(() => usageEvents(chatEvents).length === 1);
     const first = usageEvents(chatEvents)[0];
-    // `reasoning` is a breakdown of `output`, not tokens to charge twice.
-    expect(first.turn).toEqual({ inputTokens: 80, outputTokens: 40, cacheReadTokens: 500, cacheWriteTokens: 20, turns: 1, costUsd: 0.004, contextTokens: 600 });
+    // `reasoning` is NOT inside `output` on OpenCode (measured on 1.18.32: the
+    // server's own `total` adds them separately), so generated = 40 + 12.
+    expect(first.turn).toEqual({ inputTokens: 80, outputTokens: 52, cacheReadTokens: 500, cacheWriteTokens: 20, turns: 1, costUsd: 0.004, contextTokens: 600 });
 
     // The same message settling again is the same turn, not a second one.
     fake.emit('', 'message.updated', reply('msg_done_1'));
     fake.emit('', 'message.updated', reply('msg_done_2'));
     await waitFor(() => usageEvents(chatEvents).length === 2);
     const second = usageEvents(chatEvents)[1];
-    expect(second.total).toMatchObject({ inputTokens: 160, outputTokens: 80, cacheReadTokens: 1000, turns: 2 });
+    expect(second.total).toMatchObject({ inputTokens: 160, outputTokens: 104, cacheReadTokens: 1000, turns: 2 });
 
     // What the interface reads comes from the database, so it outlives the process.
     const stored = (await b.service.listTeam(work.id))[0].usage;

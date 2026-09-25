@@ -112,3 +112,38 @@ const OPENCODE: Record<EffortTier, string> = { light: 'low', balanced: 'medium',
 export function opencodeVariantForTier(tier: EffortTier): string {
   return OPENCODE[asEffortTier(tier)];
 }
+
+/**
+ * The nearest step each tier accepts when the model lacks its own, in order.
+ * `deep` stays `high` even on a model that offers `xhigh`/`max`, the same
+ * ceiling Codex uses: the tier promises "think harder", not "the most
+ * expensive setting this provider sells".
+ */
+const OPENCODE_LADDER: Record<EffortTier, readonly string[]> = {
+  light: ['low', 'minimal', 'medium'],
+  balanced: ['medium', 'high', 'low'],
+  deep: ['high', 'xhigh', 'max', 'medium'],
+};
+
+/**
+ * The tier, said in the variants THIS model has. OpenCode lists them per
+ * model in `GET /config/providers` (`models[id].variants`), and they differ a
+ * lot: measured on 1.18.32, one free model offers low/medium/high, another
+ * low..max, and the default one offers none at all.
+ *
+ * - `null` catalog (unknown): the tier's own word, as before.
+ * - An empty list: the model has no effort knob, so nothing is sent.
+ * - Otherwise the first step of the tier's ladder the model lists, or nothing
+ *   rather than a word the model never offered.
+ *
+ * The MODEL never comes from the tier on OpenCode: its providers are
+ * arbitrary (any API key, any local server), so there is no alias like
+ * Claude's `sonnet`/`opus` to map to. The member's own `model` is sent on every
+ * prompt when set; otherwise OpenCode's default model answers. Nothing about
+ * the model goes into the inline config.
+ */
+export function opencodeVariantFor(tier: EffortTier, available: readonly string[] | null): string | null {
+  const safeTier = asEffortTier(tier);
+  if (available === null) return OPENCODE[safeTier];
+  return OPENCODE_LADDER[safeTier].find((step) => available.includes(step)) ?? null;
+}
