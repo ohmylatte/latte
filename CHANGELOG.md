@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.5.0 — 2026-09-25
+
+El modo Equipo deja de parecer un equipo en silencio: ves qué hace cada miembro mientras trabaja, una línea te dice qué pasa ahora y qué se espera de vos, y un coordinador en pausa ya no detiene el run sin avisar.
+
+### Se ve que trabajan
+
+- **Qué hace cada miembro, ahora.** Mientras trabaja, su fila dice "Lee Cuestionario…", "Busca en memoria: Ayulem", "Escribe estrategia.md", "Consulta The Agentcy". Su hilo lista los pasos de cada despacho y los pliega en "N pasos" cuando reporta. Nunca el razonamiento ni las salidas: eso sigue en el chat.
+- **La línea "Ahora"** bajo el encabezado del run: "Paid Media espera tu respuesta", "El Asistente está en pausa y tiene 1 mensaje sin leer · Reanudar", "Falta: auditar la cuenta · sin despachar", "Nada te espera: el equipo trabaja". Una sola frase, siempre.
+- **Coordinador en pausa con run activo no es silencio.** Si le llega un mensaje y vos lo pausaste, el run queda suspendido con ese motivo, visible en el encabezado y en la tira de equipos. Reanudarlo entrega lo encolado. La pausa la hiciste vos: Latte no la deshace por detrás.
+- **El chat completo del coordinador** se abre desde su detalle en el modo Equipo, con una pestaña mientras está abierto. Sus permisos pendientes se ven en su hilo.
+
+### Honestidad de los números
+
+- **Títulos de tarea reales.** El título ya no es la primera línea del pedido (que suele ser el bloque de contexto): el coordinador puede mandar un título por tarea, y si no, se deriva de la línea de la tarea.
+- **El aviso "esta conversación ya pesa mucho" medía mal.** Claude Code reporta el uso de todas las llamadas de un turno sumadas; ahora el peso es el contexto de la última llamada. La línea de consumo dice "Contexto: 120 mil · 35 mil generados".
+
+### Preguntas por el canal formal
+
+- Las preguntas de un miembro a la persona van por `latte_ask` (o la pregunta del runtime), no en prosa al final de un mensaje: así aparecen como tarjeta con badge y "te espera".
+
+### Conocido
+
+- "Este trabajo lleva…" sigue contando las lecturas de caché a peso completo; una vista de consumo por marca y por día viene en la próxima.
+- OpenCode sigue sin recibir conexiones; Meta sigue necesitando una app registrada; el PNG del avatar y los archivos producidos por tarea siguen pendientes.
+
 ## 1.4.0 — 2026-09-24
 
 El equipo deja de ser de cada trabajo y pasa a ser de la marca. Armás el plantel una vez, con sus caras y sus roles, y cada trabajo convoca a quién participa. Y vos elegís quién coordina.
