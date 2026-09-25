@@ -76,6 +76,8 @@ import type {
   TeamMember,
   TeamMemberOptions,
   BrandMember,
+  BrandIdentityExtractionResult,
+  BrandIdentityView,
   UntrackedFile,
   Work,
   WorkDocument,
@@ -86,6 +88,7 @@ import type {
 } from '../../shared/contracts';
 import { isOnboardingDraft } from '../../shared/contracts';
 import {
+  GENERATION_SCHEMA_VERSION,
   type BrandContextPort,
   type SkillRef,
   type SkillResolverPort,
@@ -129,12 +132,15 @@ import type { LearningRepository } from '../storage/learningRepository';
 import { briefDocumentId, type CoordinationRunRecord, type DocumentRecord, type LatteRepository } from '../storage/repository';
 import { collectBrandMemory, hasInheritedContent, type BrandMemorySnapshot } from '../workspace/brandMemory';
 import { brandContextNudge, electBrandContextOwner } from '../workspace/brandContextNudge';
-import { INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
+import { DRAFTS_DIR, INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
 import { checkFolder, contains, importFileName, kindFromFileName, readFunnelProposal, readHandoff, scanFolder, titleFromFileName } from '../workspace/linkFolder';
 import { renderDocumentTemplate } from '../workspace/templates';
 import { openItems, renderContinuation } from '../workspace/continuation';
 import { DELIVERABLES_DIR, DeliverableFiles, deliverableName } from '../workspace/deliverables';
 import { publishDeliverable } from '../workspace/publishDeliverable';
+import { IDENTITY_DIR, IDENTITY_DOC, identityExtractionSpec, projectIdentity } from '../branding/identity';
+import { REVIEWER_ROLE_ID } from '../coordination/engine';
+import { hashGenerationContext } from '../generation/canon';
 import { documentFileName, fingerprintOf, type DocumentOnDisk, type WorkspaceFiles } from '../workspace/workspace';
 import { BRAND_CONTEXT_DRAFT_PROMPT_EN, BRAND_CONTEXT_DRAFT_PROMPT_ES, brandContextFingerprint, requireBrandContextInput } from '../workspace/brandContextProtocol';
 import { composeBrandContext } from '../../shared/brandContext';
@@ -273,6 +279,8 @@ function defaultSweepTimer(tick: () => void, everyMs: number): () => void {
 const FOLDER_TRUST_KEY = 'trust-folder:';
 /** Off is the exception, so only a disabled skill is written down. */
 const SKILL_OFF_KEY = 'skill-off:';
+/** E4: marca los recibos de `generations` que nacieron de la evidencia de una entrega, no de un `prepareGeneration`. */
+const IDENTITY_RECEIPT_META = 'identity_receipt_id:';
 const DOCUMENT_KINDS: DocumentKind[] = ['brief', 'strategy', 'calendar', 'research', 'copy', 'note'];
 const DOCUMENT_STATUSES: DocumentStatus[] = ['draft', 'review', 'approved'];
 
@@ -344,6 +352,10 @@ export class LatteService implements BackendApi {
           const work = deps.repo.getWork(workId);
           return publishDeliverable(deps.files.workDir(work.brandId, work.id), relativePath, this.clock());
         },
+        // E4: la evidencia de una entrega publicada, con el kit que tenía el
+        // trabajo, y el `IDENTIDAD.md` que el equipo extrajo, al kit.
+        recordEvidence: (input) => this.recordDeliveryEvidence(input),
+        onReported: (input) => this.importReportedIdentity(input),
       },
     });
     this.branding = new BrandingService({
@@ -736,6 +748,125 @@ export class LatteService implements BackendApi {
 
   async readWorkBrandContext(workId: string) {
     return this.branding.readWorkBrandContext(workId);
+  }
+
+  // Marca → Identidad (E4) ----------------------------------------------------
+
+  async readBrandIdentity(brandId: string): Promise<BrandIdentityView> {
+    return this.branding.readIdentity(this.deps.repo.getBrand(requireId(brandId, 'brandId')).id);
+  }
+
+  /** Abre el selector de archivos del escritorio y los trae al borrador del kit. Sin elegir nada, no cambia nada. */
+  async addBrandIdentityFiles(brandId: string): Promise<BrandIdentityView> {
+    const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
+    if (!this.deps.chooseFiles) throw new UnavailableError('Traer archivos requiere la aplicación de escritorio');
+    const chosen = await this.deps.chooseFiles('Elegí el logo, los manuales o la paleta de la marca');
+    if (chosen.length === 0) return this.branding.readIdentity(brand.id);
+    return this.branding.addIdentityFiles(brand.id, chosen);
+  }
+
+  async removeBrandIdentityFile(brandId: string, fileId: string): Promise<BrandIdentityView> {
+    const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
+    return this.branding.removeIdentityFile(brand.id, requireText(fileId, 'fileId', LIMITS.name));
+  }
+
+  /**
+   * Aprobar es de la persona: publica el borrador como versión vigente, lo
+   * proyecta en `identidad/` de cada trabajo de la marca (con o sin
+   * conversación abierta: son archivos nuevos, no los de instrucciones) y
+   * reescribe las instrucciones de los trabajos sin nadie adentro.
+   */
+  async approveBrandIdentity(brandId: string): Promise<BrandIdentityView> {
+    const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
+    const view = this.branding.approveIdentity(brand.id);
+    this.projectBrandIdentity(brand);
+    return view;
+  }
+
+  async revokeBrandIdentity(brandId: string): Promise<BrandIdentityView> {
+    const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
+    const view = this.branding.revokeIdentity(brand.id);
+    this.projectBrandIdentity(brand);
+    return view;
+  }
+
+  private projectBrandIdentity(brand: Brand): void {
+    const kit = this.branding.approvedIdentity(brand.id);
+    for (const work of this.deps.repo.listWorks(brand.id)) {
+      try { projectIdentity(this.deps.files.workDir(brand.id, work.id), kit); }
+      catch (error) { this.deps.log?.(`[latte] identity projection failed (work=${work.id}): ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    this.refreshBrandWorksInstructions(brand);
+  }
+
+  /**
+   * "Extraer identidad con el equipo": una tarea INTERNA al revisor, en el
+   * trabajo más reciente de la marca, que lee las fuentes del kit (copiadas
+   * adentro del trabajo, donde el agente puede leerlas) y escribe
+   * `borradores/identidad/IDENTIDAD.md`. Su reporte lo suma al kit; la
+   * persona lo aprueba.
+   */
+  async requestBrandIdentityExtraction(brandId: string): Promise<BrandIdentityExtractionResult> {
+    const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
+    const sources = this.branding.identitySources(brand.id);
+    if (sources.length === 0) throw new ValidationError('Agregá el logo o los manuales antes de pedirle la identidad al equipo');
+    const work = [...this.deps.repo.listWorks(brand.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    if (!work) throw new ValidationError('Creá un trabajo en esta marca: el equipo extrae la identidad adentro de un trabajo');
+    const workDir = this.deps.files.workDir(brand.id, work.id);
+    const target = nodePath.join(workDir, DRAFTS_DIR, IDENTITY_DIR, 'fuentes');
+    nodeFs.mkdirSync(target, { recursive: true });
+    for (const source of sources) nodeFs.copyFileSync(source.file, nodePath.join(target, source.name));
+    const locale = this.deps.repo.getMeta(`work_content_locale:${work.id}`) === 'en-US' ? 'en-US' : 'es-AR';
+    const title = locale === 'en-US' ? `Extract the identity of ${brand.name}` : `Extraer la identidad de ${brand.name}`;
+    let team: TeamMember[] = [];
+    try { team = this.deps.hub.listTeam(work.id).filter((m) => m.status !== 'ended'); } catch { team = []; }
+    const coordinator = this.effectiveCoordinator(work.id) ?? team.find((m) => m.roleId === ASSISTANT_ROLE_ID)?.id ?? team[0]?.id ?? null;
+    const result = await this.coordination.requestPersonTask(work.id, {
+      roleId: REVIEWER_ROLE_ID,
+      title,
+      spec: identityExtractionSpec(brand.name, sources.map((s) => s.name)),
+    }, coordinator);
+    return { outcome: result.outcome, workId: work.id, workTitle: work.title, reason: result.reason };
+  }
+
+  /** E4: el `IDENTIDAD.md` que reportó el equipo entra al borrador del kit de la marca. */
+  private importReportedIdentity(input: { workId: string; files: string[] }): void {
+    const expected = `${DRAFTS_DIR}/${IDENTITY_DIR}/${IDENTITY_DOC}`.toLowerCase();
+    if (!input.files.some((file) => file.toLowerCase() === expected)) return;
+    const work = this.deps.repo.getWork(input.workId);
+    const file = nodePath.join(this.deps.files.workDir(work.brandId, work.id), DRAFTS_DIR, IDENTITY_DIR, IDENTITY_DOC);
+    this.branding.setIdentityDoc(work.brandId, nodeFs.readFileSync(file));
+  }
+
+  /**
+   * E4 (c): la evidencia de una entrega que pasó la revisión. `delivery_evidence`
+   * cuelga de un recibo de `generations`: acá el recibo dice qué kit tenía el
+   * trabajo (o ninguno), uno por trabajo y por kit, y queda marcado para que
+   * el puntero de generaciones no lo confunda con uno fijado.
+   */
+  private recordDeliveryEvidence(input: { workId: string; reviewerId: string | null; published: string; at: string }): void {
+    const work = this.deps.repo.getWork(input.workId);
+    const kit = this.branding.approvedIdentity(work.brandId);
+    const key = `identity_receipt:${work.id}:${kit?.hash ?? 'neutral'}`;
+    let generationId = this.deps.repo.getMeta(key);
+    if (!generationId || !this.deps.repo.getGeneration(generationId)) {
+      generationId = newId('gen');
+      const sealed = hashGenerationContext({
+        schemaVersion: GENERATION_SCHEMA_VERSION,
+        workId: work.id,
+        brandId: work.brandId,
+        brandContext: kit ? { kitId: kit.kitId, version: kit.version, hash: kit.hash } : null,
+        skillRefs: [],
+      });
+      this.deps.repo.insertGeneration({ id: generationId, workId: work.id, brandId: work.brandId, context: sealed.context, contextJson: sealed.json, contextHash: sealed.hash, createdAt: input.at });
+      this.deps.repo.setMeta(key, generationId);
+      this.deps.repo.setMeta(IDENTITY_RECEIPT_META + generationId, '1');
+    }
+    let runtime = 'latte';
+    if (input.reviewerId) {
+      try { runtime = this.deps.hub.listTeam(work.id).find((m) => m.id === input.reviewerId)?.runtime ?? runtime; } catch { /* sin equipo vivo */ }
+    }
+    this.deps.repo.insertDeliveryEvidence({ id: newId('dev'), generationId, runtime, chatId: input.reviewerId, projectedAt: input.at, filesWritten: [input.published] });
   }
 
   // Works -------------------------------------------------------------------
@@ -3065,6 +3196,21 @@ export class LatteService implements BackendApi {
    * did. The brand-context nudge is computed here, brand-scoped: only the
    * elected work of an empty brand may draft it, and the others get a reason.
    */
+  /**
+   * E4: cada trabajo de la marca recibe la identidad aprobada en `identidad/`
+   * cada vez que Latte le reescribe las instrucciones (al crearlo, al
+   * abrirlo, al aprobar). Idempotente; un fallo de disco no puede dejar al
+   * trabajo sin instrucciones: se registra y rige neutral.
+   */
+  private syncIdentity(brand: Brand, work: Work): { hash: string } | null {
+    try {
+      return projectIdentity(this.deps.files.workDir(brand.id, work.id), this.branding.approvedIdentity(brand.id));
+    } catch (error) {
+      this.deps.log?.(`[latte] identity projection failed (work=${work.id}): ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
   private renderAndWriteInstructions(brand: Brand, work: Work) {
     // `memoryToolsInjected` (task 6.27) sale del planificador real, no de un
     // `undefined`: esa bandera decide si el archivo lleva la frase que sostiene
@@ -3097,7 +3243,7 @@ export class LatteService implements BackendApi {
       workId: work.id,
       ownerWorkId: electBrandContextOwner(this.deps.repo.listWorks(brand.id)),
     });
-    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), memoryToolsInjected: this.recordMemoryClaim(work.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation, brandMemory, brandContextNudge: nudge });
+    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), memoryToolsInjected: this.recordMemoryClaim(work.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation, brandMemory, brandContextNudge: nudge, identity: this.syncIdentity(brand, work) });
     return this.deps.files.writeInstructions(brand.id, work.id, bundle.text, bundle.files);
   }
 
@@ -3149,7 +3295,9 @@ export class LatteService implements BackendApi {
 
   /** Latest receipt for this work. Not called when the feature flag is off. */
   private pinnedGenerationPointer(workId: string): { generationId: string; contextHash: string; kitHash: string | null; skillRefs: SkillRef[] } | null {
-    const latest = this.deps.repo.listGenerationsForWork(workId)[0];
+    // E4: los recibos que deja la evidencia de una entrega no son generaciones
+    // fijadas (no tienen carpeta en `.latte/generations/`): no son el puntero.
+    const latest = this.deps.repo.listGenerationsForWork(workId).find((g) => this.deps.repo.getMeta(IDENTITY_RECEIPT_META + g.id) !== '1');
     if (!latest) return null;
     return {
       generationId: latest.id,

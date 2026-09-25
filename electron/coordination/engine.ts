@@ -101,6 +101,8 @@ export interface CoordinationDeliveries {
   publish(workId: string, relativePath: string): { published: string; archived: string[] };
   /** E4: la evidencia de una entrega que pasó la revisión (o que se publicó sin ella). */
   recordEvidence?(input: { workId: string; runId: string; taskId: string; reviewTaskId: string | null; reviewerId: string | null; published: string; at: string }): void;
+  /** E4: un reporte que salió bien con su lista de archivos (el `IDENTIDAD.md` que el equipo extrajo entra al kit por acá). */
+  onReported?(input: { workId: string; taskId: string; files: string[] }): void;
 }
 
 /**
@@ -1590,8 +1592,46 @@ export class CoordinationEngine {
    * que no hay un segundo validador ni un segundo lugar donde una propuesta se
    * vuelve fila: lo que ese camino rechaza, acá también, con el mismo código.
    */
-  private async proposeFromHandoff(workId: string, roleId: string, spec: string, coordinatorMemberId: string | null): Promise<{ bridged: false; reason: string } | { bridged: true; proposed: CoordinationRunRecord }> {
-    const plan = [{ roleId, spec }];
+  /**
+   * E4: UNA TAREA QUE PIDIÓ LA PERSONA DESDE UNA PANTALLA (hoy: "Extraer
+   * identidad con el equipo").
+   *
+   * El mismo camino que un traspaso: sin run, nace una propuesta de una tarea
+   * que la persona aprueba en el chat del coordinador y se despacha sola al
+   * aprobarla; con el run corriendo, la tarea entra al plan y se despacha. El
+   * clic de la persona ES la aprobación del rol para ese run: no hace falta
+   * una segunda. Con el run en otro estado, no se escribe nada y se dice por
+   * qué.
+   */
+  async requestPersonTask(workId: string, input: { roleId: string; spec: string; title: string }, coordinatorMemberId: string | null): Promise<{
+    outcome: 'proposed' | 'dispatched' | 'pending_approval' | 'not_dispatched' | 'blocked'; taskId: string | null; reason: string | null;
+  }> {
+    this.requireCoordinationEnabled();
+    const run = this.deps.repo.findActiveCoordinationRun(workId);
+    if (!run) {
+      const proposed = await this.proposeFromHandoff(workId, input.roleId, input.spec, coordinatorMemberId, input.title);
+      return proposed.bridged ? { outcome: 'proposed', taskId: null, reason: null } : { outcome: 'blocked', taskId: null, reason: proposed.reason };
+    }
+    if (run.status !== 'running') return { outcome: 'blocked', taskId: null, reason: run.status === 'planning' ? 'RUN_ALREADY_ACTIVE' : 'RUN_NOT_ACTIVE' };
+    const approved = this.approvedRoleIds(run);
+    if (!approved.has(input.roleId) && !this.workHasMemberForRole(workId, input.roleId)) {
+      approved.add(input.roleId);
+      this.deps.repo.setMeta(APPROVED_ROLES_META + run.id, JSON.stringify([...approved]));
+    }
+    const task = this.createTaskRow(run.id, input.roleId, input.spec, [], input.title, 'internal');
+    this.deps.repo.markCoordinationTaskInPlan(task.id);
+    try {
+      const outcome = await this.startDispatch({ grant: { workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id });
+      this.touch(workId, run.id);
+      return { outcome: outcome.status, taskId: task.id, reason: null };
+    } catch (error) {
+      this.touch(workId, run.id);
+      return { outcome: 'not_dispatched', taskId: task.id, reason: error instanceof LatteError ? error.code : 'INTERNAL' };
+    }
+  }
+
+  private async proposeFromHandoff(workId: string, roleId: string, spec: string, coordinatorMemberId: string | null, title?: string): Promise<{ bridged: false; reason: string } | { bridged: true; proposed: CoordinationRunRecord }> {
+    const plan: CoordinationProposalTask[] = [{ roleId, spec, ...(title ? { title } : {}) }];
     const covered = this.computeRoleCoverage(workId, { plan, membersToHire: [], estimatedDispatches: 1, rationale: '' })[0]?.coverage === 'member';
     let configured: number | null = null;
     try { configured = this.requireReadableBudget(workId)?.maxDispatches ?? null; } catch { configured = null; }
@@ -2827,6 +2867,11 @@ export class CoordinationEngine {
     if (outcome !== 'succeeded') return none;
     let run: CoordinationRunRecord;
     try { run = this.deps.repo.getCoordinationRun(task.runId); } catch { return none; }
+    const listed = reportedFiles(filesJson);
+    if (listed && listed.length > 0) {
+      try { this.deps.deliveries?.onReported?.({ workId: run.workId, taskId: task.id, files: listed }); }
+      catch (error) { this.deps.log?.(`[latte] reported files hook failed (task=${task.id}): ${error instanceof Error ? error.message : String(error)}`); }
+    }
     try {
       if (reviewOf) return verdict ? this.settleReview(run, task, reviewOf, verdict, summary, now) : none;
       if (task.audience !== 'client') return none;

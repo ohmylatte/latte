@@ -1434,3 +1434,11 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .team-advanced-review input{width:auto;padding:0;margin-top:3px}
 .team-advanced-review-text{display:flex;flex-direction:column;gap:2px;min-width:0}
 .team-advanced-review-text small{color:var(--muted);font-size:var(--text-sm)}
+/* E4: Marca -> Identidad. La fila de archivo es la del plantel; el estado, una linea en gris con su icono. */
+.identity-state{display:flex;align-items:center;gap:8px;margin:12px 0 0;color:var(--ink-soft);font-size:var(--text-sm)}
+.identity-state.is-approved{color:var(--ink)}
+.identity-file-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:0 0 28px;border-radius:var(--radius-pill);background:var(--paper-deep);color:var(--ink-soft)}
+.identity-hint,.identity-note{margin:12px 0 0;color:var(--ink-soft);font-size:var(--text-sm);max-width:640px}
+.identity-actions{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 0}
+.identity-actions button{display:inline-flex;align-items:center;gap:6px}
+.identity-footnote{margin:16px 0 0;color:var(--muted);font-size:var(--text-sm)}

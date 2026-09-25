@@ -33,6 +33,7 @@ const METHODS = [
   'publishAgencyKit',
   'setWorkBrandChoice',
   'readWorkBrandContext',
+  'readBrandIdentity','addBrandIdentityFiles','removeBrandIdentityFile','approveBrandIdentity','revokeBrandIdentity','requestBrandIdentityExtraction',
   'listWorks',
   'createWork',
   'updateWork',

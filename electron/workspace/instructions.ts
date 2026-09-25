@@ -17,6 +17,8 @@ import type { BrandContextNudge, BrandContextNudgeReason } from './brandContextN
 
 /** E2: donde van los borradores de lo que después se publica. */
 export const DRAFTS_DIR = 'borradores';
+/** E4: donde Latte proyecta la identidad aprobada de la marca. El mismo nombre que `IDENTITY_DIR` de `branding/identity`. */
+const IDENTITY_DIR_NAME = 'identidad';
 
 export const MANAGED_MARKER = '<!-- latte:managed -->';
 
@@ -227,6 +229,11 @@ export interface InstructionsInput {
    * context is empty, none when it is written).
    */
   brandContextNudge?: BrandContextNudge;
+  /**
+   * E4: la identidad APROBADA de la marca, ya proyectada en `./identidad/`.
+   * Ausente o `null`: no hay identidad aprobada y rige explicit-neutral.
+   */
+  identity?: { hash: string } | null;
 }
 
 /** Compact receipt pointer that rides CLAUDE.md / AGENTS.md. */
@@ -488,6 +495,7 @@ function renderCore(
     '- Produce real formats only with tools actually available. Renaming Markdown to .pdf/.docx/.xlsx is not conversion. Existence and size do not validate the format: open or parse it with a format-appropriate tool. For paginated documents, when tools permit, render and visually inspect every page; correct defects and repeat the checks before calling it ready. If generation, parsing or visual inspection tools are missing, report the blocker and exact QA scope, offer a real alternative, and never imply an unperformed check passed. Latte lists these files; it does not generate, validate, approve or version binary outputs. Prefer self-contained HTML without external assets; opening HTML is an explicit human decision.',
     `- When a PDF or DOCX is asked for, the file is the answer, not a description of it, and it is not done until the file exists (in ./${DRAFTS_DIR}/ or published in ./${DELIVERABLES_DIR}/). Do not conclude that from what you intended or planned: after writing it, check that it is there and not empty (list the folder or read its size), then give its relative path (in a team run, in \`files\` when you report). If the check fails, say so; never report a file you did not verify.`,
     '- A deliverable file holds only the finished piece for the client: no internal reasoning, thinking notes, plans or instructions to yourself.',
+    identityLine(input.identity ?? null),
     '- Handoff: give the relative path, checks actually performed and remaining limitations, then direct the human to Entregables / Deliverables for review. If no agent tool is available for linking, ask the human to use Encargo > Resultado esperado / Expected output > Editar / Edit in the desktop app, select the file and choose Guardar / Save; never edit SQLite or managed metadata to link it, and do not claim it is linked until confirmed. File creation, QA, human approval and result linking are separate steps.',
     '',
     `- Each tracked file listed above is a deliverable of its own. Write in the one your task belongs to; \`./${WORK_FILES.brief}\` holds the ask, not every result.`,
@@ -651,6 +659,17 @@ function compactedFooter(cut: Array<'decisions' | 'brand' | 'brandMemory'>): str
     `Latte shortened this file to stay closer to its ${INSTRUCTIONS_MAX_CHARS}-character budget, since it is re-sent on every turn. Read ${pointers.join(' and ')} for what does not fit here.`,
     '',
   );
+}
+
+/**
+ * E4: la identidad de la marca, en una línea. Con kit aprobado apunta a lo que
+ * Latte proyectó en `./identidad/`; sin él, explicit-neutral: nada inventado,
+ * y la portada de un entregable para el cliente lo dice.
+ */
+function identityLine(identity: { hash: string } | null): string {
+  return identity
+    ? `- Identity: ./${IDENTITY_DIR_NAME}/IDENTIDAD.md and the files next to it (the approved brand kit, sha256 \`${identity.hash.slice(0, 12)}\`). Client deliverables apply it: logo, palette, type. Latte keeps ./${IDENTITY_DIR_NAME}/ in sync; do not edit it.`
+    : '- No approved brand identity: explicit-neutral. Do not invent official colours, type or a logo; a client deliverable\'s cover says there is no approved identity.';
 }
 
 /** Text-only form of renderInstructionBundle, for callers that never write the side files. */

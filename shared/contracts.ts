@@ -155,6 +155,44 @@ export interface WorkBrandContextView {
   };
   snapshot: BrandContextSnapshot;
 }
+/**
+ * E4: MARCA → IDENTIDAD. El kit de la marca visto por la persona: qué
+ * archivos trajo (con su nombre, nunca una ruta), si hay `IDENTIDAD.md`, y en
+ * qué estado está. Latte no renderiza nada con esto: lo guarda, lo proyecta a
+ * cada trabajo y el revisor verifica que se aplique.
+ */
+export type BrandIdentityState = 'empty' | 'draft' | 'approved' | 'revoked';
+export interface BrandIdentityFileView {
+  id: string;
+  /** El nombre con el que la persona trajo el archivo. Nunca una ruta. */
+  name: string;
+  kind: 'logo' | 'font' | 'reference' | 'other';
+  usable: boolean;
+  bytes: number;
+  /** Es el `IDENTIDAD.md` que el equipo extrajo. */
+  identityDoc: boolean;
+}
+export interface BrandIdentityView {
+  brandId: string;
+  state: BrandIdentityState;
+  /** El borrador: lo que se aprueba al tocar "Aprobar". */
+  files: BrandIdentityFileView[];
+  hasIdentityDoc: boolean;
+  /** La versión vigente, si hay una aprobada. */
+  approved: { version: number; approvedAt: string; fileCount: number } | null;
+  /** El borrador cambió desde la última aprobación: hay algo para volver a aprobar. */
+  changedSinceApproval: boolean;
+  revokedAt: string | null;
+}
+export interface BrandIdentityExtractionResult {
+  /** `proposed`: una propuesta de una tarea que la persona aprueba en el chat del coordinador. */
+  outcome: 'proposed' | 'dispatched' | 'pending_approval' | 'not_dispatched' | 'blocked';
+  workId: string;
+  workTitle: string;
+  /** El código del motor cuando no salió como se pidió. */
+  reason: string | null;
+}
+
 /** Where a stored version came from. `external` = the file changed outside Latte; we never guess who wrote it. */
 export type RevisionSource = 'human' | 'external' | 'latte';
 export interface Revision { id: string; workId: string; documentId: string; source: RevisionSource; content: string; createdAt: string }
@@ -1430,6 +1468,13 @@ export interface LatteAPI {
   publishAgencyKit(expectedVersion: number): Promise<BrandKitView>;
   setWorkBrandChoice(workId: string, choice: WorkBrandChoiceInput, expectedRevision: number): Promise<WorkBrandPolicyView>;
   readWorkBrandContext(workId: string): Promise<WorkBrandContextView>;
+  /** E4: Marca → Identidad. */
+  readBrandIdentity(brandId: string): Promise<BrandIdentityView>;
+  addBrandIdentityFiles(brandId: string): Promise<BrandIdentityView>;
+  removeBrandIdentityFile(brandId: string, fileId: string): Promise<BrandIdentityView>;
+  approveBrandIdentity(brandId: string): Promise<BrandIdentityView>;
+  revokeBrandIdentity(brandId: string): Promise<BrandIdentityView>;
+  requestBrandIdentityExtraction(brandId: string): Promise<BrandIdentityExtractionResult>;
   /** Installation feature switches. Default off; no secrets. */
   featureFlags(): Promise<FeatureFlags>;
   listWorks(brandId: string): Promise<Work[]>;

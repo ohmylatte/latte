@@ -2,9 +2,9 @@ import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, Home, MessageSquare, Minus, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, Users, X } from 'lucide-react';
+import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, Home, MessageSquare, Minus, Palette, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, Users, X } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, BrandMember, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, HandoffTaskBridgeResult, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
+import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, BrandMember, BrandIdentityView, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, HandoffTaskBridgeResult, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
 import { api, chatStore, isDesktop } from './browser-api';
 import { DocumentsView, NewDocumentDialog } from './DocumentsView';
 import { hasMetadataDrafts } from './DocumentMetadata';
@@ -20,6 +20,7 @@ import { ALL_BRAND_SCOPE, inKnowledgeScope, selectWorkBrief, workBrief, workTitl
 import { KnowledgeScopeFilter } from './KnowledgeScope';
 import { ContextView } from './ContextView';
 import { BrandTeamView } from './BrandTeamView';
+import { IdentityView } from './IdentityView';
 import { HomeView } from './HomeView';
 import { ResumenView } from './ResumenView';
 import { TrabajoView } from './TrabajoView';
@@ -49,7 +50,7 @@ import { AvatarSprite } from './coordination/Avatar';
  * surface, reachable before any work is open. Opening a work still opens the
  * work (`selectWork`), so the two destinations never blur.
  */
-export const VIEWS = ['home', 'resumen', 'trabajo', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'roster', 'decisions', 'resultados'] as const;
+export const VIEWS = ['home', 'resumen', 'trabajo', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'roster', 'identity', 'decisions', 'resultados'] as const;
 type View = (typeof VIEWS)[number];
 type Modal = 'brand' | 'work' | 'document' | null;
 const date = (value: string) => new Date(value).toLocaleString(currentLocale(), { dateStyle: 'short', timeStyle: 'short' });
@@ -439,6 +440,16 @@ export function App() {
     void api.listBrandTeam(brand.id).then(list => { if (live) setRoster(list); }).catch(() => undefined);
     return () => { live = false; };
   }, [brand?.id, team]);
+  /** E4: Marca → Identidad. Se lee al entrar a la vista; cada acción devuelve la vista nueva. */
+  const [identity, setIdentity] = useState<BrandIdentityView | null>(null);
+  const [identityNote, setIdentityNote] = useState<string | null>(null);
+  useEffect(() => {
+    setIdentityNote(null);
+    if (!brand || view !== 'identity') { setIdentity(null); return; }
+    let live = true;
+    void api.readBrandIdentity(brand.id).then(v => { if (live) setIdentity(v); }).catch(e => setError(displayError(e)));
+    return () => { live = false; };
+  }, [brand?.id, view]);
   const coordination = useCoordination(work?.id ?? null, (e) => setError(displayError(e)), (id) => { void loadTeam(id).catch(() => undefined); });
   // La visita a la coordinación se marca cuando la persona ABRE el panel de
   // coordinación de un Trabajo (Decisiones: gates, autoridad, presupuesto,
@@ -1419,7 +1430,7 @@ export function App() {
       {showArchived && <div className="archived-brands">{archivedBrands.length === 0 ? <p className="sidebar-hint">{t('brand.noneArchived')}</p> : archivedBrands.map(b => <div key={b.id} className="archived-brand-row"><span title={b.name}>{b.name}</span><button type="button" className="subtle" disabled={busy} onClick={() => run(() => restoreArchivedBrand(b.id))}>{t('brand.restore')}</button></div>)}</div>}
       <nav><button type="button" title={t('home.nav')} className={view === 'home' ? 'nav-active' : ''} onClick={() => setView('home')}><Home size={18} />{t('home.nav')}</button></nav>
       <div className="nav-label">{t('ui.auto.034')}</div>
-      <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button><button disabled={!brand} title={t('roster.nav')} className={view === 'roster' ? 'nav-active' : ''} onClick={() => setView('roster')}><Users size={18} />{t('roster.nav')}</button></nav>
+      <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button><button disabled={!brand} title={t('roster.nav')} className={view === 'roster' ? 'nav-active' : ''} onClick={() => setView('roster')}><Users size={18} />{t('roster.nav')}</button><button disabled={!brand} title={t('identity.nav')} className={view === 'identity' ? 'nav-active' : ''} onClick={() => setView('identity')}><Palette size={18} />{t('identity.nav')}</button></nav>
       <div className="sidebar-rule" /><div className="nav-label">TRABAJOS <span>{works.length.toString().padStart(2, '0')}</span></div>
       <nav className="work-nav">{works.map(w => <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'funnel' || view === 'decisions' || view === 'resumen' || view === 'trabajo' || view === 'evidencia' || view === 'resultados') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{(workHasLiveChat(w.id) || sessions[w.id]) && <i className={sessions[w.id] && endedSessions.has(sessions[w.id].id) && !workHasLiveChat(w.id) ? 'ended-dot' : 'live-dot'} />}</button>)}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
       <div className="sidebar-bottom"><button disabled={!brand || transitioning} title={t('ui.auto.038')} onClick={() => { setName(''); setModal('work'); }}><Plus size={20} />{t('ui.auto.038')}</button><div className="sidebar-rule" /><nav><button onClick={() => setSettings('agents')} title={t('ui.auto.348')}><Settings2 size={17} />{t('ui.auto.348')}</button></nav><div className="profile"><span className="avatar">G</span><div>Tu estudio<small>{t('ui.auto.039')}</small></div></div></div>
@@ -1467,6 +1478,12 @@ export function App() {
         onSetCoordinator={isDesktop ? (id) => void run(async () => { setRoster(await api.setBrandCoordinator(brand.id, id)); if (work) await loadTeam(work.id); }) : undefined}
         onAdd={isDesktop ? async (roleId, options) => { await run(async () => { setRoster(await api.addBrandMember(brand.id, roleId, options)); }); } : undefined}
         picker={{ roles, choices: runtimeChoices, primaryLabel, primaryDetail, primaryReady, checking: checkingAgents, isDesktop, onProviders: () => setSettings('agents'), onRecheck: () => void refreshChatStatus(), submitLabel: t('roster.addSubmit'), lead: null }} />}
+      {view === 'identity' && brand && <IdentityView brandName={brand.name} identity={identity} busy={busy} formatDate={date} extractionNote={identityNote}
+        onAddFiles={isDesktop ? () => void run(async () => { setIdentity(await api.addBrandIdentityFiles(brand.id)); }) : undefined}
+        onRemoveFile={(id) => void run(async () => { setIdentity(await api.removeBrandIdentityFile(brand.id, id)); })}
+        onApprove={() => void run(async () => { setIdentity(await api.approveBrandIdentity(brand.id)); })}
+        onRevoke={() => void run(async () => { setIdentity(await api.revokeBrandIdentity(brand.id)); })}
+        onExtract={() => void run(async () => { const r = await api.requestBrandIdentityExtraction(brand.id); setIdentityNote(t(r.outcome === 'proposed' ? 'identity.extract.proposed' : r.outcome === 'dispatched' ? 'identity.extract.dispatched' : r.outcome === 'pending_approval' ? 'identity.extract.pending' : 'identity.extract.blocked', { work: r.workTitle })); })} />}
       {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} onAcceptHandoff={acceptHandoffAsTask} />}
       {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice('Aprendizaje guardado en Engram'); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
       <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
