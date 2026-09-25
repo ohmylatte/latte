@@ -1429,3 +1429,8 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .team-card-edit-audience span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .team-card-edit-audience{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--text-sm)}
 .team-card-edit-audience input{width:auto;padding:0}
+/* E2: "Revisión antes de publicar": una casilla con su consecuencia debajo, en gris. */
+.team-advanced-review{display:flex;align-items:flex-start;gap:8px;margin:8px 0;font-size:var(--text-sm);color:var(--ink)}
+.team-advanced-review input{width:auto;padding:0;margin-top:3px}
+.team-advanced-review-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.team-advanced-review-text small{color:var(--muted);font-size:var(--text-sm)}

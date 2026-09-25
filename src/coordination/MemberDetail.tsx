@@ -8,7 +8,7 @@ import type { DispatchSteps, StepKind } from './activity';
 import type { InboxEvent } from './inbox';
 import type { MemberSignal } from './member-line';
 import { memberDisplayName } from './names';
-import { bodyOf, fileNames, titleOf } from './text';
+import { bodyOf, reportFileNames, titleOf } from './text';
 import { minutesUntil } from './time';
 import { taskTitle, TASK_TITLE_LONG } from '../../shared/taskTitle';
 import type { AgentRole, CoordinationAskView, CoordinationRunTaskView, CoordinationRunView, TeamMember } from '../../shared/contracts';
@@ -278,7 +278,7 @@ export function MemberDetail(props: MemberDetailProps) {
            * dicho por su ícono y su título, que ya dicen qué pasó.
            */
           const summary = event.kind === 'reported' || event.kind === 'dispatchFailed' ? titleOf(event.detail || event.text, 400) : '';
-          const files = fileNames(event.detail || event.text);
+          const files = reportFileNames(event.files, event.detail || event.text);
           return <li key={event.id} className="team-thread-row coord-event" data-kind={event.kind}>
             <EventIcon kind={event.kind} />
             <div className="coord-event-body">

@@ -59,6 +59,13 @@ import { LatteError, UnavailableError } from '../core/errors';
 import { LIMITS } from '../services/validation';
 import { TASK_TITLE_STORED } from '../../shared/taskTitle';
 import { COORDINATION_TASK_AUDIENCES } from '../../shared/contracts';
+import { MAX_REPORTED_FILES, REPORTED_FILE_MAX } from '../../shared/reportFiles';
+import type { CoordinationBudgetBlock, CoordinationEngine } from './engine';
+import { MAX_CALLED_UP_MEMBERS_PER_RUN, MAX_TASKS_PER_RUN } from './limits';
+import { validateAgainstSchema } from './schemaGuard';
+import { createCoordinationTools, type ToolEnvelope } from './tools';
+import type { CoordinationTokenRegistry } from './tokens';
+import type { LatteRepository } from '../storage/repository';
 
 /**
  * E1: la audiencia de una tarea, publicada igual en las tres herramientas que
@@ -72,12 +79,6 @@ const AUDIENCE_SCHEMA = {
   description: 'Who reads the result. "client": the client reads it to decide (a proposal, a report, a piece they approve); it is reviewed before it is published. "internal" (the default): the team uses it (analysis, research, drafts).',
 };
 const AUDIENCE_HINT = ' Set `audience` to "client" on every task whose result the client reads; leave it out for internal work.';
-import type { CoordinationBudgetBlock, CoordinationEngine } from './engine';
-import { MAX_CALLED_UP_MEMBERS_PER_RUN, MAX_TASKS_PER_RUN } from './limits';
-import { validateAgainstSchema } from './schemaGuard';
-import { createCoordinationTools, type ToolEnvelope } from './tools';
-import type { CoordinationTokenRegistry } from './tokens';
-import type { LatteRepository } from '../storage/repository';
 
 /** The one MCP protocol version this server speaks (see the module header for why). */
 export const MCP_PROTOCOL_VERSION = '2025-06-18';
@@ -187,7 +188,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'latte_report',
-    description: 'Reports the outcome of a task this member was dispatched to do.',
+    description: 'Reports the outcome of a task this member was dispatched to do. List the files you produced or changed in `files`, as paths relative to this work. A review task also says `verdict`: "pass" or "fail".',
     inputSchema: {
       type: 'object',
       // Q2: `summary` y `files` entraban SIN tope hasta la base. `report()` los
@@ -199,7 +200,22 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
         taskId: { type: 'string', maxLength: LIMITS.name },
         outcome: { type: 'string', maxLength: LIMITS.name, enum: ['succeeded', 'failed'] },
         summary: { type: 'string', minLength: 1, maxLength: LIMITS.decision },
-        files: { type: ['string', 'null'], maxLength: LIMITS.chatMessage, description: 'Relative paths of files this task produced or changed, if any.' },
+        // E2: una LISTA de rutas relativas. El texto libre de antes se sigue
+        // aceptando (y se lee como antes); la lista es lo que la interfaz y la
+        // publicación entienden.
+        files: {
+          type: ['array', 'string', 'null'],
+          maxItems: MAX_REPORTED_FILES,
+          maxLength: LIMITS.chatMessage,
+          items: { type: 'string', maxLength: REPORTED_FILE_MAX },
+          description: 'The files this task produced or changed, as paths relative to this work (for example ["borradores/propuesta.pdf"]). A client deliverable is reviewed and then published from here.',
+        },
+        verdict: {
+          type: 'string',
+          maxLength: 8,
+          enum: ['pass', 'fail'],
+          description: 'Only for a review task, and required there: "pass" publishes the reviewed file; "fail" sends it back to its author with the reasons in `summary`.',
+        },
       },
       required: ['taskId', 'outcome', 'summary'],
     },

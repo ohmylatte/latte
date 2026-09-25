@@ -208,7 +208,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   // Coordination is a desktop-only feature (real runtime processes, a loopback
   // MCP server); the preview has neither, so it reports the safe defaults and
   // refuses writes, exactly like getWorkPermissions/setWorkPermissions above.
-  getCoordinationAuthority:async()=>'manual' as const,setCoordinationAuthority:unavailable,
+  getCoordinationAuthority:async()=>'manual' as const,setCoordinationAuthority:unavailable,getCoordinationReview:async()=>true,setCoordinationReview:unavailable,
   getCoordinationBudget:async()=>({state:'unset'}),setCoordinationBudget:unavailable,
   // Quién coordina SÍ se guarda: es una elección de la persona, no un proceso,
   // y sin esto el botón "Que coordine" no se podría probar en la vista previa.

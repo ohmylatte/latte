@@ -89,6 +89,9 @@ export interface TeamViewProps {
   /** B3.1: la configuración del equipo, que bajó del panel a esta vista. */
   coordinationAuthority?: CoordinationAuthorityMode;
   onSetCoordinationAuthority?: (mode: CoordinationAuthorityMode) => void;
+  /** E2: "revisión antes de publicar": una tarea para el cliente pasa por el revisor antes de `entregables/`. */
+  coordinationReview?: boolean;
+  onSetCoordinationReview?: (on: boolean) => void;
   coordinationBudget?: CoordinationBudgetView;
   onSetCoordinationBudget?: (maxDispatches: number) => void;
   coordinatorGrant?: string | null;
@@ -489,6 +492,16 @@ function TeamAdvanced(props: TeamViewProps) {
           </select>
         : <p className="team-advanced-authority">{t(`coordination.authority.${props.coordinationAuthority}` as 'coordination.authority.manual')}</p>}
     </>}
+    {/* E2: la revisión antes de publicar. Una casilla con su consecuencia
+        dicha: cuesta un despacho por entrega. Sin handler, se lee. */}
+    {props.coordinationReview !== undefined && <label className="team-advanced-review">
+      <input type="checkbox" checked={props.coordinationReview} disabled={!props.onSetCoordinationReview}
+        onChange={(e) => props.onSetCoordinationReview?.(e.target.checked)} />
+      <span className="team-advanced-review-text">
+        <span>{t('team.advanced.review')}</span>
+        <small>{t('team.advanced.reviewHelp')}</small>
+      </span>
+    </label>}
     <p className="team-advanced-budget">{describeWorkBudget(props.coordinationBudget)}</p>
     {/* Q6/O5: el presupuesto del RUN EN CURSO, cuando es ilegible. Sólo con el
         equipo vivo: con el run terminado ya no se deniega ni se va a denegar

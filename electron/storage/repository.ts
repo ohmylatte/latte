@@ -1497,6 +1497,16 @@ export class LatteRepository {
     return this.db.all<CoordinationTaskRow>('SELECT * FROM coordination_task WHERE run_id = ? ORDER BY seq ASC, id ASC', [runId]).map(toCoordinationTask);
   }
 
+  /**
+   * E2: el spec de una tarea que vuelve de una revisión fallida lleva los
+   * motivos. Aparte de `updateCoordinationTask` a propósito: el spec es lo que
+   * se le pidió al agente, y sólo cambia por una revisión.
+   */
+  updateCoordinationTaskSpec(id: string, spec: string, updatedAt: string): CoordinationTaskRecord {
+    this.db.run('UPDATE coordination_task SET spec = ?, updated_at = ? WHERE id = ?', [spec, updatedAt, id]);
+    return this.getCoordinationTask(id);
+  }
+
   /** Partial patch: only the fields named are changed, everything else keeps its current value. */
   updateCoordinationTask(id: string, patch: {
     status?: CoordinationTaskStatus; depth?: number; attempts?: number; assignedMemberId?: string | null;

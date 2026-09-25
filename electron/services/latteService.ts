@@ -134,6 +134,7 @@ import { checkFolder, contains, importFileName, kindFromFileName, readFunnelProp
 import { renderDocumentTemplate } from '../workspace/templates';
 import { openItems, renderContinuation } from '../workspace/continuation';
 import { DELIVERABLES_DIR, DeliverableFiles, deliverableName } from '../workspace/deliverables';
+import { publishDeliverable } from '../workspace/publishDeliverable';
 import { documentFileName, fingerprintOf, type DocumentOnDisk, type WorkspaceFiles } from '../workspace/workspace';
 import { BRAND_CONTEXT_DRAFT_PROMPT_EN, BRAND_CONTEXT_DRAFT_PROMPT_ES, brandContextFingerprint, requireBrandContextInput } from '../workspace/brandContextProtocol';
 import { composeBrandContext } from '../../shared/brandContext';
@@ -336,6 +337,14 @@ export class LatteService implements BackendApi {
       // Task 8.1: the real flag, off by default like every other feature.
       isCoordinationEnabled: () => featureEnabled((key) => deps.repo.getMeta(key), 'coordination'),
       log: deps.log,
+      // E2: publicar en `entregables/` después de la revisión. El motor no toca
+      // disco por su cuenta: le llega la carpeta del trabajo por acá.
+      deliveries: {
+        publish: (workId, relativePath) => {
+          const work = deps.repo.getWork(workId);
+          return publishDeliverable(deps.files.workDir(work.brandId, work.id), relativePath, this.clock());
+        },
+      },
     });
     this.branding = new BrandingService({
       repo: deps.repo,
@@ -1613,6 +1622,25 @@ export class LatteService implements BackendApi {
     const id = requireId(workId, 'workId');
     this.deps.repo.getWork(id);
     return this.readCoordinationAuthority(id);
+  }
+
+  /**
+   * E2: "revisión antes de publicar", por Trabajo. Prendida por defecto: una
+   * tarea para el cliente pasa por el `reviewer` antes de llegar a
+   * `entregables/`. Apagada, Latte publica al reportar. Cuesta un despacho
+   * por entrega.
+   */
+  async getCoordinationReview(workId: string): Promise<boolean> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    return this.coordination.reviewEnabled(id);
+  }
+
+  async setCoordinationReview(workId: string, on: boolean): Promise<boolean> {
+    const id = requireId(workId, 'workId');
+    this.deps.repo.getWork(id);
+    if (typeof on !== 'boolean') throw new ValidationError('Review before publishing must be on or off');
+    return this.coordination.setReviewEnabled(id, on);
   }
 
   async setCoordinationAuthority(workId: string, mode: CoordinationAuthorityMode): Promise<CoordinationAuthorityMode> {

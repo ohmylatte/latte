@@ -7,8 +7,9 @@
  * or response shape, only `data.status` for `latte_dispatch`.
  */
 import type { CoordinationAuthorityMode, CoordinationTaskAudience } from '../../shared/contracts';
-import { LatteError } from '../core/errors';
-import type { CoordinationBudgetBlock, CoordinationEngine, CoordinationGrant, CoordinationProposal } from './engine';
+import { LatteError, ValidationError } from '../core/errors';
+import { encodeReportedFiles, isSafeRelativePath, MAX_REPORTED_FILES } from '../../shared/reportFiles';
+import type { CoordinationBudgetBlock, CoordinationEngine, CoordinationGrant, CoordinationProposal, ReviewVerdict } from './engine';
 
 export interface ToolEnvelope<T> {
   ok: boolean;
@@ -66,6 +67,21 @@ async function wrap<T>(engine: CoordinationEngine, grant: CoordinationGrant, req
   }
 }
 
+/**
+ * E2: la lista de archivos de un reporte, validada y en su forma de guardar.
+ * Una ruta que se sale del trabajo no es un archivo producido: el reporte no
+ * entra y el agente puede volver a mandarlo bien.
+ */
+function encodeFilesArg(files: string[] | string | null | undefined): string | null {
+  if (files == null) return null;
+  if (typeof files === 'string') return files;
+  if (files.length > MAX_REPORTED_FILES) throw new ValidationError(`files lists at most ${MAX_REPORTED_FILES} paths`);
+  files.forEach((file, index) => {
+    if (typeof file !== 'string' || !isSafeRelativePath(file)) throw new ValidationError(`files[${index}] must be a path relative to this work (no absolute path, no ".."): ${String(file)}`);
+  });
+  return encodeReportedFiles(files);
+}
+
 export function createCoordinationTools(engine: CoordinationEngine) {
   return {
     // `latte_plan_submit`/`task_create` also need a live run (the same
@@ -106,8 +122,10 @@ export function createCoordinationTools(engine: CoordinationEngine) {
     latte_task_list: (grant: CoordinationGrant, _args: Record<string, never>) =>
       wrap(engine, grant, true, () => engine.taskList(grant.runId as string), true),
 
-    latte_report: (grant: CoordinationGrant, args: { taskId: string; outcome: 'succeeded' | 'failed'; summary: string; files?: string | null }) =>
-      wrap(engine, grant, false, () => engine.report(grant, args.taskId, args.outcome, args.summary, args.files ?? null), true),
+    // E2: `files` es una LISTA de rutas relativas (el texto de antes se sigue
+    // aceptando tal cual), y `verdict` es lo que dice una revisión.
+    latte_report: (grant: CoordinationGrant, args: { taskId: string; outcome: 'succeeded' | 'failed'; summary: string; files?: string[] | string | null; verdict?: ReviewVerdict }) =>
+      wrap(engine, grant, false, () => engine.report(grant, args.taskId, args.outcome, args.summary, encodeFilesArg(args.files), { verdict: args.verdict ?? null }), true),
 
     // Sin `wait`: el servidor nunca esperó. Lo que sí cambió es que el buzón YA
     // TIENE productor (`latte_message`), así que esto dejó de devolver `[]` por

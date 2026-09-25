@@ -1077,6 +1077,12 @@ export interface CoordinationDispatchLogEntryView {
    */
   promptPreview: string;
   summaryPreview: string | null;
+  /**
+   * E2: los archivos que el reporte trajo como lista de rutas relativas. La
+   * pantalla muestra sólo el nombre de cada uno. Ausente: el reporte no trajo
+   * lista (y entonces se leen los nombres del resumen, como antes).
+   */
+  files?: string[];
   createdAt: string;
   startedAt: string | null;
   settledAt: string | null;
@@ -1696,6 +1702,9 @@ export interface LatteAPI {
   // run/task/dispatch surface arrives in a later phase.
   getCoordinationAuthority(workId: string): Promise<CoordinationAuthorityMode>;
   setCoordinationAuthority(workId: string, mode: CoordinationAuthorityMode): Promise<CoordinationAuthorityMode>;
+  /** E2: "revisión antes de publicar" de este Trabajo. Prendida por defecto. */
+  getCoordinationReview(workId: string): Promise<boolean>;
+  setCoordinationReview(workId: string, on: boolean): Promise<boolean>;
   /**
    * `unset` means no budget was ever configured (`BUDGET_UNSET`) — never an
    * implicit unlimited default; `invalid` means the stored bytes cannot be

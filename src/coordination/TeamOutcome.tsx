@@ -4,7 +4,7 @@ import { currentLocale, translate as t } from '../i18n';
 import { CoordAvatar } from './anatomy';
 import { avatarOfMember } from './avatar-of';
 import { memberDisplayName } from './names';
-import { fileNames, titleOf } from './text';
+import { reportFileNames, titleOf } from './text';
 import { daysAgo, whenOf } from './time';
 import type { AgentRole, CoordinationLogEntryView, CoordinationRunView, TeamMember } from '../../shared/contracts';
 
@@ -49,11 +49,12 @@ interface OutcomeRow {
 /**
  * Lo que el equipo dejó, derivado SÓLO de lo que existe.
  *
- * El modelo de datos NO tiene una lista de archivos producidos: lo único que
- * el motor guarda de un reporte es su resumen (`coordination_dispatch.summary`,
- * recortado a 120 caracteres). Así que esto muestra resúmenes, y una ficha de
- * archivo sólo cuando el resumen NOMBRA uno. Inventar una lista de entregables
- * sería exactamente la capacidad-que-no-funciona que este producto no hace.
+ * E2: un reporte puede traer la LISTA de archivos que produjo (`files`,
+ * rutas relativas) y entonces las fichas salen de ahí, con el nombre de cada
+ * archivo y nunca su ruta. Un reporte sin lista (los de antes, o un agente que
+ * no la mandó) sigue como siempre: una ficha sólo cuando el resumen NOMBRA un
+ * archivo. Inventar una lista de entregables sería exactamente la
+ * capacidad-que-no-funciona que este producto no hace.
  */
 export function outcomeRows(log: readonly CoordinationLogEntryView[] | undefined): OutcomeRow[] {
   const out: OutcomeRow[] = [];
@@ -67,7 +68,7 @@ export function outcomeRows(log: readonly CoordinationLogEntryView[] | undefined
       taskId: entry.taskId,
       memberId: entry.memberId,
       summary,
-      files: fileNames(entry.summaryPreview),
+      files: reportFileNames(entry.files, entry.summaryPreview),
       at: entry.settledAt ?? entry.createdAt,
       failed: entry.status === 'failed' || entry.outcome === 'failed',
     });

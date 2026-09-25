@@ -283,7 +283,7 @@ describe('renderInstructions: the outcome section', () => {
 
   it('always demands a verified file with no internal reasoning inside', () => {
     const text = renderInstructions({ brand, work, decisions: [] });
-    expect(text).toContain(`it is not done until it exists in ./${DELIVERABLES_DIR}/`);
+    expect(text).toContain(`it is not done until the file exists (in ./borradores/ or published in ./${DELIVERABLES_DIR}/)`);
     expect(text).toContain('Do not conclude that from what you intended or planned');
     expect(text).toContain('never report a file you did not verify');
     expect(text).toContain('no internal reasoning');
