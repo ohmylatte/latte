@@ -2,28 +2,22 @@
  * La inyección MCP de OpenCode: `OPENCODE_CONFIG_CONTENT`, el config inline que
  * el servidor lee de su propio entorno al arrancar.
  *
- * **Y por qué OpenCode todavía no recibe nada, dicho con todas las letras.**
+ * `OPENCODE_CONFIG_CONTENT` es del PROCESO, y el alcance de cada servidor MCP
+ * vive en su bearer, que es POR MIEMBRO (brief de conexiones, 4.3). Por eso
+ * Latte corre **un `opencode serve` por miembro** (`chatManager.ts`): el env
+ * que devuelve `opencodeMcpEnv` va al proceso de ese miembro y de ningún otro.
  *
- * La tabla de la sección 2 del brief
- * (`docs/briefs/2026-09-23-conexiones-mcp-arquitectura.md`) dice que OpenCode
- * acepta config por invocación con esta variable y headers con `{env:VAR}`, y
- * es verdad. Lo que no cambia es la forma en que Latte lo corre: **un solo
- * servidor de OpenCode para todos los miembros** (`chatManager.ts`,
- * `ensureClient`). `OPENCODE_CONFIG_CONTENT` es del PROCESO, así que el config
- * que se le escriba vale para todos los miembros a la vez — y el modelo entero
- * de este diseño es que el bearer sea POR MIEMBRO, porque es en el bearer donde
- * vive el alcance (4.3). Un bearer compartido entre miembros de marcas
- * distintas rompe exactamente lo que el gateway vino a arreglar.
+ * Verificado contra opencode 1.18.32 (`opencode serve --pure` con un servidor
+ * MCP http de prueba): el config inline se aplica, `{env:VAR}` se resuelve y el
+ * servidor recibe `Authorization: Bearer <token>` desde el `initialize`; y
+ * `GET /mcp` devuelve el estado de cada servidor de ESE proceso, que es con lo
+ * que `ChatManager` confirma la inyección.
  *
- * Por eso esta función existe, está probada y es correcta, pero `ChatManager`
- * sigue declarando `mcpInjection = 'none'`: la pieza que falta no es esta
- * traducción sino **un servidor de OpenCode por miembro**, que es una decisión
- * de arquitectura con costo de procesos y no entra en este alcance. La
- * coordinación ya modela esta misma limitación con su razón
- * `opencode_shared_server`; ésta es la misma, en otro lugar.
- *
- * El día que haya un servidor por miembro, lo único que hace falta es pasarle a
- * `OpenCodeServer` el `env` que devuelve `opencodeMcpEnv`.
+ * Una advertencia que no se arregla desde acá: `GET /config` de ese mismo
+ * proceso devuelve el config RESUELTO, con el bearer adentro. Está detrás del
+ * Basic auth del proceso (credenciales al azar por proceso, sólo loopback), así
+ * que lo ve quien ya puede hablar con ese miembro; no está en el JSON del env,
+ * ni en argv, ni en ningún log de Latte.
  */
 import type { AdapterMcpServer } from '../agents/types';
 

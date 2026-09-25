@@ -156,6 +156,47 @@ export const MAX_ACTIVE_COORDINATION_RUNS = 4;
 export const MAX_CODEX_APP_SERVERS_TOTAL = 10;
 
 /**
+ * TECHO DE PROCESOS `opencode serve` EN TODA LA APP, el gemelo de
+ * `MAX_CODEX_APP_SERVERS_TOTAL`.
+ *
+ * Con OpenCode cada miembro abierto ES un proceso: `OPENCODE_CONFIG_CONTENT`
+ * (el config inline con los servidores MCP) es del proceso, así que la única
+ * forma de que el bearer de un miembro no lo vea otro es que cada uno tenga el
+ * suyo (`electron/opencode/chatManager.ts`). A diferencia de Codex no hay
+ * procesos compartidos que ahorrar: este número es directamente cuántos
+ * miembros de OpenCode pueden estar abiertos a la vez, y `ChatManager.start`
+ * lo hace cumplir rechazando el siguiente con su error de siempre ("Too many
+ * open chats"), contando también las aperturas en vuelo.
+ *
+ * No cuenta el proceso de PROVEEDORES: uno solo, perezoso, sin MCP, que sólo
+ * existe si la persona abrió la pantalla de proveedores (el login OAuth tiene
+ * que empezar y terminar en el mismo proceso, así que no puede vivir en el de
+ * un miembro que se cierra en el medio).
+ */
+export const MAX_OPENCODE_SERVERS_TOTAL = 10;
+
+/**
+ * Cuántos miembros de OpenCode llevan `latte_coordination` en UN run: el gemelo
+ * de `MAX_COORDINATED_CODEX_MEMBERS_PER_RUN`, con el mismo número y el mismo
+ * lugar donde se cumple (`CoordinationInjectionPlanner`, que es quien sabe de
+ * runs). Pasado el tope el miembro abre igual —con su memoria y sus
+ * conexiones— y degrada con `opencode_run_cap`.
+ *
+ * Dicho con honestidad: en OpenCode este tope NO ahorra un proceso, porque el
+ * miembro ya tiene el suyo coordine o no (en Codex coordinar sí cuesta un
+ * `app-server` propio). Lo que acota es cuántos procesos de OpenCode puede
+ * estar manejando un run a la vez, igual que con Codex, para que un equipo
+ * entero de OpenCode se comporte igual que uno de Codex.
+ */
+export const MAX_COORDINATED_OPENCODE_MEMBERS_PER_RUN = 3;
+
+/** Coordinados de OpenCode en toda la app, el gemelo de `MAX_COORDINATED_CODEX_PROCESSES`. Pasado, `opencode_global_cap`. */
+export const MAX_COORDINATED_OPENCODE_PROCESSES = 6;
+
+/** Un Trabajo de OpenCode sin run puede tener UN coordinado, el que propone: el gemelo de `MAX_BOOTSTRAP_CODEX_MEMBERS_PER_WORK`. */
+export const MAX_BOOTSTRAP_OPENCODE_MEMBERS_PER_WORK = 1;
+
+/**
  * Cuántos avisos sin entregar puede acumular un miembro. Un aviso es un turno
  * de usuario que no se le pudo mandar porque estaba en medio de otro: se
  * guarda en memoria hasta su próximo `idle`. Un miembro que se murió sin

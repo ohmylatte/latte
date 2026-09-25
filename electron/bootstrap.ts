@@ -36,7 +36,7 @@ import { featureEnabled } from './core/features';
 import { LattePaths } from './core/paths';
 import type { TaskkillExecFile } from './core/processTree';
 import { EngramClient } from './memory/engram';
-import { ChatManager } from './opencode/chatManager';
+import { ChatManager, type ChatManagerDeps } from './opencode/chatManager';
 import type { OpenCodeEndpoint } from './opencode/server';
 import { execFileRunner, type CommandRunner } from './runtime/commandRunner';
 import { RuntimeDetector } from './runtime/detect';
@@ -79,6 +79,12 @@ export interface BackendOptions {
   packsDir?: string;
   /** Tests: reuse a running (fake) OpenCode endpoint instead of spawning the CLI. */
   chatEndpoint?: OpenCodeEndpoint;
+  /**
+   * Tests: how each member's `opencode serve` is launched and killed. With it
+   * every member gets its own (fake) process through the production path, env
+   * and MCP config included, which `chatEndpoint` (one shared server) cannot do.
+   */
+  chatSpawn?: { spawnImpl: ChatManagerDeps['spawnImpl']; killProcess?: ChatManagerDeps['killProcess'] };
   /** Opens an http(s) URL in the system browser (OAuth logins). */
   openExternal?: (url: string) => Promise<void>;
   log?: (line: string) => void;
@@ -305,6 +311,8 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     env,
     platform,
     endpoint: options.chatEndpoint,
+    spawnImpl: options.chatSpawn?.spawnImpl,
+    killProcess: options.chatSpawn?.killProcess,
     log: options.log,
   });
 

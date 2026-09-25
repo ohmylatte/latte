@@ -92,7 +92,8 @@ export interface AdapterStartResult {
    * pero los adaptadores se niegan después por su cuenta (Claude sin
    * `promptDir`, Codex con su propio contador de procesos lleno), y sin este
    * reporte la UI afirmaba capacidades que el proceso no tenía. `undefined`
-   * = este adaptador no inyecta nada (OpenCode): el reclamo queda intacto.
+   * = no hubo nada que preguntar o no se pudo preguntar: el reclamo queda
+   * intacto.
    */
   injectedMcpServers?: string[];
   /**
@@ -135,10 +136,8 @@ export interface RuntimeAdapter {
   readonly mcpInjection: 'per-member' | 'none';
   /**
    * Si este adaptador puede DECIR qué servidores MCP levantó de verdad, alguna
-   * vez. Claude lo reporta en su `system/init` y Codex lo pregunta por
-   * `mcpStatus`; OpenCode no tiene ningún endpoint que los liste (mirá
-   * `electron/opencode/client.ts`: hay sesión, permisos, proveedores y nada
-   * más), así que para él la confirmación NUNCA va a llegar.
+   * vez. Claude lo reporta en su `system/init`, Codex lo pregunta por
+   * `mcpStatus` y OpenCode por `GET /mcp` sobre el proceso del miembro.
    *
    * Es una capacidad distinta de `mcpInjection`: aquélla dice si Latte puede
    * inyectar, ésta dice si el runtime puede confirmar. La UI las necesita

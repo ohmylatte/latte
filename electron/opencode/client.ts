@@ -106,6 +106,15 @@ export class OpenCodeClient {
     return this.request('GET', '/session/status', { directory }) as Promise<Record<string, OcSessionStatus>>;
   }
 
+  /**
+   * What THIS process connected, per MCP server: `{ name: { status, error? } }`
+   * with `connected`, `failed`, `disabled`, `needs_auth`... (verified against
+   * opencode 1.18.32). Scoped by `directory` like every other call.
+   */
+  mcpStatus(directory: string): Promise<Record<string, unknown>> {
+    return this.request('GET', '/mcp', { directory }) as Promise<Record<string, unknown>>;
+  }
+
   pendingPermissions(directory: string): Promise<OcPermissionRequest[]> {
     return this.request('GET', '/permission', { directory }) as Promise<OcPermissionRequest[]>;
   }
