@@ -1,4 +1,4 @@
-export type Provider = 'claude' | 'codex' | 'opencode';
+export type Provider = 'claude' | 'codex' | 'opencode' | 'grok' | 'hermes';
 export type UiLocale = 'es-AR' | 'en-US';
 export type ContentLocale = UiLocale;
 
@@ -541,7 +541,19 @@ export type ChatPart =
   | { type: 'tool'; id: string; tool: string; status: ChatToolStatus; title: string; input: string; output: string; error: string };
 export interface ChatMessage { id: string; chatId: string; role: ChatRole; parts: ChatPart[]; createdAt: string; completed: boolean; error: string | null }
 /** Which local runtime drives a chat: OpenCode (API-key providers), Claude Code or Codex (their own subscription logins). */
-export type ChatRuntime = 'opencode' | 'claude' | 'codex';
+export type ChatRuntime = 'opencode' | 'claude' | 'codex' | 'grok' | 'hermes';
+export const CHAT_RUNTIMES: readonly ChatRuntime[] = ['opencode', 'claude', 'codex', 'grok', 'hermes'];
+/**
+ * Los runtimes con cuentas propias. Claude Code y Codex tienen además "mi
+ * sesión" (el perfil del sistema); Grok y Hermes corren SÓLO con cuentas
+ * gestionadas por Latte, porque su perfil del sistema arrastra hooks, reglas,
+ * MCP y aprobaciones globales (brief 2026-09-25, decisión 1).
+ */
+export type AccountRuntimeName = 'claude' | 'codex' | 'grok' | 'hermes';
+/** Grok y Hermes: agentes que Latte habla por ACP. */
+export type AcpRuntimeName = 'grok' | 'hermes';
+/** El modelo que Ajustes eligió por nivel de esfuerzo, por runtime ACP. `null` = el default de Latte para ese nivel. */
+export type AcpTierModels = Record<AcpRuntimeName, Record<EffortTier, string | null>>;
 /**
  * A live conversation. Its id is the team member's id, so it stays stable
  * across pause/resume and app restarts.
@@ -683,7 +695,7 @@ export interface ContinuationDraft { sourceMemberId: string; text: string }
 export interface PrimaryAgent { runtime: ChatRuntime; model: string | null; accountId: string | null; label: string }
 /** A Claude Code / Codex login. `system` = the user's own CLI profile; otherwise a Latte-managed profile directory. */
 export interface AgentAccount {
-  runtime: 'claude' | 'codex'; id: string; label: string; system: boolean; loggedIn: boolean; detail: string;
+  runtime: AccountRuntimeName; id: string; label: string; system: boolean; loggedIn: boolean; detail: string;
   /**
    * Model IDs worth suggesting for this account without asking anyone: the
    * aliases the CLI itself documents, plus whatever that account's own
@@ -714,7 +726,7 @@ export type WorkPermissionMode = 'ask' | 'folder' | 'auto';
 
 /** What changing a conversation's model did. `session` is null when it was paused. */
 export interface MemberModelChange { member: TeamMember; session: ChatSession | null; resumed: boolean }
-export interface AgentRuntimeInfo { runtime: 'claude' | 'codex'; installed: boolean; version: string | null; detail: string; accounts: AgentAccount[] }
+export interface AgentRuntimeInfo { runtime: AccountRuntimeName; installed: boolean; version: string | null; detail: string; accounts: AgentAccount[] }
 export type AccountLoginStart =
   | { mode: 'terminal'; sessionId: string; instructions: string }
   | { mode: 'browser'; url: string; instructions: string };
@@ -1202,6 +1214,11 @@ export type CoordinationDegradedReason =
   /** OpenCode: los gemelos de los dos topes de Codex (cada miembro de OpenCode tiene su propio proceso). */
   | 'opencode_run_cap'
   | 'opencode_global_cap'
+  /** Grok y Hermes: los mismos dos topes, con un ledger por runtime (`MAX_COORDINATED_ACP_*`). */
+  | 'grok_run_cap'
+  | 'grok_global_cap'
+  | 'hermes_run_cap'
+  | 'hermes_global_cap'
   | 'engram_not_installed'
   /**
    * El adaptador entregó MENOS de lo que el planificador había reclamado: el
@@ -1640,18 +1657,22 @@ export interface LatteAPI {
   /** Los servidores http del registro del CLI que todavía no son Conexiones. */
   listImportableConnections(): Promise<ImportableConnection[]>;
 
-  addAgentAccount(runtime: 'claude' | 'codex', label: string): Promise<AgentAccount>;
-  removeAgentAccount(runtime: 'claude' | 'codex', accountId: string): Promise<void>;
+  addAgentAccount(runtime: AccountRuntimeName, label: string): Promise<AgentAccount>;
+  removeAgentAccount(runtime: AccountRuntimeName, accountId: string): Promise<void>;
   /** Starts the runtime's own login (browser OAuth). Claude runs inside an embedded terminal session; Codex returns a URL. */
-  startAccountLogin(runtime: 'claude' | 'codex', accountId: string): Promise<AccountLoginStart>;
-  logoutAccount(runtime: 'claude' | 'codex', accountId: string): Promise<void>;
+  startAccountLogin(runtime: AccountRuntimeName, accountId: string): Promise<AccountLoginStart>;
+  logoutAccount(runtime: AccountRuntimeName, accountId: string): Promise<void>;
   /**
    * The models this account can use. Asks the runtime when it has a catalog
    * (Codex answers `model/list` over its app-server); falls back to what Latte
    * can state as fact when it does not. Costs a process, so it is asked when
    * the Settings screen needs it, never on start.
    */
-  listAccountModels(runtime: 'claude' | 'codex', accountId: string): Promise<AgentModelList>;
+  listAccountModels(runtime: AccountRuntimeName, accountId: string): Promise<AgentModelList>;
+  /** El modelo por nivel de esfuerzo de Grok y Hermes, como está en Ajustes, y los defaults de Latte para cada uno. */
+  getAcpTierModels(): Promise<{ configured: AcpTierModels; defaults: AcpTierModels }>;
+  /** Cambia el modelo de un nivel; `null` vuelve al default. Vale para las conversaciones que arranquen después. */
+  setAcpTierModel(runtime: AcpRuntimeName, tier: EffortTier, model: string | null): Promise<AcpTierModels>;
   /**
    * Changes the model of one conversation. The runtime restarts underneath —
    * neither Claude Code nor Codex can swap a model in place — and the same

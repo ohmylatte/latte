@@ -7,8 +7,8 @@ import { PROVIDERS, isProvider } from '../../electron/runtime/providers';
 import { fakeRunner } from './helpers';
 
 describe('providers allowlist', () => {
-  it('only accepts the three known CLIs', () => {
-    expect(PROVIDERS).toEqual(['claude', 'codex', 'opencode']);
+  it('only accepts the known CLIs', () => {
+    expect(PROVIDERS).toEqual(['claude', 'codex', 'opencode', 'grok', 'hermes']);
     expect(isProvider('claude')).toBe(true);
     expect(isProvider('bash')).toBe(false);
     expect(isProvider('claude; rm -rf /')).toBe(false);
@@ -41,6 +41,8 @@ describe('RuntimeDetector', () => {
       { provider: 'claude', available: true, detail: expect.stringContaining('Claude Code 2.1.0 (Claude Code)') },
       { provider: 'codex', available: true, detail: expect.stringContaining('C:\\npm\\codex.cmd') },
       { provider: 'opencode', available: false, detail: 'OpenCode not found on PATH' },
+      { provider: 'grok', available: false, detail: 'Grok not found on PATH' },
+      { provider: 'hermes', available: false, detail: 'Hermes not found on PATH' },
     ]);
     expect((await detector.resolve('codex'))?.executable).toBe('C:\\npm\\codex.cmd');
     expect(runner.calls.every((c) => c.args.every((a) => !a.includes(';')))).toBe(true);
@@ -176,10 +178,10 @@ describe('RuntimeDetector', () => {
     const detector = new RuntimeDetector({ runner, terminalAvailability: () => ({ available: true }), platform: 'linux', env: {}, ttlMs: 60_000 });
     await detector.status();
     await detector.status();
-    expect(hits).toBe(3);
+    expect(hits).toBe(5);
     detector.invalidate();
     await detector.status();
-    expect(hits).toBe(6);
+    expect(hits).toBe(10);
   });
 
   it('treats timeouts and spawn errors as not found', async () => {

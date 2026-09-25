@@ -200,7 +200,7 @@ export interface TeamPanelProps {
   onSetCoordinator?: (memberId: string) => void;
 }
 
-const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex' };
+const RUNTIME_SHORT: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude', codex: 'Codex', grok: 'Grok', hermes: 'Hermes' };
 /**
  * El rol neutral que siempre esta (`electron/agents/roles.ts`): sin run y sin
  * permiso de coordinacion, es a quien le llega lo que se escribe en el modo
@@ -904,6 +904,10 @@ const DEGRADED_KEY: Record<CoordinationDegradedReason, string> = {
   codex_process_ceiling: 'codexProcessCeiling',
   opencode_run_cap: 'opencodeRunCap',
   opencode_global_cap: 'opencodeGlobalCap',
+  grok_run_cap: 'grokRunCap',
+  grok_global_cap: 'grokGlobalCap',
+  hermes_run_cap: 'hermesRunCap',
+  hermes_global_cap: 'hermesGlobalCap',
   engram_not_installed: 'engramMissing',
   runtime_refused_injection: 'runtimeRefused',
   coordination_server_unavailable: 'coordinationServerDown',
@@ -1097,7 +1101,7 @@ const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e)
 
 /** An agent that can take the work over right now: the primary agent when it is ready, or a logged-in alternative. */
 interface ContinueOption extends ContinuationTarget { label: string }
-const RUNTIME_NAME: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude Code', codex: 'Codex' };
+const RUNTIME_NAME: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude Code', codex: 'Codex', grok: 'Grok', hermes: 'Hermes' };
 
 /**
  * Continue a member's work with another agent or account.

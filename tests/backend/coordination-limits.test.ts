@@ -5,7 +5,11 @@ import {
   ASK_TTL_MAX_MINUTES,
   MAX_ACTIVE_COORDINATION_RUNS,
   MAX_ATTEMPTS_PER_TASK,
+  MAX_ACP_PROCESSES_TOTAL,
+  MAX_BOOTSTRAP_ACP_MEMBERS_PER_WORK,
   MAX_BOOTSTRAP_CODEX_MEMBERS_PER_WORK,
+  MAX_COORDINATED_ACP_MEMBERS_PER_RUN,
+  MAX_COORDINATED_ACP_PROCESSES,
   MAX_CODEX_APP_SERVERS_TOTAL,
   MAX_COORDINATED_CODEX_MEMBERS_PER_RUN,
   MAX_COORDINATED_CODEX_PROCESSES,
@@ -55,5 +59,13 @@ describe('coordination structural limits', () => {
   it('caps OpenCode member processes at 10 app-wide, the twin of the Codex ceiling (every open OpenCode member is its own process)', () => {
     expect(MAX_OPENCODE_SERVERS_TOTAL).toBe(10);
     expect(MAX_OPENCODE_SERVERS_TOTAL).toBe(MAX_CODEX_APP_SERVERS_TOTAL);
+  });
+
+  it('caps Grok and Hermes at 8 processes each app-wide, with the same coordinated caps as Codex and OpenCode', () => {
+    expect(MAX_ACP_PROCESSES_TOTAL).toBe(8);
+    expect(MAX_COORDINATED_ACP_MEMBERS_PER_RUN).toBe(MAX_COORDINATED_CODEX_MEMBERS_PER_RUN);
+    expect(MAX_COORDINATED_ACP_PROCESSES).toBe(MAX_COORDINATED_CODEX_PROCESSES);
+    expect(MAX_COORDINATED_ACP_PROCESSES).toBeLessThanOrEqual(MAX_ACP_PROCESSES_TOTAL);
+    expect(MAX_BOOTSTRAP_ACP_MEMBERS_PER_WORK).toBe(1);
   });
 });

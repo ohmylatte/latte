@@ -315,7 +315,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
     return { proposal: p, brand, refresh: report };
   }),
   requestBrandContextDraft: unavailable,
-  runtimeStatus: async () => ['claude', 'codex', 'opencode'].map(provider => ({ provider: provider as 'claude' | 'codex' | 'opencode', available: false, detail: 'Requiere escritorio' })),
+  runtimeStatus: async () => (['claude', 'codex', 'opencode', 'grok', 'hermes'] as const).map(provider => ({ provider, available: false, detail: 'Requiere escritorio' })),
   startAgent: unavailable, writeAgent: unavailable, resizeAgent: unavailable, stopAgent: unavailable,
   onAgentEvent: () => () => {},
   readMemory: async () => ({ available: false, text: 'Engram se conecta desde la aplicación de escritorio. Esta vista no simula recuerdos.' }),
@@ -339,6 +339,11 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   getPrimaryAgent: async () => null, setPrimaryAgent: unavailable, listAgentRuntimes: async () => [], addAgentAccount: unavailable, removeAgentAccount: unavailable, startAccountLogin: unavailable, logoutAccount: unavailable,
   // No CLI to ask in a browser tab: no catalog, and no pretending there is one.
   listAccountModels: async () => ({ source: 'suggested' as const, models: [], detail: 'Esta vista previa no puede consultar los modelos de tu cuenta.' }),
+  getAcpTierModels: async () => {
+    const none = { light: null, balanced: null, deep: null };
+    return { configured: { grok: { ...none }, hermes: { ...none } }, defaults: { grok: { ...none }, hermes: { ...none } } };
+  },
+  setAcpTierModel: unavailable,
   // The team roster is real only on desktop; the preview shows the roles so the concept is visible.
   listRoles: async()=> (await browserAPI.listProfiles()).map(({id,name,initial,summary,builtin,tier,avatar})=>({id,name,initial,summary,builtin,tier,avatar})),
   listProfiles:async()=>[...builtinProfiles,...normalized().profiles].map(p=>({...p,avatar:roleAvatars.get(p.id)??p.avatar})),

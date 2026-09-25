@@ -2,13 +2,65 @@ import { translate as t } from './i18n';
 import { useEffect, useState } from 'react';
 import { Check, ExternalLink, KeyRound, LogIn, LogOut, Plug, Plus, Star, Trash2, Unplug } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { AgentAccount, AgentModel, AgentModelList, AgentRuntimeInfo, PrimaryAgent, ProviderInfo, ProviderOAuthStart } from '../shared/contracts';
+import { EFFORT_TIERS, type AccountRuntimeName, type AcpRuntimeName, type AcpTierModels, type AgentAccount, type AgentModel, type AgentModelList, type AgentRuntimeInfo, type ChatRuntime, type EffortTier, type PrimaryAgent, type ProviderInfo, type ProviderOAuthStart } from '../shared/contracts';
 import { agentBus, api, isDesktop } from './browser-api';
 import { TerminalPane } from './TerminalPane';
 import { accountModelKey, selectedAccountModel, selectedProviderModel, validModelInput } from './provider-models';
 
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const RUNTIME_NAME: Record<'claude' | 'codex', string> = { claude: 'Claude Code', codex: 'Codex' };
+const RUNTIME_NAME: Record<AccountRuntimeName, string> = { claude: 'Claude Code', codex: 'Codex', grok: 'Grok', hermes: 'Hermes' };
+const isAcp = (runtime: AccountRuntimeName): runtime is AcpRuntimeName => runtime === 'grok' || runtime === 'hermes';
+
+/**
+ * El modelo que Grok y Hermes usan en cada nivel de esfuerzo. Un campo por
+ * nivel, texto libre con el default de Latte como pista: Hermes es
+ * multiproveedor y ningún catálogo cabe en una lista cerrada.
+ */
+function AcpTierModelsForm({ runtime, busy, onSaved, onError }: { runtime: AcpRuntimeName; busy: boolean; onSaved: (text: string) => void; onError: (text: string) => void }) {
+  const [state, setState] = useState<{ configured: AcpTierModels; defaults: AcpTierModels } | null>(null);
+  const [draft, setDraft] = useState<Record<EffortTier, string>>({ light: '', balanced: '', deep: '' });
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void api.getAcpTierModels().then(value => {
+      if (!live) return;
+      setState(value);
+      setDraft({ light: value.configured[runtime].light ?? '', balanced: value.configured[runtime].balanced ?? '', deep: value.configured[runtime].deep ?? '' });
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, [runtime]);
+  if (!state) return null;
+  const changed = EFFORT_TIERS.some(tier => draft[tier].trim() !== (state.configured[runtime][tier] ?? ''));
+  const valid = EFFORT_TIERS.every(tier => draft[tier].trim() === '' || validModelInput(draft[tier]));
+  const save = async () => {
+    setSaving(true);
+    try {
+      let next = state.configured;
+      for (const tier of EFFORT_TIERS) {
+        const value = draft[tier].trim();
+        if (value !== (state.configured[runtime][tier] ?? '')) next = await api.setAcpTierModel(runtime, tier, value || null);
+      }
+      setState({ ...state, configured: next });
+      onSaved(t('provider.tierModels.saved'));
+    } catch (e) {
+      onError(displayError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <div className="provider-tier-models" role="group" aria-label={`${t('provider.tierModels.title')} · ${RUNTIME_NAME[runtime]}`}>
+    <div className="field-label">{t('provider.tierModels.title')}</div>
+    {EFFORT_TIERS.map(tier => <div className="provider-model-row" key={tier}>
+      <label htmlFor={`tier-model-${runtime}-${tier}`}>{t(`effort.tier.${tier}.label` as 'effort.tier.light.label')}</label>
+      <input id={`tier-model-${runtime}-${tier}`} value={draft[tier]} maxLength={200} disabled={busy || saving} autoComplete="off" spellCheck={false}
+        aria-invalid={draft[tier].trim() !== '' && !validModelInput(draft[tier])}
+        placeholder={state.defaults[runtime][tier] ?? t('provider.tierModels.accountDefault')}
+        onChange={e => setDraft(prev => ({ ...prev, [tier]: e.target.value }))} />
+    </div>)}
+    <small>{t(runtime === 'grok' ? 'provider.tierModels.grok' : 'provider.tierModels.hermes')}</small>
+    <div><button disabled={busy || saving || !changed || !valid} onClick={() => void save()}>{saving ? <Loading size={14} /> : <Check size={13} />}{t('provider.tierModels.save')}</button></div>
+  </div>;
+}
 
 /**
  * One place to decide who does the work. Subscription runtimes (Claude Code,
@@ -22,8 +74,8 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
   const [providers, setProviders] = useState<ProviderInfo[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [login, setLogin] = useState<{ runtime: 'claude' | 'codex'; accountId: string; sessionId: string | null; url: string | null; instructions: string; ended: boolean } | null>(null);
-  const [newAccount, setNewAccount] = useState<{ runtime: 'claude' | 'codex'; label: string } | null>(null);
+  const [login, setLogin] = useState<{ runtime: AccountRuntimeName; accountId: string; sessionId: string | null; url: string | null; instructions: string; ended: boolean } | null>(null);
+  const [newAccount, setNewAccount] = useState<{ runtime: AccountRuntimeName; label: string } | null>(null);
   const [selected, setSelected] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [oauth, setOauth] = useState<{ providerId: string; methodIndex: number; start: ProviderOAuthStart } | null>(null);
@@ -101,7 +153,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
     }
   };
 
-  const makePrimary = (choice: { runtime: 'opencode' | 'claude' | 'codex'; model: string | null; accountId: string | null }) =>
+  const makePrimary = (choice: { runtime: ChatRuntime; model: string | null; accountId: string | null }) =>
     run(async () => { const p = await api.setPrimaryAgent(choice); setPrimary(p); }, 'Agente principal actualizado');
 
   const startLogin = (account: AgentAccount) => run(async () => {
@@ -144,7 +196,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
       <div className="field-label">{t('ui.auto.228')}</div>
       {loading && !runtimes && <p className="footnote"><Loading size={16} />  {t('ui.auto.229')}</p>}
       {runtimes?.map(rt => <div className="runtime-card" key={rt.runtime}>
-        <div className="runtime-head"><strong>{RUNTIME_NAME[rt.runtime]}</strong><small>{rt.detail}</small></div>
+        <div className="runtime-head"><strong>{RUNTIME_NAME[rt.runtime]}</strong><small>{rt.detail}</small>{isAcp(rt.runtime) && <small>{t('provider.managedOnly')}</small>}</div>
         {rt.installed && <div className="provider-list">
           {rt.accounts.map(a => {
             const chosen = selectedAccountModel(a, primary, modelChoice);
@@ -169,7 +221,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
             </div>
             <div className="provider-actions">
               {!a.loggedIn && <button className="primary" disabled={busy || Boolean(login && !login.ended)} onClick={() => startLogin(a)}><LogIn size={13} />{t('ui.auto.233')}</button>}
-              {a.loggedIn && <button disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.385', { p0: RUNTIME_NAME[rt.runtime], p1: a.label }))) void run(() => api.logoutAccount(a.runtime, a.id), 'Sesión cerrada'); }}><LogOut size={13} />{t('ui.auto.234')}</button>}
+              {a.loggedIn && a.runtime !== 'hermes' && <button disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.385', { p0: RUNTIME_NAME[rt.runtime], p1: a.label }))) void run(() => api.logoutAccount(a.runtime, a.id), 'Sesión cerrada'); }}><LogOut size={13} />{t('ui.auto.234')}</button>}
               {!a.system && <button disabled={busy} title={t('ui.auto.235')} onClick={() => { if (window.confirm(t('ui.auto.386', { p0: a.label }))) void run(() => api.removeAgentAccount(a.runtime, a.id), 'Perfil quitado'); }}><Trash2 size={13} /></button>}
             </div>
           </div>; })}
@@ -186,6 +238,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
             <div className="provider-key-row"><input autoFocus aria-label={t('ui.auto.242')} placeholder={t('ui.auto.243')} value={newAccount.label} onChange={e => setNewAccount({ runtime: rt.runtime, label: e.target.value })} /><button className="primary" disabled={busy || !newAccount.label.trim()}>{t('ui.auto.083')}</button><button type="button" onClick={() => setNewAccount(null)}>{t('ui.auto.241')}</button></div>
             <p className="footnote">{t('ui.auto.244')} {RUNTIME_NAME[rt.runtime]}  {t('ui.auto.245')}</p>
           </form> : <button className="subtle" disabled={busy} onClick={() => setNewAccount({ runtime: rt.runtime, label: '' })}><Plus size={13} />{t('ui.auto.387')}</button>}
+          {isAcp(rt.runtime) && <AcpTierModelsForm runtime={rt.runtime} busy={busy} onSaved={onNotice} onError={onError} />}
         </div>}
       </div>)}
     </section>

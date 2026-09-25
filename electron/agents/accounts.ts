@@ -1,14 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import type { AgentAccount } from '../../shared/contracts';
+import { EFFORT_TIERS, type AccountRuntimeName, type AgentAccount } from '../../shared/contracts';
+import { isolatedHome } from './acp/profiles';
+import { HERMES_DEFAULT_TIER_MODELS } from './tiers';
 import { writeFileAtomic, readTextIfExists } from '../core/atomicFile';
 import { NotFoundError, ValidationError } from '../core/errors';
 import { safeJoin } from '../core/paths';
 import type { CommandRunner } from '../runtime/commandRunner';
 import { scrubEnv } from '../runtime/terminalManager';
 
-export type AccountRuntime = 'claude' | 'codex';
+export type AccountRuntime = AccountRuntimeName;
+
+/** Los runtimes que sólo corren con cuentas gestionadas por Latte: sin "mi sesión". */
+export function managedOnly(runtime: AccountRuntime): boolean {
+  return runtime === 'grok' || runtime === 'hermes';
+}
+
+const RUNTIME_NAME: Record<AccountRuntime, string> = { claude: 'Claude Code', codex: 'Codex', grok: 'Grok', hermes: 'Hermes' };
 
 export const SYSTEM_ACCOUNT_ID = 'system';
 const ACCOUNT_ID = /^acc_[a-f0-9]{16}$/;
@@ -27,7 +36,7 @@ export interface AccountStoreDeps {
 }
 
 /** Environment variable each CLI reads to relocate its profile (auth + settings). */
-export const PROFILE_ENV: Record<AccountRuntime, string> = { claude: 'CLAUDE_CONFIG_DIR', codex: 'CODEX_HOME' };
+export const PROFILE_ENV: Record<AccountRuntime, string> = { claude: 'CLAUDE_CONFIG_DIR', codex: 'CODEX_HOME', grok: 'GROK_HOME', hermes: 'HERMES_HOME' };
 
 /**
  * Orca-style account management: every Latte-managed account is a directory
@@ -57,7 +66,20 @@ export class AccountStore {
   /** Environment overlay that points the CLI at the account's profile (empty for the system profile). */
   envFor(runtime: AccountRuntime, accountId: string | null): Record<string, string> {
     if (!accountId || accountId === SYSTEM_ACCOUNT_ID) return {};
-    return { [PROFILE_ENV[runtime]]: this.dir(runtime, accountId) };
+    const dir = this.dir(runtime, accountId);
+    if (!managedOnly(runtime)) return { [PROFILE_ENV[runtime]]: dir };
+    // Grok y Hermes también leen `~`: el login y el estado ven lo mismo que el
+    // agente, un home vacío adentro de la cuenta (brief 7.1, punto 1).
+    const home = isolatedHome(dir);
+    fs.mkdirSync(home, { recursive: true });
+    return { [PROFILE_ENV[runtime]]: dir, USERPROFILE: home, HOME: home };
+  }
+
+  /** El directorio de una cuenta gestionada que existe, o `null` (el perfil del sistema, un id que no es de nadie). */
+  managedHome(runtime: AccountRuntime, accountId: string | null): string | null {
+    if (!accountId || accountId === SYSTEM_ACCOUNT_ID || !ACCOUNT_ID.test(accountId)) return null;
+    const dir = this.dir(runtime, accountId);
+    return fs.existsSync(dir) ? dir : null;
   }
 
   list(runtime: AccountRuntime): AccountRecord[] {
@@ -101,14 +123,14 @@ export class AccountStore {
     const executable = await this.deps.resolveExecutable(runtime);
     const managed = this.list(runtime);
     const entries: Array<{ id: string; label: string; system: boolean }> = [
-      { id: SYSTEM_ACCOUNT_ID, label: runtime === 'claude' ? 'Mi sesión de Claude Code' : 'Mi sesión de Codex', system: true },
+      ...(managedOnly(runtime) ? [] : [{ id: SYSTEM_ACCOUNT_ID, label: `Mi sesión de ${RUNTIME_NAME[runtime]}`, system: true }]),
       ...managed.map((m) => ({ id: m.id, label: m.label, system: false })),
     ];
     const results: AgentAccount[] = [];
     for (const entry of entries) {
       const models = this.suggestedModels(runtime, entry.id);
       if (!executable) {
-        results.push({ runtime, ...entry, loggedIn: false, detail: `${runtime === 'claude' ? 'Claude Code' : 'Codex'} no está instalado`, models });
+        results.push({ runtime, ...entry, loggedIn: false, detail: `${RUNTIME_NAME[runtime]} no está instalado`, models });
         continue;
       }
       const status = await this.status(runtime, executable, entry.id);
@@ -126,8 +148,50 @@ export class AccountStore {
    */
   suggestedModels(runtime: AccountRuntime, accountId: string): string[] {
     if (runtime === 'claude') return [...CLAUDE_MODEL_ALIASES];
+    if (runtime === 'grok') return this.grokCachedModels(accountId);
+    if (runtime === 'hermes') {
+      const configured = this.hermesConfiguredModel(accountId);
+      return [...new Set([...(configured ? [configured] : []), ...EFFORT_TIERS.map((tier) => HERMES_DEFAULT_TIER_MODELS[tier])])];
+    }
     const configured = this.codexConfiguredModel(accountId);
     return configured ? [configured] : [];
+  }
+
+  /** Los modelos que Grok guardó en su caché la última vez que habló con su servidor (`models_cache.json`). */
+  private grokCachedModels(accountId: string): string[] {
+    const home = this.managedHome('grok', accountId);
+    const raw = home ? readTextIfExists(path.join(home, 'models_cache.json')) : null;
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as { models?: Record<string, unknown> };
+      return parsed.models && typeof parsed.models === 'object' ? Object.keys(parsed.models).filter((id) => /^[\w.:/-]{1,200}$/.test(id)) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * El modelo que `hermes model` dejó en el `config.yaml` de la cuenta, como
+   * `proveedor:modelo`. Se lee el bloque `model:` de arriba, con su sangría, sin
+   * un parser de YAML: son dos claves planas que Hermes escribe siempre igual.
+   */
+  hermesConfiguredModel(accountId: string): string | null {
+    const home = this.managedHome('hermes', accountId);
+    const raw = home ? readTextIfExists(path.join(home, 'config.yaml')) : null;
+    if (!raw) return null;
+    const block = /^model:[ \t]*\r?\n((?:[ \t]+.*(?:\r?\n|$))+)/m.exec(raw);
+    if (!block) return null;
+    const read = (key: string): string | null => {
+      for (const line of block[1].split(/\r?\n/)) {
+        const match = /^[ \t]+([\w-]+):[ \t]*['"]?([^'"#]*?)['"]?[ \t]*$/.exec(line);
+        if (match && match[1] === key && match[2]) return match[2].trim();
+      }
+      return null;
+    };
+    const model = read('default');
+    const provider = read('provider');
+    if (!model) return null;
+    return provider ? `${provider}:${model}` : model;
   }
 
   private codexConfiguredModel(accountId: string): string | null {
@@ -162,10 +226,43 @@ export class AccountStore {
         return { loggedIn: false, detail: result.code === 0 ? 'Respuesta no reconocida de Claude Code' : 'Sin sesión iniciada' };
       }
     }
+    if (runtime === 'grok') return this.grokStatus(executable, env);
+    if (runtime === 'hermes') return this.hermesStatus(executable, env, accountId);
     const result = await this.deps.runner(executable, ['login', 'status'], { timeoutMs: this.timeoutMs, env });
     if (result.error || result.timedOut) return { loggedIn: false, detail: result.timedOut ? 'Codex no respondió a tiempo' : `No se pudo consultar Codex: ${result.error}` };
     const text = `${result.stdout}\n${result.stderr}`.trim().split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0) ?? '';
     const loggedIn = result.code === 0 && /logged in/i.test(text) && !/not logged in/i.test(text);
     return { loggedIn, detail: loggedIn ? text.slice(0, 120) : 'Sin sesión iniciada' };
+  }
+
+  /**
+   * `grok models` dice quién está logueado sin llamar a ningún modelo (medido
+   * en 1.0.41: "You are logged in with grok.com." / "You are not
+   * authenticated."). El plan no lo dice: la cuenta del dueño está en el plan
+   * gratis con una promo, y eso queda "por revisar" (decisión 5).
+   */
+  private async grokStatus(executable: string, env: Record<string, string>): Promise<{ loggedIn: boolean; detail: string }> {
+    const result = await this.deps.runner(executable, ['models'], { timeoutMs: this.timeoutMs, env });
+    if (result.error || result.timedOut) return { loggedIn: false, detail: result.timedOut ? 'Grok no respondió a tiempo' : `No se pudo consultar Grok: ${result.error}` };
+    const text = `${result.stdout}\n${result.stderr}`;
+    const login = /logged in with ([^\s]+?)\.?(?:\s|$)/i.exec(text);
+    if (!login || /not authenticated/i.test(text)) return { loggedIn: false, detail: 'Sin sesión iniciada' };
+    const model = /Default model:\s*(\S+)/i.exec(text)?.[1];
+    return { loggedIn: true, detail: ['Sesión iniciada con ' + login[1], model ? `modelo ${model}` : null].filter(Boolean).join(' · ') };
+  }
+
+  /**
+   * `hermes auth list` lista las credenciales por proveedor. Tener alguna no
+   * alcanza: sin un modelo elegido en el `config.yaml` de la cuenta, ningún
+   * turno responde (medido en B1), así que eso también cuenta.
+   */
+  private async hermesStatus(executable: string, env: Record<string, string>, accountId: string): Promise<{ loggedIn: boolean; detail: string }> {
+    const result = await this.deps.runner(executable, ['auth', 'list'], { timeoutMs: this.timeoutMs, env });
+    if (result.error || result.timedOut) return { loggedIn: false, detail: result.timedOut ? 'Hermes no respondió a tiempo' : `No se pudo consultar Hermes: ${result.error}` };
+    const providers = [...result.stdout.matchAll(/^([\w:.-]+) \((\d+) credentials?\):/gm)].filter((m) => Number(m[2]) > 0).map((m) => m[1]);
+    if (providers.length === 0) return { loggedIn: false, detail: 'Sin sesión iniciada' };
+    const model = this.hermesConfiguredModel(accountId);
+    if (!model) return { loggedIn: false, detail: `Credenciales de ${providers.join(', ')}, pero sin modelo elegido: volvé a iniciar sesión y elegí uno` };
+    return { loggedIn: true, detail: `${providers.join(', ')} · modelo ${model}` };
   }
 }
