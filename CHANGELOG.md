@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.6.0 — 2026-09-25
+
+Dos runtimes nuevos y uno que se pone a la par. Grok y Hermes se suman a Claude Code y Codex, y OpenCode deja de ser un runtime de segunda: con eso, DeepSeek y cualquier proveedor que OpenCode o Hermes soporten entran a Latte con equipo, coordinación y conexiones.
+
+### OpenCode a la par
+
+- **Un servidor de OpenCode por miembro**, con puerto, credenciales y entorno propios. Cerrar a uno no toca a otro; reabrir reanuda la sesión. Tope de diez procesos.
+- **Conexiones y coordinación en OpenCode.** Cada miembro recibe sus servidores MCP y el bearer de sus conexiones por variable de entorno, nunca en la configuración ni en la línea de comandos. Sólo cuenta como conectado lo que OpenCode confirma. Topes gemelos a los de Codex.
+- **Consumo honesto.** OpenCode reporta el razonamiento fuera de lo generado; ahora se suma. El nivel de esfuerzo se traduce a la variante del modelo cuando el modelo la publica.
+- **Sin paridad, dicho con todas las letras**: el agente de OpenCode tiene permiso para todo dentro de la carpeta del trabajo y sólo pregunta por directorios externos, como Codex y no como Claude.
+
+### Grok y Hermes
+
+- **Un adaptador para los dos**, por el protocolo ACP que ambos hablan: sesión por miembro, servidores MCP y conexiones inyectados en la sesión, permisos y preguntas en el chat, consumo por llamada, cancelar y reanudar.
+- **Casa propia por cuenta.** Grok y Hermes arrancan aislados de tu configuración personal: sin tus reglas de Claude Code, tus skills, tus MCP ni tu "aprobar siempre". Hermes queda con aprobación manual porque su aprobación inteligente aprobaba sola comandos peligrosos.
+- **En Ajustes → Agentes** elegís cuenta y modelo por nivel de esfuerzo. Hermes arranca con gpt-5.6 luna, terra y sol.
+- **Grok en plan gratis** funciona pero no alcanza para un equipo; queda por revisar con una cuenta paga.
+- **Lo que Hermes no tiene**: preguntas nativas, costo por llamada ni confirmación de sus MCP; sólo pregunta por ediciones y comandos peligrosos.
+
+### Conocido
+
+- Grok y Hermes se probaron dentro de Latte contra un agente de prueba y por fuera contra los CLIs reales; falta la corrida completa en la app con cada uno.
+- OpenCode y Hermes guardan el historial en su runtime: un miembro pausado no muestra su conversación hasta reabrirlo.
+- Meta sigue necesitando una app registrada; el PNG del avatar y los archivos producidos por tarea siguen pendientes.
+
 ## 1.5.0 — 2026-09-25
 
 El modo Equipo deja de parecer un equipo en silencio: ves qué hace cada miembro mientras trabaja, una línea te dice qué pasa ahora y qué se espera de vos, y un coordinador en pausa ya no detiene el run sin avisar.
