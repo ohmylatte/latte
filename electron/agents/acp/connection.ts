@@ -55,6 +55,9 @@ export class AcpConnection {
     private readonly handlers: AcpConnectionHandlers,
   ) {
     output.on('data', (chunk: Buffer | string) => this.onData(typeof chunk === 'string' ? chunk : chunk.toString('utf8')));
+    // Un stdin cerrado (el proceso se murió, o Latte lo cerró) emite `error`
+    // en cada write: sin este listener, eso tumba el proceso principal.
+    input.on('error', (error) => this.handlers.log?.(`[acp] stdin error: ${error.message}`));
   }
 
   get closed(): boolean {
@@ -99,6 +102,8 @@ export class AcpConnection {
   }
 
   private write(message: unknown): void {
+    // Contestarle a un proceso que ya no escucha no es un error de nadie.
+    if (this.input.writableEnded || this.input.destroyed) return;
     try {
       this.input.write(`${JSON.stringify(message)}\n`);
     } catch (error) {

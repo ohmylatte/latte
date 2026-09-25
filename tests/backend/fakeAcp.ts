@@ -23,6 +23,8 @@
  *   ECHO        contesta con el texto exacto que recibió.
  *   LISTMCP     contesta con los servidores MCP que tiene registrados ahora.
  *   MCP <server> <tool> <json>  llama esa tool por HTTP con el header que vino en `mcpServers`.
+ *               Una por línea, en orden. `@NOMBRE` en el JSON se reemplaza con lo que diga
+ *               el archivo `FAKE_ACP_VARS` (el test escribe ahí el id de la tarea).
  *   FAIL        el prompt vuelve con un error JSON-RPC.
  *   EXIT        el proceso se muere a mitad de turno.
  */
@@ -195,6 +197,8 @@ async function prompt(params: Json, reply: (result: unknown) => void, fail: (cod
   const text = promptText(params);
   session.history.push({ role: 'user', text });
   const sid = session.id;
+  // Palabras clave enteras: `@TASK` no es `ASK`.
+  const has = (keyword: string): boolean => new RegExp(`(^|[^A-Za-z_@])${keyword}($|[^A-Za-z_])`).test(text);
   const say = (chunk: string): void => { update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: chunk } }); };
   const finish = (answer: string): void => {
     session.history.push({ role: 'agent', text: answer });
@@ -202,21 +206,21 @@ async function prompt(params: Json, reply: (result: unknown) => void, fail: (cod
     reply(usageFor(sid));
   };
 
-  if (text.includes('FAIL')) return fail(-32603, 'the fake model failed');
-  if (text.includes('EXIT')) { say('about to die'); setTimeout(() => process.exit(3), 20); return; }
-  if (text.includes('SLOW')) {
+  if (has('FAIL')) return fail(-32603, 'the fake model failed');
+  if (has('EXIT')) { say('about to die'); setTimeout(() => process.exit(3), 20); return; }
+  if (has('SLOW')) {
     say('working');
     await new Promise<void>((resolve) => { cancelled = resolve; });
     return reply({ stopReason: 'cancelled' });
   }
   update(sid, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'pensando' } });
-  if (text.includes('ECHO')) { say(text); return finish(text); }
-  if (text.includes('LISTMCP')) {
+  if (has('ECHO')) { say(text); return finish(text); }
+  if (has('LISTMCP')) {
     const names = session.mcpLost ? '' : session.mcpServers.map((s) => s.name).join(',');
     say(`mcp=[${names}] model=${session.model} mode=${session.mode} effort=${session.config.reasoning_effort ?? ''}`);
     return finish(names);
   }
-  if (text.includes('TOOLS')) {
+  if (has('TOOLS')) {
     update(sid, { sessionUpdate: 'tool_call', toolCallId: 'tc-ok', title: 'read_file: notes.md', kind: 'read', status: 'pending', rawInput: { path: 'notes.md' } });
     update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'tc-ok', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'contenido' } }] });
     update(sid, { sessionUpdate: 'tool_call', toolCallId: 'tc-bad', title: 'Write `x.md`', kind: 'edit', status: 'in_progress', rawInput: { file_path: 'x.md' }, _meta: { 'x.ai/tool': { name: 'write' } } });
@@ -224,12 +228,12 @@ async function prompt(params: Json, reply: (result: unknown) => void, fail: (cod
     say('listo');
     return finish('listo');
   }
-  if (text.includes('OPENTOOL')) {
+  if (has('OPENTOOL')) {
     update(sid, { sessionUpdate: 'tool_call', toolCallId: 'tc-open', title: 'mcp__latte__ping', kind: 'other' });
     say('pong');
     return finish('pong');
   }
-  if (text.includes('PERMISSION')) {
+  if (has('PERMISSION')) {
     update(sid, { sessionUpdate: 'tool_call', toolCallId: 'tc-write', title: 'Write `perm.txt`', kind: 'edit', status: 'pending', rawInput: { file_path: 'perm.txt', content: 'ok' } });
     const options = flavor === 'hermes'
       ? [{ optionId: 'allow_once', kind: 'allow_once', name: 'Allow edit' }, { optionId: 'deny', kind: 'reject_once', name: 'Deny' }]
@@ -242,18 +246,25 @@ async function prompt(params: Json, reply: (result: unknown) => void, fail: (cod
     say(`permission=${chosen}`);
     return finish(`permission=${chosen}`);
   }
-  if (text.includes('ASK')) {
+  if (has('ASK')) {
     const answer = await ask('_x.ai/ask_user_question', { sessionId: sid, toolCallId: 'tc-ask', questions: [{ question: 'Which color?', options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cold' }], multiSelect: null }], mode: 'default' });
     const said = answer.error ? `error=${String((answer.error as Json).message)}` : `answer=${JSON.stringify(answer.result)}`;
     say(said);
     return finish(said);
   }
-  const mcp = /MCP (\S+) (\S+) (\{.*\})/s.exec(text);
-  if (mcp) {
-    const result = await callMcp(session, mcp[1], mcp[2], JSON.parse(mcp[3]) as Json);
-    update(sid, { sessionUpdate: 'tool_call', toolCallId: `tc-mcp-${Date.now()}`, title: `${mcp[1]}__${mcp[2]}`, kind: 'other', status: 'completed', rawOutput: result });
-    say(`mcp=${JSON.stringify(result)}`);
-    return finish(`mcp=${JSON.stringify(result)}`);
+  const calls = [...text.matchAll(/^MCP (\S+) (\S+) (\{.*\})\s*$/gm)];
+  if (calls.length > 0) {
+    const varsFile = process.env.FAKE_ACP_VARS;
+    const vars = varsFile && fs.existsSync(varsFile) ? JSON.parse(fs.readFileSync(varsFile, 'utf8')) as Record<string, string> : {};
+    const said: string[] = [];
+    for (const [index, call] of calls.entries()) {
+      const args = JSON.parse(call[3].replace(/@([A-Z_]+)/g, (_m, name: string) => vars[name] ?? `@${name}`)) as Json;
+      const result = await callMcp(session, call[1], call[2], args);
+      update(sid, { sessionUpdate: 'tool_call', toolCallId: `tc-mcp-${index}`, title: `${call[1]}__${call[2]}`, kind: 'other', status: 'completed', rawInput: args, rawOutput: result });
+      said.push(`${call[2]}=${JSON.stringify(result)}`);
+    }
+    say(said.join('\n'));
+    return finish(said.join('\n'));
   }
   say('Hola');
   say(' desde el fake');
@@ -268,7 +279,9 @@ async function callMcp(session: Session, serverName: string, tool: string, args:
   const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
   for (const h of server.headers ?? []) headers[h.name] = h.value;
   const rpc = async (body: Json): Promise<Json> => {
+    log({ kind: 'mcp-rpc', server: serverName, method: body.method });
     const res = await fetch(server.url as string, { method: 'POST', headers, body: JSON.stringify(body) });
+    log({ kind: 'mcp-rpc-status', server: serverName, method: body.method, status: res.status, type: res.headers.get('content-type') });
     const sessionHeader = res.headers.get('mcp-session-id');
     if (sessionHeader) headers['mcp-session-id'] = sessionHeader;
     const raw = await res.text();

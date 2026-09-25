@@ -335,3 +335,52 @@ modelo no pueda deducir (`LATTE-ROL-<id del miembro>`); (2) llevar la conversaci
 `session_info_update._meta.hermes.sessionProvenance.compressionDepth` pase de 0 (o forzarlo con el
 comando local `/compress`); (3) preguntar "¿cuál es tu marca de rol?" y comparar; (4) repetir con
 `protect_first_n: 0` para confirmar que la protección es lo que la sostiene.
+
+## 8. Estado de la implementación (2026-09-25)
+
+Rama `feat/acp-runtimes`, un commit por bloque. El código vive en `electron/agents/acp/`
+(`connection.ts`, `acpAdapter.ts`, `profiles.ts`, `profiles/grok.ts`, `profiles/hermes.ts`,
+`tierModels.ts`, `executables.ts`) y el agente falso en `tests/backend/fakeAcp.ts`.
+
+Lo que cambió respecto de la sección 3, por lo que se midió en 7.1:
+
+- **Aislamiento**: además del home de la cuenta, `USERPROFILE`/`HOME` apuntan a `<cuenta>/home`.
+  Grok y Hermes no tienen "mi sesión": corren sólo con cuentas gestionadas por Latte.
+- **Hermes en Windows**: `sitecustomize.py` de Latte por `PYTHONPATH` (`<datos>/support/hermes-stdin-fix`)
+  para que sus hijos no hereden el pipe de ACP. Sin eso, se cuelga al primer archivo.
+- **Hermes, aprobaciones**: Latte agrega `approvals: {mode: manual}` al `config.yaml` de la cuenta si
+  no dice nada; si la persona eligió otro modo en esa cuenta, se respeta.
+- **Hermes, modelo por nivel**: `openai-codex:gpt-5.6-luna | gpt-5.6-terra | gpt-5.6-sol`
+  (light, balanced, deep), configurable en Ajustes → Agentes. No son GPT-6 porque Hermes 0.21 no
+  puede cambiar por ACP a un modelo de su mismo proveedor que no esté en su catálogo estático.
+- **Grok, carpeta confiada**: no se traduce a su "accept edits", que no está acotado a la carpeta.
+- **`injectedMcpServers`**: el adaptador NO devuelve los nombres que mandó (eso sería la tautología
+  del juicio #1 de la ronda 4). Grok confirma después, con `_x.ai/mcp/server_status`; Hermes nunca.
+- **Topes**: `MAX_ACP_AGENT_PROCESSES_TOTAL = 8` por adaptador, en `acpAdapter.ts`, con un TODO para
+  llevarlo a `coordination/limits.ts` cuando mergee la tanda de OpenCode.
+
+### 8.1 Paridad con Claude Code
+
+| | Grok | Hermes |
+|---|---|---|
+| Permisos | Sí. Lecturas y comandos de sólo lectura no preguntan (política de Grok). | Sólo ediciones y comandos que Hermes marca peligrosos; el resto de la terminal corre sin preguntar. Niega solo a los 60 s. |
+| Carpeta confiada | No: sigue preguntando. | Sí, `accept_edits` (workspace y `/tmp`). |
+| Preguntas nativas | Sí. Descartar: sin medir (se contesta con error). | No existen: `latte_ask` de coordinación. |
+| Confirmación de MCP | Sí (`_x.ai/mcp/server_status`). | No: queda "no confirmado". |
+| Costo | Sí (`costUsdTicks`). | No: `costUsd: null`. |
+| Contexto (N3) | `_meta.inputTokens` de la última llamada. | Último `usage_update.used`. |
+| Rol | `_meta.rules` (se suma a sus reglas). | Preámbulo del primer mensaje; hay que medir la compactación (7.1). |
+| Resume | `session/load`; el pane vuelve del transcripto. | Igual, más el `session/load` de rescate después de `set_model`. |
+| Cierre de sesión | `grok logout`. | Quitar la cuenta (Hermes guarda una credencial por proveedor). |
+| Modelo | El de la cuenta (hoy uno solo); el nivel mueve el esfuerzo. | Por nivel, `proveedor:modelo`. |
+
+### 8.2 Para el dueño
+
+1. **Modelos de Hermes**: revisar los defaults de 8 y, cuando Hermes publique GPT-6 en su catálogo,
+   pasarlos a `gpt-6-*` desde Ajustes.
+2. **Grok en el plan gratis**: queda "por revisar" (decisión 5). Latte lo ofrece igual y muestra lo que
+   `grok models` dice de la sesión; el plan no lo informa.
+3. **Upstream**: reportar a Hermes los dos bugs (stdin heredado en Windows, `set_model` con modelos
+   fuera del catálogo) y el de los MCP de ACP que se pierden en `set_model`.
+4. **Sin probar contra los CLIs reales en la app**: el dev server y un turno real por runtime desde la
+   interfaz (B5 del brief original) no se corrieron; todo lo de la app está probado contra el agente falso.
