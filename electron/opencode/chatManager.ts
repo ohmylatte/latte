@@ -1,11 +1,14 @@
-import type { spawn } from 'node:child_process';
+import type { ChildProcess, spawn } from 'node:child_process';
 import { DEFAULT_EFFORT_TIER, EMPTY_USAGE, type ChatEvent, type ChatMessage, type ChatPart, type ChatRuntimeStatus, type ChatSession, type ChatUsage, type PermissionReply, type ProviderAuthMethod, type ProviderInfo, type ProviderOAuthStart } from '../../shared/contracts';
+import { forgetServerPid, recordServerPid } from '../agents/codex/staleServers';
 import { opencodeVariantForTier } from '../agents/tiers';
+import { MAX_OPENCODE_SERVERS_TOTAL } from '../coordination/limits';
 import { sessionFrom, type AdapterStartInput, type AdapterStartResult, type RuntimeAdapter } from '../agents/types';
 import { NotFoundError, UnavailableError, ValidationError } from '../core/errors';
 import { newId } from '../core/ids';
 import { addUsage, tokenCount } from '../core/usage';
 import { OpenCodeClient, OpenCodeHttpError } from './client';
+import { opencodeMcpEnv } from './mcpConfig';
 import { OpenCodeServer, type OpenCodeEndpoint } from './server';
 import { describeMessageError, translateMessage, translatePart, translatePermission, translateQuestion, translateStatus } from './translate';
 import {
@@ -36,8 +39,15 @@ export interface ChatManagerDeps {
   log?: (line: string) => void;
   /** Injectable process launcher for bounded tests. */
   spawnImpl?: typeof spawn;
-  /** Tests: talk to an already running (fake) server instead of spawning one. */
+  /** Tests: kills a server's process tree instead of `killProcessTree`. */
+  killProcess?: (child: ChildProcess) => void;
+  /**
+   * Tests: talk to an already running (fake) server instead of spawning one.
+   * Every chat then shares that single endpoint, so nothing per member (env,
+   * MCP config) can reach it: this mode exists for protocol tests only.
+   */
   endpoint?: OpenCodeEndpoint;
+  /** Open chats = member processes. Defaults to `MAX_OPENCODE_SERVERS_TOTAL`. */
   maxChats?: number;
 }
 
@@ -46,6 +56,8 @@ export type StartChatResult = AdapterStartResult;
 
 interface LiveChat {
   session: ChatSession;
+  /** Which server process this chat lives on (`memberKey(chatId)`, or the shared test endpoint). */
+  runtimeKey: string;
   ocSessionId: string;
   directory: string;
   model: { providerID: string; modelID: string } | null;
@@ -65,11 +77,42 @@ interface LiveChat {
   usageSeen: Set<string>;
 }
 
+/** One `opencode serve` process (or the shared test endpoint) and its event stream. */
+interface ServerRuntime {
+  key: string;
+  /** `null` only for `deps.endpoint`, which Latte did not start and must not stop. */
+  server: OpenCodeServer | null;
+  client: OpenCodeClient;
+  stream: { abort: AbortController; task: Promise<void> } | null;
+}
+
 const MESSAGE_LIMIT = 400;
+/** The provider-management process: no MCP, no member env, never counted as a member. */
+const CONTROL_KEY = 'control';
+/** `deps.endpoint`: the one server every chat shares in protocol tests. */
+const SHARED_KEY = 'shared';
+
+function memberKey(chatId: string): string {
+  return `member:${chatId}`;
+}
+
+/** The pid-file key in Latte's stray-process directory (reaped at startup). */
+function strayKey(runtimeKey: string): string {
+  return `opencode|${runtimeKey}`;
+}
 
 /**
- * Native chat on top of the OpenCode server protocol. One server process,
- * one global SSE subscription, one OpenCode session per Latte work.
+ * Native chat on top of the OpenCode server protocol.
+ *
+ * ONE SERVER PROCESS PER MEMBER. `OPENCODE_CONFIG_CONTENT` (the inline config
+ * that carries the MCP servers) is read from the PROCESS environment, and the
+ * bearer of each MCP server is per member: a shared process would hand one
+ * member's scope to every other. So each chat gets its own `opencode serve`
+ * with its own ephemeral port, Basic credentials, env and SSE stream; closing
+ * the chat kills it, reopening starts another and resumes the OpenCode session
+ * from the runtime's own store on disk (shared by every process of the user).
+ * Provider management (keys, OAuth) runs on a separate lazy process, because
+ * an OAuth login must start and finish on the same one.
  */
 export class ChatManager implements RuntimeAdapter {
   readonly runtime = 'opencode' as const;
@@ -80,18 +123,27 @@ export class ChatManager implements RuntimeAdapter {
   // (ver `client.ts`: sesion, mensajes, permisos, preguntas, proveedores). No
   // hay forma de que confirme una inyeccion, ni ahora ni esperando mas.
   readonly confirmsMcpInjection = false;
-  private server: OpenCodeServer | null = null;
-  private client: OpenCodeClient | null = null;
-  private endpoint: OpenCodeEndpoint | null = null;
+  private readonly runtimes = new Map<string, ServerRuntime>();
+  /** Runtime key -> launch in flight, so two callers never spawn two processes for one key. */
+  private readonly launching = new Map<string, Promise<ServerRuntime>>();
   private readonly chats = new Map<string, LiveChat>();
   private readonly byOcSession = new Map<string, string>();
-  private streamAbort: AbortController | null = null;
-  private streamTask: Promise<void> | null = null;
+  /** Chats still opening: they count against the cap before their process exists. */
+  private readonly starting = new Set<string>();
   private closed = false;
   private readonly maxChats: number;
 
   constructor(private readonly deps: ChatManagerDeps) {
-    this.maxChats = deps.maxChats ?? 16;
+    this.maxChats = deps.maxChats ?? MAX_OPENCODE_SERVERS_TOTAL;
+  }
+
+  /** Live member processes (the provider process is not a member and is not counted). */
+  processCount(): number {
+    let count = 0;
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.key !== CONTROL_KEY && runtime.server?.running) count += 1;
+    }
+    return count;
   }
 
   // Status ------------------------------------------------------------------
@@ -174,11 +226,28 @@ export class ChatManager implements RuntimeAdapter {
 
   async start(input: StartChatInput): Promise<StartChatResult> {
     if (this.closed) throw new UnavailableError('Chat manager is shut down');
-    if (this.chats.size >= this.maxChats) throw new ValidationError(`Too many open chats (max ${this.maxChats})`);
+    // The chats still opening count too: N simultaneous opens would otherwise
+    // all read the same size and all pass, one process each.
+    if (this.chats.size + this.starting.size >= this.maxChats) throw new ValidationError(`Too many open chats (max ${this.maxChats})`);
     const chatId = input.chatId ?? newId('ses');
-    if (this.chats.has(chatId)) throw new ValidationError('This chat is already open');
-    const client = await this.ensureClient();
+    if (this.chats.has(chatId) || this.starting.has(chatId)) throw new ValidationError('This chat is already open');
+    this.starting.add(chatId);
+    const key = this.deps.endpoint ? SHARED_KEY : memberKey(chatId);
+    try {
+      // The member's own env and its MCP servers ride on ITS process only.
+      const env = { ...(input.extraEnv ?? {}), ...opencodeMcpEnv(input.mcpServers ?? []) };
+      const runtime = await this.ensureRuntime(key, env);
+      return await this.startOn(runtime, chatId, input);
+    } catch (error) {
+      if (!this.chats.has(chatId)) this.releaseRuntimeIfUnused(key);
+      throw error;
+    } finally {
+      this.starting.delete(chatId);
+    }
+  }
 
+  private async startOn(runtime: ServerRuntime, chatId: string, input: StartChatInput): Promise<StartChatResult> {
+    const client = runtime.client;
     let ocSessionId: string | null = null;
     let resumed = false;
     if (input.previousSessionId) {
@@ -224,7 +293,7 @@ export class ChatManager implements RuntimeAdapter {
     const label = input.label ?? `OpenCode · ${chosenModel ?? 'modelo por defecto'}`;
     const session: ChatSession = { ...sessionFrom({ ...input, label }, 'opencode', chosenModel, null, label, resumed), id: chatId };
     const instructions = input.instructions?.trim() ?? '';
-    const live: LiveChat = { session, ocSessionId, directory: input.directory, model, system: instructions || null, busy: false, messages: new Map(), order: [], pendingPermissions: new Set(), pendingQuestions: new Set(), variant: opencodeVariantForTier(input.tier ?? DEFAULT_EFFORT_TIER), usage: EMPTY_USAGE, usageSeen: new Set() };
+    const live: LiveChat = { session, runtimeKey: runtime.key, ocSessionId, directory: input.directory, model, system: instructions || null, busy: false, messages: new Map(), order: [], pendingPermissions: new Set(), pendingQuestions: new Set(), variant: opencodeVariantForTier(input.tier ?? DEFAULT_EFFORT_TIER), usage: EMPTY_USAGE, usageSeen: new Set() };
     this.chats.set(session.id, live);
     this.byOcSession.set(ocSessionId, session.id);
 
@@ -248,7 +317,7 @@ export class ChatManager implements RuntimeAdapter {
       } catch { /* optional */ }
     }
 
-    this.ensureStream();
+    this.ensureStream(runtime);
     return { session, runtimeSessionId: ocSessionId };
   }
 
@@ -267,7 +336,7 @@ export class ChatManager implements RuntimeAdapter {
 
   async send(chatId: string, text: string): Promise<void> {
     const live = this.require(chatId);
-    const client = this.requireClient();
+    const client = this.clientFor(live);
     try {
       await client.promptAsync(live.ocSessionId, live.directory, text, live.model, live.system, live.variant);
       live.busy = true;
@@ -279,7 +348,7 @@ export class ChatManager implements RuntimeAdapter {
   async abort(chatId: string): Promise<void> {
     const live = this.require(chatId);
     try {
-      await this.requireClient().abort(live.ocSessionId, live.directory);
+      await this.clientFor(live).abort(live.ocSessionId, live.directory);
     } catch (error) {
       throw new UnavailableError(`Could not abort: ${describe(error)}`);
     }
@@ -289,7 +358,7 @@ export class ChatManager implements RuntimeAdapter {
     const live = this.require(chatId);
     if (!live.pendingPermissions.has(requestId)) throw new NotFoundError('Permission request', requestId);
     try {
-      await this.requireClient().replyPermission(requestId, live.directory, reply);
+      await this.clientFor(live).replyPermission(requestId, live.directory, reply);
       live.pendingPermissions.delete(requestId);
     } catch (error) {
       throw new UnavailableError(`Could not answer the permission request: ${describe(error)}`);
@@ -300,22 +369,26 @@ export class ChatManager implements RuntimeAdapter {
     const live = this.require(chatId);
     if (!live.pendingQuestions.has(requestId)) throw new NotFoundError('Question', requestId);
     try {
-      if (answers === null) await this.requireClient().rejectQuestion(requestId, live.directory);
-      else await this.requireClient().replyQuestion(requestId, live.directory, answers);
+      if (answers === null) await this.clientFor(live).rejectQuestion(requestId, live.directory);
+      else await this.clientFor(live).replyQuestion(requestId, live.directory, answers);
       live.pendingQuestions.delete(requestId);
     } catch (error) {
       throw new UnavailableError(`Could not answer the question: ${describe(error)}`);
     }
   }
 
-  /** Detaches the chat. The OpenCode session stays on disk so it can be resumed later. */
+  /**
+   * Closes the chat and kills ITS server process; no other member's process is
+   * touched. The OpenCode session stays in the runtime's store on disk, so a
+   * later `start` with `previousSessionId` resumes it on a fresh process.
+   */
   stop(chatId: string): void {
     const live = this.chats.get(chatId);
     if (!live) return;
     this.chats.delete(chatId);
-    this.byOcSession.delete(live.ocSessionId);
+    if (this.byOcSession.get(live.ocSessionId) === chatId) this.byOcSession.delete(live.ocSessionId);
     this.deps.emit({ chatId, type: 'closed', reason: 'stopped' });
-    if (this.chats.size === 0) this.stopStream();
+    this.releaseRuntimeIfUnused(live.runtimeKey);
   }
 
   list(): ChatSession[] {
@@ -325,46 +398,121 @@ export class ChatManager implements RuntimeAdapter {
   shutdown(): void {
     this.closed = true;
     for (const id of [...this.chats.keys()]) this.stop(id);
-    this.stopStream();
-    this.server?.stop();
-    this.server = null;
-    this.client = null;
-    this.endpoint = null;
+    for (const key of [...this.runtimes.keys()]) this.stopRuntime(key);
   }
 
   // Internals ---------------------------------------------------------------
 
+  /** Provider management runs on its own process (see `CONTROL_KEY`). */
   private async ensureClient(): Promise<OpenCodeClient> {
-    if (this.client && this.endpoint && (this.deps.endpoint || this.server?.running)) return this.client;
-    let endpoint: OpenCodeEndpoint;
-    if (this.deps.endpoint) {
-      endpoint = this.deps.endpoint;
-    } else {
-      const runtime = await this.deps.resolveExecutable();
-      if (!runtime) throw new UnavailableError('OpenCode is not installed or not on PATH');
-      this.server ??= new OpenCodeServer({
-        executable: runtime.executable,
-        cwd: this.deps.serverCwd,
-        env: this.deps.env,
-        platform: this.deps.platform,
-        startupTimeoutMs: this.deps.startupTimeoutMs,
-        log: this.deps.log,
-        spawnImpl: this.deps.spawnImpl,
-      });
-      try {
-        endpoint = await this.server.ensure();
-      } catch (error) {
-        throw new UnavailableError(describe(error));
-      }
-    }
-    this.endpoint = endpoint;
-    this.client = new OpenCodeClient(endpoint, { timeoutMs: this.deps.clientTimeoutMs, fetchImpl: this.deps.fetchImpl });
-    return this.client;
+    return (await this.ensureRuntime(this.deps.endpoint ? SHARED_KEY : CONTROL_KEY, {})).client;
   }
 
-  private requireClient(): OpenCodeClient {
-    if (!this.client) throw new UnavailableError('OpenCode runtime is not running');
-    return this.client;
+  private async ensureRuntime(key: string, env: Record<string, string>): Promise<ServerRuntime> {
+    const existing = this.runtimes.get(key);
+    if (existing && (existing.server === null || existing.server.running)) return existing;
+    const inFlight = this.launching.get(key);
+    if (inFlight) return inFlight;
+    const launch = this.launchRuntime(key, env).finally(() => {
+      if (this.launching.get(key) === launch) this.launching.delete(key);
+    });
+    this.launching.set(key, launch);
+    return launch;
+  }
+
+  private async launchRuntime(key: string, env: Record<string, string>): Promise<ServerRuntime> {
+    if (this.deps.endpoint) {
+      const runtime: ServerRuntime = { key, server: null, client: this.newClient(this.deps.endpoint), stream: null };
+      this.runtimes.set(key, runtime);
+      return runtime;
+    }
+    const found = await this.deps.resolveExecutable();
+    if (!found) throw new UnavailableError('OpenCode is not installed or not on PATH');
+    // The pid is recorded in Latte's stray-process directory (the one the
+    // startup sweep reaps, shared with Codex): N processes instead of one make
+    // an orphan after a crash N times likelier.
+    const pidKey = strayKey(key);
+    const server = new OpenCodeServer({
+      executable: found.executable,
+      cwd: this.deps.serverCwd,
+      env: this.deps.env,
+      extraEnv: env,
+      platform: this.deps.platform,
+      startupTimeoutMs: this.deps.startupTimeoutMs,
+      log: this.deps.log,
+      spawnImpl: this.deps.spawnImpl,
+      killProcess: this.deps.killProcess,
+      onSpawn: (pid) => recordServerPid(this.deps.serverCwd, pidKey, pid),
+    });
+    let endpoint: OpenCodeEndpoint;
+    try {
+      endpoint = await server.ensure();
+    } catch (error) {
+      server.stop();
+      forgetServerPid(this.deps.serverCwd, pidKey);
+      throw new UnavailableError(describe(error));
+    }
+    if (this.closed) {
+      server.stop();
+      forgetServerPid(this.deps.serverCwd, pidKey);
+      throw new UnavailableError('Chat manager is shut down');
+    }
+    const runtime: ServerRuntime = { key, server, client: this.newClient(endpoint), stream: null };
+    server.onExit = (reason) => this.onServerExit(runtime, reason);
+    this.runtimes.set(key, runtime);
+    return runtime;
+  }
+
+  private newClient(endpoint: OpenCodeEndpoint): OpenCodeClient {
+    return new OpenCodeClient(endpoint, { timeoutMs: this.deps.clientTimeoutMs, fetchImpl: this.deps.fetchImpl });
+  }
+
+  /** A process died on its own: the chats that lived on it close with the reason, nobody else's. */
+  private onServerExit(runtime: ServerRuntime, reason: string): void {
+    if (this.runtimes.get(runtime.key) !== runtime) return;
+    this.runtimes.delete(runtime.key);
+    runtime.stream?.abort.abort();
+    runtime.stream = null;
+    forgetServerPid(this.deps.serverCwd, strayKey(runtime.key));
+    for (const live of [...this.chats.values()].filter((c) => c.runtimeKey === runtime.key)) {
+      if (live.busy) this.deps.emit({ chatId: live.session.id, type: 'error', message: reason });
+      this.chats.delete(live.session.id);
+      if (this.byOcSession.get(live.ocSessionId) === live.session.id) this.byOcSession.delete(live.ocSessionId);
+      this.deps.emit({ chatId: live.session.id, type: 'closed', reason });
+    }
+  }
+
+  /** Kills a member's process once no chat lives on it; the shared test endpoint only loses its stream. */
+  private releaseRuntimeIfUnused(key: string): void {
+    if (key === CONTROL_KEY || this.hasChatsOn(key)) return;
+    if (key === SHARED_KEY) {
+      const runtime = this.runtimes.get(key);
+      if (runtime?.stream) {
+        runtime.stream.abort.abort();
+        runtime.stream = null;
+      }
+      return;
+    }
+    this.stopRuntime(key);
+  }
+
+  private stopRuntime(key: string): void {
+    const runtime = this.runtimes.get(key);
+    if (!runtime) return;
+    this.runtimes.delete(key);
+    runtime.stream?.abort.abort();
+    runtime.stream = null;
+    if (runtime.server) {
+      runtime.server.onExit = null;
+      runtime.server.stop();
+      forgetServerPid(this.deps.serverCwd, strayKey(key));
+    }
+  }
+
+  private clientFor(live: LiveChat): OpenCodeClient {
+    const runtime = this.runtimes.get(live.runtimeKey);
+    if (!runtime) throw new UnavailableError('OpenCode runtime is not running');
+    return runtime.client;
   }
 
   private require(chatId: string): LiveChat {
@@ -373,40 +521,36 @@ export class ChatManager implements RuntimeAdapter {
     return live;
   }
 
-  private ensureStream(): void {
-    if (this.streamTask || this.closed) return;
-    const controller = new AbortController();
-    this.streamAbort = controller;
-    this.streamTask = this.runStream(controller.signal).finally(() => {
-      if (this.streamAbort === controller) {
-        this.streamAbort = null;
-        this.streamTask = null;
-      }
+  private hasChatsOn(key: string): boolean {
+    for (const chat of this.chats.values()) if (chat.runtimeKey === key) return true;
+    return false;
+  }
+
+  private ensureStream(runtime: ServerRuntime): void {
+    if (runtime.stream || this.closed) return;
+    const abort = new AbortController();
+    const stream = { abort, task: Promise.resolve() };
+    stream.task = this.runStream(runtime, abort.signal).finally(() => {
+      if (runtime.stream === stream) runtime.stream = null;
     });
+    runtime.stream = stream;
   }
 
-  private stopStream(): void {
-    this.streamAbort?.abort();
-    this.streamAbort = null;
-    this.streamTask = null;
-  }
-
-  private async runStream(signal: AbortSignal): Promise<void> {
+  private async runStream(runtime: ServerRuntime, signal: AbortSignal): Promise<void> {
     let attempt = 0;
     while (!signal.aborted && !this.closed) {
-      const client = this.client;
-      if (!client) return;
       try {
-        await client.globalEvents((event) => this.handleEvent(event), signal);
+        await runtime.client.globalEvents((event) => this.handleEvent(runtime.key, event), signal);
         attempt = 0;
       } catch (error) {
         if (signal.aborted) return;
         this.deps.log?.(`[chat] event stream dropped: ${describe(error)}`);
       }
-      if (signal.aborted || this.chats.size === 0) return;
+      if (signal.aborted || !this.hasChatsOn(runtime.key)) return;
       attempt += 1;
       if (attempt > 20) {
         for (const chat of this.chats.values()) {
+          if (chat.runtimeKey !== runtime.key) continue;
           this.deps.emit({ chatId: chat.session.id, type: 'error', message: 'Lost the connection to the OpenCode runtime.' });
         }
         return;
@@ -415,14 +559,15 @@ export class ChatManager implements RuntimeAdapter {
     }
   }
 
-  private handleEvent(event: OcGlobalEvent): void {
+  private handleEvent(runtimeKey: string, event: OcGlobalEvent): void {
     const payload = event.payload;
     const props = isRecord(payload.properties) ? payload.properties : {};
     const ocSessionId = str(props.sessionID) || (isRecord(props.info) ? str(props.info.sessionID) : '') || (isRecord(props.part) ? str(props.part.sessionID) : '');
     const chatId = ocSessionId ? this.byOcSession.get(ocSessionId) : undefined;
     if (!chatId) return;
     const live = this.chats.get(chatId);
-    if (!live) return;
+    // Only the process a chat lives on speaks for it.
+    if (!live || live.runtimeKey !== runtimeKey) return;
 
     switch (payload.type) {
       case 'message.updated': {

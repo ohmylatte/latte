@@ -10,6 +10,7 @@ import {
   MAX_COORDINATED_CODEX_MEMBERS_PER_RUN,
   MAX_COORDINATED_CODEX_PROCESSES,
   MAX_DEPENDENCY_DEPTH,
+  MAX_OPENCODE_SERVERS_TOTAL,
   MAX_TASKS_PER_RUN,
 } from '../../electron/coordination/limits';
 
@@ -49,5 +50,10 @@ describe('coordination structural limits', () => {
   it('caps every Latte-spawned codex app-server process (coordination-injected or engram-only) at 10 app-wide, of which at most 6 may be coordination-injected', () => {
     expect(MAX_CODEX_APP_SERVERS_TOTAL).toBe(10);
     expect(MAX_COORDINATED_CODEX_PROCESSES).toBeLessThanOrEqual(MAX_CODEX_APP_SERVERS_TOTAL);
+  });
+
+  it('caps OpenCode member processes at 10 app-wide, the twin of the Codex ceiling (every open OpenCode member is its own process)', () => {
+    expect(MAX_OPENCODE_SERVERS_TOTAL).toBe(10);
+    expect(MAX_OPENCODE_SERVERS_TOTAL).toBe(MAX_CODEX_APP_SERVERS_TOTAL);
   });
 });

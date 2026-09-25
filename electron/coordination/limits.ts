@@ -156,6 +156,26 @@ export const MAX_ACTIVE_COORDINATION_RUNS = 4;
 export const MAX_CODEX_APP_SERVERS_TOTAL = 10;
 
 /**
+ * TECHO DE PROCESOS `opencode serve` EN TODA LA APP, el gemelo de
+ * `MAX_CODEX_APP_SERVERS_TOTAL`.
+ *
+ * Con OpenCode cada miembro abierto ES un proceso: `OPENCODE_CONFIG_CONTENT`
+ * (el config inline con los servidores MCP) es del proceso, así que la única
+ * forma de que el bearer de un miembro no lo vea otro es que cada uno tenga el
+ * suyo (`electron/opencode/chatManager.ts`). A diferencia de Codex no hay
+ * procesos compartidos que ahorrar: este número es directamente cuántos
+ * miembros de OpenCode pueden estar abiertos a la vez, y `ChatManager.start`
+ * lo hace cumplir rechazando el siguiente con su error de siempre ("Too many
+ * open chats"), contando también las aperturas en vuelo.
+ *
+ * No cuenta el proceso de PROVEEDORES: uno solo, perezoso, sin MCP, que sólo
+ * existe si la persona abrió la pantalla de proveedores (el login OAuth tiene
+ * que empezar y terminar en el mismo proceso, así que no puede vivir en el de
+ * un miembro que se cierra en el medio).
+ */
+export const MAX_OPENCODE_SERVERS_TOTAL = 10;
+
+/**
  * Cuántos avisos sin entregar puede acumular un miembro. Un aviso es un turno
  * de usuario que no se le pudo mandar porque estaba en medio de otro: se
  * guarda en memoria hasta su próximo `idle`. Un miembro que se murió sin
