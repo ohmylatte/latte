@@ -37,6 +37,11 @@ export interface AcpSessionSetup {
   tier: EffortTier;
   timeoutMs: number;
   log: (line: string) => void;
+  /**
+   * Corre algo durante lo cual el agente puede reproducir la historia (un
+   * `session/load` de rescate): lo que llegue mientras tanto no es un turno nuevo.
+   */
+  quietly<T>(work: () => Promise<T>): Promise<T>;
 }
 
 export interface AcpSessionSetupResult {

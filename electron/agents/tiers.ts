@@ -112,3 +112,36 @@ const OPENCODE: Record<EffortTier, string> = { light: 'low', balanced: 'medium',
 export function opencodeVariantForTier(tier: EffortTier): string {
   return OPENCODE[asEffortTier(tier)];
 }
+
+/**
+ * Grok Build lo llama `reasoning_effort` y lo cambia en vivo con
+ * `session/set_config_option` (medido en 1.0.41: el valor va como string; una
+ * sesión nueva arranca en `high`). El modelo no se toca: la cuenta ofrece uno
+ * solo (`grok-4.7`), así que el nivel sólo mueve el esfuerzo.
+ */
+const GROK: Record<EffortTier, string> = { light: 'low', balanced: 'medium', deep: 'high' };
+
+export function grokEffortForTier(tier: EffortTier): string {
+  return GROK[asEffortTier(tier)];
+}
+
+/**
+ * Hermes es multiproveedor: el nivel elige `proveedor:modelo`. Los defaults
+ * salen de lo que la instalación del dueño tiene logueado (brief 2026-09-25,
+ * decisión 2): su suscripción de ChatGPT por `openai-codex`, sin costo por
+ * token. Son de la familia GPT-5.6 y no GPT-6 a propósito: Hermes 0.21 no
+ * puede cambiar por ACP a un modelo del mismo proveedor que no esté en su
+ * catálogo estático (lo reencamina a OpenRouter y falla), y `gpt-6-*` todavía
+ * no está (brief 7.1, punto 10). Ajustes los pisa por nivel.
+ */
+export const HERMES_DEFAULT_TIER_MODELS: Record<EffortTier, string> = {
+  light: 'openai-codex:gpt-5.6-luna',
+  balanced: 'openai-codex:gpt-5.6-terra',
+  deep: 'openai-codex:gpt-5.6-sol',
+};
+
+/** El modelo que el humano eligió gana siempre; si no, el de Ajustes para ese nivel; si no, el default. */
+export function hermesModelForTier(tier: EffortTier, explicitModel: string | null, configured: string | null): string {
+  const chosen = explicitModel?.trim() || configured?.trim();
+  return chosen || HERMES_DEFAULT_TIER_MODELS[asEffortTier(tier)];
+}

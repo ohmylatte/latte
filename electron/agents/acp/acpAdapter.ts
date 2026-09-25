@@ -251,6 +251,10 @@ export class AcpChatAdapter implements RuntimeAdapter {
           tier: input.tier ?? DEFAULT_EFFORT_TIER,
           timeoutMs: profile.startupTimeoutMs,
           log: (line) => this.deps.log?.(`[${profile.runtime} ${chatId}] ${line}`),
+          quietly: async (work) => {
+            live.replaying = true;
+            try { return await work(); } finally { live.replaying = false; }
+          },
         }));
         model = setup.model ?? model;
         if (setup.notice) this.deps.emit({ chatId, type: 'error', message: setup.notice });
