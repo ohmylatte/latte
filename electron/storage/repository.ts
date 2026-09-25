@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type CoordinationSuspendReason, type CoordinationTaskAudience, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
+import { CHAT_RUNTIMES, DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type CoordinationSuspendReason, type CoordinationTaskAudience, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
 import type { ArtifactCheck, DeliveryEvidence, GenerationReceipt } from '../../shared/generationContracts';
 import { GenerationContractError } from '../generation/errors';
 import { hashGenerationContext } from '../generation/canon';
@@ -297,7 +297,7 @@ const toDocument = (r: DocumentRow): DocumentRecord => ({
 const emptySource = (): DecisionSource => ({ chatId:null,messageId:null,memberId:null,roleId:null,runtime:null });
 const jsonStrings = (value:string):string[] => { try { const v:unknown=JSON.parse(value); return Array.isArray(v)?v.filter((x):x is string=>typeof x==='string'):[]; } catch { return []; } };
 const toDecision = (r: DecisionRow): Decision => ({ id:r.id,workId:r.work_id,text:r.text,rationale:'',alternativesRejected:[],evidenceRefs:[],status:'approved',source:emptySource(),clientRequestId:null,fingerprint:'',createdAt:r.created_at,decidedAt:r.created_at });
-const toProposal = (r:DecisionProposalRow):Decision => ({id:r.id,workId:r.work_id,text:r.statement,rationale:r.rationale,alternativesRejected:jsonStrings(r.alternatives),evidenceRefs:jsonStrings(r.evidence),status:r.status as DecisionStatus,source:{chatId:r.source_chat_id,messageId:r.source_message_id,memberId:r.source_member_id,roleId:r.source_role_id,runtime:(r.source_runtime==='claude'||r.source_runtime==='codex'||r.source_runtime==='opencode')?r.source_runtime:null},clientRequestId:r.client_request_id,fingerprint:r.fingerprint,createdAt:r.created_at,decidedAt:r.decided_at});
+const toProposal = (r:DecisionProposalRow):Decision => ({id:r.id,workId:r.work_id,text:r.statement,rationale:r.rationale,alternativesRejected:jsonStrings(r.alternatives),evidenceRefs:jsonStrings(r.evidence),status:r.status as DecisionStatus,source:{chatId:r.source_chat_id,messageId:r.source_message_id,memberId:r.source_member_id,roleId:r.source_role_id,runtime:readSourceRuntime(r.source_runtime)},clientRequestId:r.client_request_id,fingerprint:r.fingerprint,createdAt:r.created_at,decidedAt:r.decided_at});
 const toBrandContextProposal = (r: BrandContextProposalRow): BrandContextProposal => ({
   id: r.id,
   brandId: r.brand_id,
@@ -307,7 +307,7 @@ const toBrandContextProposal = (r: BrandContextProposalRow): BrandContextProposa
     messageId: r.source_message_id,
     memberId: r.source_member_id,
     roleId: r.source_role_id,
-    runtime: (r.source_runtime === 'claude' || r.source_runtime === 'codex' || r.source_runtime === 'opencode') ? r.source_runtime : null,
+    runtime: readSourceRuntime(r.source_runtime),
   },
   text: r.text,
   rationale: r.rationale,
@@ -374,7 +374,7 @@ const toMember = (r: MemberRow): TeamMemberRecord => ({
   roleId: r.role_id,
   roleName: r.role_name,
   initial: r.initial,
-  runtime: (r.runtime === 'claude' || r.runtime === 'codex' ? r.runtime : 'opencode'),
+  runtime: readRuntime(r.runtime),
   model: r.model,
   accountId: r.account_id,
   sessionId: r.session_id,
@@ -388,7 +388,9 @@ const toMember = (r: MemberRow): TeamMemberRecord => ({
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
-const readRuntime = (runtime: string): ChatRuntime => (runtime === 'claude' || runtime === 'codex' ? runtime : 'opencode');
+/** Un runtime que este build no conoce se lee como OpenCode, el de siempre; Grok y Hermes se leen como lo que son. */
+const readRuntime = (runtime: string): ChatRuntime => ((CHAT_RUNTIMES as readonly string[]).includes(runtime) ? runtime as ChatRuntime : 'opencode');
+const readSourceRuntime = (runtime: string | null): ChatRuntime | null => (runtime && (CHAT_RUNTIMES as readonly string[]).includes(runtime) ? runtime as ChatRuntime : null);
 const readTier = (tier: string | null): EffortTier => ((EFFORT_TIERS as readonly string[]).includes(tier ?? '') ? (tier as EffortTier) : DEFAULT_EFFORT_TIER);
 const toBrandMember = (r: BrandMemberRow): BrandMemberRecord => ({
   id: r.id,

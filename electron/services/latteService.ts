@@ -10,6 +10,9 @@ import type {
   DocumentPatch,
   FolderEntries,
   FunnelStage,
+  AccountRuntimeName,
+  AcpRuntimeName,
+  AcpTierModels,
   AgentModelList,
   WorkPermissionMode,
   MemberModelChange,
@@ -111,6 +114,7 @@ import { WORK_FILES } from '../core/paths';
 import { EngramClient, memoryProjectFor } from '../memory/engram';
 import { AccountStore } from '../agents/accounts';
 import { isAccountRuntime, isChatRuntime, type AgentHub, type MemberContext } from '../agents/hub';
+import { acpTierModelDefaults, readAcpTierModels, writeAcpTierModel } from '../agents/acp/tierModels';
 import { CoordinationEngine, coordinationRequestMetaKey } from '../coordination/engine';
 import { mergeCoordinationBudget, readStoredCoordinationBudget, requireCoordinationBudget } from '../coordination/budget';
 import type { CoordinationInjectionPlanner } from '../coordination/injection';
@@ -2886,18 +2890,18 @@ export class LatteService implements BackendApi {
     return this.connections;
   }
 
-  async addAgentAccount(runtime: 'claude' | 'codex', label: string): Promise<AgentAccount> {
+  async addAgentAccount(runtime: AccountRuntimeName, label: string): Promise<AgentAccount> {
     if (!isAccountRuntime(runtime)) throw new TypeError('Unknown runtime');
     return this.deps.hub.addAccount(runtime, requireLabel(label, 'Account label', 80));
   }
 
-  async removeAgentAccount(runtime: 'claude' | 'codex', accountId: string): Promise<void> {
+  async removeAgentAccount(runtime: AccountRuntimeName, accountId: string): Promise<void> {
     if (!isAccountRuntime(runtime)) throw new TypeError('Unknown runtime');
     if (!AccountStore.isValidId(accountId)) throw new TypeError('Invalid account id');
     this.deps.hub.removeAccount(runtime, accountId);
   }
 
-  async startAccountLogin(runtime: 'claude' | 'codex', accountId: string): Promise<AccountLoginStart> {
+  async startAccountLogin(runtime: AccountRuntimeName, accountId: string): Promise<AccountLoginStart> {
     if (!isAccountRuntime(runtime)) throw new TypeError('Unknown runtime');
     if (!AccountStore.isValidId(accountId)) throw new TypeError('Invalid account id');
     const start = await this.deps.hub.startLogin(runtime, accountId);
@@ -2905,16 +2909,25 @@ export class LatteService implements BackendApi {
     return start;
   }
 
-  async logoutAccount(runtime: 'claude' | 'codex', accountId: string): Promise<void> {
+  async logoutAccount(runtime: AccountRuntimeName, accountId: string): Promise<void> {
     if (!isAccountRuntime(runtime)) throw new TypeError('Unknown runtime');
     if (!AccountStore.isValidId(accountId)) throw new TypeError('Invalid account id');
     await this.deps.hub.logout(runtime, accountId);
   }
 
-  async listAccountModels(runtime: 'claude' | 'codex', accountId: string): Promise<AgentModelList> {
+  async listAccountModels(runtime: AccountRuntimeName, accountId: string): Promise<AgentModelList> {
     if (!isAccountRuntime(runtime)) throw new TypeError('Unknown runtime');
     if (!AccountStore.isValidId(accountId)) throw new TypeError('Invalid account id');
     return this.deps.hub.listAccountModels(runtime, accountId);
+  }
+
+  /** El modelo por nivel de Grok y Hermes (Ajustes → Agentes), con los defaults de Latte al lado. */
+  async getAcpTierModels(): Promise<{ configured: AcpTierModels; defaults: AcpTierModels }> {
+    return { configured: readAcpTierModels((key) => this.deps.repo.getMeta(key)), defaults: acpTierModelDefaults() };
+  }
+
+  async setAcpTierModel(runtime: AcpRuntimeName, tier: EffortTier, model: string | null): Promise<AcpTierModels> {
+    return writeAcpTierModel((key) => this.deps.repo.getMeta(key), (key, value) => this.deps.repo.setMeta(key, value), runtime, tier, model);
   }
 
   async replyQuestion(chatId: string, requestId: string, answers: string[][] | null): Promise<void> {

@@ -123,6 +123,8 @@ const METHODS = [
   'startAccountLogin',
   'logoutAccount',
   'listAccountModels',
+  'getAcpTierModels',
+  'setAcpTierModel',
   'setTeamMemberModel',
   'setTeamMemberTier',
   'listRoles',
