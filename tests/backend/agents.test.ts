@@ -384,7 +384,7 @@ describe('AgentHub through the service', () => {
 
   it('lists subscription runtimes with accounts and manages managed profiles', async () => {
     const runtimes = await b.service.listAgentRuntimes();
-    expect(runtimes.map((r) => r.runtime)).toEqual(['claude', 'codex']);
+    expect(runtimes.map((r) => r.runtime)).toEqual(['claude', 'codex', 'grok', 'hermes']);
     expect(runtimes[0]).toMatchObject({ installed: true, accounts: [{ id: SYSTEM_ACCOUNT_ID, system: true, loggedIn: true }] });
     expect(runtimes[1].accounts[0]).toMatchObject({ loggedIn: false });
 

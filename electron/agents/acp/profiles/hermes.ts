@@ -2,9 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { hermesModelForTier } from '../../tiers';
 import type { AdapterStartInput } from '../../types';
-import type { AcpEnvContext, AcpProfile, AcpSessionSetup, AcpSessionSetupResult } from '../profiles';
+import { isolatedHome, type AcpEnvContext, type AcpProfile, type AcpSessionSetup, type AcpSessionSetupResult } from '../profiles';
 import { isRecord } from '../types';
-import { isolatedHome } from './grok';
 
 /**
  * El arreglo del cuelgue de Hermes en Windows (brief 7.1, punto 8).

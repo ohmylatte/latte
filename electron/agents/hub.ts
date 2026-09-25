@@ -1,4 +1,4 @@
-import { DEFAULT_EFFORT_TIER, EMPTY_USAGE, type AgentProfile, type ProfileInput } from '../../shared/contracts';
+import { CHAT_RUNTIMES, DEFAULT_EFFORT_TIER, EMPTY_USAGE, type AgentProfile, type ProfileInput } from '../../shared/contracts';
 import type {
   AccountLoginStart,
   AgentAccount,
@@ -30,7 +30,7 @@ import type { RuntimeDetector } from '../runtime/detect';
 import type { TerminalManager } from '../runtime/terminalManager';
 import type { BrandMemberRecord, LatteRepository, TeamMemberRecord } from '../storage/repository';
 import { rosterFaces } from './roster';
-import { AccountStore, SYSTEM_ACCOUNT_ID, type AccountRuntime } from './accounts';
+import { AccountStore, managedOnly, SYSTEM_ACCOUNT_ID, type AccountRuntime } from './accounts';
 import { ASSISTANT_ROLE_ID, RoleCatalog } from './roles';
 import { avatarFromSeed, serializeAvatar } from '../../shared/avatar';
 import type { TranscriptStore } from './transcripts';
@@ -40,6 +40,9 @@ export interface AgentHubDeps {
   opencode: ChatManager;
   claude: RuntimeAdapter;
   codex: RuntimeAdapter | null;
+  /** Grok y Hermes por ACP (`electron/agents/acp`). Ausentes = este build no los trae. */
+  grok?: RuntimeAdapter | null;
+  hermes?: RuntimeAdapter | null;
   accounts: AccountStore;
   repo: LatteRepository;
   detector: RuntimeDetector;
@@ -108,12 +111,26 @@ const PRIMARY_KEY = 'primary_agent';
 const RUNTIME_LABEL: Record<ChatRuntime, string> = { opencode: 'OpenCode', claude: 'Claude Code', codex: 'Codex', grok: 'Grok', hermes: 'Hermes' };
 
 export function isChatRuntime(value: unknown): value is ChatRuntime {
-  return value === 'opencode' || value === 'claude' || value === 'codex';
+  return typeof value === 'string' && (CHAT_RUNTIMES as readonly string[]).includes(value);
 }
 
 export function isAccountRuntime(value: unknown): value is AccountRuntime {
-  return value === 'claude' || value === 'codex';
+  return value === 'claude' || value === 'codex' || value === 'grok' || value === 'hermes';
 }
+
+/** Grok y Hermes: los runtimes que Latte habla por ACP, con transcripto propio y sólo cuentas gestionadas. */
+function isAcpRuntime(runtime: ChatRuntime): runtime is 'grok' | 'hermes' {
+  return runtime === 'grok' || runtime === 'hermes';
+}
+
+/** Cómo inicia sesión cada CLI en su terminal. Hermes elige proveedor y modelo en el mismo paso. */
+const LOGIN_ARGS: Record<AccountRuntime, string[]> = { claude: ['auth', 'login'], codex: ['login'], grok: ['login'], hermes: ['model'] };
+const LOGIN_INSTRUCTIONS: Record<AccountRuntime, string> = {
+  claude: 'Claude Code abre el navegador para iniciar sesión. Si te pide un código, pegalo en esta terminal. Al terminar, la terminal se cierra sola.',
+  codex: 'Codex abre el navegador para iniciar sesión con tu cuenta de ChatGPT. Al terminar, la terminal se cierra sola.',
+  grok: 'Grok abre el navegador para iniciar sesión con tu cuenta de X/Grok. Esta cuenta es sólo de Latte: no toca tu ~/.grok. Al terminar, la terminal se cierra sola.',
+  hermes: 'Hermes te pide un proveedor (por ejemplo ChatGPT/Codex) y su modelo, y te guía para iniciar sesión. Esta cuenta es sólo de Latte: no toca tu Hermes de siempre. Al terminar, la terminal se cierra sola.',
+};
 
 /**
  * Routes chats to runtimes, owns the "primary agent" choice and the team of
@@ -237,6 +254,10 @@ export class AgentHub {
     if (choice.runtime === 'opencode' && choice.accountId) throw new ValidationError('OpenCode has no accounts');
     if (choice.runtime !== 'opencode' && choice.accountId && !AccountStore.isValidId(choice.accountId)) throw new ValidationError('Invalid account id');
     if (choice.runtime === 'codex' && !this.deps.codex) throw new UnavailableError('Codex support is not available in this build');
+    if (isAcpRuntime(choice.runtime)) {
+      this.adapterFor(choice.runtime);
+      if (!choice.accountId || choice.accountId === SYSTEM_ACCOUNT_ID) throw new ValidationError(`${RUNTIME_LABEL[choice.runtime]} runs only with an account managed by Latte`);
+    }
     const primary: PrimaryAgent = {
       runtime: choice.runtime,
       model: choice.model,
@@ -271,12 +292,12 @@ export class AgentHub {
 
   async listAgentRuntimes(): Promise<AgentRuntimeInfo[]> {
     const out: AgentRuntimeInfo[] = [];
-    for (const runtime of ['claude', 'codex'] as const) {
+    for (const runtime of ['claude', 'codex', 'grok', 'hermes'] as const) {
       const found = await this.deps.detector.resolve(runtime);
       const accounts = await this.deps.accounts.describe(runtime);
       let detail: string;
       if (!found) detail = `${RUNTIME_LABEL[runtime]} no está instalado o no está en el PATH.`;
-      else if (runtime === 'codex' && !this.deps.codex) detail = 'Codex detectado, pero este build no incluye su adaptador de chat.';
+      else if (runtime !== 'claude' && !this.adapterOrNull(runtime)) detail = `${RUNTIME_LABEL[runtime]} detectado, pero este build no incluye su adaptador de chat.`;
       else detail = `${RUNTIME_LABEL[runtime]}${found.version ? ` ${found.version}` : ''} · ${found.executable}`;
       out.push({ runtime, installed: Boolean(found), version: found?.version ?? null, detail, accounts });
     }
@@ -301,6 +322,7 @@ export class AgentHub {
    */
   async startLogin(runtime: AccountRuntime, accountId: string): Promise<AccountLoginStart> {
     if (!AccountStore.isValidId(accountId)) throw new ValidationError('Invalid account id');
+    if (managedOnly(runtime) && accountId === SYSTEM_ACCOUNT_ID) throw new ValidationError(`${RUNTIME_LABEL[runtime]} runs only with an account managed by Latte`);
     const found = await this.deps.detector.resolve(runtime);
     if (!found) throw new UnavailableError(`${RUNTIME_LABEL[runtime]} is not installed or not on PATH`);
     const extraEnv = this.deps.accounts.envFor(runtime, accountId);
@@ -312,21 +334,22 @@ export class AgentHub {
       brandId: 'login',
       provider: runtime,
       executable: found.executable,
-      args: runtime === 'claude' ? ['auth', 'login'] : ['login'],
+      args: LOGIN_ARGS[runtime],
       cwd: this.deps.loginCwd ?? process.cwd(),
       extraEnv,
     });
     return {
       mode: 'terminal',
       sessionId: session.id,
-      instructions: runtime === 'claude'
-        ? 'Claude Code abre el navegador para iniciar sesión. Si te pide un código, pegalo en esta terminal. Al terminar, la terminal se cierra sola.'
-        : 'Codex abre el navegador para iniciar sesión con tu cuenta de ChatGPT. Al terminar, la terminal se cierra sola.',
+      instructions: LOGIN_INSTRUCTIONS[runtime],
     };
   }
 
   async logout(runtime: AccountRuntime, accountId: string): Promise<void> {
     if (!AccountStore.isValidId(accountId)) throw new ValidationError('Invalid account id');
+    // Hermes guarda una credencial por proveedor y su `logout` pide cuál; la
+    // cuenta de Latte es el home entero, así que cerrar sesión es quitarla.
+    if (runtime === 'hermes') throw new ValidationError('Hermes keeps one login per provider: remove this account from Latte to sign it out');
     const found = await this.deps.detector.resolve(runtime);
     if (!found) throw new UnavailableError(`${RUNTIME_LABEL[runtime]} is not installed or not on PATH`);
     const env = { ...scrub(this.deps.env ?? process.env), ...this.deps.accounts.envFor(runtime, accountId) };
@@ -907,7 +930,7 @@ export class AgentHub {
     const record = this.deps.repo.getMember(memberId);
     const adapter = this.adapters().find((a) => a.owns(memberId));
     if (adapter) return { messages: adapter.listMessages(memberId), exposed: true };
-    if (record.runtime === 'claude' && this.deps.transcripts) return { messages: this.deps.transcripts.load(memberId), exposed: true };
+    if ((record.runtime === 'claude' || isAcpRuntime(record.runtime)) && this.deps.transcripts) return { messages: this.deps.transcripts.load(memberId), exposed: true };
     return { messages: [], exposed: false };
   }
 
@@ -932,7 +955,10 @@ export class AgentHub {
     const primary = this.resolvePrimary();
     const runtime = input.runtime ?? primary.runtime;
     const model = input.runtime ? (input.model ?? null) : (input.model ?? primary.model);
-    const accountId = runtime === 'opencode' ? null : (input.accountId ?? (input.runtime ? SYSTEM_ACCOUNT_ID : primary.accountId ?? SYSTEM_ACCOUNT_ID));
+    let accountId = runtime === 'opencode' ? null : (input.accountId ?? (input.runtime ? SYSTEM_ACCOUNT_ID : primary.accountId ?? SYSTEM_ACCOUNT_ID));
+    // Grok y Hermes no tienen "mi sesión": sin cuenta elegida, la primera
+    // gestionada. Sin ninguna, el adaptador se niega con un mensaje claro.
+    if (isAcpRuntime(runtime) && (!accountId || accountId === SYSTEM_ACCOUNT_ID)) accountId = this.deps.accounts.list(runtime)[0]?.id ?? null;
     return { runtime, model, accountId };
   }
 
@@ -1000,6 +1026,8 @@ export class AgentHub {
       detail,
     });
     if (runtime === 'claude') return suggested('Claude Code no publica un catálogo: estos son los alias que documenta su propio --model.');
+    if (runtime === 'grok') return suggested('Los modelos que Grok guardó la última vez que habló con su servidor.');
+    if (runtime === 'hermes') return suggested('El modelo que eligió esta cuenta y los que Latte usa por nivel de esfuerzo (Ajustes → Agentes).');
     const key = `${runtime}:${accountId}`;
     const cached = this.modelCache.get(key);
     if (cached && Date.now() - cached.at < MODEL_CACHE_MS) return cached.value;
@@ -1043,14 +1071,24 @@ export class AgentHub {
   }
 
   private adapters(): RuntimeAdapter[] {
-    return [this.deps.opencode, this.deps.claude, ...(this.deps.codex ? [this.deps.codex] : [])];
+    return [this.deps.opencode, this.deps.claude, this.deps.codex, this.deps.grok, this.deps.hermes].filter((a): a is RuntimeAdapter => Boolean(a));
+  }
+
+  private adapterOrNull(runtime: ChatRuntime): RuntimeAdapter | null {
+    switch (runtime) {
+      case 'opencode': return this.deps.opencode;
+      case 'claude': return this.deps.claude;
+      case 'codex': return this.deps.codex;
+      case 'grok': return this.deps.grok ?? null;
+      case 'hermes': return this.deps.hermes ?? null;
+      default: return null;
+    }
   }
 
   private adapterFor(runtime: ChatRuntime): RuntimeAdapter {
-    if (runtime === 'opencode') return this.deps.opencode;
-    if (runtime === 'claude') return this.deps.claude;
-    if (this.deps.codex) return this.deps.codex;
-    throw new UnavailableError('Codex support is not available in this build');
+    const adapter = this.adapterOrNull(runtime);
+    if (adapter) return adapter;
+    throw new UnavailableError(`${RUNTIME_LABEL[runtime] ?? runtime} support is not available in this build`);
   }
 
   private route(chatId: string): RuntimeAdapter {

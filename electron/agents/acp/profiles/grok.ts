@@ -1,21 +1,15 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import type { ChatQuestionItem, ChatQuestionOption } from '../../../../shared/contracts';
 import { tokenCount } from '../../../core/usage';
 import { grokEffortForTier } from '../../tiers';
 import type { AdapterStartInput } from '../../types';
 import { AcpRpcError } from '../connection';
-import type { AcpEnvContext, AcpProfile, AcpQuestionBridge, AcpSessionSetup, AcpSessionSetupResult, AcpUsageReading } from '../profiles';
+import { isolatedHome, type AcpEnvContext, type AcpProfile, type AcpQuestionBridge, type AcpSessionSetup, type AcpSessionSetupResult, type AcpUsageReading } from '../profiles';
 import { isRecord } from '../types';
 
 /** Lo que Grok importa de otras herramientas si no se le dice que no (sus docs y el binario: `GROK_<FUENTE>_<COSA>_ENABLED`). */
 const FOREIGN_SOURCES = ['CLAUDE', 'CURSOR', 'CODEX'];
 const FOREIGN_THINGS = ['MCPS', 'HOOKS', 'RULES', 'AGENTS', 'SKILLS', 'SESSIONS'];
-
-/** El `~` que ve el proceso: un directorio vacío adentro de la cuenta (brief 7.1, punto 1). */
-export function isolatedHome(accountHome: string): string {
-  return path.join(accountHome, 'home');
-}
 
 /**
  * Grok Build 1.0.41 como agente ACP (`grok agent --no-leader stdio`).

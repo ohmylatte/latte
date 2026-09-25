@@ -4,7 +4,7 @@
  * open, under TWO INDEPENDENT policies --
  *
  *   `latte_memory` (stdio, engram): every member of every Work, wherever the
- *   runtime supports per-member injection (Claude, Codex -- never OpenCode).
+ *   runtime supports per-member injection (Claude, Codex, Grok, Hermes -- never OpenCode).
  *   NOT gated by a run, NOT gated by any coordination flag, NOT subject to
  *   any coordination ceiling -- only `MAX_CODEX_APP_SERVERS_TOTAL` (a member
  *   may share an existing brand+account process with other engram-only
@@ -442,6 +442,18 @@ export class CoordinationInjectionPlanner {
       if (!claudeSupportsMcpInjection(resolved.claudeVersion)) {
         return { coordinationEligible: false, memoryServer: null, reason: 'claude_below_floor' };
       }
+      return {
+        coordinationEligible: coordinationFeatureOn,
+        memoryServer: resolved.memoryServer,
+        reason: resolved.memoryServer ? null : 'engram_not_installed',
+      };
+    }
+
+    // Grok y Hermes (ACP): un proceso por miembro, como Claude, sin piso de
+    // versión y sin el ledger de `codex app-server`. Su techo de procesos lo
+    // lleva el propio adaptador (`MAX_ACP_AGENT_PROCESSES_TOTAL`), que se niega
+    // a arrancar el noveno: ahí `addMember`/`openMember` sueltan el reclamo.
+    if (input.runtime === 'grok' || input.runtime === 'hermes') {
       return {
         coordinationEligible: coordinationFeatureOn,
         memoryServer: resolved.memoryServer,

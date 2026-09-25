@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { ChatQuestionItem, EffortTier } from '../../../shared/contracts';
 import type { AdapterMcpServer, AdapterStartInput } from '../types';
 import type { AcpConnection, AcpRpcError } from './connection';
@@ -112,6 +113,11 @@ export interface AcpProfile {
   mcpSignal?(method: string, params: unknown): AcpMcpSignal | null;
   /** El nombre con el que el modelo ve una tool MCP (`latte__x` en Grok, `mcp__latte__x` en Hermes). */
   mcpToolName(server: string, tool: string): string;
+}
+
+/** El `~` que ve el proceso: un directorio vacío adentro de la cuenta (brief 7.1, punto 1). */
+export function isolatedHome(accountHome: string): string {
+  return path.join(accountHome, 'home');
 }
 
 /**

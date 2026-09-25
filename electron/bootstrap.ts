@@ -6,6 +6,11 @@ import { brandContextProtocolBlocks } from './workspace/brandContextProtocol';
 import { AccountStore } from './agents/accounts';
 import { ClaudeChatAdapter } from './agents/claude/claudeAdapter';
 import { CodexChatAdapter } from './agents/codex/codexAdapter';
+import { AcpChatAdapter } from './agents/acp/acpAdapter';
+import { grokProfile } from './agents/acp/profiles/grok';
+import { hermesProfile } from './agents/acp/profiles/hermes';
+import { tierModelReader } from './agents/acp/tierModels';
+import { resolveHermesExecutable } from './agents/acp/executables';
 import { sweepStrayCodexServers } from './agents/codex/staleServers';
 import { AgentHub } from './agents/hub';
 import { McpCatalog } from './agents/mcp';
@@ -83,6 +88,8 @@ export interface BackendOptions {
   brandContext?: BrandContextPort;
   /** Tests inject a fake taskkill for the startup stray-codex-app-server sweep (sdd/autonomous-coordination, task 5.8), so no real OS process is ever touched in a test. */
   taskkillImpl?: TaskkillExecFile;
+  /** Tests: cómo se lanza un agente ACP (Grok, Hermes), para correr `tests/backend/fakeAcp.ts` en su lugar. */
+  acpSpawnImpl?: typeof import('node:child_process').spawn;
   /** Q7: los tests inyectan su propio timer del barrido periódico de coordinación y disparan el tick a mano, en vez de esperar treinta segundos reales. */
   sweepTimer?: (tick: () => void, everyMs: number) => () => void;
   /**
@@ -127,6 +134,8 @@ export interface Backend {
   /** Exposed alongside `hub` so tests can spy on `start()` directly instead of spawning a real (or fake-CLI) process. */
   claude: ClaudeChatAdapter;
   codex: CodexChatAdapter | null;
+  grok: AcpChatAdapter;
+  hermes: AcpChatAdapter;
   accounts: AccountStore;
   /**
    * El servidor MCP REAL, el que sirve todo `tools/call` de todo miembro
@@ -336,12 +345,45 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     log: options.log,
     openExternal: options.openExternal,
   });
+  // Grok y Hermes por ACP: un proceso por miembro, cada uno en el home de su
+  // cuenta gestionada (brief 2026-09-25). El modelo por nivel sale de Ajustes.
+  const acpDeps = (runtime: 'grok' | 'hermes') => ({
+    emit: (event: ChatEvent) => emitChat(event),
+    accountHome: (accountId: string | null) => accounts.managedHome(runtime, accountId),
+    tierModel: tierModelReader((key) => repo.getMeta(key), runtime),
+    // Grok confirma los MCP que levantó, como el `system/init` de Claude.
+    onMcpServers: (chatId: string, connected: string[]) => hub.confirmRuntimeMcpServers(chatId, connected),
+    transcripts,
+    supportDir: path.join(paths.root, 'support'),
+    env,
+    platform,
+    log: options.log,
+    clientVersion: options.version,
+    spawnImpl: options.acpSpawnImpl,
+  });
+  const grok = new AcpChatAdapter({
+    profile: grokProfile,
+    resolveExecutable: async () => {
+      const found = await detector.resolve('grok');
+      return found ? { executable: found.executable, version: found.version } : null;
+    },
+    ...acpDeps('grok'),
+  });
+  const hermes = new AcpChatAdapter({
+    profile: hermesProfile,
+    resolveExecutable: async () => {
+      const found = await detector.resolve('hermes');
+      const executable = found ? resolveHermesExecutable(found.executable) : null;
+      return found && executable ? { executable, version: found.version } : null;
+    },
+    ...acpDeps('hermes'),
+  });
   const packsDir = options.packsDir ?? path.resolve(__dirname, '..', 'packs');
   const pack = loadInstructionPack(packsDir, 'marketing-core');
   // La cara elegida a mano para un rol incluido vive en `meta`, que es
   // clave/valor y no pide migracion: por eso esto no sube el esquema.
   const roles = new RoleCatalog(pack, new ProfileStore(path.join(paths.root, 'agents')), (roleId) => repo.getMeta(ROLE_AVATAR_KEY(roleId)));
-  const hub: AgentHub = new AgentHub({ opencode: chat, claude, codex, accounts, repo, detector, terminal, runner, roles, transcripts, promptDir: path.join(paths.root, 'prompts'), loginCwd: paths.root, env });
+  const hub: AgentHub = new AgentHub({ opencode: chat, claude, codex, grok, hermes, accounts, repo, detector, terminal, runner, roles, transcripts, promptDir: path.join(paths.root, 'prompts'), loginCwd: paths.root, env });
 
   const mcp = new McpCatalog({
     runner,
@@ -549,6 +591,8 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     hub,
     claude,
     codex,
+    grok,
+    hermes,
     accounts,
     coordinationMcpServer,
     coordinationTokens,

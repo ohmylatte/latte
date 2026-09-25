@@ -1239,9 +1239,7 @@ function modelListFor(runtime: ChatRuntime, accountId: string | null): Promise<A
       detail: t('team.model.openCodeDetail', { suffix: status.defaultModel ? t('team.model.openCodeDefault', { model: status.defaultModel }) : '' }),
       models: status.models.map(id => ({ id, label: id, description: '', isDefault: id === status.defaultModel })),
     }))
-    : runtime === 'claude' || runtime === 'codex'
-      ? api.listAccountModels(runtime, accountId ?? 'system')
-      : Promise.resolve({ source: 'suggested', models: [], detail: '' });
+    : api.listAccountModels(runtime, accountId ?? 'system');
 }
 
 function ModelPicker({ member, busy, onModel }: { member: TeamMember; busy: boolean; onModel: (memberId: string, model: string | null) => void }) {
