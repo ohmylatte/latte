@@ -6,7 +6,7 @@ import { translate as t } from '../i18n';
 import { memberDisplayName, roleDisplayName } from './names';
 import { CoordAvatar } from './anatomy';
 import { avatarOfRole } from './avatar-of';
-import { titleOf } from './text';
+import { taskTitle } from '../../shared/taskTitle';
 import { hourOf, minutesSince } from './time';
 import type {
   AgentRole, CoordinationAskView, CoordinationGateAggregate, CoordinationGateView,
@@ -481,7 +481,7 @@ function ReadableProposalGateCard({ gate, proposal, roles, team, onResolveGate, 
         const owner = roleDisplayName(task.roleId, roles, team);
         return <li key={i} className="coord-plan-task">
           <span className="coord-plan-n">{numberOf.get(i)}</span>
-          <span className="coord-plan-title" title={task.spec}>{titleOf(task.spec)}</span>
+          <span className="coord-plan-title" title={task.spec}>{taskTitle(task.spec, task.title)}</span>
           {after.length > 0 && <span className="coord-plan-after">{t('coord.proposal.after', { n: after.join(', ') })}</span>}
           <CoordAvatar name={owner} small roleId={task.roleId} avatar={avatarOfRole(task.roleId, roles, team)} />
         </li>;

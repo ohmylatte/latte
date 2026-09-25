@@ -2098,6 +2098,7 @@ export class LatteService implements BackendApi {
         dispatchesUsed,
         maxDispatches,
         pendingGates,
+        suspendReason: run.suspendReason,
         budgetInvalid,
         updatedAt: run.updatedAt,
         lastEventAt: this.lastCoordinationEventAt(run),
@@ -2363,7 +2364,12 @@ export class LatteService implements BackendApi {
 
   async openTeamMember(memberId: string): Promise<ChatSession> {
     const member = this.deps.hub.getMember(requireId(memberId, 'memberId'));
-    return this.deps.hub.openMember(member.id, this.memberContext(member.workId));
+    const session = await this.deps.hub.openMember(member.id, this.memberContext(member.workId));
+    // O2: reanudar al coordinador levanta la suspensión que su pausa causó y
+    // le entrega lo que quedó esperando. Para cualquier otro miembro es un
+    // no-op barato, y nunca tira.
+    await this.coordination.noteMemberOpened(member.id);
+    return session;
   }
 
   async pauseTeamMember(memberId: string): Promise<void> {

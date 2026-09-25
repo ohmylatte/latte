@@ -243,6 +243,17 @@ function PermissionCard({ chatId, runtime, request, onError }: { chatId: string;
 }
 
 /**
+ * N4: los permisos pendientes de un chat, para quien no es `ChatPane`. El
+ * hilo del modo Equipo ES la conversación del coordinador: un permiso suyo
+ * que sólo se ve en su chat completo es un turno trabado sin que nadie lo vea.
+ * La MISMA tarjeta, no una segunda que haga lo mismo peor.
+ */
+export function ChatPermissions({ chatId, runtime, permissions, onError }: { chatId: string; runtime: string; permissions: readonly ChatPermission[]; onError: (error: string) => void }) {
+  if (permissions.length === 0) return null;
+  return <>{permissions.map(permission => <PermissionCard key={permission.id} chatId={chatId} runtime={runtime} request={permission} onError={onError} />)}</>;
+}
+
+/**
  * Las preguntas abiertas de un chat, para quien no es `ChatPane`.
  *
  * El hilo del modo Equipo ES la conversación de su destinatario, así que una

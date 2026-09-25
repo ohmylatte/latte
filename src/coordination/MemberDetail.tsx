@@ -1,13 +1,15 @@
-import { ArrowUpRight, CircleCheck, CircleHelp, CircleX, CornerDownLeft, FileText, Flag, MessageSquare, Send, UserPlus, Users } from 'lucide-react';
+import { ArrowUpRight, Brain, CircleCheck, CircleHelp, CircleX, CornerDownLeft, FileText, Flag, Globe, MessageSquare, PenLine, Plug, Search, Send, Terminal, UserPlus, Users, Wrench } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { translate as t } from '../i18n';
 import { CoordAvatar, CoordTime } from './anatomy';
 import { avatarOfMember } from './avatar-of';
+import type { DispatchSteps, StepKind } from './activity';
 import type { InboxEvent } from './inbox';
 import type { MemberSignal } from './member-line';
 import { memberDisplayName } from './names';
 import { bodyOf, fileNames, titleOf } from './text';
 import { minutesUntil } from './time';
+import { taskTitle, TASK_TITLE_LONG } from '../../shared/taskTitle';
 import type { AgentRole, CoordinationAskView, CoordinationRunTaskView, CoordinationRunView, TeamMember } from '../../shared/contracts';
 
 /**
@@ -53,6 +55,12 @@ export interface MemberDetailProps {
   coordinateLocked?: boolean;
   /** Lo que el contenedor quiera meter entre el encabezado y la línea de tiempo. */
   children?: ReactNode;
+  /**
+   * N1: los pasos de cada despacho, por el id de su hecho `dispatched`. Van
+   * debajo de la tarjeta de la tarea: lo que hizo entre el despacho y el
+   * reporte. Sin esto, ningún paso.
+   */
+  steps?: Readonly<Record<string, DispatchSteps>>;
 }
 
 /**
@@ -119,6 +127,57 @@ function EventIcon({ kind }: { kind: InboxEvent['kind'] }) {
     case 'replied': return <span className="coord-tic"><CornerDownLeft size={14} /></span>;
     default: return <span className="coord-tic"><Flag size={14} /></span>;
   }
+}
+
+/** Tope de pasos a la vista por despacho: los anteriores quedan contados en "y N más". */
+const MAX_STEPS = 50;
+
+/** El ícono chico del paso: el tipo de herramienta, de un vistazo. */
+function StepIcon({ kind }: { kind: StepKind }) {
+  const size = 12;
+  switch (kind) {
+    case 'read': return <FileText size={size} />;
+    case 'search': return <Search size={size} />;
+    case 'write': return <PenLine size={size} />;
+    case 'run': return <Terminal size={size} />;
+    case 'web': return <Globe size={size} />;
+    case 'memory': return <Brain size={size} />;
+    case 'connection': return <Plug size={size} />;
+    case 'coordinate': return <Users size={size} />;
+    default: return <Wrench size={size} />;
+  }
+}
+
+/**
+ * N1: LO QUE HIZO ENTRE EL DESPACHO Y EL REPORTE.
+ *
+ * Una línea por herramienta: ícono, verbo y objeto, hora en mono. Mientras
+ * trabaja se ven, y el último en curso lleva el punto; cuando reporta, se
+ * pliegan en "N pasos" — lo que importa ahí es el reporte. Nunca el
+ * razonamiento ni el output: eso es su chat.
+ */
+function StepList({ data, time }: { data: DispatchSteps; time: (value: string) => string }) {
+  const { steps, settled } = data;
+  if (steps.length === 0) return null;
+  const hidden = Math.max(0, steps.length - MAX_STEPS);
+  const shown = steps.slice(hidden);
+  const list = <ol className="coord-steps" aria-label={t('coord.steps.label')}>
+    {hidden > 0 && <li className="coord-steps-more">{t('coord.steps.more', { count: hidden })}</li>}
+    {shown.map((step, index) => {
+      const live = !settled && step.running && index === shown.length - 1;
+      return <li key={step.id} className={'coord-step' + (live ? ' is-live' : '') + (step.failed ? ' is-failed' : '')} data-kind={step.kind}>
+        <span className="coord-step-icon"><StepIcon kind={step.kind} /></span>
+        <span className="coord-step-text" title={step.text}>{step.text}</span>
+        {live && <i className="coord-step-dot" role="img" aria-label={t('coord.steps.live')} />}
+        <CoordTime at={step.at} label={time(step.at)} />
+      </li>;
+    })}
+  </ol>;
+  if (!settled) return list;
+  return <details className="coord-steps-fold">
+    <summary className="coord-steps-summary">{t('coord.steps.count', { count: steps.length })}</summary>
+    {list}
+  </details>;
 }
 
 /**
@@ -190,7 +249,7 @@ export function MemberDetail(props: MemberDetailProps) {
     {/* C4: la pregunta abierta, arriba de todo: es lo unico del detalle que te
         esta esperando, y por eso es lo unico que lleva el acento. */}
     {(props.openAsks ?? []).filter((ask) => !ask.answeredAt).map((ask) => <AskCard key={ask.id} ask={ask}
-      taskTitle={titleOf(taskOf(ask.taskId ?? undefined)?.spec)} name={name}
+      taskTitle={taskTitle(taskOf(ask.taskId ?? undefined)?.spec, taskOf(ask.taskId ?? undefined)?.title)} name={name}
       onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now ?? Date.now()} />)}
     {props.children}
     <ol className="team-thread coord-timeline" aria-label={t('coord.timeline.label')}>
@@ -206,7 +265,7 @@ export function MemberDetail(props: MemberDetailProps) {
            * puente, donde nace, Y acá: una fila vieja, ya guardada con su
            * numeral, sigue leyéndose bien.
            */
-          const heading = task ? titleOf(task.spec) : titleOf(event.detail || event.text);
+          const heading = task ? taskTitle(task.spec, task.title, TASK_TITLE_LONG) : taskTitle(event.detail || event.text, null, TASK_TITLE_LONG);
           const body = task ? bodyOf(task.spec) : bodyOf(event.detail || '');
           /**
            * C3 BUG (b): UN REPORTE MUESTRA SU RESUMEN.
@@ -230,6 +289,7 @@ export function MemberDetail(props: MemberDetailProps) {
                 <div className="coord-event-task">{heading}</div>
                 {body && <div className="coord-event-spec">{body}</div>}
               </div>}
+              {event.kind === 'dispatched' && props.steps?.[event.id] && <StepList data={props.steps[event.id]!} time={time} />}
               {summary && <p className="coord-event-text team-thread-text">{summary}</p>}
               {event.kind !== 'dispatched' && event.kind !== 'reported' && event.kind !== 'dispatchFailed' && event.kind !== 'dispatchClosed' && event.text
                 && <p className="coord-event-text team-thread-text">{titleOf(event.detail || event.text, 400)}</p>}

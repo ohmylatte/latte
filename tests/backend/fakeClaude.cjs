@@ -81,6 +81,21 @@ rl.on('line', (line) => {
       out({ type: 'system', subtype: 'init', session_id: sessionId, model, permissionMode: 'default', tools: ['Write'], cwd: process.cwd(), mcp_servers: mcpServers });
     }
     out({ type: 'system', subtype: 'status', status: 'requesting', session_id: sessionId });
+    // N3: UN TURNO CON TRES LLAMADAS A LA API (dos herramientas y la
+    // respuesta). Cada `assistant` trae el `usage` de SU llamada, ~90 mil de
+    // contexto; el `result` trae la SUMA del turno, como el CLI real.
+    if (/tres-llamadas/i.test(text)) {
+      for (let call = 0; call < 3; call += 1) {
+        const id = `msg_${++counter}`;
+        const usage = { input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 89000, cache_creation_input_tokens: 0 };
+        out({ type: 'stream_event', event: { type: 'message_start', message: { id, role: 'assistant', usage } }, session_id: sessionId });
+        out({ type: 'assistant', message: { id, role: 'assistant', model, content: [{ type: 'text', text: `paso ${call}` }], usage }, session_id: sessionId });
+      }
+      turns += 1;
+      out({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: sessionId, num_turns: turns,
+        usage: { input_tokens: 3000, output_tokens: 1500, cache_read_input_tokens: 267000, cache_creation_input_tokens: 0 } });
+      return;
+    }
     if (/razonar/i.test(text)) {
       replyThinkingThenText('Encontre actividad real en la cuenta.');
       finish('ok');

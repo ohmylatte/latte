@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { translate as t } from './i18n';
 import { MessageSquare, UserPlus, Users } from 'lucide-react';
 import type {
-  AgentRole, ChatMessage, ChatQuestion, ChatStatus, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
+  AgentRole, ChatMessage, ChatPermission, ChatQuestion, ChatStatus, CoordinationAskView, CoordinationAuthorityMode, CoordinationBudgetView,
   CoordinationGateView, CoordinationHireView, CoordinationLogEntryView, CoordinationMemberSupport,
   CoordinationMessageView, CoordinationRunTaskView, CoordinationRunView, TeamMember, Work,
 } from '../shared/contracts';
-import { ChatQuestions, ChatWorking, type ChatCoordinationProps } from './ChatPane';
+import { ChatPermissions, ChatQuestions, ChatWorking, type ChatCoordinationProps } from './ChatPane';
 import { ChatComposer } from './ChatComposer';
 import { TeamCardsCollapsible } from './coordination/TeamCards';
 import { describeCoordinationSupport, describeMemorySupport, memberCoordinationState, type LatteMode } from './TeamPanel';
@@ -17,8 +17,9 @@ import { CoordAvatar, CoordRow } from './coordination/anatomy';
 import { avatarOfMember } from './coordination/avatar-of';
 import { EmptyTeam, RunOutput } from './coordination/TeamOutcome';
 import { memberSignal } from './coordination/member-line';
+import { activityLine, dispatchSteps, type ConnectionLabel } from './coordination/activity';
 import { hourOf } from './coordination/time';
-import { titleOf } from './coordination/text';
+import { taskTitle as taskTitleOf } from '../shared/taskTitle';
 import { memberDisplayName } from './coordination/names';
 
 /**
@@ -60,6 +61,12 @@ export interface TeamViewProps {
   onPauseCoordination?: (runId: string) => void;
   onResumeCoordination?: (runId: string) => void;
   onCancelCoordination?: (runId: string) => void;
+  /**
+   * O1: reanudar a un miembro en pausa (abrir su conversación de nuevo). Es el
+   * mismo camino que la tarjeta de pausa; sin handler la línea "Ahora" no
+   * ofrece el botón.
+   */
+  onResumeMember?: (memberId: string) => void;
   coordinationLog?: readonly CoordinationLogEntryView[];
   coordinationMessages?: readonly CoordinationMessageView[];
   coordinationAsks?: readonly CoordinationAskView[];
@@ -140,6 +147,12 @@ export interface TeamViewProps {
    * este hilo ES su conversación.
    */
   teamChatQuestions?: readonly ChatQuestion[];
+  /**
+   * N4: los permisos NATIVOS que el destinatario dejó pendientes. Mismo
+   * motivo que las preguntas: este hilo es su conversación, y un permiso que
+   * sólo se ve en su chat completo deja el turno trabado a ciegas.
+   */
+  teamChatPermissions?: readonly ChatPermission[];
   /** Para reportar un fallo al responderla. Sin esto la lista no se dibuja. */
   onError?: (error: string) => void;
   /**
@@ -148,6 +161,15 @@ export interface TeamViewProps {
    * conversacion. Es el MISMO paquete que recibe `ChatPane`.
    */
   chatCoordination?: ChatCoordinationProps;
+  /**
+   * N1: LO QUE CADA MIEMBRO ESTÁ HACIENDO, de su propia sesión. La
+   * conversación de cada uno, por id, del store del chat. Con esto su fila
+   * dice qué hace ahora y su hilo lista los pasos de cada despacho. Sin esto,
+   * lo que había.
+   */
+  memberChats?: Readonly<Record<string, readonly ChatMessage[]>>;
+  /** El nombre legible de una Conexión a partir de su slug. */
+  connectionLabel?: ConnectionLabel;
 }
 
 /**
@@ -200,7 +222,7 @@ export function TeamView(props: TeamViewProps) {
    * lo que la persona pidio. Sin tareas cableadas, la fila cae en el prompt,
    * que es lo que ya habia.
    */
-  const taskTitle = (taskId: string) => titleOf((props.coordinationTasks ?? []).find((task) => task.id === taskId)?.spec);
+  const taskTitle = (taskId: string) => { const task = (props.coordinationTasks ?? []).find((t) => t.id === taskId); return taskTitleOf(task?.spec, task?.title); };
   /**
    * LO QUE ESTÁ PASANDO AHORA MISMO GANA.
    *
@@ -211,19 +233,28 @@ export function TeamView(props: TeamViewProps) {
    * más fuerte que una fila puede contar, así que se dice primero.
    */
   const signalOf = (memberId: string) => {
-    const signal = memberSignal({ ...input, team, roles, run, taskTitle }, memberId);
+    const signal = memberSignal({ ...input, team, roles, run, taskTitle, chats: props.memberChats, connectionLabel: props.connectionLabel }, memberId);
     if (memberId !== coordinatorId) return signal;
     // Lo que TE ESPERA gana sobre lo que está pasando: la escala de urgencia
     // es la misma que la de las preguntas de coordinación.
     if (targetQuestions > 0) return { ...signal, dot: 'live' as const, line: t('coord.member.askingYou'), urgent: true };
-    if (targetWorking) return { ...signal, dot: 'live' as const, line: t('coord.member.working'), urgent: false };
+    if (targetWorking) return { ...signal, dot: 'live' as const, line: coordinatorActivity() ?? t('coord.member.working'), urgent: false };
     return signal;
+  };
+  /**
+   * N1: el destinatario contestando también dice QUÉ hace: su turno empieza
+   * con el último mensaje de la persona, y lo que vino después es lo suyo.
+   */
+  const coordinatorActivity = (): string | null => {
+    const chat = props.coordinatorChat ?? (coordinatorId ? props.memberChats?.[coordinatorId] : undefined) ?? [];
+    const lastAsk = [...chat].reverse().find((m) => m.role === 'user');
+    return lastAsk ? activityLine(chat, lastAsk.createdAt, props.connectionLabel) : null;
   };
   const readingCoordinator = Boolean(selected && selected === coordinatorId);
   /** El destinatario está escribiendo: lo dicen su fila y el final de su hilo, con las mismas palabras que la conversación. */
   const targetWorking = props.teamChatStatus === 'busy' || props.teamChatStatus === 'retry';
   /** Preguntas nativas del destinatario sin responder: cuentan como pendiente, igual que una `latte_ask`. */
-  const targetQuestions = (props.teamChatQuestions ?? []).length;
+  const targetQuestions = (props.teamChatQuestions ?? []).length + (props.teamChatPermissions ?? []).length;
   // La conversacion entra SOLO en el hilo del coordinador: los demas la tienen
   // en su propia pestana, y meterla en los dos seria la misma charla dos veces.
   const thread = selected ? inboxEvents(readingCoordinator ? { ...input, chat: props.coordinatorChat } : input, selected) : [];
@@ -255,7 +286,11 @@ export function TeamView(props: TeamViewProps) {
       tasks={props.coordinationTasks} asks={props.coordinationAsks} team={team} roles={roles}
       busy={props.busy} pending={props.pending} formatTime={props.formatTime}
       onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination}
-      onNewRequest={props.onNewRequest} />}
+      onNewRequest={props.onNewRequest}
+      coordinatorPaused={team.find((m) => m.id === run.coordinatorMemberId)?.status === 'paused'}
+      coordinatorWaiting={(coordinatorId && coordinatorId === run.coordinatorMemberId ? targetQuestions : 0) + (props.coordinationGates ?? []).length}
+      coordinatorUnread={(props.coordinationMessages ?? []).filter((m) => m.to.memberId === run.coordinatorMemberId && !m.readAt).length}
+      onOpenMember={props.onSelectMember} onResumeCoordinator={props.onResumeMember} />}
     <div className="team-view-columns">
       {/* C2: LA MISMA ANATOMÍA QUE TODA FILA DEL PRODUCTO.
           Avatar con punto · nombre · qué hace ahora · cuándo. La fila ES la
@@ -316,8 +351,9 @@ export function TeamView(props: TeamViewProps) {
             persona vuelve a buscarla, y ahora esta pantalla ES esa charla. */}
         {(run?.active || openedMember || readingCoordinator) && selected && <MemberDetail memberId={selected} team={team} roles={roles} run={run}
           events={thread} tasks={props.coordinationTasks}
+          steps={props.memberChats ? dispatchSteps(props.coordinationLog, selected, props.memberChats[selected], props.connectionLabel) : undefined}
           signal={signalOf(selected)}
-          formatTime={hour} onOpenChat={readingCoordinator ? undefined : props.onOpenChat}
+          formatTime={hour} onOpenChat={props.onOpenChat}
           openAsks={(props.coordinationAsks ?? []).filter((ask) => ask.memberId === selected && (run == null || run.active))}
           onAnswerAsk={props.onAnswerAsk} pending={props.pending} now={props.now}
           onCoordinate={props.onSetCoordinator} coordinating={selected === markedCoordinator}
@@ -329,6 +365,9 @@ export function TeamView(props: TeamViewProps) {
           {/* Su pregunta nativa, respondible acá mismo: este hilo ES su
               conversación, y mandarla a otra pantalla sería pedirle a la
               persona que la busque. */}
+          {readingCoordinator && props.onError && coordinatorId
+            && <ChatPermissions chatId={coordinatorId} runtime={team.find((m) => m.id === coordinatorId)?.runtime ?? 'opencode'}
+              permissions={props.teamChatPermissions ?? []} onError={props.onError} />}
           {readingCoordinator && props.onError && coordinatorId
             && <ChatQuestions chatId={coordinatorId} questions={props.teamChatQuestions ?? []} onError={props.onError} />}
           {readingCoordinator && <ChatWorking status={props.teamChatStatus ?? 'idle'} detail={props.teamChatStatusDetail} />}

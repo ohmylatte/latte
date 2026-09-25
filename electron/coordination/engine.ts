@@ -17,6 +17,7 @@
 import type { AgentHub, MemberContext } from '../agents/hub';
 import type { CoordinationAuthorityMode, CoordinationBudget } from '../../shared/contracts';
 import { isAskSuspendReason } from '../../shared/contracts';
+import { taskTitle, TASK_TITLE_LONG, TASK_TITLE_STORED } from '../../shared/taskTitle';
 import type { CoordinationSuspendReason } from '../../shared/contracts';
 
 /** Lo que un despacho denegado puede alegar: todo motivo de suspensión, más el "ahora no" de la concurrencia, que NO suspende. */
@@ -73,8 +74,11 @@ export function coordinationRequestMetaKey(runId: string): string {
  * guarda nada, porque un pedido inventado es peor que ninguno.
  */
 export function coordinationRequestTitle(proposal: Pick<CoordinationProposal, 'rationale' | 'plan'>): string {
-  const source = [proposal.rationale, proposal.plan?.[0]?.spec].find((text) => typeof text === 'string' && text.trim() !== '') ?? '';
-  const line = firstLine(source);
+  // N2: con la MISMA regla que el título de una tarea: el bloque de contexto
+  // con el que el coordinador arranca no es el pedido.
+  const rationale = typeof proposal.rationale === 'string' ? taskTitle(proposal.rationale, null, Number.MAX_SAFE_INTEGER) : '';
+  const first = proposal.plan?.[0];
+  const line = rationale || (first && typeof first.spec === 'string' ? taskTitle(first.spec, first.title, Number.MAX_SAFE_INTEGER) : '');
   if (line.length <= COORDINATION_REQUEST_MAX) return line;
   // El recorte deja lugar para el puntito: el tope es del texto que se
   // guarda, no del texto antes de adornarlo.
@@ -174,6 +178,8 @@ export interface CoordinationGateRoleCoverage {
  */
 export interface CoordinationProposalTask {
   roleId: string;
+  /** N2: el título corto de la tarea, si el coordinador lo manda. */
+  title?: string;
   spec: string;
   dependsOn?: number[];
 }
@@ -306,12 +312,6 @@ function isDagStatus(status: CoordinationTaskRecord['status']): DagTask['status'
   return status;
 }
 
-/** La primera línea de un texto: un `spec` de doce párrafos no puede volver ilegible la lista de tareas de un aviso. */
-function firstLine(text: string): string {
-  const line = text.split('\n', 1)[0]?.trim() ?? '';
-  return line.length > 0 ? line : text.trim();
-}
-
 export class CoordinationEngine {
   /**
    * Los miembros que un despacho YA eligió y todavía está levantando.
@@ -409,6 +409,7 @@ export class CoordinationEngine {
    */
   private async deliverNotice(memberId: string, text: string): Promise<{ delivered: boolean; queued: boolean }> {
     if (!memberId || !text) return { delivered: false, queued: false };
+    if (this.holdForPausedCoordinator(memberId, text)) return { delivered: false, queued: true };
     // B5.5: se registra QUÉ pasó con el aviso, nunca su contenido. Un aviso
     // lleva resúmenes y nombres de archivo; la bitácora del proceso lleva ids
     // y estados.
@@ -429,6 +430,72 @@ export class CoordinationEngine {
       this.deps.log?.(`[latte] coordination notice queued after send failed (${memberId}): ${error instanceof Error ? error.message : String(error)}`);
       return { delivered: false, queued: true };
     }
+  }
+
+  /**
+   * O2: EL COORDINADOR EN PAUSA CON EL RUN ACTIVO NO ES SILENCIO.
+   *
+   * Lo que pasó (2026-09-24): un worker reportó y le escribió al coordinador,
+   * que la persona había pausado. El aviso se encolaba —la cola sólo se vacía
+   * en un fin de turno, y un proceso apagado no tiene turnos— y el run seguía
+   * `running` sin que nada se moviera ni nadie lo dijera.
+   *
+   * LA DECISIÓN: no se lo despierta solo. La pausa la hizo la persona, y un
+   * motor que la deshace por detrás la vacía de sentido (y gasta en su nombre).
+   * Lo que cambia es que la pausa SE VE: el aviso queda en la cola, el run pasa
+   * a `suspended:coordinator_paused` y la persona lo lee en el encabezado y en
+   * la tira de equipos. Reanudar al coordinador (`noteMemberOpened`) entrega la
+   * cola y devuelve el run a `running`.
+   *
+   * "En pausa" es lo que publica el hub (`paused`: la fila existe y ningún
+   * adaptador la posee). Sólo se pisa `running`: una suspensión anterior —la
+   * pausa del equipo, un tope, una pregunta— tiene su propio motivo y su
+   * propia salida, y el aviso igual queda en la cola.
+   */
+  private holdForPausedCoordinator(memberId: string, text: string): boolean {
+    let runs: CoordinationRunRecord[];
+    try { runs = this.deps.repo.listActiveCoordinationRuns().filter((run) => this.coordinatorOf(run) === memberId); } catch { return false; }
+    for (const run of runs) {
+      const member = this.teamOf(run.workId).find((m) => m.id === memberId);
+      if (!member || member.status !== 'paused') continue;
+      this.queueNotice(memberId, text);
+      this.deps.log?.(`[latte] coordination notice queued (member=${memberId} reason=coordinator_paused)`);
+      if (run.status === 'running') {
+        this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', this.deps.clock(), 'coordinator_paused');
+        this.deps.log?.(`[latte] coordination run suspended (run=${run.id} reason=coordinator_paused)`);
+      }
+      this.touch(run.workId, run.id);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * O2: el coordinador volvió (la persona lo reanudó). El run que estaba
+   * suspendido POR SU PAUSA vuelve a `running` —o a `coordination_disabled` si
+   * el interruptor está abajo: reanudar a un miembro no enciende el equipo—, y
+   * recién después se le entrega lo que esperaba, para que lo que haga con esos
+   * avisos (despachar, contestar) encuentre el run andando.
+   *
+   * Nunca tira: lo llama la apertura de un miembro, cuyo efecto ya ocurrió.
+   */
+  async noteMemberOpened(memberId: string): Promise<void> {
+    if (!memberId) return;
+    try {
+      const now = this.deps.clock();
+      const enabled = this.deps.isCoordinationEnabled ? this.deps.isCoordinationEnabled() : true;
+      for (const run of this.deps.repo.listActiveCoordinationRuns()) {
+        if (this.coordinatorOf(run) !== memberId) continue;
+        if (run.status !== 'suspended' || run.suspendReason !== 'coordinator_paused') continue;
+        if (enabled) this.deps.repo.updateCoordinationRunStatus(run.id, 'running', now, null);
+        else this.deps.repo.updateCoordinationRunStatus(run.id, 'suspended', now, 'coordination_disabled');
+        this.deps.log?.(`[latte] coordination run resumed with its coordinator (run=${run.id})`);
+        this.touch(run.workId, run.id);
+      }
+    } catch (error) {
+      this.deps.log?.(`[latte] coordination resume check failed (${memberId}): ${error instanceof Error ? error.message : String(error)}`);
+    }
+    await this.flushMemberNotices(memberId);
   }
 
   /** Un `isMemberBusy` que tira se lee como "ocupado": encolar de más sólo retrasa, mandar sobre un turno en vuelo pierde el aviso. */
@@ -720,6 +787,7 @@ export class CoordinationEngine {
     // decisión de presupuesto inventada en Decisiones.
     if (run.status === 'suspended' && run.suspendReason
       && run.suspendReason !== 'paused_by_human'
+      && run.suspendReason !== 'coordinator_paused'
       && run.suspendReason !== 'all_blocked_on_ask'
       && run.suspendReason !== 'coordination_disabled') {
       gates.push({ id: `budget:${run.id}`, kind: 'budget', runId: run.id, createdAt: run.updatedAt });
@@ -1096,7 +1164,7 @@ export class CoordinationEngine {
           if (!dep) throw new ValidationError(`Plan task dependsOn index ${idx} is out of range`);
           return dep.id;
         });
-        const task = this.createTaskRow(run.id, item.roleId, item.spec, dependsOnIds);
+        const task = this.createTaskRow(run.id, item.roleId, item.spec, dependsOnIds, item.title);
         // K7: la pertenencia al plan se marca sin tocar el reloj de la tarea,
         // igual que en el gate de plan. Acá la tarea acaba de nacer y no puede
         // estar reclamada, pero es la misma forma y no hay dos.
@@ -1547,7 +1615,7 @@ export class CoordinationEngine {
 
   // -- Tool-facing engine methods (wrapped by tools.ts) ------------------------
 
-  planSubmit(runId: string, tasks: Array<{ roleId: string; spec: string; dependsOn?: number[] }>): CoordinationTaskRecord[] {
+  planSubmit(runId: string, tasks: Array<{ roleId: string; spec: string; title?: string; dependsOn?: number[] }>): CoordinationTaskRecord[] {
     const run = this.deps.repo.getCoordinationRun(runId);
     // `running`, no "cualquier cosa menos terminal" (D3). Sobre un run
     // `planning` esto pisaba `plan_json` —que ahí adentro guarda la PROPUESTA
@@ -1580,7 +1648,7 @@ export class CoordinationEngine {
           if (!dep) throw new ValidationError(`Plan task dependsOn index ${idx} is out of range`);
           return dep.id;
         });
-        rows.push(this.createTaskRow(run.id, spec.roleId, spec.spec, dependsOnIds));
+        rows.push(this.createTaskRow(run.id, spec.roleId, spec.spec, dependsOnIds, spec.title));
       }
       this.deps.repo.setCoordinationPlan(run.id, JSON.stringify(rows.map((t) => t.id)), this.deps.clock());
       return rows;
@@ -1589,7 +1657,7 @@ export class CoordinationEngine {
     return created;
   }
 
-  taskCreate(runId: string, input: { roleId: string; spec: string; dependsOn?: string[] }): CoordinationTaskRecord {
+  taskCreate(runId: string, input: { roleId: string; spec: string; title?: string; dependsOn?: string[] }): CoordinationTaskRecord {
     const run = this.assertRunMutable(this.deps.repo.getCoordinationRun(runId));
     // `running`, el MISMO umbral que `planSubmit` (F6). Sin esto, con el
     // permiso de coordinador escrito por IPC y un run todavía en `planning`,
@@ -1599,7 +1667,7 @@ export class CoordinationEngine {
     // propuesta.
     if (run.status !== 'running') throw new LatteError('RUN_NOT_ACTIVE', `Run is ${run.status}`);
     this.assertRoleCreatable(run, input.roleId);
-    const task = this.createTaskRow(runId, input.roleId, input.spec, input.dependsOn ?? []);
+    const task = this.createTaskRow(runId, input.roleId, input.spec, input.dependsOn ?? [], input.title);
     this.touch(run.workId, runId);
     return task;
   }
@@ -1675,7 +1743,7 @@ export class CoordinationEngine {
    */
   taskList(runId: string): Array<{
     id: string; roleId: string; status: CoordinationTaskRecord['status']; inPlan: boolean;
-    dependsOn: string[]; attempts: number; assignedMemberId: string | null; spec: string;
+    dependsOn: string[]; attempts: number; assignedMemberId: string | null; spec: string; title: string;
   }> {
     const deps = new Map<string, string[]>();
     for (const edge of this.deps.repo.listCoordinationTaskDeps(runId)) {
@@ -1690,6 +1758,9 @@ export class CoordinationEngine {
       attempts: task.attempts,
       assignedMemberId: task.assignedMemberId,
       spec: task.spec.length > TASK_LIST_SPEC_PREVIEW ? `${task.spec.slice(0, TASK_LIST_SPEC_PREVIEW)}…` : task.spec,
+      // N2: del spec ENTERO, no del recorte: el pedido puede venir después de
+      // un bloque de contexto más largo que el recorte.
+      title: taskTitle(task.spec, task.title, TASK_TITLE_LONG),
     }));
   }
 
@@ -1719,7 +1790,7 @@ export class CoordinationEngine {
     lines.push('Tasks that already exist:');
     for (const task of tasks) {
       const depends = task.dependsOn.length > 0 ? ` (depends on: ${task.dependsOn.join(', ')})` : '';
-      lines.push(`- ${task.id} [${task.roleId}] ${task.status}${depends}: ${firstLine(task.spec)}`);
+      lines.push(`- ${task.id} [${task.roleId}] ${task.status}${depends}: ${task.title}`);
     }
     if (hired.length > 0) {
       lines.push('');
@@ -2925,7 +2996,7 @@ export class CoordinationEngine {
       if (!tracked.nudged) {
         tracked.nudged = true;
         this.deps.log?.(`[latte] coordination turn ended without report (run=${run.id} dispatch=${dispatch.id} task=${task.id} member=${memberId}) nudged`);
-        void this.deliverNotice(memberId, this.noReportNudgeText(task));
+        void this.deliverNotice(memberId, this.noReportNudgeText(task, this.endedWithQuestion(memberId)));
         return;
       }
       this.sentDispatches.delete(memberId);
@@ -2957,9 +3028,37 @@ export class CoordinationEngine {
    * llamar y con qué argumentos, porque un aviso que sólo señala el error
    * gasta un turno y no arregla nada.
    */
-  private noReportNudgeText(task: CoordinationTaskRecord): string {
-    const title = task.spec.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim().slice(0, 120) ?? task.id;
+  /**
+   * O3: ¿el último texto del miembro termina con una pregunta? Heurística a
+   * propósito simple: la última línea con contenido de su última respuesta
+   * lleva `?` o `¿`. Se equivoca hacia el lado barato —una línea de más en un
+   * aviso que igual se manda—, y un transcripto que no se puede leer es "no".
+   */
+  private endedWithQuestion(memberId: string): boolean {
+    try {
+      const last = [...this.deps.hub.listMessages(memberId)].reverse().find((m) => m.role === 'assistant' && m.parts.some((p) => p.type === 'text' && p.text.trim()));
+      if (!last) return false;
+      const text = last.parts.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n');
+      const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      const final = lines[lines.length - 1] ?? '';
+      return final.includes('?') || final.includes('¿');
+    } catch {
+      return false;
+    }
+  }
+
+  private noReportNudgeText(task: CoordinationTaskRecord, endedWithQuestion = false): string {
+    const title = taskTitle(task.spec, task.title, 120) || task.id;
+    // O3: la pregunta en prosa al final de un turno no le llega a nadie: sin
+    // tarjeta, sin badge, sin "te necesita". Se le dice cuál es el canal.
+    const asking = endedWithQuestion
+      ? 'Your reply ended with a question for the person, and a question written in your reply reaches nobody. '
+        + 'If you need something from the person, ask it with `latte_ask` (that is what shows them a card), '
+        + 'then call `latte_report` with `"failed"` if the task cannot go on without the answer (say in the summary what you asked), or keep working and report once it is answered. '
+        + 'Never leave a question for the person only in your reply.\n\n'
+      : '';
     return `Your turn ended without reporting the task Latte gave you. Task ${task.id}: «${title}».\n\n`
+      + asking
       + `Call \`latte_report\` now: \`taskId: "${task.id}"\`, \`outcome: "succeeded"\` if you finished it or \`"failed"\` if you could not, `
       + 'and a `summary` of what you actually did.\n\n'
       + 'If you left work for another role — a file, a draft, a handoff — say so in the summary and name the file in `files`. '
@@ -3840,7 +3939,7 @@ export class CoordinationEngine {
     );
   }
 
-  private createTaskRow(runId: string, roleId: string, spec: string, dependsOnIds: string[]): CoordinationTaskRecord {
+  private createTaskRow(runId: string, roleId: string, spec: string, dependsOnIds: string[], title?: unknown): CoordinationTaskRecord {
     const existing = this.deps.repo.listCoordinationTasks(runId);
     // Las dependencias tienen que ser de ESTE run: `getCoordinationTask` sola
     // acepta cualquier id de la app, así que un coordinador podía colgar una
@@ -3861,6 +3960,9 @@ export class CoordinationEngine {
     const now = this.deps.clock();
     const task = this.deps.repo.insertCoordinationTask({
       id: newId('ctk'), runId, seq: existing.length + 1, roleId, spec,
+      // N2: el título es opcional y de adorno: uno que no es texto no rompe
+      // la tarea, se ignora. Y se guarda acotado.
+      title: typeof title === 'string' && title.trim() ? title.trim().slice(0, TASK_TITLE_STORED) : null,
       status: dependsOnIds.length === 0 ? 'ready' : 'pending', depth, attempts: 0, inPlan: false,
       assignedMemberId: null, resultSummary: null, resultFilesJson: null, createdAt: now, updatedAt: now,
     });

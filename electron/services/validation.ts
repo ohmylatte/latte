@@ -5,6 +5,7 @@ import { isValidId } from '../core/ids';
 // aplican cuando la propuesta ya se aprobó. Una segunda copia del tope acá
 // sería exactamente la forma de que los dos se separen.
 import { MAX_CALLED_UP_MEMBERS_PER_RUN, MAX_DEPENDENCY_DEPTH, MAX_TASKS_PER_RUN } from '../coordination/limits';
+import { TASK_TITLE_STORED } from '../../shared/taskTitle';
 
 export const LIMITS = {
   name: 120,
@@ -198,6 +199,8 @@ export function assertCoordinationProposal(parsed: unknown): void {
     const task = item as Record<string, unknown>;
     requireText(task.roleId, `Plan task ${index} roleId`, LIMITS.name);
     requireText(task.spec, `Plan task ${index} spec`, LIMITS.chatMessage);
+    // N2: el título es opcional; si viene, es texto y corto.
+    if (task.title !== undefined && task.title !== null) requireText(task.title, `Plan task ${index} title`, TASK_TITLE_STORED);
     if (task.dependsOn !== undefined) {
       if (!Array.isArray(task.dependsOn)) throw new ValidationError(`Plan task ${index} dependsOn must be an array`);
       // Q6: SÓLO HACIA ATRÁS. Un índice hacia adelante —o hacia sí misma—

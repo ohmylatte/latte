@@ -1,13 +1,13 @@
 import { currentLocale, translate as t, type MessageKey } from './i18n';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Check, CircleAlert, CircleCheck, FolderCheck, FolderLock, Forward, LoaderCircle, MessageSquare, MessageSquarePlus, Pause, Play, Plug, Plus, Settings2, Trash2, UserPlus, Users, X, Zap } from 'lucide-react';
 import { DEFAULT_EFFORT_TIER, EFFORT_TIERS, type AgentModelList, type AgentRole, type BrandMember, type WorkPermissionMode, type ChatRuntime, type ChatSession, type CoordinationAskView, type CoordinationAuthorityMode, type CoordinationBudgetView, type CoordinationDegradedReason, type CoordinationGateView, type CoordinationHireView, type CoordinationLogEntryView, type CoordinationMemberSupport, type CoordinationMessageView, type CoordinationRunTaskView, type CoordinationRunView, type EffortTier, type HandoffRequest, type TeamMember, type TeamMemberOptions, type TeamMemberStatus, type Work } from '../shared/contracts';
 import { api, chatStore } from './browser-api';
 import { ChatPane, type ChatCoordinationProps } from './ChatPane';
-import { useChatState } from './chat-store';
+import { useChatMessagesOf, useChatState } from './chat-store';
 import { canChangePermission } from './permission-ux';
 import { continuationModel, continuationOptions, type ContinuationTarget } from './provider-models';
-import { contextWeight, describeUsage, formatTokens, totalTokens } from './usage-format';
+import { describeUsage, describeUsageDetail, formatTokens, isHeavyConversation, totalTokens } from './usage-format';
 import { Loading } from './brand-marks';
 import { pendingForMember, pendingForWork } from './coordination/inbox';
 import { roleSummary } from './pack-i18n';
@@ -17,7 +17,7 @@ import { avatarOfMember } from './coordination/avatar-of';
 import { parseAvatar } from '../shared/avatar';
 import { memberSignal, type MemberDot } from './coordination/member-line';
 import { hourOf } from './coordination/time';
-import { titleOf } from './coordination/text';
+import { taskTitle as taskTitleOf } from '../shared/taskTitle';
 import { TeamView } from './TeamView';
 
 /** A runtime the user can pick for a new member instead of the primary agent. */
@@ -284,7 +284,17 @@ export function TeamPanel(props: TeamPanelProps) {
   const [railChoice, setRailChoice] = useState<'chat' | 'team'>('chat');
   /** Que miembro se esta leyendo en el modo Equipo. `null` cae en el coordinador, y sin run en el primero. */
   const [threadMember, setThreadMember] = useState<string | null>(null);
-  useEffect(() => { setAdding(false); setContinuing(null); setRailChoice('chat'); setThreadMember(null); }, [work?.id]);
+  /**
+   * N4: EL CHAT COMPLETO DEL COORDINADOR, A PEDIDO.
+   *
+   * Su conversación es el modo Equipo y por eso no tiene pestaña; pero el hilo
+   * no reemplaza al chat entero (herramientas, razonamiento, permisos). Desde
+   * su detalle, "Conversación" lo abre en la columna del chat con una pestaña
+   * TRANSITORIA, primera y marcada, que se va al elegir a otro o al volver a
+   * Equipo.
+   */
+  const [coordinatorChat, setCoordinatorChat] = useState(false);
+  useEffect(() => { setAdding(false); setContinuing(null); setRailChoice('chat'); setThreadMember(null); setCoordinatorChat(false); }, [work?.id]);
   /**
    * H1: EL RAIL ES QUIEN SABE QUE EL EQUIPO SE ABRIO.
    *
@@ -313,13 +323,27 @@ export function TeamPanel(props: TeamPanelProps) {
   // Sin nadie más que el coordinador no hay "uno" con quien hablar: el modo
   // Equipo ES la pantalla, y el toggle recién aparece con más de uno.
   const teamOnly = Boolean(coordinatorId) && memberTabs.length === 0 && team.length > 0;
-  const rail: 'chat' | 'team' = coordinatorSelected || teamOnly ? 'team' : railChoice;
+  const coordinatorChatOpen = coordinatorChat && coordinatorSelected;
+  // Elegir a cualquier otro cierra la pestaña transitoria: no queda colgada
+  // para reaparecer la próxima vez que se aterrice en el coordinador.
+  useEffect(() => { if (!coordinatorSelected) setCoordinatorChat(false); }, [coordinatorSelected]);
+  const rail: 'chat' | 'team' = coordinatorChatOpen ? 'chat' : coordinatorSelected || teamOnly ? 'team' : railChoice;
+  const coordinatorMember = coordinatorId ? team.find(m => m.id === coordinatorId) ?? null : null;
+  /** La tira: los que no coordinan, y el coordinador primero sólo mientras su chat está abierto. */
+  const stripMembers = coordinatorChatOpen && coordinatorMember ? [coordinatorMember, ...memberTabs] : memberTabs;
   /** Volver a "uno": si lo que estaba abierto era el coordinador, se elige a alguien con quien hablar. */
   const showChat = () => {
+    setCoordinatorChat(false);
     setRailChoice('chat');
     if (coordinatorSelected && memberTabs[0]) props.onSelect(memberTabs[0].id);
   };
-  const showTeam = () => setRailChoice('team');
+  const showTeam = () => { setCoordinatorChat(false); setRailChoice('team'); };
+  /** "Conversación" desde el modo Equipo: la de un miembro, o la del coordinador en su pestaña transitoria. */
+  const openMemberChat = (memberId: string) => {
+    if (memberId === coordinatorId) setCoordinatorChat(true);
+    props.onSelect(memberId);
+    setRailChoice('chat');
+  };
   // Aterrizar en el coordinador es aterrizar en SU hilo, no en el del miembro
   // que se estuviera leyendo antes en el modo Equipo.
   useEffect(() => { if (coordinatorSelected) setThreadMember(null); }, [coordinatorSelected]);
@@ -357,6 +381,42 @@ export function TeamPanel(props: TeamPanelProps) {
     if (rail !== 'team' || !teamChatTargetId || liveCoordinator) return;
     void chatStore.sync(teamChatTargetId).catch(() => undefined);
   }, [rail, teamChatTargetId, liveCoordinator, runStatus]);
+  /**
+   * N1: QUÉ ESTÁ HACIENDO CADA MIEMBRO, EN EL MODO EQUIPO.
+   *
+   * El store del chat recibe los eventos de TODAS las sesiones —la
+   * suscripción es global y no filtra por chats abiertos—, incluidos los
+   * miembros que el motor levantó y la persona nunca abrió. Lo que no tiene es
+   * lo que pasó ANTES de que el renderer existiera (una recarga en medio de un
+   * run): por eso, al entrar al modo Equipo, a cada miembro vivo que el store
+   * todavía no conoce se le pide su historia UNA vez. Sin spawn:
+   * `listChatMessages` contesta con el adaptador vivo o el transcripto, y
+   * vacío si no hay ninguno. Y nunca sobre uno que ya tiene mensajes:
+   * re-sincronizar encima de un turno en vuelo le pisaría lo que escribe.
+   */
+  const memberChats = useChatMessagesOf(chatStore, team.map(m => m.id));
+  const activitySynced = useRef(new Set<string>());
+  useEffect(() => {
+    if (rail !== 'team') return;
+    for (const member of team) {
+      if (member.status !== 'working' && member.status !== 'idle') continue;
+      if (chats[member.id] || activitySynced.current.has(member.id)) continue;
+      if (chatStore.get(member.id).messages.length > 0) continue;
+      activitySynced.current.add(member.id);
+      void chatStore.sync(member.id).catch(() => undefined);
+    }
+  }, [rail, team, chats]);
+  /** Los nombres de las Conexiones, para "Consulta The Agentcy" en vez del slug. */
+  const [connectionLabels, setConnectionLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (rail !== 'team') return;
+    let alive = true;
+    Promise.resolve().then(() => api.listAllConnections()).then((list) => {
+      if (!alive || !Array.isArray(list)) return;
+      setConnectionLabels(Object.fromEntries(list.map(c => [c.name, c.label || c.name])));
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [rail]);
   // The first team is the empty state itself; after that, adding is a dialog.
   const firstTeam = team.length === 0 && Boolean(work);
   const showPicker = adding || firstTeam;
@@ -394,7 +454,7 @@ export function TeamPanel(props: TeamPanelProps) {
    * cuentan el mismo hecho; si cada una lo derivara por su cuenta, "la misma
    * anatomia" seria una intencion y no un hecho.
    */
-  const taskTitle = (taskId: string) => titleOf((props.coordinationTasks ?? []).find(task => task.id === taskId)?.spec);
+  const taskTitle = (taskId: string) => { const task = (props.coordinationTasks ?? []).find(item => item.id === taskId); return taskTitleOf(task?.spec, task?.title); };
   const memberTabSignal = (memberId: string) => {
     const signal = memberSignal({ ...inbox, team, roles: props.roles, run: props.coordinationRun ?? null, taskTitle }, memberId);
     return {
@@ -413,6 +473,7 @@ export function TeamPanel(props: TeamPanelProps) {
   const openCoordinatorChat = () => {
     if (teamChatTargetId) props.onSelect(teamChatTargetId);
     setThreadMember(null);
+    setCoordinatorChat(false);
     setRailChoice('team');
   };
 
@@ -443,7 +504,7 @@ export function TeamPanel(props: TeamPanelProps) {
           quedaria sin ninguna salida. Ahi, y solo ahi, siguen aca. */}
       {rail === 'chat' && team.length === 0 && <CoordinationRunControls run={props.coordinationRun ?? null} busy={busy} pending={props.pending}
         onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination} />}
-      {work && memberTabs.length > 0 && <div className="team-rail-modes" role="group" aria-label={t('team.rail.group')}>
+      {work && (memberTabs.length > 0 || coordinatorChatOpen) && <div className="team-rail-modes" role="group" aria-label={t('team.rail.group')}>
         <button type="button" className={'team-rail-chat' + (rail === 'chat' ? ' selected' : '')} aria-pressed={rail === 'chat'} onClick={showChat}><MessageSquare size={13} />{t('team.rail.chat')}</button>
         {/* El contador es del TRABAJO entero: gates mas preguntas. No promete a
             quien le toca -- eso lo dice la lista de adentro --, promete que hay algo. */}
@@ -481,10 +542,11 @@ export function TeamPanel(props: TeamPanelProps) {
         habrian sido dos botones que no hacian nada. */}
     {rail === 'team' && <TeamView work={work} team={team} roles={roles} mode={mode} busy={busy}
       selectedMemberId={threadMember} onSelectMember={setThreadMember}
-      onOpenChat={(memberId) => { props.onSelect(memberId); setRailChoice('chat'); }}
+      onOpenChat={openMemberChat}
       coordinationRun={props.coordinationRun} pending={props.pending}
       onPauseCoordination={props.onPauseCoordination} onResumeCoordination={props.onResumeCoordination}
       onCancelCoordination={props.onCancelCoordination}
+      onResumeMember={isDesktop ? (memberId) => { void props.onOpen(memberId).catch(() => undefined); } : undefined}
       coordinationLog={props.coordinationLog} coordinationMessages={props.coordinationMessages}
       coordinationAsks={props.coordinationAsks} coordinationHires={props.coordinationHires}
       coordinationGates={props.coordinationGates} coordinationTasks={props.coordinationTasks}
@@ -500,6 +562,8 @@ export function TeamPanel(props: TeamPanelProps) {
       teamChatTargetId={teamChatTargetId}
       teamChatStatus={coordinatorState.status} teamChatStatusDetail={coordinatorState.statusDetail}
       teamChatQuestions={coordinatorState.questions}
+      teamChatPermissions={coordinatorState.permissions}
+      memberChats={memberChats} connectionLabel={(slug) => connectionLabels[slug]}
       onError={props.onError}
       composer={teamChatTargetId ? {
         sessionId: teamChatTargetId,
@@ -530,12 +594,14 @@ export function TeamPanel(props: TeamPanelProps) {
     {work && team.length > 0 && <>
       <div className="team-tabs" role="tablist" aria-label={t('ui.auto.268')}>
         <div className="team-tab-strip">
-          {/* El coordinador no está acá: su conversación es el modo Equipo. */}
-          {memberTabs.map(member => <MemberTab key={member.id} member={member} chat={chats[member.id] ?? null} selected={member.id === selectedId} busy={busy} mode={mode}
+          {/* El coordinador no está acá: su conversación es el modo Equipo. Sólo
+              mientras su chat completo está abierto (N4) tiene una pestaña,
+              primera y marcada, que se va al elegir a otro. */}
+          {stripMembers.map(member => <MemberTab key={member.id} member={member} chat={chats[member.id] ?? null} selected={member.id === selectedId} busy={busy} mode={mode}
             pending={pendingForMember(member.id, props.coordinationGates, props.coordinationAsks, props.coordinationRun ?? null)}
             {...memberTabSignal(member.id)}
-            coordinator={props.coordinationRun?.coordinatorMemberId === member.id}
-            onSelect={() => props.onSelect(member.id)} />)}
+            coordinator={member.id === coordinatorId || props.coordinationRun?.coordinatorMemberId === member.id}
+            onSelect={() => { if (member.id !== coordinatorId) setCoordinatorChat(false); props.onSelect(member.id); }} />)}
         </div>
         {activity && <span className={'team-activity' + (activity.needsAttention ? ' attention' : '')} role="status" title={activity.detail}>{activity.label}</span>}
         {workTotal > 0 && <span className="team-usage-total" title={t('usage.help')}>{t('usage.workTotal', { tokens: formatTokens(workTotal, currentLocale()) })}</span>}
@@ -546,7 +612,7 @@ export function TeamPanel(props: TeamPanelProps) {
             <ModelPicker member={selected} busy={busy} onModel={props.onModel} />
             <TierPicker tier={selected.tier} busy={busy} compact onChange={tier => props.onTier(selected.id, tier)} />
           </>}
-          <button type="button" className="team-tab-thread" title={t('team.view.threadHelp')} disabled={busy} onClick={() => { setThreadMember(selected.id); setRailChoice('team'); }}>{t('team.view.thread')}</button>
+          <button type="button" className="team-tab-thread" title={t('team.view.threadHelp')} disabled={busy} onClick={() => { setCoordinatorChat(false); setThreadMember(selected.id); setRailChoice('team'); }}>{t('team.view.thread')}</button>
           <button className="icon-button" aria-label={t('continue.action')} title={t('continue.actionHelp')} disabled={busy || !isDesktop} onClick={() => setContinuing(selected.id)}><Forward size={13} /></button>
           {selectedLive && <button className="icon-button" aria-label={t('ui.auto.087')} title={t('ui.auto.270')} disabled={busy} onClick={() => void props.onPause(selected.id)}><Pause size={13} /></button>}
           {selectedStatus !== 'ended' && <button className="icon-button" aria-label={t('team.finish.label')} title={t('ui.auto.271')} disabled={busy} onClick={() => void props.onFinish(selected.id)}><CircleCheck size={13} /></button>}
@@ -702,11 +768,13 @@ function useTeamUsageTotal(team: TeamMember[]): number {
  */
 function MemberUsage({ member }: { member: TeamMember }) {
   const state = useChatState(chatStore, member.id);
-  const line = describeUsage(state.usage, currentLocale());
+  const locale = currentLocale();
+  const line = describeUsage(state.usage, locale);
   if (!line) return null;
-  const heavy = contextWeight(state.usage.contextTokens) === 'heavy';
-  return <p className="team-usage" title={t('usage.help')}>
-    <span>{t('usage.label')}: {line}</span>
+  // N3: el aviso mira el contexto de la ÚLTIMA lectura, nunca una suma.
+  const heavy = isHeavyConversation(state.usage);
+  return <p className="team-usage" title={describeUsageDetail(state.usage, locale)}>
+    <span>{line}</span>
     {heavy && <span className="team-usage-hint">{t('usage.heavyHint')}</span>}
   </p>;
 }

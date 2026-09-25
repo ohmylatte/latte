@@ -73,10 +73,10 @@ export function createCoordinationTools(engine: CoordinationEngine) {
     // a coordinator grant can be lazily resolved with no active run (the
     // run just ended, or the grant was set without ever starting one), and
     // there is nothing to submit a plan or create a task INTO.
-    latte_plan_submit: (grant: CoordinationGrant, args: { tasks: Array<{ roleId: string; spec: string; dependsOn?: number[] }> }) =>
+    latte_plan_submit: (grant: CoordinationGrant, args: { tasks: Array<{ roleId: string; spec: string; title?: string; dependsOn?: number[] }> }) =>
       wrap(engine, grant, true, () => engine.planSubmit(grant.runId as string, args.tasks).map((t) => ({ taskId: t.id, seq: t.seq })), true),
 
-    latte_task_create: (grant: CoordinationGrant, args: { roleId: string; spec: string; dependsOn?: string[] }) =>
+    latte_task_create: (grant: CoordinationGrant, args: { roleId: string; spec: string; title?: string; dependsOn?: string[] }) =>
       wrap(engine, grant, true, () => {
         const task = engine.taskCreate(grant.runId as string, args);
         return { taskId: task.id, status: task.status };

@@ -244,6 +244,9 @@ describe('C7 (g): el CSS del bloque coord-', () => {
       'coord-card', 'coord-card-head', 'coord-card-title', 'coord-plan', 'coord-plan-task',
       'coord-plan-n', 'coord-plan-title', 'coord-plan-after', 'coord-hire', 'coord-hire-name',
       'coord-hire-note', 'coord-approved', 'coord-approved-text', 'coord-approved-go',
+      // N1: los pasos de un despacho.
+      'coord-steps', 'coord-step', 'coord-step-icon', 'coord-step-text', 'coord-step-dot',
+      'coord-steps-more', 'coord-steps-fold', 'coord-steps-summary',
     ];
     const missing = needed.filter((name) => {
       const pattern = new RegExp('\\.' + name + '(?![\\w-])');

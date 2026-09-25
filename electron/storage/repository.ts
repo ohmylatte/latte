@@ -37,7 +37,7 @@ interface GenerationRow extends SqlRow { id: string; work_id: string; brand_id: 
 interface EvidenceRow extends SqlRow { id: string; generation_id: string; runtime: string; chat_id: string | null; projected_at: string; files_written: string }
 interface CheckRow extends SqlRow { id: string; generation_id: string; relative_path: string; file_hash: string | null; checks_json: string; brand_compliant: number | null; created_at: string }
 interface CoordinationRunRow extends SqlRow { id: string; work_id: string; status: string; coordinator_member_id: string | null; budget_json: string; plan_json: string | null; plan_approved_at: string | null; suspend_reason: string | null; created_at: string; updated_at: string }
-interface CoordinationTaskRow extends SqlRow { id: string; run_id: string; seq: number; role_id: string; spec: string; status: string; depth: number; attempts: number; in_plan: number; assigned_member_id: string | null; result_summary: string | null; result_files_json: string | null; created_at: string; updated_at: string }
+interface CoordinationTaskRow extends SqlRow { id: string; run_id: string; seq: number; role_id: string; spec: string; title: string | null; status: string; depth: number; attempts: number; in_plan: number; assigned_member_id: string | null; result_summary: string | null; result_files_json: string | null; created_at: string; updated_at: string }
 interface CoordinationDispatchRow extends SqlRow { id: string; run_id: string; task_id: string; member_id: string; attempt: number; status: string; gate_id: string | null; prompt: string; outcome: string | null; summary: string | null; files_json: string | null; reservation_id: string | null; created_at: string; started_at: string | null; settled_at: string | null }
 interface CoordinationMessageRow extends SqlRow { id: string; run_id: string; to_member_id: string; from_member_id: string | null; kind: string; body: string; delivered_at: string | null; created_at: string }
 interface CoordinationAskRow extends SqlRow { id: string; run_id: string; task_id: string | null; member_id: string; question: string; answer: string | null; deadline_at: string; answered_at: string | null; created_at: string }
@@ -148,6 +148,8 @@ export interface CoordinationTaskRecord {
   seq: number;
   roleId: string;
   spec: string;
+  /** N2: el título que mandó el coordinador, cuando lo mandó. `null`/ausente: se deriva del spec. */
+  title?: string | null;
   status: CoordinationTaskStatus;
   depth: number;
   attempts: number;
@@ -422,6 +424,7 @@ const toCoordinationTask = (r: CoordinationTaskRow): CoordinationTaskRecord => (
   seq: Number(r.seq),
   roleId: r.role_id,
   spec: r.spec,
+  title: r.title ?? null,
   status: r.status as CoordinationTaskStatus,
   depth: Number(r.depth),
   attempts: Number(r.attempts),
@@ -546,6 +549,10 @@ export class LatteRepository {
   migrate(): void {
     this.db.exec(SCHEMA_SQL);
     this.db.exec(BRANDING_SCHEMA_SQL);
+    // N2: las tareas de coordinación ganan un título opcional. Mismo patrón:
+    // ADD COLUMN no es idempotente, así que se mira la tabla primero.
+    const coordinationTaskColumns = this.db.all<{ name: string }>("SELECT name FROM pragma_table_info('coordination_task')").map(c => c.name);
+    if (coordinationTaskColumns.length > 0 && !coordinationTaskColumns.includes('title')) this.db.run('ALTER TABLE coordination_task ADD COLUMN title TEXT');
     const documentColumns = this.db.all<{ name: string }>("SELECT name FROM pragma_table_info('documents')").map(c => c.name);
     if (!documentColumns.includes('funnel_stages')) this.db.run("ALTER TABLE documents ADD COLUMN funnel_stages TEXT NOT NULL DEFAULT '[]'");
     if (documentColumns.length > 0 && !documentColumns.includes('proposed_stages')) this.db.run("ALTER TABLE documents ADD COLUMN proposed_stages TEXT NOT NULL DEFAULT '[]'");
@@ -1469,8 +1476,8 @@ export class LatteRepository {
 
   insertCoordinationTask(task: CoordinationTaskRecord): CoordinationTaskRecord {
     this.db.run(
-      'INSERT INTO coordination_task(id, run_id, seq, role_id, spec, status, depth, attempts, in_plan, assigned_member_id, result_summary, result_files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [task.id, task.runId, task.seq, task.roleId, task.spec, task.status, task.depth, task.attempts, task.inPlan ? 1 : 0, task.assignedMemberId, task.resultSummary, task.resultFilesJson, task.createdAt, task.updatedAt],
+      'INSERT INTO coordination_task(id, run_id, seq, role_id, spec, title, status, depth, attempts, in_plan, assigned_member_id, result_summary, result_files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [task.id, task.runId, task.seq, task.roleId, task.spec, task.title ?? null, task.status, task.depth, task.attempts, task.inPlan ? 1 : 0, task.assignedMemberId, task.resultSummary, task.resultFilesJson, task.createdAt, task.updatedAt],
     );
     return this.getCoordinationTask(task.id);
   }

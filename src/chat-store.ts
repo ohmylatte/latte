@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useRef, useSyncExternalStore } from 'react';
 import { EMPTY_USAGE, type ChatEvent, type ChatMessage, type ChatPermission, type ChatQuestion, type ChatStatus, type ChatUsage, type LatteAPI } from '../shared/contracts';
 import { editsInProgress } from './active-edits';
 
@@ -192,4 +192,31 @@ export function useActiveEdits(store: ChatStore, fileNames: string[]): Record<st
   const subscribe = useCallback((listener: () => void) => store.subscribe(listener), [store]);
   const snapshot = useCallback(() => store.activeEdits(key ? key.split(' ') : []), [store, key]);
   return useSyncExternalStore(subscribe, snapshot, () => NO_EDITS);
+}
+
+const NO_CHATS: Readonly<Record<string, ChatMessage[]>> = {};
+
+/**
+ * N1: la conversación de VARIOS chats a la vez, por id — lo que el modo Equipo
+ * necesita para decir qué hace cada miembro. La referencia es estable
+ * mientras ninguno de esos chats cambie, así React no redibuja de más.
+ */
+export function useChatMessagesOf(store: ChatStore, chatIds: readonly string[]): Readonly<Record<string, ChatMessage[]>> {
+  const key = chatIds.join(' ');
+  const cache = useRef<{ key: string; value: Record<string, ChatMessage[]> } | null>(null);
+  const subscribe = useCallback((listener: () => void) => store.subscribe(listener), [store]);
+  const snapshot = useCallback(() => {
+    const ids = key ? key.split(' ') : [];
+    const previous = cache.current;
+    let same = previous !== null && previous.key === key;
+    const next: Record<string, ChatMessage[]> = {};
+    for (const id of ids) {
+      next[id] = store.get(id).messages;
+      if (same && previous!.value[id] !== next[id]) same = false;
+    }
+    if (same) return previous!.value;
+    cache.current = { key, value: next };
+    return next;
+  }, [store, key]);
+  return useSyncExternalStore(subscribe, snapshot, () => NO_CHATS);
 }

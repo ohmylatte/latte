@@ -864,6 +864,9 @@ export type CoordinationRunStatus = 'planning' | 'running' | 'suspended' | 'done
  */
 export type CoordinationSuspendReason =
   | 'paused_by_human'
+  // O2: el coordinador no tiene proceso vivo (la persona lo pausó) y le llegó
+  // un aviso que no puede recibir. Se levanta reanudándolo, no solo.
+  | 'coordinator_paused'
   | 'all_blocked_on_ask'
   | 'coordination_disabled'
   | 'budget_invalid'
@@ -988,6 +991,8 @@ export interface CoordinationGateAggregate {
  */
 export interface CoordinationProposalTask {
   roleId: string;
+  /** N2: el título corto de la tarea, si el coordinador lo manda. Sin esto se deriva del spec (`shared/taskTitle`). */
+  title?: string;
   spec: string;
   dependsOn?: number[];
 }
@@ -1156,6 +1161,12 @@ export interface CoordinationRunTaskView {
   roleId: string;
   /** Recortado a 200 caracteres por el motor, igual que para un agente. */
   spec: string;
+  /**
+   * N2: el título de la tarea: el que mandó el coordinador o, si no, el que
+   * `taskTitle` deriva del spec ENTERO (el `spec` de acá viene recortado y
+   * el pedido puede estar después del bloque de contexto).
+   */
+  title?: string | null;
   status: CoordinationTaskStatus;
   /** Si la tarea es parte del plan aprobado o nació después, de un despacho. */
   inPlan: boolean;
@@ -1280,6 +1291,13 @@ export interface CoordinationActiveRunSummary {
   dispatchesUsed: number;
   maxDispatches: number | null;
   pendingGates: number;
+  /**
+   * O2: por qué está suspendido, tal como lo escribió el motor. Con
+   * `coordinator_paused` la tira lo marca como algo que te necesita: el equipo
+   * espera a que reanudes al coordinador. Opcional: una tira sin este dato
+   * se lee como antes.
+   */
+  suspendReason?: string | null;
   /**
    * `true` cuando el `budget_json` de ESTE run no se pudo leer. Antes, una
    * sola fila así hacía tirar el mapeo entero y la tira global —que es

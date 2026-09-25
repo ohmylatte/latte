@@ -3,8 +3,10 @@ import { translate as t } from '../i18n';
 import { CoordAvatar } from './anatomy';
 import { avatarOfRole } from './avatar-of';
 import { roleDisplayName } from './names';
-import { titleOf } from './text';
+import { taskTitle, TASK_TITLE_LONG } from '../../shared/taskTitle';
 import { hourOf } from './time';
+import { memberDisplayName } from './names';
+import { nowLine, type NowLine } from './now-line';
 import type {
   AgentRole, CoordinationAskView, CoordinationRunTaskView, CoordinationRunView, TeamMember,
 } from '../../shared/contracts';
@@ -52,6 +54,43 @@ export interface RunHeaderProps {
   onNewRequest?: () => void;
   /** Inyectable para los tests: la hora local de un ISO. */
   formatTime?: (value: string) => string;
+  /**
+   * O1: lo que la línea "Ahora" necesita saber del coordinador y que el run no
+   * trae: si su proceso está vivo, cuántas preguntas nativas, permisos o
+   * decisiones dejó esperándote, y cuántos mensajes del equipo no leyó.
+   */
+  coordinatorPaused?: boolean;
+  coordinatorWaiting?: number;
+  coordinatorUnread?: number;
+  /** O1: el enlace de "X espera tu respuesta": abre la fila y el hilo de quien espera. */
+  onOpenMember?: (memberId: string) => void;
+  /** O1: "Reanudar" en la línea: el mismo reanudar de la tarjeta de pausa del miembro. */
+  onResumeCoordinator?: (memberId: string) => void;
+}
+
+/** "A", "A y B", "A, B y C": la conjunción sale del diccionario. */
+function joinNames(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return t('coord.now.and', { first: names.slice(0, -1).join(', '), last: names[names.length - 1] });
+}
+
+/** La frase de la línea "Ahora", en palabras. Una sola, sin ids. */
+export function nowLineText(line: NowLine, nameOf: (memberId: string | null, roleId?: string) => string): string {
+  switch (line.kind) {
+    case 'waiting': return line.memberIds.length === 1
+      ? t('coord.now.waitingOne', { name: nameOf(line.memberIds[0]) })
+      : t('coord.now.waitingMany', { count: line.memberIds.length, names: joinNames(line.memberIds.map((id) => nameOf(id))) });
+    case 'coordinatorPaused': {
+      const name = nameOf(line.memberId);
+      if (line.unread === 0) return t('coord.now.paused', { name });
+      return line.unread === 1 ? t('coord.now.pausedUnreadOne', { name }) : t('coord.now.pausedUnreadMany', { name, count: line.unread });
+    }
+    case 'missing': return t(line.noBudget ? 'coord.now.missingNoBudget' : 'coord.now.missing', { title: line.title });
+    case 'working': return line.workers.length === 1
+      ? t('coord.now.workingOne', { name: nameOf(line.workers[0].memberId, line.workers[0].roleId), title: line.title })
+      : t('coord.now.workingMany', { count: line.workers.length, names: joinNames(line.workers.map((w) => nameOf(w.memberId, w.roleId))) });
+    default: return t('coord.now.calm');
+  }
 }
 
 /** Qué controles tiene este run. Mismo criterio que `planRunControls`, sin la frase de estado: el estado ya lo dice la barra. */
@@ -115,6 +154,23 @@ export function RunHeader(props: RunHeaderProps) {
   const max = run.budget?.maxDispatches ?? null;
   const finished = !run.active;
   const cancelled = run.status === 'cancelled';
+  const line = nowLine({
+    run, tasks: props.tasks ?? [], asks: props.asks ?? [],
+    coordinatorPaused: Boolean(props.coordinatorPaused),
+    coordinatorWaiting: props.coordinatorWaiting ?? 0,
+    coordinatorUnread: props.coordinatorUnread ?? 0,
+  });
+  const nameOf = (memberId: string | null, roleId?: string) => memberDisplayName(memberId, team, roleId ?? null, roles);
+  /**
+   * O2: un equipo suspendido PORQUE SU COORDINADOR ESTÁ EN PAUSA se reanuda
+   * reanudando al coordinador: es lo único que lo destraba (el motor entrega
+   * la cola y vuelve a `running`). Reanudar sólo el run lo dejaría andando con
+   * nadie que lea los avisos.
+   */
+  const resumeTeam = () => {
+    if (run.suspendReason === 'coordinator_paused' && run.coordinatorMemberId && props.onResumeCoordinator) props.onResumeCoordinator(run.coordinatorMemberId);
+    else props.onResume?.(run.id);
+  };
 
   return <div className="coord-head">
     <div className="coord-head-top">
@@ -167,17 +223,29 @@ export function RunHeader(props: RunHeaderProps) {
         ? props.onNewRequest && <button type="button" className="coord-btn coord-btn-primary" onClick={props.onNewRequest}><MessageSquare size={14} />{t('coord.done.newRequest')}</button>
         : <div className="coord-head-actions">
           {controls.pause && <button type="button" className="coord-btn coord-icon-btn team-pause-coordination" aria-label={t('coord.run.pause')} title={t('coord.run.pause')} disabled={inFlightAction} onClick={() => props.onPause?.(run.id)}><Pause size={14} /></button>}
-          {controls.resume && <button type="button" className="coord-btn coord-icon-btn team-resume-coordination" aria-label={t('coord.run.resume')} title={t('coord.run.resume')} disabled={inFlightAction} onClick={() => props.onResume?.(run.id)}><Play size={14} /></button>}
+          {controls.resume && <button type="button" className="coord-btn coord-icon-btn team-resume-coordination" aria-label={t('coord.run.resume')} title={t('coord.run.resume')} disabled={inFlightAction} onClick={resumeTeam}><Play size={14} /></button>}
           {controls.cancel && <button type="button" className="coord-btn coord-icon-btn team-cancel-coordination" aria-label={t('coord.run.cancel')} title={t('coord.run.cancel')} disabled={inFlightAction} onClick={() => props.onCancel?.(run.id)}><X size={14} /></button>}
         </div>}
     </div>
+    {/* O1: LA LINEA "AHORA". Una frase, siempre, con el run activo: que te
+        espera, quien esta en pausa, que falta o quien trabaja. Sobre un run
+        terminado no hay: el subtitulo ya dice "Terminamos · 3 de 3". */}
+    {line && <p className={'coord-now' + (line.kind === 'waiting' ? ' is-waiting' : '')} data-now={line.kind} aria-label={t('coord.now.label')}>
+      {line.kind === 'waiting' && props.onOpenMember
+        ? <button type="button" className="coord-now-link" onClick={() => props.onOpenMember?.(line.memberIds[0])}><CircleHelp size={14} />{nowLineText(line, nameOf)}</button>
+        : <span className="coord-now-text">{line.kind === 'waiting' && <CircleHelp size={14} />}{nowLineText(line, nameOf)}</span>}
+      {line.kind === 'coordinatorPaused' && props.onResumeCoordinator && <>
+        <span className="coord-now-sep" aria-hidden="true">·</span>
+        <button type="button" className="coord-now-action" disabled={inFlightAction} onClick={() => props.onResumeCoordinator?.(line.memberId)}><Play size={13} />{t('coord.now.resume')}</button>
+      </>}
+    </p>}
     {(props.tasks?.length ?? 0) > 0 && <ul className="coord-tasks" aria-label={t('coord.tasks.label')}>
       {props.tasks!.map((task) => {
         const state = taskChipState(task, askedTaskIds);
         const owner = roleDisplayName(task.roleId, roles, team);
-        return <li key={task.id} className={'coord-task is-' + state} data-task-state={state} title={taskLabel(state) + ' · ' + titleOf(task.spec)}>
+        return <li key={task.id} className={'coord-task is-' + state} data-task-state={state} title={taskLabel(state) + ' · ' + taskTitle(task.spec, task.title, TASK_TITLE_LONG)}>
           <TaskIcon state={state} />
-          <span className="coord-task-title">{titleOf(task.spec)}</span>
+          <span className="coord-task-title">{taskTitle(task.spec, task.title)}</span>
           <CoordAvatar name={owner} small roleId={task.roleId} avatar={avatarOfRole(task.roleId, roles, team)} />
           <span className="visually-hidden">{taskLabel(state)}</span>
         </li>;

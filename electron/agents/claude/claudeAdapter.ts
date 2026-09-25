@@ -136,6 +136,14 @@ interface LiveChat {
    * second turn would be charged for the first one again.
    */
   costSoFar: number | null;
+  /**
+   * N3: el contexto de la ÚLTIMA llamada a la API de este turno (entrada
+   * fresca + lo que se leyó y escribió en caché). El `usage` del `result` es
+   * la SUMA de todas las llamadas del turno: un turno con veinte herramientas
+   * sobre 90 mil reportaba 1,8 M de "contexto" y el aviso de conversación
+   * pesada saltaba en dos turnos. `null` hasta la primera llamada con `usage`.
+   */
+  turnContext: number | null;
 }
 
 const MESSAGE_LIMIT = 400;
@@ -307,6 +315,7 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       mcpConfigFile,
       usage: EMPTY_USAGE,
       costSoFar: null,
+      turnContext: null,
     };
     // Resuming: put the earlier turns back on screen before the first new one.
     if (input.previousSessionId && this.deps.transcripts) {
@@ -642,6 +651,7 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       case 'assistant': {
         const message = isRecord(msg.message) ? msg.message : null;
         if (!message || typeof message.id !== 'string') return;
+        this.noteCallContext(live, message.usage);
         this.ensureAssistant(live, message.id);
         const content = Array.isArray(message.content) ? message.content : [];
         content.forEach((block, index) => {
@@ -737,6 +747,13 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
    * result without `usage` (an early abort, an old CLI) reports nothing rather
    * than reporting zeros, which would read as "this turn was free".
    */
+  /** N3: el contexto de UNA llamada, del `usage` que trae su mensaje. Una llamada sin `usage` no pisa la anterior. */
+  private noteCallContext(live: LiveChat, usage: unknown): void {
+    if (!isRecord(usage)) return;
+    const context = tokenCount(usage.input_tokens) + tokenCount(usage.cache_read_input_tokens) + tokenCount(usage.cache_creation_input_tokens);
+    if (context > 0) live.turnContext = context;
+  }
+
   private reportUsage(live: LiveChat, msg: Record<string, unknown>): void {
     const raw = isRecord(msg.usage) ? msg.usage : null;
     if (!raw) return;
@@ -756,11 +773,13 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
       cacheWriteTokens,
       turns: 1,
       costUsd: delta !== null && delta > 0 ? delta : null,
-      // What the model re-read to answer: fresh input plus everything the
-      // cache handed it. This is the number that says why a long conversation
-      // gets expensive even when the answers stay short.
-      contextTokens: inputTokens + cacheReadTokens + cacheWriteTokens,
+      // What the model re-reads on the next message: the LAST call's fresh
+      // input plus everything the cache handed it. Never the turn's sum (N3).
+      // Without a per-call reading (an old CLI, a one-call turn from a fake)
+      // the result's own numbers are the only honest fallback.
+      contextTokens: live.turnContext ?? inputTokens + cacheReadTokens + cacheWriteTokens,
     };
+    live.turnContext = null;
     live.usage = addUsage(live.usage, turn);
     this.deps.emit({ chatId: live.chatId, type: 'usage', turn, total: live.usage });
   }
@@ -769,6 +788,7 @@ export class ClaudeChatAdapter implements RuntimeAdapter {
     switch (event.type) {
       case 'message_start': {
         const message = isRecord(event.message) ? event.message : null;
+        if (message) this.noteCallContext(live, message.usage);
         if (message && typeof message.id === 'string') this.ensureAssistant(live, message.id);
         return;
       }

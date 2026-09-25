@@ -1399,3 +1399,26 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 /* El coordinador habitual de la marca: el mismo ícono que marca al coordinador; apretado, en tinta y con fondo, sin gastar el acento. */
 .roster-coordinate{color:var(--muted-soft)}
 .roster-coordinate[aria-pressed="true"]{color:var(--ink);background:var(--paper-deep);border-color:var(--line-strong)}
+/* N1: LOS PASOS DE UN DESPACHO. Una linea por herramienta, chica y en gris:
+   icono, verbo y objeto, hora en mono. El ultimo en curso lleva el punto del
+   acento; al reportar se pliegan en "N pasos". */
+.coord-steps{list-style:none;margin:2px 0 0;padding:0;display:flex;flex-direction:column;gap:3px;min-width:0}
+.coord-step{display:flex;align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:var(--text-sm)}
+.coord-step-icon{display:inline-flex;flex:0 0 auto;color:var(--muted-soft)}
+.coord-step-text{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.coord-step.is-live{color:var(--ink-soft)}
+.coord-step.is-failed .coord-step-text{color:var(--danger)}
+.coord-step-dot{width:7px;height:7px;flex:0 0 7px;border-radius:var(--radius-pill);background:var(--rust);box-shadow:0 0 0 3px var(--rust-wash)}
+.coord-steps-more{color:var(--muted-soft);font-size:var(--text-sm)}
+.coord-steps-fold{min-width:0}
+.coord-steps-summary{cursor:pointer;color:var(--muted);font-size:var(--text-sm);width:max-content}
+/* O1: LA LINEA "AHORA". Una frase bajo el encabezado del run, en gris; el acento
+   sólo cuando algo te espera, que es el único estado que te pide algo. */
+.coord-now{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;margin:8px 0 0;color:var(--ink-soft);font-size:var(--text-sm)}
+.coord-now-text{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.coord-now.is-waiting .coord-now-text{color:var(--rust)}
+.coord-now-link{display:inline-flex;align-items:center;gap:6px;min-width:0;padding:0;border:0;background:transparent;color:var(--rust);font:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.coord-now-link:hover{text-decoration-thickness:2px}
+.coord-now-sep{color:var(--muted-soft)}
+.coord-now-action{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:transparent;color:var(--ink);font:inherit;font-weight:600;cursor:pointer}
+.coord-now-action:disabled{cursor:default;color:var(--muted)}
