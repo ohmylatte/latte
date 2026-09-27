@@ -183,7 +183,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
     // A2: lo que hacía falta para no recrear el plan. La descripción dice para
     // qué existe, porque el error que corrige es exactamente el de un agente
     // que no sabía que las tareas ya estaban.
-    description: "Coordinator only. Lists the tasks of the active coordination run: id, role, status, whether the task belongs to the approved plan, its dependencies, attempts and assigned member. Approving a plan already creates every task of it — list them here and dispatch them with latte_dispatch instead of creating them again.",
+    description: "Lists the tasks of the active coordination run: id, role, status, whether the task belongs to the approved plan, its dependencies, attempts and assigned member. Approving a plan already creates every task of it — list them here and dispatch them with latte_dispatch instead of creating them again. A member without the coordinator grant gets only its own tasks (the ones it was dispatched), with their ids.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -197,7 +197,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
       // esquema no decía nada. Los mismos topes que `assertCoordinationProposal`
       // aplica del otro lado.
       properties: {
-        taskId: { type: 'string', maxLength: LIMITS.name },
+        taskId: { type: 'string', maxLength: LIMITS.name, description: 'The task you were dispatched (its id is at the end of your task). Optional: without it Latte uses the task you have in flight.' },
         outcome: { type: 'string', maxLength: LIMITS.name, enum: ['succeeded', 'failed'] },
         summary: { type: 'string', minLength: 1, maxLength: LIMITS.decision },
         // E2: una LISTA de rutas relativas. El texto libre de antes se sigue
@@ -217,7 +217,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
           description: 'Only for a review task, and required there: "pass" publishes the reviewed file; "fail" sends it back to its author with the reasons in `summary`.',
         },
       },
-      required: ['taskId', 'outcome', 'summary'],
+      required: ['outcome', 'summary'],
     },
   },
   {

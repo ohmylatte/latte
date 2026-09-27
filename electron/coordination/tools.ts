@@ -119,13 +119,16 @@ export function createCoordinationTools(engine: CoordinationEngine) {
     // podía volver a crear el plan entero, con tareas `inPlan:false` que
     // después gatean una por una. `requiresRun:true`: sin run no hay tareas, y
     // decirlo acá no lee una sola fila.
+    // E6: un worker ve SUS tareas en vez de FORBIDDEN: el revisor de la
+    // extracción de identidad no tenía otra forma de saber su id.
     latte_task_list: (grant: CoordinationGrant, _args: Record<string, never>) =>
-      wrap(engine, grant, true, () => engine.taskList(grant.runId as string), true),
+      wrap(engine, grant, false, () => (grant.role === 'coordinator' ? engine.taskList(grant.runId as string) : engine.ownTaskList(grant)), true),
 
     // E2: `files` es una LISTA de rutas relativas (el texto de antes se sigue
     // aceptando tal cual), y `verdict` es lo que dice una revisión.
-    latte_report: (grant: CoordinationGrant, args: { taskId: string; outcome: 'succeeded' | 'failed'; summary: string; files?: string[] | string | null; verdict?: ReviewVerdict }) =>
-      wrap(engine, grant, false, () => engine.report(grant, args.taskId, args.outcome, args.summary, encodeFilesArg(args.files), { verdict: args.verdict ?? null }), true),
+    latte_report: (grant: CoordinationGrant, args: { taskId?: string; outcome: 'succeeded' | 'failed'; summary: string; files?: string[] | string | null; verdict?: ReviewVerdict }) =>
+      // E6: sin `taskId`, la tarea en vuelo de quien llama.
+      wrap(engine, grant, false, () => engine.report(grant, args.taskId || engine.resolveOwnTaskId(grant), args.outcome, args.summary, encodeFilesArg(args.files), { verdict: args.verdict ?? null }), true),
 
     // Sin `wait`: el servidor nunca esperó. Lo que sí cambió es que el buzón YA
     // TIENE productor (`latte_message`), así que esto dejó de devolver `[]` por

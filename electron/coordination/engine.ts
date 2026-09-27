@@ -106,6 +106,19 @@ export interface CoordinationDeliveries {
 }
 
 /**
+ * E6: LA ÚLTIMA LÍNEA DE TODO DESPACHO: qué tarea es y cómo se cierra.
+ *
+ * El revisor de la extracción de identidad hizo el trabajo y no pudo cerrarlo:
+ * nadie le había dicho el id y `latte_report` lo exigía. El id va igual —es lo
+ * que se manda si el agente quiere ser explícito—, pero ya no hace falta.
+ */
+export function withClosingLine(prompt: string, task: Pick<CoordinationTaskRecord, 'id'>, review = false): string {
+  if (prompt.includes(`Task \`${task.id}\``)) return prompt;
+  const outcome = review ? 'outcome "succeeded", verdict "pass" or "fail", and the reasons in summary' : 'outcome and summary and the files you produced (paths relative to this work)';
+  return `${prompt}\n\n---\nTask \`${task.id}\`. When done, call latte_report (taskId \`${task.id}\` or omit it: Latte knows your task) with ${outcome}.`;
+}
+
+/**
  * E2: el pedido de la revisión. En inglés, como todo lo que Latte le dice a un
  * agente, salvo la línea del cliente, que va en el idioma del trabajo: es la
  * frase con la que el revisor tiene que leer el documento.
@@ -2267,7 +2280,11 @@ export class CoordinationEngine {
       // que nadie deshacia. Nada se ejecuto, asi que la reserva se cierra SIN
       // asiento de gasto: no se cobra un despacho que nunca salio.
       try {
-        await this.deps.hub.send(session.id, prompt);
+        // E6: el id y cómo cerrar viajan al final de TODO despacho —el del
+        // coordinador, la revisión, la extracción de identidad, uno editado a
+        // mano—, en el envío y no en la fila: la tarjeta del gate y la
+        // bitácora siguen mostrando el pedido, no un id.
+        await this.deps.hub.send(session.id, withClosingLine(prompt, task, Boolean(this.reviewOriginOf(task.id))));
       } catch (error) {
         // K4 (ronda 10): la hora del cierre es la de AHORA. Con `now` —tomado
         // antes del spawn— esta fila quedaba con `settled_at` cuarenta minutos
@@ -2826,6 +2843,38 @@ export class CoordinationEngine {
     // segundos y el reporte de quien terminó no tiene por qué esperarlo.
     if (followUp.dispatchTaskId) void this.dispatchFollowUp(grant.workId, task.runId, followUp.dispatchTaskId);
     return this.deps.repo.getCoordinationTask(taskId);
+  }
+
+  /**
+   * E6: LA TAREA DE QUIEN LLAMA, SIN QUE TENGA QUE SABER EL ID.
+   *
+   * El bearer ya dice quién es. Con un solo despacho en vuelo es ése; con
+   * varios, el error los lista (id y título) para que elija; sin ninguno, el
+   * mismo FORBIDDEN que recibe quien reporta una tarea que no es suya.
+   */
+  resolveOwnTaskId(grant: CoordinationGrant): string {
+    if (grant.runId == null) throw new LatteError('NO_ACTIVE_RUN', 'This Work has no active coordination run');
+    const inFlight = this.deps.repo.listCoordinationDispatches(grant.runId)
+      .filter((d) => d.memberId === grant.memberId && (d.status === 'dispatched' || d.status === 'running'));
+    const taskIds = [...new Set(inFlight.map((d) => d.taskId))];
+    if (taskIds.length === 1) return taskIds[0]!;
+    if (taskIds.length === 0) throw new LatteError('FORBIDDEN', 'Only the member this task is currently dispatched to may report it, and you have no task in flight right now.');
+    const list = taskIds.map((id) => {
+      const task = this.deps.repo.getCoordinationTask(id);
+      return `- ${id}: ${taskTitle(task.spec, task.title, TASK_TITLE_LONG)}`;
+    }).join('\n');
+    throw new ValidationError(`You have ${taskIds.length} tasks in flight; say which one with taskId:\n${list}`);
+  }
+
+  /**
+   * E6: `latte_task_list` para un worker: SUS tareas (las que tiene o tuvo
+   * despachadas), en vez de FORBIDDEN. No amplía nada: es lo mismo que ya
+   * recibió en sus prompts, con el id y el estado de hoy.
+   */
+  ownTaskList(grant: CoordinationGrant): ReturnType<CoordinationEngine['taskList']> {
+    if (grant.runId == null) throw new LatteError('NO_ACTIVE_RUN', 'This Work has no active coordination run');
+    const mine = new Set(this.deps.repo.listCoordinationDispatches(grant.runId).filter((d) => d.memberId === grant.memberId).map((d) => d.taskId));
+    return this.taskList(grant.runId).filter((task) => mine.has(task.id) || task.assignedMemberId === grant.memberId);
   }
 
   /** E2: si esta tarea es la revisión de otra, el id de la otra. */
