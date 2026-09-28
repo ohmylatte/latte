@@ -160,8 +160,9 @@ describe('renderInstructionBundle: hard cap', () => {
     // this fixture would have produced (brand + every decision + the skill body inlined).
     // The protocol stays available under compaction; inherited brand memory adds a bounded summary on 0.5+.
     // E2/E4: the working rules grew by the deliverables boundary (drafts vs ./entregables/) and
-    // the identity line; rules are never trimmed, so the margin grows with them, not the brand.
-    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60 + 1000);
+    // the identity line; 1B suma la línea del ADN de marca con su bloque `latte-dna`.
+    // Rules are never trimmed, so the margin grows with them, not the brand.
+    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60 + 2_000);
     // The cap is a target, not an absolute: a short footer may push it slightly over,
     // but never by much once decisions and brand context are both at their floor.
     expect(bundle.text.length).toBeLessThan(INSTRUCTIONS_MAX_CHARS + 500);

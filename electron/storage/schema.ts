@@ -3,6 +3,7 @@ import { BRAND_CONTEXT_SCHEMA_SQL } from './brandContextSchema';
 import { BRANDING_SCHEMA_SQL } from './brandingSchema';
 import { CONNECTIONS_SCHEMA_SQL } from './connectionsSchema';
 import { COORDINATION_SCHEMA_SQL } from './coordinationSchema';
+import { DNA_SCHEMA_SQL } from './dnaSchema';
 import { GENERATION_SCHEMA_SQL } from './generationSchema';
 import { LEARNING_SCHEMA_SQL } from './learningSchema';
 
@@ -160,7 +161,7 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-` + GENERATION_SCHEMA_SQL + BRANDING_SCHEMA_SQL + LEARNING_SCHEMA_SQL + ARCHIVE_SCHEMA_SQL + BRAND_CONTEXT_SCHEMA_SQL + COORDINATION_SCHEMA_SQL + CONNECTIONS_SCHEMA_SQL;
+` + GENERATION_SCHEMA_SQL + BRANDING_SCHEMA_SQL + LEARNING_SCHEMA_SQL + ARCHIVE_SCHEMA_SQL + BRAND_CONTEXT_SCHEMA_SQL + COORDINATION_SCHEMA_SQL + CONNECTIONS_SCHEMA_SQL + DNA_SCHEMA_SQL;
 
 /**
  * Not bumped for works.expected_output / works.result_path / works.out_of_scope_stages

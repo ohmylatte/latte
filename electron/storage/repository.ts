@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { CHAT_RUNTIMES, DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type CoordinationSuspendReason, type CoordinationTaskAudience, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
+import { CHAT_RUNTIMES, DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type BrandDnaField, type BrandDnaFields, type BrandDnaProposal, type CoordinationSuspendReason, type CoordinationTaskAudience, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
 import type { ArtifactCheck, DeliveryEvidence, GenerationReceipt } from '../../shared/generationContracts';
 import { GenerationContractError } from '../generation/errors';
 import { hashGenerationContext } from '../generation/canon';
@@ -31,10 +31,37 @@ interface BrandContextProposalRow extends SqlRow {
 }
 interface DocumentRow extends SqlRow { id: string; work_id: string; kind: string; title: string; file_name: string; status: string; funnel_stages: string; proposed_stages: string; base_doc_id: string | null; base_rev_id: string | null; base_print: string | null; last_print: string | null; created_at: string; updated_at: string }
 interface BrandContextRevisionRow extends SqlRow { id: string; brand_id: string; source: string; origin: string | null; content: string; fingerprint: string; created_at: string }
+interface BrandDnaDraftRow extends SqlRow { brand_id: string; fields_json: string; updated_at: string }
+interface BrandDnaVersionRow extends SqlRow { brand_id: string; version: number; fields_json: string; hash: string; approved_at: string }
+interface BrandDnaProposalRow extends SqlRow {
+  id: string; brand_id: string; work_id: string; field: string; next_json: string; reason: string;
+  source_kind: string; source_label: string; status: string;
+  source_chat_id: string | null; source_message_id: string | null; source_member_id: string | null;
+  source_role_id: string | null; source_runtime: string | null; client_request_id: string | null;
+  created_at: string; decided_at: string | null;
+}
+/**
+ * ADN de marca (Entrega 1B): la propuesta COMO LA GUARDA LATTE. El contrato
+ * público (`BrandDnaProposal`) es sólo lo que ve la persona; de quién salió
+ * (chat, miembro, rol, runtime) y en qué estado está queda acá, para poder
+ * responder el mismo `clientRequestId` y para no resolver dos veces la misma.
+ */
+export interface BrandDnaProposalRecord extends BrandDnaProposal {
+  brandId: string;
+  workId: string;
+  status: 'pending' | 'accepted' | 'rejected' | 'superseded';
+  chatId: string | null;
+  messageId: string | null;
+  memberId: string | null;
+  roleId: string | null;
+  runtime: ChatRuntime | null;
+  clientRequestId: string | null;
+  decidedAt: string | null;
+}
 interface MemberRow extends SqlRow { id: string; work_id: string; role_id: string; role_name: string; initial: string; runtime: string; model: string | null; account_id: string | null; session_id: string; done: number; continued_from: string | null; tier: string | null; usage_json: string | null; brand_member_id: string | null; created_at: string; updated_at: string }
 interface BrandMemberRow extends SqlRow { id: string; brand_id: string; role_id: string; role_name: string; initial: string; avatar: string | null; runtime: string; model: string | null; account_id: string | null; tier: string | null; coordinator: number; last_called_at: string; retired_at: string | null; created_at: string; updated_at: string }
 interface GenerationRow extends SqlRow { id: string; work_id: string; brand_id: string; context_json: string; context_hash: string; created_at: string }
-interface EvidenceRow extends SqlRow { id: string; generation_id: string; runtime: string; chat_id: string | null; projected_at: string; files_written: string }
+interface EvidenceRow extends SqlRow { id: string; generation_id: string; runtime: string; chat_id: string | null; projected_at: string; files_written: string; dna_version: number | null }
 interface CheckRow extends SqlRow { id: string; generation_id: string; relative_path: string; file_hash: string | null; checks_json: string; brand_compliant: number | null; created_at: string }
 interface CoordinationRunRow extends SqlRow { id: string; work_id: string; status: string; coordinator_member_id: string | null; budget_json: string; plan_json: string | null; plan_approved_at: string | null; suspend_reason: string | null; created_at: string; updated_at: string }
 interface CoordinationTaskRow extends SqlRow { id: string; run_id: string; seq: number; role_id: string; spec: string; title: string | null; audience: string | null; status: string; depth: number; attempts: number; in_plan: number; assigned_member_id: string | null; result_summary: string | null; result_files_json: string | null; created_at: string; updated_at: string }
@@ -330,6 +357,25 @@ const toBrandContextRevision = (r: BrandContextRevisionRow): BrandContextRevisio
   fingerprint: r.fingerprint,
   createdAt: r.created_at,
 });
+/** La propuesta de ADN tal cual se guardó. `next` se re-valida al aceptarla, no al leerla. */
+const toBrandDnaProposal = (r: BrandDnaProposalRow): BrandDnaProposalRecord => ({
+  id: r.id,
+  brandId: r.brand_id,
+  workId: r.work_id,
+  field: r.field as BrandDnaField,
+  next: JSON.parse(r.next_json) as BrandDnaFields[BrandDnaField],
+  reason: r.reason,
+  source: { kind: r.source_kind as BrandDnaProposal['source']['kind'], label: r.source_label },
+  status: r.status === 'accepted' || r.status === 'rejected' || r.status === 'superseded' ? r.status : 'pending',
+  chatId: r.source_chat_id,
+  messageId: r.source_message_id,
+  memberId: r.source_member_id,
+  roleId: r.source_role_id,
+  runtime: readSourceRuntime(r.source_runtime),
+  clientRequestId: r.client_request_id,
+  createdAt: r.created_at,
+  decidedAt: r.decided_at,
+});
 const toGeneration = (r: GenerationRow): GenerationReceipt => ({
   id: r.id,
   workId: r.work_id,
@@ -346,6 +392,9 @@ const toEvidence = (r: EvidenceRow): DeliveryEvidence => ({
   chatId: r.chat_id,
   projectedAt: r.projected_at,
   filesWritten: jsonStrings(r.files_written),
+  // 1B: la versión del ADN vigente cuando se entregó. NULL en las filas de
+  // antes de este esquema: nada se inventa retroactivamente.
+  dnaVersion: r.dna_version ?? null,
 });
 const toCheck = (r: CheckRow): ArtifactCheck => {
   let checks: ArtifactCheck['checks'] = [];
@@ -598,6 +647,11 @@ export class LatteRepository {
     const brandContextColumns = this.db.all<{ name: string }>("SELECT name FROM pragma_table_info('brand_context_proposals')").map((c) => c.name);
     if (brandContextColumns.length > 0 && !brandContextColumns.includes('decided_reason')) this.db.run('ALTER TABLE brand_context_proposals ADD COLUMN decided_reason TEXT');
     if (brandContextColumns.length > 0 && !brandContextColumns.includes('superseded_by')) this.db.run('ALTER TABLE brand_context_proposals ADD COLUMN superseded_by TEXT');
+    // 1B: la versión del ADN aprobado en la evidencia de una entrega. Mismo
+    // patrón: ADD COLUMN no es idempotente, se mira la tabla primero. Antes de
+    // cualquier INSERT, porque la fila es inmutable por trigger.
+    const evidenceColumns = this.db.all<{ name: string }>("SELECT name FROM pragma_table_info('delivery_evidence')").map((c) => c.name);
+    if (evidenceColumns.length > 0 && !evidenceColumns.includes('dna_version')) this.db.run('ALTER TABLE delivery_evidence ADD COLUMN dna_version INTEGER');
     // v1/v2 kept one runtime session per work in chat_sessions. v3 models a
     // team: every conversation is a member with a role. Old sessions become
     // "assistant" members so nothing already resumable is lost.
@@ -1243,6 +1297,91 @@ export class LatteRepository {
     return this.getBrandContextProposal(id);
   }
 
+  // Brand DNA (Entrega 1B) ---------------------------------------------------
+  //
+  // Tres piezas por marca: el borrador que se edita, las versiones aprobadas
+  // (inmutables por trigger, con su fecha) y las propuestas que aprendieron de
+  // una corrección. Sin fila de borrador no hay ADN: `null`, no un objeto vacío.
+
+  getDnaDraft(brandId: string): BrandDnaFields | null {
+    const row = this.db.get<BrandDnaDraftRow>('SELECT * FROM brand_dna_drafts WHERE brand_id = ?', [brandId]);
+    if (!row) return null;
+    return JSON.parse(row.fields_json) as BrandDnaFields;
+  }
+
+  saveDnaDraft(brandId: string, fields: BrandDnaFields, at: string): void {
+    this.db.run('INSERT OR REPLACE INTO brand_dna_drafts(brand_id, fields_json, updated_at) VALUES (?, ?, ?)', [brandId, JSON.stringify(fields), at]);
+  }
+
+  /** La versión vigente: la que viaja a los trabajos. `null` mientras no hubo una aprobación. */
+  dnaHead(brandId: string): { version: number; approvedAt: string; fields: BrandDnaFields } | null {
+    const head = this.db.get<{ current_version: number }>('SELECT current_version FROM brand_dna_heads WHERE brand_id = ?', [brandId]);
+    if (!head) return null;
+    const row = this.db.get<BrandDnaVersionRow>('SELECT * FROM brand_dna_versions WHERE brand_id = ? AND version = ?', [brandId, head.current_version]);
+    if (!row) return null;
+    return { version: Number(row.version), approvedAt: row.approved_at, fields: JSON.parse(row.fields_json) as BrandDnaFields };
+  }
+
+  /** La SIGUIENTE a la más alta que existe, no a la del head: como los kits, para no pisar una fila inmutable. */
+  nextDnaVersion(brandId: string): number {
+    const row = this.db.get<{ v: number | null }>('SELECT MAX(version) AS v FROM brand_dna_versions WHERE brand_id = ?', [brandId]);
+    return Number(row?.v ?? 0) + 1;
+  }
+
+  insertDnaVersion(brandId: string, version: number, fields: BrandDnaFields, hash: string, at: string): void {
+    this.db.run('INSERT INTO brand_dna_versions(brand_id, version, fields_json, hash, approved_at) VALUES (?, ?, ?, ?, ?)',
+      [brandId, version, JSON.stringify(fields), hash, at]);
+  }
+
+  setDnaHead(brandId: string, version: number): void {
+    this.db.run('INSERT OR REPLACE INTO brand_dna_heads(brand_id, current_version) VALUES (?, ?)', [brandId, version]);
+  }
+
+  listPendingDnaProposals(brandId: string): BrandDnaProposalRecord[] {
+    return this.db
+      .all<BrandDnaProposalRow>("SELECT * FROM brand_dna_proposals WHERE brand_id = ? AND status = 'pending' ORDER BY created_at ASC, id ASC", [brandId])
+      .map(toBrandDnaProposal);
+  }
+
+  getDnaProposal(id: string): BrandDnaProposalRecord | null {
+    const row = this.db.get<BrandDnaProposalRow>('SELECT * FROM brand_dna_proposals WHERE id = ?', [id]);
+    return row ? toBrandDnaProposal(row) : null;
+  }
+
+  /** Mismo `clientRequestId`: la misma propuesta, no una segunda. */
+  findDnaProposalRequest(brandId: string, workId: string, chatId: string, clientRequestId: string): BrandDnaProposalRecord | null {
+    const row = this.db.get<BrandDnaProposalRow>(
+      'SELECT * FROM brand_dna_proposals WHERE brand_id = ? AND work_id = ? AND source_chat_id = ? AND client_request_id = ?',
+      [brandId, workId, chatId, clientRequestId],
+    );
+    return row ? toBrandDnaProposal(row) : null;
+  }
+
+  findPendingDnaProposalForField(brandId: string, field: BrandDnaField): BrandDnaProposalRecord | null {
+    const row = this.db.get<BrandDnaProposalRow>(
+      "SELECT * FROM brand_dna_proposals WHERE brand_id = ? AND field = ? AND status = 'pending'",
+      [brandId, field],
+    );
+    return row ? toBrandDnaProposal(row) : null;
+  }
+
+  insertDnaProposal(proposal: BrandDnaProposalRecord): void {
+    this.db.run(
+      'INSERT INTO brand_dna_proposals(id, brand_id, work_id, field, next_json, reason, source_kind, source_label, status, source_chat_id, source_message_id, source_member_id, source_role_id, source_runtime, client_request_id, created_at, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        proposal.id, proposal.brandId, proposal.workId, proposal.field, JSON.stringify(proposal.next), proposal.reason,
+        proposal.source.kind, proposal.source.label, proposal.status,
+        proposal.chatId, proposal.messageId, proposal.memberId, proposal.roleId, proposal.runtime,
+        proposal.clientRequestId, proposal.createdAt, proposal.decidedAt,
+      ],
+    );
+  }
+
+  /** La fila nunca se borra: `pending` pasa a aceptada, rechazada o supersedeada, con su fecha. */
+  setDnaProposalStatus(id: string, status: BrandDnaProposalRecord['status'], at: string): void {
+    this.db.run('UPDATE brand_dna_proposals SET status = ?, decided_at = ? WHERE id = ?', [status, at, id]);
+  }
+
   // Brand context history (immutable) ----------------------------------------
 
   /** The history of `brands.context`, newest first. */
@@ -1336,8 +1475,8 @@ export class LatteRepository {
 
   insertDeliveryEvidence(row: DeliveryEvidence): DeliveryEvidence {
     this.db.run(
-      'INSERT INTO delivery_evidence(id, generation_id, runtime, chat_id, projected_at, files_written) VALUES (?, ?, ?, ?, ?, ?)',
-      [row.id, row.generationId, row.runtime, row.chatId, row.projectedAt, JSON.stringify(row.filesWritten)],
+      'INSERT INTO delivery_evidence(id, generation_id, runtime, chat_id, projected_at, files_written, dna_version) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [row.id, row.generationId, row.runtime, row.chatId, row.projectedAt, JSON.stringify(row.filesWritten), row.dnaVersion ?? null],
     );
     return row;
   }

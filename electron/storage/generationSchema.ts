@@ -29,7 +29,10 @@ CREATE TABLE IF NOT EXISTS delivery_evidence (
   runtime       TEXT NOT NULL,
   chat_id       TEXT,
   projected_at  TEXT NOT NULL,
-  files_written TEXT NOT NULL
+  files_written TEXT NOT NULL,
+  -- 1B: la versión del ADN aprobado al entregar. Nullable: una fila de antes
+  -- de este esquema queda NULL (migrate() la agrega a las bases existentes).
+  dna_version   INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_delivery_evidence_generation ON delivery_evidence(generation_id);
 

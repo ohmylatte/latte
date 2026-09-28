@@ -127,6 +127,12 @@ export interface DeliveryEvidence {
   chatId: string | null;
   projectedAt: string;
   filesWritten: string[];
+  /**
+   * 1B: la versión del ADN de marca vigente cuando se entregó, junto al hash
+   * del kit que ya viajaba en el contexto. `null` = no había ADN aprobado (o
+   * la fila es de antes de este campo): nunca se inventa retroactivamente.
+   */
+  dnaVersion: number | null;
 }
 
 export interface ArtifactCheck {

@@ -88,8 +88,11 @@ import type {
   BrandIdentityExtractionResult,
   BrandDnaBuildJob,
   BrandDnaBuildMode,
+  BrandDnaBuildStep,
+  BrandDnaBuildStepKey,
   BrandDnaField,
   BrandDnaFields,
+  BrandDnaProposal,
   BrandDnaSourcesInput,
   BrandDnaView,
   BrandIdentityView,
@@ -101,7 +104,7 @@ import type {
   WorkBrandChoiceInput,
   OnboardingDraft,
 } from '../../shared/contracts';
-import { isOnboardingDraft } from '../../shared/contracts';
+import { BRAND_DNA_FIELDS, isOnboardingDraft } from '../../shared/contracts';
 import {
   GENERATION_SCHEMA_VERSION,
   type BrandContextPort,
@@ -146,8 +149,8 @@ import { LearningService } from '../learning/service';
 import type { SkillCandidateRecord } from '../learning/types';
 import type { CandidateGenerator } from '../learning/worker';
 import type { LearningRepository } from '../storage/learningRepository';
-import { briefDocumentId, type CoordinationRunRecord, type DocumentRecord, type LatteRepository } from '../storage/repository';
-import { collectBrandMemory, hasInheritedContent, type BrandMemorySnapshot } from '../workspace/brandMemory';
+import { briefDocumentId, type BrandDnaProposalRecord, type CoordinationRunRecord, type DocumentRecord, type LatteRepository } from '../storage/repository';
+import { collectBrandMemory, hasBrandMemory, hasInheritedContent, renderBrandMemory, type BrandMemorySnapshot } from '../workspace/brandMemory';
 import { brandContextNudge, electBrandContextOwner } from '../workspace/brandContextNudge';
 import { DRAFTS_DIR, INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
 import { checkFolder, contains, importFileName, kindFromFileName, readFunnelProposal, readHandoff, scanFolder, titleFromFileName } from '../workspace/linkFolder';
@@ -156,6 +159,27 @@ import { openItems, renderContinuation } from '../workspace/continuation';
 import { DELIVERABLES_DIR, DeliverableFiles, deliverableName } from '../workspace/deliverables';
 import { publishDeliverable } from '../workspace/publishDeliverable';
 import { IDENTITY_DIR, IDENTITY_DOC, identityExtractionSpec, projectIdentity } from '../branding/identity';
+import {
+  DNA_AGENT_STEP_KEYS,
+  DNA_DRAFT_DIR,
+  DNA_JSON,
+  DNA_JSON_RELATIVE,
+  DNA_STEPS_JSON,
+  DNA_STEPS_RELATIVE,
+  brandDnaFingerprint,
+  brandDnaIsEmpty,
+  dnaBuildSpec,
+  emptyBrandDnaFields,
+  parseDnaStepReport,
+  projectBrandDna,
+  requireBrandDnaFields,
+  requireBrandDnaFieldValue,
+  type BrandDnaProjection,
+  type DnaStepReport,
+} from '../branding/dna';
+import { brandDnaProtocolBlocks, requireBrandDnaProposalInput, type BrandDnaProposalInput } from '../workspace/dnaProtocol';
+import { reportedFiles } from '../../shared/reportFiles';
+import { canonicalJson } from '../core/canonical';
 import { REVIEWER_ROLE_ID } from '../coordination/engine';
 import { hashGenerationContext } from '../generation/canon';
 import { documentFileName, fingerprintOf, type DocumentOnDisk, type WorkspaceFiles } from '../workspace/workspace';
@@ -172,6 +196,31 @@ export function decisionFingerprint(statement:string):string {
 /** A propagation report with nothing in it, for a decision that changed no work. */
 function emptyRefreshReport(): BrandContextRefreshReport {
   return { updated: [], unchanged: [], live: [], userOwned: [] };
+}
+
+/** 1B: los ocho pasos de un build, en el orden en que los cuenta el contrato. */
+const DNA_BUILD_STEP_KEYS: readonly BrandDnaBuildStepKey[] = ['web', 'instagram', 'files', 'context', 'documents', 'decisions', 'memory', 'compose'];
+
+function initialDnaSteps(): BrandDnaBuildStep[] {
+  return DNA_BUILD_STEP_KEYS.map((key) => ({ key, state: 'pending' as const, detail: null }));
+}
+
+function setDnaStep(job: BrandDnaBuildJob, key: BrandDnaBuildStepKey, state: BrandDnaBuildStep['state'], detail: string | null): void {
+  const step = job.steps.find((candidate) => candidate.key === key);
+  if (step) { step.state = state; step.detail = detail; }
+}
+
+/**
+ * 1B: un build de ADN en vuelo. El `job` es lo que se le muestra a la persona;
+ * `taskId`/`runId` son la join key contra la tarea del equipo, que puede no
+ * existir todavía (la propuesta espera el sí de la persona). En memoria: un
+ * build no sobrevive a un reinicio de la app, y el borrador sí.
+ */
+interface DnaJobRecord {
+  job: BrandDnaBuildJob;
+  workId: string;
+  taskId: string | null;
+  runId: string | null;
 }
 
 /** Everything the renderer can call, minus the event subscriptions (wired in the preload). */
@@ -353,6 +402,8 @@ export class LatteService implements BackendApi {
   private readonly coordination: CoordinationEngine;
   /** Q7: el cancelador del tick periódico; lo llama `shutdown`, una sola vez. */
   private readonly stopSweepTimer: () => void;
+  /** 1B: los builds de ADN en vuelo, por jobId. Uno por marca: `activeDnaJob` es la regla. */
+  private readonly dnaJobs = new Map<string, DnaJobRecord>();
 
   constructor(private readonly deps: LatteServiceDeps) {
     this.clock = deps.clock ?? nowIso;
@@ -375,7 +426,7 @@ export class LatteService implements BackendApi {
         // E4: la evidencia de una entrega publicada, con el kit que tenía el
         // trabajo, y el `IDENTIDAD.md` que el equipo extrajo, al kit.
         recordEvidence: (input) => this.recordDeliveryEvidence(input),
-        onReported: (input) => this.importReportedIdentity(input),
+        onReported: (input) => this.onAgentReported(input),
       },
     });
     this.branding = new BrandingService({
@@ -770,17 +821,532 @@ export class LatteService implements BackendApi {
     return this.branding.readWorkBrandContext(workId);
   }
 
-  // ADN de marca (Entrega 1B): contrato fijado; el motor lo implementa la rama del motor.
+  // ADN de marca (Entrega 1B) -------------------------------------------------
+  //
+  // El motor: borrador editable, versión aprobada con número y fecha,
+  // propuestas que aprenden de una corrección, y UN build por marca a la vez
+  // que le entrega la composición a un agente. Regla de oro: cada dato dice de
+  // dónde salió; lo inferido sin fuente firme queda `assumption: true`, y lo
+  // que ninguna fuente sostiene se queda en `null` en vez de inventarse.
+
   async readBrandDna(brandId: string): Promise<BrandDnaView> {
     const brand = this.deps.repo.getBrand(requireId(brandId, 'brandId'));
-    return { brandId: brand.id, draft: null, approved: null, changedSinceApproval: false, proposals: [] };
+    return this.brandDnaView(brand.id);
   }
-  async updateBrandDnaField(_brandId: string, _field: BrandDnaField, _value: BrandDnaFields[BrandDnaField]): Promise<BrandDnaView> { throw new UnavailableError('El ADN de marca todavía no está disponible'); }
-  async approveBrandDna(_brandId: string): Promise<BrandDnaView> { throw new UnavailableError('El ADN de marca todavía no está disponible'); }
-  async buildBrandDna(_brandId: string, _mode: BrandDnaBuildMode, _sources: BrandDnaSourcesInput | null): Promise<BrandDnaBuildJob> { throw new UnavailableError('El ADN de marca todavía no está disponible'); }
-  async readBrandDnaBuildJob(_jobId: string): Promise<BrandDnaBuildJob> { throw new UnavailableError('El ADN de marca todavía no está disponible'); }
-  async cancelBrandDnaBuild(_jobId: string): Promise<BrandDnaBuildJob> { throw new UnavailableError('El ADN de marca todavía no está disponible'); }
-  async resolveBrandDnaProposal(_brandId: string, _proposalId: string, _accept: boolean): Promise<BrandDnaView> { throw new UnavailableError('El ADN de marca todavía no está disponible'); }
+
+  /** La persona edita un campo: su fuente pasa a `human` y deja de ser supuesto. */
+  async updateBrandDnaField(brandId: string, field: BrandDnaField, value: BrandDnaFields[BrandDnaField]): Promise<BrandDnaView> {
+    const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
+    if (!(BRAND_DNA_FIELDS as readonly string[]).includes(field)) throw new ValidationError('Invalid brand DNA field');
+    const clean = requireBrandDnaFieldValue(field, value);
+    const locale = await this.getContentLocale();
+    const draft = this.deps.repo.getDnaDraft(brand.id) ?? emptyBrandDnaFields();
+    const entry = { value: clean, sources: [{ kind: 'human' as const, label: locale === 'en-US' ? 'manual edit' : 'edición manual' }], assumption: false };
+    (draft as unknown as Record<string, unknown>)[field] = entry;
+    this.deps.repo.saveDnaDraft(brand.id, draft, this.clock());
+    return this.brandDnaView(brand.id);
+  }
+
+  /**
+   * Aprobar publica el borrador como versión vigente (número +1, con fecha),
+   * lo proyecta en `identidad/ADN.md` de cada trabajo y reescribe las
+   * instrucciones sin nadie adentro — el mismo camino que la identidad.
+   */
+  async approveBrandDna(brandId: string): Promise<BrandDnaView> {
+    const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
+    const draft = this.deps.repo.getDnaDraft(brand.id);
+    if (!draft || brandDnaIsEmpty(draft)) throw new ValidationError('Todavía no hay un borrador de ADN para aprobar');
+    const version = this.deps.repo.nextDnaVersion(brand.id);
+    const at = this.clock();
+    this.deps.repo.transaction(() => {
+      this.deps.repo.insertDnaVersion(brand.id, version, draft, brandDnaFingerprint(draft), at);
+      this.deps.repo.setDnaHead(brand.id, version);
+    });
+    this.projectBrandDnaToWorks(this.deps.repo.getBrand(brand.id));
+    return this.brandDnaView(brand.id);
+  }
+
+  /**
+   * Arranca el motor. Un solo build por marca a la vez: un segundo llamado
+   * devuelve el que está en curso. Sin IA el trabajo FALLA con el código del
+   * motor (`NOT_INSTALLED` / `UNAVAILABLE`); lo que Latte junta con sus
+   * propias manos queda registrado en sus pasos aunque después falle el
+   * despacho — pasos gruesos si hace falta, pero verdaderos.
+   */
+  async buildBrandDna(brandId: string, mode: BrandDnaBuildMode, sources: BrandDnaSourcesInput | null): Promise<BrandDnaBuildJob> {
+    const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
+    if (mode !== 'sources' && mode !== 'existing') throw new ValidationError('Invalid brand DNA build mode');
+    const input = this.requireDnaSources(sources, mode);
+
+    const running = this.activeDnaJob(brand.id);
+    if (running) return this.dnaJobSnapshot(running.job);
+
+    const work = [...this.deps.repo.listWorks(brand.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    if (!work) throw new ValidationError('Creá un trabajo en esta marca: el ADN se compone adentro de un trabajo');
+
+    const record: DnaJobRecord = {
+      job: { jobId: newId('bdj'), brandId: brand.id, mode, steps: initialDnaSteps(), done: false, outcome: null, reason: null },
+      workId: work.id,
+      taskId: null,
+      runId: null,
+    };
+    this.dnaJobs.set(record.job.jobId, record);
+    this.pruneDnaJobs();
+
+    const unavailable = await this.dnaRuntimeUnavailableReason();
+    if (unavailable) return this.dnaJobSnapshot(this.finishDnaJob(record, 'failed', unavailable));
+
+    try {
+      this.gatherDnaSources(record, brand, work, input);
+    } catch (error) {
+      this.deps.log?.(`[latte] dna sources gathering failed (brand=${brand.id}): ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    try {
+      const workDir = this.deps.files.workDir(brand.id, work.id);
+      const locale = this.deps.repo.getMeta(`work_content_locale:${work.id}`) === 'en-US' ? 'en-US' : 'es-AR';
+      const title = locale === 'en-US' ? `Compose the brand DNA of ${brand.name}` : `Componer el ADN de ${brand.name}`;
+      let team: TeamMember[] = [];
+      try { team = this.deps.hub.listTeam(work.id).filter((m) => m.status !== 'ended'); } catch { team = []; }
+      const coordinator = this.effectiveCoordinator(work.id) ?? team.find((m) => m.roleId === ASSISTANT_ROLE_ID)?.id ?? team[0]?.id ?? null;
+      const spec = dnaBuildSpec({
+        jobId: record.job.jobId,
+        brandName: brand.name,
+        mode,
+        url: input.url,
+        instagram: input.instagram,
+        prepared: this.dnaPreparedSources(workDir),
+      });
+      const result = await this.coordination.requestPersonTask(work.id, { roleId: REVIEWER_ROLE_ID, title, spec }, coordinator);
+      record.taskId = result.taskId;
+      try { record.runId = this.deps.repo.findActiveCoordinationRun(work.id)?.id ?? null; } catch { record.runId = null; }
+      switch (result.outcome) {
+        case 'dispatched':
+          setDnaStep(record.job, 'compose', 'running', 'El equipo está componiendo el ADN');
+          break;
+        case 'pending_approval':
+          setDnaStep(record.job, 'compose', 'pending', 'Esperando que la persona despache la tarea del equipo');
+          break;
+        case 'proposed':
+          setDnaStep(record.job, 'compose', 'pending', 'La propuesta de tarea espera la aprobación de la persona');
+          break;
+        default:
+          return this.dnaJobSnapshot(this.finishDnaJob(record, 'failed', result.reason ?? 'UNAVAILABLE'));
+      }
+    } catch (error) {
+      this.deps.log?.(`[latte] dna build dispatch failed (job=${record.job.jobId}): ${error instanceof Error ? error.message : String(error)}`);
+      return this.dnaJobSnapshot(this.finishDnaJob(record, 'failed', error instanceof LatteError ? error.code : 'INTERNAL'));
+    }
+    return this.dnaJobSnapshot(record.job);
+  }
+
+  async readBrandDnaBuildJob(jobId: string): Promise<BrandDnaBuildJob> {
+    const record = this.dnaJobs.get(requireId(jobId, 'jobId'));
+    if (!record) throw new NotFoundError('BrandDnaBuildJob', jobId);
+    this.settleDnaJob(record);
+    return this.dnaJobSnapshot(record.job);
+  }
+
+  /**
+   * Cancelar es dejar de OBSERVAR: el build queda `cancelled` y sucede otro.
+   * El motor de coordinación no tiene cancel por tarea (sólo cancelar un run
+   * entero), así que la tarea sigue su curso y su reporte cae en un job que ya
+   * no está activo — se ignora, en vez de pisar un borrador que la persona ya
+   * dejó de pedir.
+   */
+  async cancelBrandDnaBuild(jobId: string): Promise<BrandDnaBuildJob> {
+    const record = this.dnaJobs.get(requireId(jobId, 'jobId'));
+    if (!record) throw new NotFoundError('BrandDnaBuildJob', jobId);
+    this.settleDnaJob(record);
+    if (record.job.done) throw new ValidationError('Este build ya terminó: no se puede cancelar');
+    return this.dnaJobSnapshot(this.finishDnaJob(record, 'cancelled', null));
+  }
+
+  /** La persona acepta o rechaza lo que el motor aprendió. Aceptar lo pone en el BORRADOR: publicarlo sigue siendo aprobar. */
+  async resolveBrandDnaProposal(brandId: string, proposalId: string, accept: boolean): Promise<BrandDnaView> {
+    const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
+    if (typeof accept !== 'boolean') throw new TypeError('accept must be a boolean');
+    const proposal = this.deps.repo.getDnaProposal(requireId(proposalId, 'proposalId'));
+    if (!proposal) throw new NotFoundError('BrandDnaProposal', proposalId);
+    if (proposal.brandId !== brand.id) throw new ValidationError('La propuesta no es de esta marca');
+    if (proposal.status !== 'pending') throw new ValidationError('Esa propuesta ya fue resuelta');
+    const now = this.clock();
+    if (accept) {
+      const draft = this.deps.repo.getDnaDraft(brand.id) ?? emptyBrandDnaFields();
+      const entry = { value: proposal.next, sources: [proposal.source], assumption: false };
+      (draft as unknown as Record<string, unknown>)[proposal.field] = entry;
+      this.deps.repo.transaction(() => {
+        this.deps.repo.saveDnaDraft(brand.id, draft, now);
+        this.deps.repo.setDnaProposalStatus(proposal.id, 'accepted', now);
+      });
+    } else {
+      this.deps.repo.setDnaProposalStatus(proposal.id, 'rejected', now);
+    }
+    return this.brandDnaView(brand.id);
+  }
+
+  /**
+   * 1B: APRENDIZAJE POR BLOQUE DE PROTOCOLO. El agente propone con un bloque
+   * fenced `latte-dna` (mismo camino que decision y brand-context, misma
+   * validación estricta de la forma). Acá se decide DÓNDE queda: una propuesta
+   * pendiente por campo — la nueva supersede a la anterior, con la fila
+   * intacta— y con qué origen. Nunca aplica sola: el sí es de la persona.
+   */
+  async proposeBrandDnaFromAgent(chatId: string, messageId: string, input: BrandDnaProposalInput): Promise<BrandDnaProposal | null> {
+    const member = this.deps.repo.findMember(requireId(chatId, 'chatId'));
+    if (!member) throw new ValidationError('Unknown brand DNA source');
+    const work = this.deps.repo.getWork(member.workId);
+    const brand = this.requireActiveBrand(work.brandId);
+    const parsed = requireBrandDnaProposalInput(input);
+    const existing = this.deps.repo.findDnaProposalRequest(brand.id, work.id, chatId, parsed.clientRequestId);
+    if (existing) return existing;
+    const pending = this.deps.repo.findPendingDnaProposalForField(brand.id, parsed.field);
+    // La misma corrección dos veces es UNA propuesta, no dos.
+    if (pending && canonicalJson(pending.next) === canonicalJson(parsed.next)) return pending;
+    const now = this.clock();
+    const proposal: BrandDnaProposalRecord = {
+      id: newId('bdp'),
+      brandId: brand.id,
+      workId: work.id,
+      field: parsed.field,
+      // El contrato tipa `next` como la unión de entradas; el motor guarda el
+      // valor crudo validado. El casteo es la frontera entre las dos formas.
+      next: parsed.next as unknown as BrandDnaFields[BrandDnaField],
+      reason: parsed.reason,
+      source: parsed.source,
+      status: 'pending',
+      chatId,
+      messageId: requireRequestId(messageId),
+      memberId: member.id,
+      roleId: member.roleId,
+      runtime: member.runtime,
+      clientRequestId: parsed.clientRequestId,
+      createdAt: now,
+      decidedAt: null,
+    };
+    this.deps.repo.transaction(() => {
+      if (pending) this.deps.repo.setDnaProposalStatus(pending.id, 'superseded', now);
+      this.deps.repo.insertDnaProposal(proposal);
+    });
+    return proposal;
+  }
+
+  // --- 1B: internals del motor ---------------------------------------------
+
+  private brandDnaView(brandId: string): BrandDnaView {
+    const draft = this.deps.repo.getDnaDraft(brandId);
+    const approved = this.deps.repo.dnaHead(brandId);
+    const proposals: BrandDnaProposal[] = this.deps.repo.listPendingDnaProposals(brandId)
+      .map((p) => ({ id: p.id, field: p.field, next: p.next, reason: p.reason, source: p.source, createdAt: p.createdAt }));
+    return {
+      brandId,
+      draft,
+      approved: approved ? { version: approved.version, approvedAt: approved.approvedAt, fields: approved.fields } : null,
+      changedSinceApproval: draft !== null && (approved === null || brandDnaFingerprint(draft) !== brandDnaFingerprint(approved.fields)),
+      proposals,
+    };
+  }
+
+  private approvedBrandDna(brandId: string): BrandDnaProjection | null {
+    const head = this.deps.repo.dnaHead(brandId);
+    if (!head) return null;
+    return { brandName: this.deps.repo.getBrand(brandId).name, version: head.version, approvedAt: head.approvedAt, fields: head.fields };
+  }
+
+  /** La versión vigente en `identidad/ADN.md` de cada trabajo, y las instrucciones al día. */
+  private projectBrandDnaToWorks(brand: Brand): void {
+    const dna = this.approvedBrandDna(brand.id);
+    for (const work of this.deps.repo.listWorks(brand.id)) {
+      try { projectBrandDna(this.deps.files.workDir(brand.id, work.id), dna); }
+      catch (error) { this.deps.log?.(`[latte] dna projection failed (work=${work.id}): ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    this.refreshBrandWorksInstructions(brand);
+  }
+
+  /** 1B: cada reescritura de instrucciones proyecta (o saca) `identidad/ADN.md`, como hace con el kit. */
+  private syncDna(brand: Brand, work: Work): { version: number } | null {
+    try {
+      const dna = this.approvedBrandDna(brand.id);
+      projectBrandDna(this.deps.files.workDir(brand.id, work.id), dna);
+      return dna ? { version: dna.version } : null;
+    } catch (error) {
+      this.deps.log?.(`[latte] dna projection failed (work=${work.id}): ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  private activeDnaJob(brandId: string): DnaJobRecord | null {
+    for (const record of this.dnaJobs.values()) {
+      if (!record.job.done && record.job.brandId === brandId) return record;
+    }
+    return null;
+  }
+
+  private dnaJobSnapshot(job: BrandDnaBuildJob): BrandDnaBuildJob {
+    return { ...job, steps: job.steps.map((step) => ({ ...step })) };
+  }
+
+  private pruneDnaJobs(): void {
+    if (this.dnaJobs.size <= 32) return;
+    for (const [jobId, record] of [...this.dnaJobs.entries()]) {
+      if (this.dnaJobs.size <= 32) break;
+      if (record.job.done) this.dnaJobs.delete(jobId);
+    }
+  }
+
+  /**
+   * El trabajo terminó (bien o mal): el job queda cerrado y la marca queda
+   * libre para arrancar otro. Un `proposed` NO toca los pasos: lo que quedó
+   * `pending` sigue siendo "no se pudo saber", y eso es lo honesto.
+   */
+  private finishDnaJob(record: DnaJobRecord, outcome: 'proposed' | 'failed' | 'cancelled', reason: string | null): BrandDnaBuildJob {
+    const job = record.job;
+    if (!job.done) {
+      job.done = true;
+      job.outcome = outcome;
+      job.reason = reason;
+      if (outcome !== 'proposed') {
+        for (const step of job.steps) {
+          if (step.state === 'done' || step.state === 'skipped') continue;
+          if (step.key === 'compose' && outcome === 'failed') {
+            step.state = 'failed';
+            step.detail = `No se pudo componer (${reason ?? 'INTERNAL'})`;
+          } else {
+            step.state = 'skipped';
+            step.detail = outcome === 'cancelled' ? 'Cancelado antes de ejecutarse' : 'No llegó a ejecutarse';
+          }
+        }
+      }
+    }
+    return job;
+  }
+
+  /** `null` = hay IA para componer. Si no, el código del motor: `NOT_INSTALLED` / `UNAVAILABLE`. */
+  private async dnaRuntimeUnavailableReason(): Promise<string | null> {
+    try {
+      const statuses = await this.deps.detector.status();
+      if (statuses.some((status) => status.available)) return null;
+      return statuses.some((status) => status.code !== 'not_installed') ? 'UNAVAILABLE' : 'NOT_INSTALLED';
+    } catch {
+      return 'UNAVAILABLE';
+    }
+  }
+
+  /** Fuentes del build, validadas sin pitos ni flautas: forma estricta, nada de claves de más. */
+  private requireDnaSources(sources: BrandDnaSourcesInput | null, mode: BrandDnaBuildMode): { url: string | null; instagram: string | null; useIdentityFiles: boolean } {
+    if (sources === null || sources === undefined) {
+      if (mode === 'sources') throw new ValidationError('Decidí qué fuentes leer: URL, Instagram o los archivos del kit');
+      return { url: null, instagram: null, useIdentityFiles: false };
+    }
+    if (typeof sources !== 'object' || Array.isArray(sources)) throw new ValidationError('Invalid brand DNA sources');
+    const record = sources as unknown as Record<string, unknown>;
+    const unknown = Object.keys(record).filter((key) => key !== 'url' && key !== 'instagram' && key !== 'useIdentityFiles');
+    if (unknown.length > 0) throw new ValidationError(`Unknown brand DNA source field: ${unknown.join(', ')}`);
+    const url = record.url === null || record.url === undefined ? null : requireText(record.url, 'url', 2_000).trim();
+    if (url !== null && !/^https?:\/\/\S+$/.test(url)) throw new ValidationError('La URL tiene que empezar por http:// o https://');
+    const rawInstagram = record.instagram === null || record.instagram === undefined ? null : requireLabel(record.instagram, 'Instagram', 100);
+    const instagram = rawInstagram ? rawInstagram.replace(/^@+/, '') : null;
+    const useIdentityFiles = record.useIdentityFiles === undefined ? false : record.useIdentityFiles;
+    if (typeof useIdentityFiles !== 'boolean') throw new ValidationError('useIdentityFiles must be a boolean');
+    if (mode === 'sources' && !url && !instagram && !useIdentityFiles) {
+      throw new ValidationError('Elegí al menos una fuente: URL, Instagram o los archivos del kit');
+    }
+    return { url, instagram, useIdentityFiles };
+  }
+
+  /**
+   * 1B: lo que Latte junta CON SUS PROPIAS MANOS, antes de despachar. Cada
+   * paso queda en su estado verdad: `done` con lo que hubo, `skipped` con el
+   * porqué. La carpeta de fuentes vive en el trabajo, donde el agente lee.
+   */
+  private gatherDnaSources(
+    record: DnaJobRecord,
+    brand: Brand,
+    work: Work,
+    sources: { url: string | null; instagram: string | null; useIdentityFiles: boolean },
+  ): void {
+    const job = record.job;
+    if (job.mode === 'sources') {
+      const note = 'Modo fuentes: el material existente no entra en este build';
+      for (const key of ['context', 'documents', 'decisions', 'memory'] as const) setDnaStep(job, key, 'skipped', note);
+      setDnaStep(job, 'web', sources.url ? 'pending' : 'skipped', sources.url ? `El agente tiene que leer ${sources.url}` : 'Sin URL para leer');
+      setDnaStep(job, 'instagram', sources.instagram ? 'pending' : 'skipped', sources.instagram ? `El agente tiene que leer el perfil público @${sources.instagram}` : 'Sin cuenta de Instagram');
+    } else {
+      const note = 'Modo material existente: no se lee la web ni Instagram en este build';
+      setDnaStep(job, 'web', 'skipped', note);
+      setDnaStep(job, 'instagram', 'skipped', note);
+    }
+
+    const workDir = this.deps.files.workDir(brand.id, work.id);
+    const fuentes = nodePath.join(workDir, DRAFTS_DIR, DNA_DRAFT_DIR, 'fuentes');
+    const write = (relative: string, content: string | Buffer): void => {
+      const target = nodePath.join(fuentes, ...relative.split('/'));
+      nodeFs.mkdirSync(nodePath.dirname(target), { recursive: true });
+      nodeFs.writeFileSync(target, content);
+    };
+
+    const wantsFiles = sources.useIdentityFiles || job.mode === 'existing';
+    const copied: string[] = [];
+    if (wantsFiles) {
+      if (sources.useIdentityFiles) {
+        for (const source of this.branding.identitySources(brand.id)) {
+          try {
+            write(nodePath.basename(source.name), nodeFs.readFileSync(source.file));
+            copied.push(source.name);
+          } catch (error) {
+            this.deps.log?.(`[latte] dna identity source copy failed (${source.name}): ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+      }
+      const identityDoc = nodePath.join(workDir, IDENTITY_DIR, IDENTITY_DOC);
+      if (nodeFs.existsSync(identityDoc)) {
+        try { write(IDENTITY_DOC, nodeFs.readFileSync(identityDoc)); copied.push(IDENTITY_DOC); }
+        catch (error) { this.deps.log?.(`[latte] dna identity doc copy failed: ${error instanceof Error ? error.message : String(error)}`); }
+      }
+      setDnaStep(job, 'files', copied.length > 0 ? 'done' : 'skipped', copied.length > 0 ? `${copied.length} archivos de identidad copiados` : 'Sin archivos de identidad para leer');
+    } else {
+      setDnaStep(job, 'files', 'skipped', 'No se pidieron archivos de identidad');
+    }
+
+    if (job.mode !== 'existing') return;
+
+    const context = brand.context.trim();
+    if (context) { write('contexto.md', context); setDnaStep(job, 'context', 'done', 'Contexto de marca'); }
+    else setDnaStep(job, 'context', 'skipped', 'Sin contexto de marca');
+
+    let approvedDocs = 0;
+    let docFailure: string | null = null;
+    for (const other of this.deps.repo.listWorks(brand.id)) {
+      for (const doc of this.deps.repo.listDocuments(other.id)) {
+        if (doc.status !== 'approved') continue;
+        try {
+          const content = this.deps.files.readDocument(brand.id, other.id, doc.fileName).content;
+          approvedDocs += 1;
+          write(`documentos/${approvedDocs}-${slugify(doc.title)}.md`, `# ${doc.title}\n\n_De ${other.title}._\n\n${content}`);
+        } catch (error) {
+          docFailure = `No se pudo leer ${doc.title}`;
+          this.deps.log?.(`[latte] dna document read failed (${doc.fileName}): ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+    if (approvedDocs > 0) setDnaStep(job, 'documents', 'done', `${approvedDocs} documentos aprobados`);
+    else if (docFailure) setDnaStep(job, 'documents', 'failed', docFailure);
+    else setDnaStep(job, 'documents', 'skipped', 'Sin documentos aprobados');
+
+    const decisionLines: string[] = [];
+    for (const other of this.deps.repo.listWorks(brand.id)) {
+      for (const decision of this.deps.repo.listDecisions(other.id)) {
+        if (decision.status !== 'approved') continue;
+        decisionLines.push(`- [${decision.createdAt.slice(0, 10)}] (${other.title}) ${decision.text}`);
+      }
+    }
+    if (decisionLines.length > 0) {
+      write('decisiones.md', `# Decisiones aprobadas de ${brand.name}\n\n${decisionLines.join('\n')}\n`);
+      setDnaStep(job, 'decisions', 'done', `${decisionLines.length} decisiones aprobadas`);
+    } else setDnaStep(job, 'decisions', 'skipped', 'Sin decisiones aprobadas');
+
+    const snapshot = this.loadBrandMemory(brand, work);
+    const rendered = hasBrandMemory(snapshot) ? renderBrandMemory(snapshot, { decisions: 500, artifacts: 500 }) : null;
+    if (rendered) {
+      write('memoria.md', `# Memoria de ${brand.name}\n\n${rendered.body}\n`);
+      setDnaStep(job, 'memory', 'done', 'Memoria de trabajos anteriores');
+    } else setDnaStep(job, 'memory', 'skipped', 'Sin memoria de trabajos anteriores');
+  }
+
+  /** Las fuentes ya preparadas, como rutas relativas para el pedido al agente. */
+  private dnaPreparedSources(workDir: string): string[] {
+    const base = nodePath.join(workDir, DRAFTS_DIR, DNA_DRAFT_DIR, 'fuentes');
+    const out: string[] = [];
+    const walk = (dir: string, prefix: string): void => {
+      let entries: nodeFs.Dirent[];
+      try { entries = nodeFs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) walk(nodePath.join(dir, entry.name), relative);
+        else out.push(`${DRAFTS_DIR}/${DNA_DRAFT_DIR}/fuentes/${relative}`);
+      }
+    };
+    walk(base, '');
+    return out.sort();
+  }
+
+  /** El build observa su tarea: con el reporte llega, o leyendo en cada consulta. */
+  private settleDnaJob(record: DnaJobRecord): void {
+    if (record.job.done) return;
+    const task = this.dnaTaskOf(record);
+    if (!task) return;
+    record.taskId = task.id;
+    if (task.status === 'done') {
+      const files = reportedFiles(task.resultFilesJson) ?? [];
+      if (files.some((file) => file.replace(/\\/g, '/').toLowerCase() === DNA_JSON_RELATIVE.toLowerCase())) this.importDnaResult(record);
+      else this.finishDnaJob(record, 'failed', 'NO_ADN_FILE');
+    } else if (task.status === 'failed') {
+      this.finishDnaJob(record, 'failed', 'AGENT_FAILED');
+    }
+  }
+
+  private dnaTaskOf(record: DnaJobRecord): { id: string; spec: string; status: string; resultFilesJson: string | null } | null {
+    if (record.taskId) {
+      try { return this.deps.repo.getCoordinationTask(record.taskId); } catch { return null; }
+    }
+    if (!record.runId) {
+      try { record.runId = this.deps.repo.findActiveCoordinationRun(record.workId)?.id ?? null; } catch { record.runId = null; }
+      if (!record.runId) return null;
+    }
+    try {
+      return this.deps.repo.listCoordinationTasks(record.runId).find((task) => task.audience === 'internal' && task.spec.includes(record.job.jobId)) ?? null;
+    } catch { return null; }
+  }
+
+  /** 1B: un reporte del equipo con archivos — el `IDENTIDAD.md` sigue entrando al kit; el `ADN.json`, a este build. */
+  private onAgentReported(input: { workId: string; taskId: string; files: string[] }): void {
+    this.importReportedIdentity(input);
+    try { this.importReportedDna(input); }
+    catch (error) { this.deps.log?.(`[latte] dna report hook failed (task=${input.taskId}): ${error instanceof Error ? error.message : String(error)}`); }
+  }
+
+  private importReportedDna(input: { workId: string; taskId: string; files: string[] }): void {
+    const record = [...this.dnaJobs.values()].find((candidate) => !candidate.job.done
+      && (candidate.taskId === input.taskId || (candidate.workId === input.workId && this.dnaTaskBelongsTo(input.taskId, candidate))));
+    if (!record) return;
+    record.taskId = input.taskId;
+    const reportsDna = input.files.some((file) => file.replace(/\\/g, '/').toLowerCase() === DNA_JSON_RELATIVE.toLowerCase());
+    if (reportsDna) { this.importDnaResult(record); return; }
+    // Reportó sin el ADN: si la tarea cerró, el build no se queda colgado.
+    this.settleDnaJob(record);
+  }
+
+  private dnaTaskBelongsTo(taskId: string, record: DnaJobRecord): boolean {
+    try { return this.deps.repo.getCoordinationTask(taskId).spec.includes(record.job.jobId); } catch { return false; }
+  }
+
+  /**
+   * El agente escribió `ADN.json`: Latte lo valida ESTRICTAMENTE y sólo si
+   * pasa va al borrador. Un archivo con otra forma es un build fallido, nunca
+   * un borrador a medias.
+   */
+  private importDnaResult(record: DnaJobRecord): void {
+    const work = this.deps.repo.getWork(record.workId);
+    const dir = nodePath.join(this.deps.files.workDir(work.brandId, work.id), DRAFTS_DIR, DNA_DRAFT_DIR);
+    try {
+      const raw = nodeFs.readFileSync(nodePath.join(dir, DNA_JSON), 'utf8');
+      const fields = requireBrandDnaFields(JSON.parse(raw));
+      let report: DnaStepReport = {};
+      try { report = parseDnaStepReport(nodeFs.readFileSync(nodePath.join(dir, DNA_STEPS_JSON), 'utf8')); }
+      catch { report = {}; }
+      this.deps.repo.saveDnaDraft(work.brandId, fields, this.clock());
+      for (const key of DNA_AGENT_STEP_KEYS) {
+        const entry = report[key];
+        if (entry) setDnaStep(record.job, key, entry.state, entry.detail);
+        else if (record.job.mode === 'sources') setDnaStep(record.job, key, 'pending', 'El agente no reportó este paso');
+      }
+      setDnaStep(record.job, 'compose', 'done', 'ADN.json validado y guardado como borrador');
+      this.finishDnaJob(record, 'proposed', null);
+    } catch (error) {
+      this.deps.log?.(`[latte] invalid ADN.json (job=${record.job.jobId}): ${error instanceof Error ? error.message : String(error)}`);
+      this.finishDnaJob(record, 'failed', 'INVALID_ADN');
+    }
+  }
 
   // Marca → Identidad (E4) ----------------------------------------------------
 
@@ -879,7 +1445,11 @@ export class LatteService implements BackendApi {
   private recordDeliveryEvidence(input: { workId: string; reviewerId: string | null; published: string; at: string }): void {
     const work = this.deps.repo.getWork(input.workId);
     const kit = this.branding.approvedIdentity(work.brandId);
-    const key = `identity_receipt:${work.id}:${kit?.hash ?? 'neutral'}`;
+    // 1B: y la versión del ADN vigente. Va en la clave porque el recibo del
+    // kit cambia sólo cuando cambia el kit: una entrega con OTRO ADN necesita
+    // su propio recibo, o la evidencia le atribuiría la versión vieja.
+    const dna = this.approvedBrandDna(work.brandId);
+    const key = `identity_receipt:${work.id}:${kit?.hash ?? 'neutral'}:dna${dna?.version ?? 0}`;
     let generationId = this.deps.repo.getMeta(key);
     if (!generationId || !this.deps.repo.getGeneration(generationId)) {
       generationId = newId('gen');
@@ -898,7 +1468,7 @@ export class LatteService implements BackendApi {
     if (input.reviewerId) {
       try { runtime = this.deps.hub.listTeam(work.id).find((m) => m.id === input.reviewerId)?.runtime ?? runtime; } catch { /* sin equipo vivo */ }
     }
-    this.deps.repo.insertDeliveryEvidence({ id: newId('dev'), generationId, runtime, chatId: input.reviewerId, projectedAt: input.at, filesWritten: [input.published] });
+    this.deps.repo.insertDeliveryEvidence({ id: newId('dev'), generationId, runtime, chatId: input.reviewerId, projectedAt: input.at, filesWritten: [input.published], dnaVersion: dna?.version ?? null });
   }
 
   // Works -------------------------------------------------------------------
@@ -3342,7 +3912,7 @@ export class LatteService implements BackendApi {
       workId: work.id,
       ownerWorkId: electBrandContextOwner(this.deps.repo.listWorks(brand.id)),
     });
-    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), memoryToolsInjected: this.recordMemoryClaim(work.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation, brandMemory, brandContextNudge: nudge, identity: this.syncIdentity(brand, work) });
+    const bundle = renderInstructionBundle({ brand, work, resultExists: this.resultExists(work), decisions, documents, outputLanguage, decisionAuthority, pack: this.deps.pack ?? null, memoryProject: memoryProjectFor(brand.id), memoryToolsInjected: this.recordMemoryClaim(work.id), skills: this.enabledSkills(), team: this.deps.hub.listTeam(work.id).map((m) => ({ roleId: m.roleId, roleName: m.roleName, status: m.status })), available: this.deps.hub.listRoles().map((r) => ({ id: r.id, name: r.name, summary: r.summary })), generation, brandMemory, brandContextNudge: nudge, identity: this.syncIdentity(brand, work), dna: this.syncDna(brand, work) });
     return this.deps.files.writeInstructions(brand.id, work.id, bundle.text, bundle.files);
   }
 
