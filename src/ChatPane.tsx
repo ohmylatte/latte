@@ -8,9 +8,11 @@ import type { AgentRole, ChatMessage, ChatPart, ChatPermission, ChatQuestion, Ch
 import { api, chatStore } from './browser-api';
 import { useChatState } from './chat-store';
 import { friendlyTool } from './tool-names';
+import { roleLabel } from './pack-i18n';
 import { isNearConversationEnd } from './conversation-scroll';
 import { TeamCardsCollapsible } from './coordination/TeamCards';
 import { ChatComposer } from './ChatComposer';
+import type { ActivationStep, ActivationTone } from './activation-progress';
 
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -57,8 +59,40 @@ export interface ChatCoordinationProps {
   initiallyExpanded?: boolean;
 }
 
-export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked = [], onAdoptFile, onAttachFiles, beforeComposer, coordination }: { session: ChatSession; onStop: () => void; onError: (error: string) => void; onSaveAsDocument?: (text: string) => void; untracked?: string[]; onAdoptFile?: (fileName: string) => void; onAttachFiles?: () => Promise<string[]>; beforeComposer?: ReactNode; coordination?: ChatCoordinationProps }) {
+/**
+ * ENTREGA 1A: LO QUE LA ACTIVACIÓN LE AGREGA A ESTA CONVERSACIÓN.
+ *
+ * Aditivo y opcional: sin esta prop `ChatPane` se dibuja exactamente como
+ * antes. `pinnedBrief` es `work.brief` tal cual — la tarjeta sólo se muestra
+ * cuando el primer mensaje humano de ESTA conversación coincide con él, nunca
+ * por adivinar; `steps`/`workingDetail` ya vienen calculados (`activationSteps`,
+ * `activityLine`) por quien llama, así que este componente sólo dibuja.
+ */
+export interface ChatActivationProps {
+  pinnedBrief?: string;
+  onEditBrief?: () => void;
+  steps?: readonly ActivationStep[];
+  /** El detalle técnico ("Ejecuta …"), sólo en modo avanzado; `null`/ausente lo calla. */
+  workingDetail?: string | null;
+}
+
+export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked = [], onAdoptFile, onAttachFiles, beforeComposer, coordination, activation }: { session: ChatSession; onStop: () => void; onError: (error: string) => void; onSaveAsDocument?: (text: string) => void; untracked?: string[]; onAdoptFile?: (fileName: string) => void; onAttachFiles?: () => Promise<string[]>; beforeComposer?: ReactNode; coordination?: ChatCoordinationProps; activation?: ChatActivationProps }) {
   const state = useChatState(chatStore, session.id);
+  // `work.brief` es el documento guardado ("# Título\n\n" + el texto que la
+  // persona revisó en "Esto es lo que entendí"); el primer turno mandó ese
+  // texto SIN el título, que es lo único que vio en esa pantalla. Se compara
+  // contra las dos formas, nunca contra un texto adivinado.
+  const pinnedBriefRaw = activation?.pinnedBrief?.trim() || '';
+  const pinnedBriefWithoutTitle = pinnedBriefRaw.replace(/^#[^\n]*\n+/, '').trim();
+  const firstUserMessage = pinnedBriefRaw ? state.messages.find((m) => m.role === 'user') : undefined;
+  const firstUserText = firstUserMessage ? firstUserMessage.parts.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n').trim() : '';
+  // La tarjeta reemplaza la burbuja: sólo se activa cuando el mensaje ES el
+  // brief (mismo texto, con o sin el título del documento), nunca por ser el
+  // primero nomás — un miembro sumado a mano también tiene un "primer
+  // mensaje", y ese no es este caso. Se muestra el texto tal cual se mandó.
+  const briefCardMatches = firstUserText.length > 0 && (firstUserText === pinnedBriefRaw || firstUserText === pinnedBriefWithoutTitle);
+  const briefCardMessageId = briefCardMatches ? firstUserMessage!.id : null;
+  const pinnedBrief = firstUserText;
   const scroller = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const [unread, setUnread] = useState(false);
@@ -88,22 +122,25 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
   };
 
   const abort = () => api.abortChat(session.id).catch(e => onError(displayError(e)));
+  const roleName = roleLabel({ id: session.roleId, name: session.roleName });
 
   return <div className="chat-pane">
     <div className="session-heading">
-      <span title={`${session.roleName} · ${session.label}`}><i className={'role-dot ' + (state.closed ? 'ended' : busy ? 'busy' : '')} data-role={session.roleId} /><strong>{session.roleName}</strong><span className="chat-heading-runtime">{session.label}</span>{session.resumed ? t('chat.resumed') : ''}</span>
+      <span title={`${roleName} · ${session.label}`}><i className={'role-dot ' + (state.closed ? 'ended' : busy ? 'busy' : '')} data-role={session.roleId} /><strong>{roleName}</strong><span className="chat-heading-runtime">{session.label}</span>{session.resumed ? t('chat.resumed') : ''}</span>
       <div className="chat-heading-actions">
         {busy && <button aria-label={t('ui.auto.086')} title={t('ui.auto.086')} onClick={abort}><Square size={12} /></button>}
         <button aria-label={t('ui.auto.087')} title={t('ui.auto.088')} onClick={onStop}><X size={13} /></button>
       </div>
     </div>
+    {activation?.steps && activation.steps.length > 0 && <ActivationProgressStrip steps={activation.steps} workingDetail={activation.workingDetail} />}
     <div className="chat-scroll" ref={scroller} aria-live="polite" onScroll={e => {
       const el = e.currentTarget;
       following.current = isNearConversationEnd(el.scrollTop, el.clientHeight, el.scrollHeight);
       if (following.current) setUnread(false);
     }}>
-      {state.messages.length === 0 && <p className="chat-empty">{t('ui.auto.089')} {session.roleName}{t('ui.auto.090')}</p>}
-      {state.messages.map(message => <MessageView key={message.id} message={message} roleName={session.roleName} onSaveAsDocument={onSaveAsDocument} untracked={untracked} onAdoptFile={onAdoptFile} />)}
+      {briefCardMessageId && <ActivationBriefCard text={pinnedBrief} onEdit={activation?.onEditBrief} />}
+      {state.messages.length === 0 && <p className="chat-empty">{t('ui.auto.089')} {roleName}{t('ui.auto.090')}</p>}
+      {state.messages.filter(message => message.id !== briefCardMessageId).map(message => <MessageView key={message.id} message={message} roleName={roleName} onSaveAsDocument={onSaveAsDocument} untracked={untracked} onAdoptFile={onAdoptFile} />)}
       {state.permissions.map(permission => <PermissionCard key={permission.id} chatId={session.id} runtime={session.provider} request={permission} onError={onError} />)}
       {state.questions.map(question => <QuestionCard key={question.id} chatId={session.id} request={question} onError={onError} />)}
       {state.expiredConnections.map(connection => <ConnectionExpiredCard key={connection.connectionId} connection={connection} onError={onError} />)}
@@ -150,6 +187,36 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
 export function ChatWorking({ status, detail }: { status: ChatStatus; detail?: string }) {
   if (status !== 'busy' && status !== 'retry') return null;
   return <div className="chat-status"><Loading size={16} />{status === 'retry' ? detail || t('chat.retrying') : t('ui.auto.091')}</div>;
+}
+
+/**
+ * ENTREGA 1A: "BRIEF · ENVIADO AL EMPEZAR".
+ *
+ * Reemplaza la burbuja plana del primer turno: el mismo texto, con la marca
+ * de que ESO fue lo que arrancó el trabajo y un camino para corregirlo.
+ * "Editar" nunca reescribe el turno ya mandado — eso mentiría sobre lo que el
+ * agente leyó — sino que carga el texto en el borrador (mismo patrón que
+ * `acceptHandoff`: cargado, nunca mandado solo) para que la persona lo
+ * corrija y lo reenvíe como una aclaración.
+ */
+function ActivationBriefCard({ text, onEdit }: { text: string; onEdit?: () => void }) {
+  return <div className="chat-brief-card">
+    <div className="chat-brief-card-label">
+      <span>{t('activation.brief.label')}</span>
+      {onEdit && <button type="button" className="chat-brief-card-edit" onClick={onEdit}>{t('activation.brief.edit')}</button>}
+    </div>
+    <div className="chat-brief-card-text">{text}</div>
+  </div>;
+}
+
+const ACTIVATION_TONE_CHIP: Record<ActivationTone, string> = { done: 'verified', current: 'running', pending: 'draft' };
+
+/** La tira de pasos de negocio (Brief 01, "progreso comprensible"): nunca un spinner opaco. */
+function ActivationProgressStrip({ steps, workingDetail }: { steps: readonly ActivationStep[]; workingDetail?: string | null }) {
+  return <div className="activation-progress" role="list" aria-label={t('activation.progress.label')}>
+    {steps.map(step => <span key={step.id} role="listitem" className="chip" data-tone={ACTIVATION_TONE_CHIP[step.tone]}>{t(step.labelKey)}</span>)}
+    {workingDetail && <small className="activation-progress-detail" title={workingDetail}>{workingDetail}</small>}
+  </div>;
 }
 
 function MessageView({ message, roleName, onSaveAsDocument, untracked, onAdoptFile }: { message: ChatMessage; roleName: string; onSaveAsDocument?: (text: string) => void; untracked: string[]; onAdoptFile?: (fileName: string) => void }) {

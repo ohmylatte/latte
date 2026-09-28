@@ -3,7 +3,7 @@ import { render, waitFor } from '@testing-library/react';
 import { TeamPanel, type LatteMode, type RuntimeChoice } from './TeamPanel';
 import { SkillsView } from './SkillsView';
 import { I18nProvider } from './i18n';
-import { roleSummary, skillSummary } from './pack-i18n';
+import { roleLabel, roleSummary, skillSummary } from './pack-i18n';
 import type { AgentRole, AgentSkill, ChatRuntime, ChatSession, HandoffRequest, TeamMember, Work, WorkPermissionMode } from '../shared/contracts';
 
 /**
@@ -53,6 +53,32 @@ describe('roleSummary / skillSummary: el mapa por id, y el respaldo honesto', ()
     expect(skillSummary(shipped, 'es-AR')).toBe(shipped.summary);
     expect(skillSummary(shipped, 'en-US')).not.toBe(shipped.summary);
     expect(skillSummary(learned, 'en-US')).toBe(learned.summary);
+  });
+});
+
+describe('roleLabel: el nombre visible de un rol, en el idioma de la interfaz', () => {
+  it('traduce el nombre en castellano para los roles del pack', () => {
+    expect(roleLabel({ id: 'assistant', name: 'Asistente' }, 'es-AR')).toBe('Asistente');
+    expect(roleLabel({ id: 'strategist', name: 'Strategist' }, 'es-AR')).toBe('Estratega');
+    expect(roleLabel({ id: 'researcher', name: 'Researcher' }, 'es-AR')).toBe('Investigador/a');
+    expect(roleLabel({ id: 'analyst', name: 'Analyst' }, 'es-AR')).toBe('Analista');
+    expect(roleLabel({ id: 'reviewer', name: 'Reviewer' }, 'es-AR')).toBe('Revisor/a');
+    expect(roleLabel({ id: 'sales-copywriter', name: 'Sales Copywriter' }, 'es-AR')).toBe('Copywriter de ventas');
+  });
+
+  it('"Asistente" se lee "Assistant" con la interfaz en inglés', () => {
+    expect(roleLabel({ id: 'assistant', name: 'Asistente' }, 'en-US')).toBe('Assistant');
+    expect(roleLabel({ id: 'strategist', name: 'Strategist' }, 'en-US')).toBe('Strategist');
+  });
+
+  it('Paid Media no se toca: ya es el mismo nombre en los dos idiomas', () => {
+    expect(roleLabel({ id: 'paid-media', name: 'Paid Media' }, 'es-AR')).toBe('Paid Media');
+    expect(roleLabel({ id: 'paid-media', name: 'Paid Media' }, 'en-US')).toBe('Paid Media');
+  });
+
+  it('un rol propio devuelve su propio nombre en los dos idiomas: nadie lo tradujo', () => {
+    expect(roleLabel({ id: 'mi-rol', name: 'Mi rol' }, 'es-AR')).toBe('Mi rol');
+    expect(roleLabel({ id: 'mi-rol', name: 'Mi rol' }, 'en-US')).toBe('Mi rol');
   });
 });
 

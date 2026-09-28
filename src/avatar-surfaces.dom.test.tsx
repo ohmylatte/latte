@@ -275,7 +275,9 @@ describe('D8: sumar un rol abre el mismo dialogo desde los dos lados', () => {
     expect(open, 'la fila "Sumar un rol" no abrio nada').not.toBeNull();
     // Y es EL picker: las mismas tarjetas de rol, con su avatar.
     const cards = Array.from(open.querySelectorAll('.role-card'));
-    expect(cards.map((c) => c.querySelector('.av')!.getAttribute('aria-label'))).toEqual(['Strategist', 'Asistente']);
+    // Entrega 1A: el nombre visible se traduce (`roleLabel`) — "Strategist" del
+    // frontmatter del pack se lee "Estratega" con la interfaz en castellano.
+    expect(cards.map((c) => c.querySelector('.av')!.getAttribute('aria-label'))).toEqual(['Estratega', 'Asistente']);
   });
 
   it('sigue en el modo Equipo al abrirlo: te deja donde lo pediste', () => {

@@ -10,7 +10,11 @@ import { DocumentsView, NewDocumentDialog } from './DocumentsView';
 import { hasMetadataDrafts } from './DocumentMetadata';
 import { hasOutcomeDrafts } from './WorkOutcome';
 import { documentDrafts } from './document-drafts';
-import { useActiveEdits } from './chat-store';
+import { useActiveEdits, useChatState } from './chat-store';
+import { activationSteps } from './activation-progress';
+import { activityLine } from './coordination/activity';
+import { hasFirstResult, momentoDeValor } from './momento-de-valor';
+import { useWorkMomentSeen } from './useWorkMomentSeen';
 import { SettingsScreen, type SettingsSection } from './SettingsScreen';
 import { TeamPanel, type LatteMode, type RuntimeChoice } from './TeamPanel';
 import { hourOf } from './coordination/time';
@@ -28,6 +32,7 @@ import { ResultadosView } from './ResultadosView';
 import { DecisionsView } from './DecisionsView';
 import { useDocumentStates } from './document-states';
 import { OnboardingGate, type OnboardingResult } from './OnboardingGate';
+import { WorkCatalogModal } from './WorkCatalogModal';
 import { contextSaveNotice } from './context-view';
 import { applyFetchedBrand } from './brand-context-sync';
 import { confirmFolderLink } from './folder-link';
@@ -207,6 +212,9 @@ export const APP_ERROR_KEYS: Record<string, MessageKey> = {
   // que una Conexión MCP no se guarda. La persona tiene que enterarse de POR
   // QUÉ: si no, parece que el botón no hizo nada.
   SECRET_STORE_UNAVAILABLE: 'error.app.secretStoreUnavailable',
+  // El agente elegido no está en este equipo: la salida es instalarlo desde
+  // Latte, no buscar qué es el PATH.
+  NOT_INSTALLED: 'error.app.notInstalled',
 };
 
 /**
@@ -290,6 +298,11 @@ export function App() {
   // shows them. Persisted the same way as the rail, and toggled only in Ajustes.
   const [mode, setMode] = useState<LatteMode>(() => { try { return localStorage.getItem('latte:mode') === 'advanced' ? 'advanced' : 'simple'; } catch { return 'simple'; } });
   useEffect(() => { try { localStorage.setItem('latte:mode', mode); } catch { /* private window */ } }, [mode]);
+  /**
+   * ENTREGA 1A: EL MOMENTO DE VALOR SE MUESTRA UNA SOLA VEZ POR TRABAJO.
+   * Mismo patrón que `useTeamSeen` — ver `useWorkMomentSeen.ts`.
+   */
+  const workMomentSeen = useWorkMomentSeen();
   // Documents of the current work: the editor lives in DocumentsView, App only tracks which one is open.
   const [documents, setDocuments] = useState<WorkDocument[]>([]), [selectedDoc, setSelectedDoc] = useState<Record<string, string>>({});
   const [documentDirty, setDocumentDirty] = useState(false);
@@ -587,6 +600,46 @@ export function App() {
   // `home` and `resumen` never mount together — one `view` selects one `<main>`
   // branch — so exactly one sweep is ever active and the sweep can never double.
   const { states: homeStates, checking: homeChecking } = useDocumentStates(brand?.id ?? '', documents, (view === 'home' || view === 'resumen') && Boolean(brand));
+  /**
+   * ENTREGA 1A (Brief 01, tarea 2): LOS PASOS DE NEGOCIO DE LA CONVERSACIÓN
+   * SELECCIONADA.
+   *
+   * Todo sale de estado que YA está cargado: el store del chat (mensajes,
+   * status, permisos y preguntas del miembro seleccionado) y los documentos
+   * de este Trabajo. Nunca `homeStates` (esa lectura sólo corre en Inicio y
+   * Resumen — ver el comentario de arriba): "hay un resultado" se pregunta
+   * con el mismo hecho que `momentoDeValor` (`hasFirstResult`), no con uno
+   * nuevo.
+   */
+  const selectedMemberChatState = useChatState(chatStore, selectedMemberId);
+  const selectedMember = team.find(m => m.id === selectedMemberId) ?? null;
+  const briefSent = selectedMemberChatState.messages.some(m => m.role === 'user');
+  const agentWorking = selectedMemberChatState.status === 'busy' || selectedMember?.status === 'working';
+  const pendingApprovalsCount = selectedMemberChatState.permissions.length + selectedMemberChatState.questions.length;
+  const workResultReady = work ? hasFirstResult(documents, work.id) : false;
+  const workHasVerification = Boolean(work?.resultPath);
+  const selectedActivationSteps = work && selectedMemberId && briefSent
+    ? activationSteps({ briefSent, agentWorking, pendingApprovals: pendingApprovalsCount, resultReady: workResultReady, hasVerification: workHasVerification, verified: workHasVerification })
+    : undefined;
+  // El detalle técnico ("Ejecuta wc -l brief.md…") sólo en modo avanzado — modo
+  // simple lo calla del todo (Brief 01: nunca CLI/runtime en la experiencia
+  // básica). `activityLine` es la MISMA función que ya usa el modo Equipo
+  // (`coordination/activity.ts`); acá se le pasa el último turno humano de
+  // ESTA conversación como ventana, porque una charla 1:1 no tiene despachos.
+  const lastUserTurnAt = mode === 'advanced'
+    ? [...selectedMemberChatState.messages].reverse().find(m => m.role === 'user')?.createdAt ?? null
+    : null;
+  const selectedActivationDetail = lastUserTurnAt ? activityLine(selectedMemberChatState.messages, lastUserTurnAt) : null;
+  /**
+   * ENTREGA 1A (Brief 01, tarea 4): EL MOMENTO DE VALOR, UNA VEZ POR TRABAJO.
+   * Mismo patrón que el aviso de equipo (`teamSeenRuns`): se marca visto en
+   * cuanto se muestra, así que no vuelve a aparecer al re-renderizar ni tras
+   * reiniciar la app.
+   */
+  const momentoInput = work ? momentoDeValor({ work: { id: work.id }, documents, decisions, brandContextDefined: Boolean(brand?.context.trim()) }) : null;
+  const momentoUnseen = Boolean(work && momentoInput && !workMomentSeen.seen(work.id));
+  useEffect(() => { if (work && momentoUnseen) workMomentSeen.markSeen(work.id); }, [work?.id, momentoUnseen]);
+  const momento = momentoUnseen ? momentoInput : null;
   // Who is writing to which file right now, straight from each runtime's own
   // tool reports. A write that did not come through a tool is never attributed.
   const documentFileNames = documents.map(d => d.fileName);
@@ -914,6 +967,13 @@ export function App() {
    * no puede consumir un aviso que todavia no existe.
    */
   const teamSeenRuns = useTeamSeen();
+  /**
+   * ENTREGA 1A (Brief 01, "Ningún proveedor disponible"): por Trabajo, el
+   * brief que quedó guardado pero no se pudo mandar como primer turno porque
+   * ninguna IA estaba lista. `activateWork` lo escribe; "Conectar IA" abre
+   * Ajustes y "Seguir explorando el demo" lo limpia sin reintentar solo.
+   */
+  const [activationRecovery, setActivationRecovery] = useState<Record<string, { brief: string }>>({});
   const wantCoordinatorRef = useRef<string | null>(null);
   const openWorkCoordination = (workId: string) => {
     const target = works.find((w) => w.id === workId);
@@ -978,6 +1038,56 @@ export function App() {
    * that one reads `brand?.context` from a stale closure and would put the old
    * brand's context on screen.
    */
+  /**
+   * ENTREGA 1A (Brief 01, tarea 1): "EMPEZAR TRABAJO" ARRANCA EL TRABAJO.
+   *
+   * Abre el rol recomendado y le manda el brief compuesto como su primer
+   * turno — el MISMO camino que ya usa `continueMember` (`api.sendChat` +, si
+   * falla, `chatStore.setDraft` para no perder el texto), nunca uno nuevo.
+   *
+   * Reutiliza el registro que hacía `finishOnboarding` (setChats/
+   * setSelectedMembers/loadTeam) en vez de `openSession`: ese helper también
+   * pone un aviso ("Se sumó el rol…"), y acá puede haber uno más importante ya
+   * en pantalla (el conflicto del brief, el aviso de la carpeta) que un aviso
+   * de éxito llegado un instante después le pisaría.
+   *
+   * Si ninguna IA está lista, no falla en silencio: el trabajo y su brief ya
+   * existen (los guardó el llamador), así que se declara la falta con una
+   * salida real — conectar, o seguir explorando el demo — en vez de un
+   * proceso que de todos modos no iba a poder arrancar.
+   */
+  const activateWork = async (workId: string, roleId: string, brief: string) => {
+    // La vista previa web (`!isDesktop`) nunca tiene un agente real que abrir
+    // -- `addTeamMember`/`sendChat` son `unavailable` ahí -- así que cuenta
+    // exactamente como "ninguna IA lista": la misma tarjeta de recuperación,
+    // nunca un picker vacío que no explica nada. Antes esta función cortaba
+    // en silencio (`if (!isDesktop) return`) sin tocar `activationRecovery`,
+    // y el equipo vacío hacía que `TeamPanel` mostrara el picker de 7 roles.
+    if (!isDesktop || (!checkingAgents && !primaryReady)) {
+      setActivationRecovery(prev => ({ ...prev, [workId]: { brief } }));
+      return;
+    }
+    try {
+      const s = await api.addTeamMember(workId, roleId);
+      setChats(prev => ({ ...prev, [s.id]: s }));
+      setSelectedMembers(prev => ({ ...prev, [workId]: s.id }));
+      void loadTeam(workId);
+      setActivationRecovery(prev => { if (!(workId in prev)) return prev; const next = { ...prev }; delete next[workId]; return next; });
+      if (brief.trim()) {
+        try {
+          await api.sendChat(s.id, brief);
+        } catch (e) {
+          chatStore.setDraft(s.id, brief);
+          setError(t('activation.sendFailed', { message: displayError(e) }));
+        }
+      }
+    } catch {
+      // El trabajo y el brief ya existen (el llamador los creó): lo único que
+      // falta es abrir la conversación, y eso es justamente lo que la tarjeta
+      // de recuperación ofrece — nunca un error suelto sin salida.
+      setActivationRecovery(prev => ({ ...prev, [workId]: { brief } }));
+    }
+  };
   const finishOnboarding = async (result: OnboardingResult) => {
     // No catch on purpose: the gate owns this call and shows the failure with a
     // retry. Swallowing it here used to leave the gate frozen with no message,
@@ -1002,13 +1112,12 @@ export function App() {
     if (result.briefConflict) setNotice(t('onboarding.briefConflict'));
     else if (result.folderLinkError) setNotice(t('onboarding.folderLinkFailed', { reason: result.folderLinkError }));
     else if (result.folderNotLinked) setNotice(t('onboarding.folderNotLinked'));
-    // Pre-select the recommended role (opens its conversation). The web preview has no live team, so this is desktop-only.
-    if (isDesktop && result.recommendedRoleId) {
-      void api.addTeamMember(result.workId, result.recommendedRoleId).then(s => {
-        setChats(prev => ({ ...prev, [s.id]: s }));
-        setSelectedMembers(prev => ({ ...prev, [result.workId]: s.id }));
-        void loadTeam(result.workId);
-      }).catch(e => setError(displayError(e)));
+    // Opens the recommended role's conversation, or — the web preview has no
+    // live team, same as "no AI ready" — the recovery card. `activateWork`
+    // itself decides which; it must always run so the preview writes
+    // `activationRecovery` instead of leaving an unexplained empty team.
+    if (result.recommendedRoleId) {
+      void activateWork(result.workId, result.recommendedRoleId, result.brief);
     }
   };
   // Reopening the walk has to close Settings with it: the Settings branch renders
@@ -1154,7 +1263,10 @@ export function App() {
   };
   const onWorkUpdated = (updated: Work) => { setWork(updated); setWorks(prev => prev.map(x => x.id === updated.id ? updated : x)); };
   const openMemory = () => { setView('memory'); if (!brand) return; const n = ++memoryGeneration.current; setMemory(t('memory.loading')); void api.readMemory(brand.id).then(r => { if (n !== memoryGeneration.current) return; setMemory(r.text); setMemoryAvailable(r.available); }).catch(e => setError(displayError(e))); };
-  const create = () => run(async () => { if (!name.trim()) return; if (!guard()) return; if (modal === 'brand') { const b = await api.createBrand(name.trim()); setBrands(prev => [...prev, b]); setBrand(b); setContext(b.context); } else if (brand) { const w = await api.createWork(brand.id, name.trim()); setWorks(prev => [...prev, w]); setWork(w); setLayout('conversation'); setContext(brand.context); } setView('brief'); setModal(null); setName(''); });
+  // ENTREGA 1A: sólo crea marcas. "Nuevo trabajo" (antes el mismo `create()`
+  // con `modal === 'work'`) ahora abre `WorkCatalogModal`, que crea el
+  // trabajo con el catálogo — este helper ya no tiene ese camino que tomar.
+  const create = () => run(async () => { if (!name.trim() || !guard()) return; const b = await api.createBrand(name.trim()); setBrands(prev => [...prev, b]); setBrand(b); setContext(b.context); setView('brief'); setModal(null); setName(''); });
   const createDocument = async (kind: DocumentKind, title: string, baseDocumentId: string | null) => {
     if (!work) return;
     await run(async () => {
@@ -1486,7 +1598,14 @@ export function App() {
       <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : t('app.tagline')}</span></div>
     </main>
     <aside className="agent-panel">{focusChat && (error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}<button type="button" className={'panel-resizer' + (dragging ? ' dragging' : '')} aria-label={t('ui.auto.066')} title={t('ui.auto.067')} onPointerDown={startResize} />
-      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} roster={roster} onCallUp={callUpMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onAcceptHandoffAsTask={acceptHandoffAsTask} handoffHolds={openHandoffHolds} handoffProposal={pendingHandoffProposal} onOpenHandoffProposal={() => setCardsFromPending(true)} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} coordinationLog={work ? coordination.log : undefined} coordinationMessages={work ? coordination.messages : undefined} coordinationAsks={work ? coordination.openAsks : undefined} coordinationHires={work ? coordination.hires : undefined} coordinationGates={work ? coordination.gates : undefined} coordinationTasks={work ? coordination.tasks : undefined} formatTime={hour} formatDate={date} coordinationSupport={work ? coordination.support : undefined} coordinationAuthority={work ? coordination.authority : undefined} onSetCoordinationAuthority={changeCoordinationAuthority} coordinationBudget={work ? coordination.budget : undefined} onSetCoordinationBudget={coordination.setBudget} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} onSetCoordinator={work ? (memberId) => { void coordination.setCoordinator(memberId); } : undefined} chatCoordination={{ coordinationRun: work ? coordination.run : undefined, gates: work ? coordination.gates : undefined, openAsks: work ? coordination.openAsks : undefined, roles, team, formatDate: date, onResolveGate: coordination.resolveGate, onAnswerAsk: coordination.answerAsk, coordinationPending: coordination.pending, onSelectMember: selectMember, initiallyExpanded: cardsFromPending, teamSeen: coordination.run ? teamSeenRuns.seen(coordination.run.id) : false, onTeamOpened: () => { const r = coordination.run; if (r?.planApproved) teamSeenRuns.markSeen(r.id); } }} />
+      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} roster={roster} onCallUp={callUpMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onAcceptHandoffAsTask={acceptHandoffAsTask} handoffHolds={openHandoffHolds} handoffProposal={pendingHandoffProposal} onOpenHandoffProposal={() => setCardsFromPending(true)} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} coordinationLog={work ? coordination.log : undefined} coordinationMessages={work ? coordination.messages : undefined} coordinationAsks={work ? coordination.openAsks : undefined} coordinationHires={work ? coordination.hires : undefined} coordinationGates={work ? coordination.gates : undefined} coordinationTasks={work ? coordination.tasks : undefined} formatTime={hour} formatDate={date} coordinationSupport={work ? coordination.support : undefined} coordinationAuthority={work ? coordination.authority : undefined} onSetCoordinationAuthority={changeCoordinationAuthority} coordinationBudget={work ? coordination.budget : undefined} onSetCoordinationBudget={coordination.setBudget} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} onSetCoordinator={work ? (memberId) => { void coordination.setCoordinator(memberId); } : undefined} chatCoordination={{ coordinationRun: work ? coordination.run : undefined, gates: work ? coordination.gates : undefined, openAsks: work ? coordination.openAsks : undefined, roles, team, formatDate: date, onResolveGate: coordination.resolveGate, onAnswerAsk: coordination.answerAsk, coordinationPending: coordination.pending, onSelectMember: selectMember, initiallyExpanded: cardsFromPending, teamSeen: coordination.run ? teamSeenRuns.seen(coordination.run.id) : false, onTeamOpened: () => { const r = coordination.run; if (r?.planApproved) teamSeenRuns.markSeen(r.id); } }}
+        activationSteps={selectedActivationSteps} activationWorkingDetail={selectedActivationDetail}
+        onEditBrief={memberId => { if (work?.brief) chatStore.setDraft(memberId, work.brief); }}
+        momento={momento} onMomentoViewResult={() => { setLayout('review'); setView('brief'); }} onMomentoReviewDecisions={() => setView('decisions')} onMomentoContinue={() => setView('resumen')}
+        activationRecovery={work ? activationRecovery[work.id] ?? null : null}
+        onActivationConnect={() => setSettings('agents')}
+        onActivationContinueDemo={() => { if (work) setActivationRecovery(prev => { const next = { ...prev }; delete next[work.id]; return next; }); }}
+      />
       <details className="active-context">
         <summary><Bookmark size={12} />{t('ui.auto.035')}<span>{[brand?.context ? 'marca' : null, work ? 'trabajo' : null, decisions.length ? `${decisions.length} decisiones` : null].filter(Boolean).join(' · ') || t('ui.auto.068')}</span></summary>
         <div className="active-context-body">
@@ -1498,7 +1617,28 @@ export function App() {
       </details>
     </aside>
     <footer className="statusbar"><span><Circle size={11} />{isDesktop ? t('ui.auto.354', { p0: activeChats, p1: activeTerminals }) : t('ui.auto.074')}</span><span>{busy ? t('ui.auto.355') : dirty || contextDirty ? t('ui.auto.075') : t('app.allSaved')}<Check size={13} /></span>{appInfo && <span>Latte <span className="status-version">{appInfo.version}</span></span>}</footer>
-    {(modal === 'brand' || modal === 'work') && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setModal(null); }}><section ref={createModalRef} role="dialog" aria-modal="true" aria-labelledby="dialog-title" className="modal"><div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="dialog-title">{modal === 'brand' ? t('ui.auto.077') : t('ui.auto.078')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setModal(null)}><X size={20} /></button></div><div className="modal-body"><form onSubmit={e => { e.preventDefault(); void create(); }}><label className="field-label" htmlFor="new-name">{modal === 'brand' ? t('ui.auto.079') : t('ui.auto.080')}</label><input autoFocus id="new-name" maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder={modal === 'brand' ? t('brand.namePlaceholder') : t('ui.auto.081')} /><p className="footnote">{t('ui.auto.082')}</p><button className="primary" disabled={!name.trim() || busy}>{modal === 'brand' ? <>{t('ui.auto.083')} {t('ui.auto.084')}</> : t('ui.auto.038')}<ArrowUpRight size={16} /></button></form></div></section></div>}
+    {modal === 'brand' && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setModal(null); }}><section ref={createModalRef} role="dialog" aria-modal="true" aria-labelledby="dialog-title" className="modal"><div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="dialog-title">{t('ui.auto.077')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setModal(null)}><X size={20} /></button></div><div className="modal-body"><form onSubmit={e => { e.preventDefault(); void create(); }}><label className="field-label" htmlFor="new-name">{t('ui.auto.079')}</label><input autoFocus id="new-name" maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder={t('brand.namePlaceholder')} /><p className="footnote">{t('ui.auto.082')}</p><button className="primary" disabled={!name.trim() || busy}>{t('ui.auto.083')} {t('ui.auto.084')}<ArrowUpRight size={16} /></button></form></div></section></div>}
+    {/* ENTREGA 1A (Brief 01, tarea 3): "Nuevo trabajo" abre el mismo catálogo
+        que el recorrido inicial (intención → preguntas adaptativas → brief),
+        en vez del formulario de sólo título de antes. "Empezar libremente"
+        sigue siendo ese camino rápido — ver `WorkCatalogModal.tsx`. */}
+    {modal === 'work' && brand && <WorkCatalogModal
+      brand={brand}
+      roles={roles}
+      busy={busy}
+      onClose={() => setModal(null)}
+      onError={setError}
+      onCreated={(created, options) => {
+        setWorks(prev => [...prev, created]);
+        setWork(created);
+        setLayout('conversation');
+        setContext(brand.context);
+        setView('brief');
+        setModal(null);
+        setName('');
+        if (options.recommendedRoleId) void activateWork(created.id, options.recommendedRoleId, options.brief);
+      }}
+    />}
     {modal === 'document' && <NewDocumentDialog documents={documents.filter(d => d.workId === work?.id)} busy={busy} onCancel={() => setModal(null)} onCreate={createDocument} />}
     {savingAnswer && <PromptDialog titleId="save-answer-title" title={t('chat.saveAsDocument.title')} label={t('ui.auto.002')} fieldId="save-answer-title-field" initialValue="Estrategia" submitLabel={t('chat.saveAsDocument.submit')} busy={busy} validate={v => v ? null : t('chat.saveAsDocument.required')} onSubmit={confirmSaveAnswerAsDocument} onCancel={() => setSavingAnswer(null)} />}
     {editingContextProposal && <PromptDialog titleId="context-edit-title" title={t('context.editAccept')} label={t('context.editAccept.label')} fieldId="context-edit-field" initialValue={editingContextProposal.initialText} multiline submitLabel={t('context.accept')} busy={busy} validate={v => v ? null : t('context.editAccept.required')} onSubmit={text => void run(() => confirmContextProposalEdit(text))} onCancel={() => setEditingContextProposal(null)} />}

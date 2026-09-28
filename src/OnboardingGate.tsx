@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, ArrowUpRight, Check, ExternalLink, Folder, Folde
 import { Loading } from './brand-marks';
 import type { AgentRole, AgentRuntimeInfo, Brand, ChatRuntimeStatus, OnboardingDraft, PrimaryAgent, ProviderInfo, ProviderOAuthStart } from '../shared/contracts';
 import { useI18n } from './i18n';
+import { roleLabel } from './pack-i18n';
 import { agentBus, api, isDesktop } from './browser-api';
 import { TerminalPane } from './TerminalPane';
 import { confirmFolderLink } from './folder-link';
@@ -41,6 +42,14 @@ export interface OnboardingResult {
   brandId: string;
   recommendedRoleId: string;
   title: string;
+  /**
+   * The brief this walk composed (or the human's correction, edited on the
+   * summary step) — never the `# Title\n\n` prefixed version `saveBrief`
+   * stored. The shell reuses it verbatim as the recommended role's first
+   * chat turn, so the same text becomes both the brief document and the
+   * opening message: one source, never re-derived.
+   */
+  brief: string;
   /**
    * The brief kept the disk version because an unseen change was detected. The
    * work exists, but the human's brief text was not saved, and the shell has to
@@ -401,7 +410,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
           folderNotLinked = true;
         }
       }
-      const result: OnboardingResult = { workId, brandId, recommendedRoleId: state.recommendedRoleId, title, briefConflict, folderNotLinked, folderLinkError };
+      const result: OnboardingResult = { workId, brandId, recommendedRoleId: state.recommendedRoleId, title, brief: state.brief, briefConflict, folderNotLinked, folderLinkError };
       // Remembered BEFORE the landing: if the shell cannot take over, the retry
       // lands this same work instead of creating a duplicate.
       pendingResult.current = result;
@@ -746,7 +755,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
               <div className="onboarding-role-row">
                 <span className="field-label">{t('onboarding.summary.role')}</span>
                 <select value={state.recommendedRoleId} onChange={(e) => setState((prev) => ({ ...prev, recommendedRoleId: e.target.value }))}>
-                  {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  {roles.map((r) => <option key={r.id} value={r.id}>{roleLabel(r)}</option>)}
                 </select>
               </div>
               {missingRequired.length > 0 ? (

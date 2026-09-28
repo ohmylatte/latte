@@ -1564,3 +1564,50 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .chip[data-tone="error"]{background:var(--state-error-bg);color:var(--state-error-text)}
 .chip[data-tone="authorize"]{background:var(--state-authorize-bg);color:var(--state-authorize-text);border-color:var(--state-authorize-border)}
 .chip[data-tone="draft"]{background:transparent;color:var(--state-draft-text);border-color:var(--state-draft-border)}
+
+/* --- Entrega 1A: activacion marketer-first ---------------------------------
+   "BRIEF - ENVIADO AL EMPEZAR": el turno que arranco el trabajo, marcado
+   arriba de la conversacion en vez de una burbuja mas. Papel + borde punteado
+   -- un documento adjunto, no un mensaje -- con la etiqueta en mono, chica y
+   mayuscula, como el resto de los kickers de la app. */
+.chat-brief-card{border:1px dashed var(--line-strong);background:var(--paper);border-radius:var(--radius-md);padding:var(--space-3) var(--space-4);margin:0 0 var(--space-3)}
+.chat-brief-card-label{display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);font-family:var(--mono);font-size:var(--text-sm);letter-spacing:.6px;text-transform:uppercase;color:var(--muted)}
+.chat-brief-card-edit{background:none;border:0;padding:0;color:var(--rust);font:inherit;letter-spacing:inherit;text-transform:inherit;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.chat-brief-card-text{margin-top:var(--space-2);font-size:var(--text-md);line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink)}
+
+/* La tira de pasos de negocio: los mismos `.chip` de la capa 2 de tokens,
+   nunca un color solo -- cada uno lleva su frase. `done` reusa el tono
+   `verified` (verde), `current` el tono `running` (rust) y `pending` el tono
+   `draft` (linea marcada, sin fondo): los tres pares ya existian, ninguno se
+   inventa para esto. */
+.activation-progress{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);margin:0 0 var(--space-2)}
+.activation-progress-detail{flex-basis:100%;color:var(--muted);font-size:var(--text-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* La tarjeta de cierre del primer resultado ("momento de valor"): un acento
+   suave (foam), nunca el mismo papel punteado del brief -- son dos hechos
+   distintos, uno arranca el trabajo y el otro lo cierra. */
+.momento-card{border:1px solid var(--line);border-radius:var(--radius-md);background:var(--foam);padding:var(--space-4);margin:0 0 var(--space-3);display:flex;flex-direction:column;gap:var(--space-2)}
+.momento-kicker{display:flex;align-items:center;gap:var(--space-1);font-family:var(--mono);font-size:var(--text-sm);letter-spacing:.6px;text-transform:uppercase;color:var(--rust-deep)}
+.momento-card h3{margin:0;font-size:var(--text-lg)}
+.momento-used,.momento-produced{margin:0;font-size:var(--text-base);color:var(--ink-soft)}
+.momento-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-1)}
+
+/* El estado "falta conectar una IA" del arranque activado (Brief 01, "Ningun
+   proveedor disponible"): ocupa el lugar del selector de rol vacio, nunca un
+   error suelto -- siempre con las dos salidas, conectar o seguir en el demo. */
+.activation-recovery{border:1px solid var(--line);border-radius:var(--radius-md);background:var(--paper-raised);padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-2);max-width:420px;margin:0 auto}
+.activation-recovery h3{margin:0;font-size:var(--text-lg)}
+.activation-recovery p{margin:0;color:var(--ink-soft);font-size:var(--text-base)}
+.activation-recovery-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-1)}
+
+/* QA (Entrega 1A): "Nuevo trabajo" heredaba la grilla `auto-fill` de
+   OnboardingGate, pensada para un `.onboarding-main` de ancho de pantalla
+   completa -- adentro del modal de 620px (`.roomy`) sólo entraba UNA columna
+   de ~270px, con scroll largo. Acá el modal se ensancha un poco (el mismo
+   ancho que ya usa `.modal.continuation`) y la grilla fija sus columnas en
+   vez de heredar el `auto-fill`: dos mientras entran cómodas, una sola bajo
+   un viewport angosto. */
+.modal.work-catalog-modal{width:760px}
+.work-catalog-groups{grid-template-columns:repeat(2,1fr)}
+@media(max-width:680px){.work-catalog-groups{grid-template-columns:1fr}}
+.work-catalog-head-actions{display:flex;align-items:center;gap:var(--space-2);flex-shrink:0}
