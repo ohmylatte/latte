@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { configure, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { TeamPanel, type LatteMode, type RuntimeChoice } from './TeamPanel';
+import { RolePicker, TeamPanel, type LatteMode, type RuntimeChoice } from './TeamPanel';
+import { ChatPane } from './ChatPane';
 import { App } from './App';
 import { I18nProvider } from './i18n';
 import { EMPTY_USAGE, type AgentRole, type ChatRuntime, type ChatSession, type HandoffRequest, type TeamMember, type Work, type WorkPermissionMode } from '../shared/contracts';
@@ -161,5 +162,63 @@ describe('Latte mode persistence and active-context footnote (App)', () => {
     fireEvent.change(select, { target: { value: 'advanced' } });
 
     await waitFor(() => expect(localStorage.getItem('latte:mode')).toBe('advanced'));
+  });
+});
+
+/**
+ * Entrega 1C (tarea 3): el diálogo de "sumar un rol"/"nuevo trabajo" también
+ * expone runtime y esfuerzo manuales — "CON QUÉ AGENTE" y "Cuánto se
+ * esfuerza" — y no estaba gateado por modo. En simple se usa la recomendación
+ * del rol tal cual; en avanzado el comportamiento no cambia.
+ */
+describe('RolePicker (el diálogo de sumar un miembro) respeta el modo', () => {
+  const rolePickerRoles: AgentRole[] = [{ id: 'assistant', name: 'Asistente', initial: 'A', summary: 'Asistente', builtin: true, tier: 'balanced', avatar: null }];
+  const rolePickerProps = {
+    roles: rolePickerRoles, choices: [] as RuntimeChoice[], primaryLabel: 'OpenCode', primaryDetail: 'Listo', primaryReady: true,
+    checking: false, busy: false, isDesktop: true, canCancel: false,
+    onCancel: () => {}, onAdd: async () => {}, onProviders: () => {}, onRecheck: () => {},
+  };
+
+  it('simple mode hides the runtime picker and the effort picker', () => {
+    const { container } = render(<RolePicker {...rolePickerProps} mode="simple" />);
+    expect(container.querySelector('#member-runtime')).toBeNull();
+    expect(container.querySelector('.effort-picker')).toBeNull();
+  });
+
+  it('advanced mode keeps them, exactly as before', () => {
+    const { container } = render(<RolePicker {...rolePickerProps} mode="advanced" />);
+    expect(container.querySelector('#member-runtime')).not.toBeNull();
+    expect(container.querySelector('.effort-picker')).not.toBeNull();
+  });
+
+  it('omitting the prop keeps today\'s behavior (advanced)', () => {
+    const { container } = render(<RolePicker {...rolePickerProps} />);
+    expect(container.querySelector('#member-runtime')).not.toBeNull();
+    expect(container.querySelector('.effort-picker')).not.toBeNull();
+  });
+});
+
+/**
+ * Entrega 1C (tarea 3): el encabezado de la conversación mostraba
+ * `session.label` (runtime/modelo) siempre. En simple queda sólo el rol; en
+ * avanzado sigue mostrando el detalle técnico, sin cambios.
+ */
+describe('ChatPane header respects the mode for the runtime/model detail', () => {
+  const chatSession: ChatSession = { id: 'm1', workId: 'w1', provider: 'opencode', model: null, accountId: null, label: 'OpenCode · gpt-5-codex', resumed: false, roleId: 'assistant', roleName: 'Asistente', historyRecovered: false };
+
+  it('simple mode shows only the role name', () => {
+    const { container } = render(<ChatPane session={chatSession} onStop={() => {}} onError={() => {}} mode="simple" />);
+    expect(container.querySelector('.chat-heading-runtime')).toBeNull();
+    expect(container.querySelector('.session-heading')?.textContent).toContain('Asistente');
+  });
+
+  it('advanced mode keeps the runtime/model detail', () => {
+    const { container } = render(<ChatPane session={chatSession} onStop={() => {}} onError={() => {}} mode="advanced" />);
+    expect(container.querySelector('.chat-heading-runtime')?.textContent).toBe('OpenCode · gpt-5-codex');
+  });
+
+  it('omitting the prop keeps today\'s behavior (advanced)', () => {
+    const { container } = render(<ChatPane session={chatSession} onStop={() => {}} onError={() => {}} />);
+    expect(container.querySelector('.chat-heading-runtime')?.textContent).toBe('OpenCode · gpt-5-codex');
   });
 });

@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import { Check, ChevronRight, CircleAlert, CircleHelp, FilePlus, LogIn, Plug, ShieldQuestion, Square, Wrench, X } from 'lucide-react';
 import { Loading } from './brand-marks';
 import type { AgentRole, ChatMessage, ChatPart, ChatPermission, ChatQuestion, ChatSession, ChatStatus, ChatToolStatus, CoordinationAskView, CoordinationGateView, CoordinationRunView, TeamMember } from '../shared/contracts';
+import type { LatteMode } from './TeamPanel';
 import { api, chatStore } from './browser-api';
 import { useChatState } from './chat-store';
 import { friendlyTool } from './tool-names';
@@ -76,7 +77,7 @@ export interface ChatActivationProps {
   workingDetail?: string | null;
 }
 
-export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked = [], onAdoptFile, onAttachFiles, beforeComposer, coordination, activation }: { session: ChatSession; onStop: () => void; onError: (error: string) => void; onSaveAsDocument?: (text: string) => void; untracked?: string[]; onAdoptFile?: (fileName: string) => void; onAttachFiles?: () => Promise<string[]>; beforeComposer?: ReactNode; coordination?: ChatCoordinationProps; activation?: ChatActivationProps }) {
+export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked = [], onAdoptFile, onAttachFiles, beforeComposer, coordination, activation, mode = 'advanced' }: { session: ChatSession; onStop: () => void; onError: (error: string) => void; onSaveAsDocument?: (text: string) => void; untracked?: string[]; onAdoptFile?: (fileName: string) => void; onAttachFiles?: () => Promise<string[]>; beforeComposer?: ReactNode; coordination?: ChatCoordinationProps; activation?: ChatActivationProps; /** Modo simple: oculta el runtime/modelo técnico del encabezado. Sin la prop, se comporta como hoy (avanzado). */ mode?: LatteMode }) {
   const state = useChatState(chatStore, session.id);
   // `work.brief` es el documento guardado ("# Título\n\n" + el texto que la
   // persona revisó en "Esto es lo que entendí"); el primer turno mandó ese
@@ -126,7 +127,7 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
 
   return <div className="chat-pane">
     <div className="session-heading">
-      <span title={`${roleName} · ${session.label}`}><i className={'role-dot ' + (state.closed ? 'ended' : busy ? 'busy' : '')} data-role={session.roleId} /><strong>{roleName}</strong><span className="chat-heading-runtime">{session.label}</span>{session.resumed ? t('chat.resumed') : ''}</span>
+      <span title={mode === 'advanced' ? `${roleName} · ${session.label}` : roleName}><i className={'role-dot ' + (state.closed ? 'ended' : busy ? 'busy' : '')} data-role={session.roleId} /><strong>{roleName}</strong>{mode === 'advanced' && <span className="chat-heading-runtime">{session.label}</span>}{session.resumed ? t('chat.resumed') : ''}</span>
       <div className="chat-heading-actions">
         {busy && <button aria-label={t('ui.auto.086')} title={t('ui.auto.086')} onClick={abort}><Square size={12} /></button>}
         <button aria-label={t('ui.auto.087')} title={t('ui.auto.088')} onClick={onStop}><X size={13} /></button>

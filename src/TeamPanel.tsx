@@ -634,7 +634,7 @@ export function TeamPanel(props: TeamPanelProps) {
     {adding && !firstTeam && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setAdding(false); }}>
       <section ref={addMemberDialogRef} role="dialog" aria-modal="true" aria-labelledby="add-member-title" className="modal">
         <div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="add-member-title">{t('ui.auto.275')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setAdding(false)}><X size={20} /></button></div>
-        <div className="modal-body"><RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={false} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} {...rosterPicker} /></div>
+        <div className="modal-body"><RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={false} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} mode={mode} {...rosterPicker} /></div>
       </section></div>}
     {rail === 'chat' && <>
     {work && team.length > 0 && <>
@@ -650,7 +650,7 @@ export function TeamPanel(props: TeamPanelProps) {
             onSelect={() => { if (member.id !== coordinatorId) setCoordinatorChat(false); props.onSelect(member.id); }} />)}
         </div>
         {activity && <span className={'team-activity' + (activity.needsAttention ? ' attention' : '')} role="status" title={activity.detail}>{activity.label}</span>}
-        {workTotal > 0 && <span className="team-usage-total" title={t('usage.help')}>{t('usage.workTotal', { tokens: formatTokens(workTotal, currentLocale()) })}</span>}
+        {workTotal > 0 && <span className="team-usage-total" title={mode === 'advanced' ? t('usage.help') : undefined}>{t('usage.workTotal', { tokens: formatTokens(workTotal, currentLocale()) })}</span>}
         <button className="team-tab-add" aria-label={t('ui.auto.269')} title={t('ui.auto.269')} disabled={busy || !isDesktop} onClick={() => setAdding(true)}><UserPlus size={15} /></button>
         <button className="team-tab-add" aria-label={t('team.providers.label')} title={t('team.providers.title')} onClick={props.onProviders}><Settings2 size={15} /></button>
         {selected && <div className="team-tab-actions">
@@ -666,7 +666,7 @@ export function TeamPanel(props: TeamPanelProps) {
           <button className="icon-button" aria-label={t('ui.auto.274')} title={t('ui.auto.274')} disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.402', { p0: roleLabel({ id: selected.roleId, name: selected.roleName }) }))) void props.onRemove(selected.id); }}><Trash2 size={13} /></button>
         </div>}
       </div>
-      {selected && <MemberUsage member={selected} />}
+      {selected && <MemberUsage member={selected} mode={mode} />}
     </>}
     {/* ENTREGA 1A: el cierre del primer resultado, arriba de lo que sea que
         esta conversación muestre ahora — la persona lo tiene que ver apenas
@@ -674,14 +674,14 @@ export function TeamPanel(props: TeamPanelProps) {
     {props.momento && <MomentoDeValorCard summary={props.momento} onViewResult={() => props.onMomentoViewResult?.()} onReviewDecisions={() => props.onMomentoReviewDecisions?.()} onContinue={() => props.onMomentoContinue?.()} />}
     {firstTeam && (props.activationRecovery
       ? <ActivationRecoveryCard brief={props.activationRecovery.brief} onConnect={() => props.onActivationConnect?.()} onContinueDemo={() => props.onActivationContinueDemo?.()} />
-      : <RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={team.length > 0} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} {...rosterPicker} />)}
+      : <RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={team.length > 0} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} mode={mode} {...rosterPicker} />)}
     {continuingMember && <ContinueDialog source={continuingMember} roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryReady={props.primaryReady} primaryRuntime={props.primaryRuntime} primaryAccountId={props.primaryAccountId} primaryModel={props.primaryModel} checking={props.checking} busy={busy} isDesktop={isDesktop} onClose={() => setContinuing(null)} onProviders={props.onProviders} onRecheck={props.onRecheck} onContinue={async (roleId, options, text) => { await props.onContinue(continuingMember.id, roleId, options, text); setContinuing(null); }} />}
     {/* "Cancelar" cierra la coordinación del Trabajo y libera su cupo, y no se
         puede deshacer -- antes disparaba directo desde el botón. La confirmación
         dice la consecuencia en el mismo texto que ya usaba el tooltip. */}
     {confirmCancelRunId && <ConfirmDialog titleId="cancel-run-confirm-title" title={t('coordination.run.cancelConfirmTitle')} body={t('coordination.run.cancelHelp')} confirmLabel={t('coordination.run.cancel')} destructive busy={busy} onCancel={() => setConfirmCancelRunId(null)} onConfirm={() => { const runId = confirmCancelRunId; setConfirmCancelRunId(null); props.onCancelCoordination?.(runId); }} />}
     {!work && <div className="agent-idle"><div className="agent-symbol"><MessageSquare size={27} /></div><h3>{t('ui.auto.276')}<br />{t('ui.auto.277')}</h3><p className="footnote">{t('ui.auto.278')}</p></div>}
-    {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} onAttachFiles={props.onAttachFiles} coordination={props.chatCoordination && { ...props.chatCoordination, formatTime: props.formatTime, onShowTeam: showTeam }} activation={{ pinnedBrief: work?.brief, onEditBrief: props.onEditBrief ? () => props.onEditBrief!(selected.id) : undefined, steps: props.activationSteps, workingDetail: props.activationWorkingDetail }} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}
+    {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} mode={mode} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} onAttachFiles={props.onAttachFiles} coordination={props.chatCoordination && { ...props.chatCoordination, formatTime: props.formatTime, onShowTeam: showTeam }} activation={{ pinnedBrief: work?.brief, onEditBrief: props.onEditBrief ? () => props.onEditBrief!(selected.id) : undefined, steps: props.activationSteps, workingDetail: props.activationWorkingDetail }} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}
     {!showPicker && !selected && team.length > 0 && <p className="chat-empty">{t('ui.auto.279')}</p>}
     </>}
   </div>;
@@ -822,14 +822,14 @@ function useTeamUsageTotal(team: TeamMember[]): number {
  * "tokens". Nothing renders before the first turn: there is nothing honest to
  * report yet.
  */
-function MemberUsage({ member }: { member: TeamMember }) {
+function MemberUsage({ member, mode }: { member: TeamMember; mode: LatteMode }) {
   const state = useChatState(chatStore, member.id);
   const locale = currentLocale();
   const line = describeUsage(state.usage, locale);
   if (!line) return null;
   // N3: el aviso mira el contexto de la ÚLTIMA lectura, nunca una suma.
   const heavy = isHeavyConversation(state.usage);
-  return <p className="team-usage" title={describeUsageDetail(state.usage, locale)}>
+  return <p className="team-usage" title={mode === 'advanced' ? describeUsageDetail(state.usage, locale) : undefined}>
     <span>{line}</span>
     {heavy && <span className="team-usage-hint">{t('usage.heavyHint')}</span>}
   </p>;
@@ -1088,9 +1088,11 @@ export interface RolePickerProps {
   /** El verbo del botón y la frase de arriba, para cuando el diálogo no abre una conversación (Marca → Equipo). `null` no dibuja la frase. */
   submitLabel?: string;
   lead?: string | null;
+  /** Modo simple: oculta el runtime y el esfuerzo manuales; se usa la recomendación del rol tal cual. Sin la prop, se comporta como hoy (avanzado). */
+  mode?: LatteMode;
 }
 
-export function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady, checking, busy, isDesktop, canCancel, onCancel, onAdd, onProviders, onRecheck, roster = [], onCallUp, submitLabel, lead }: RolePickerProps) {
+export function RolePicker({ roles, choices, primaryLabel, primaryDetail, primaryReady, checking, busy, isDesktop, canCancel, onCancel, onAdd, onProviders, onRecheck, roster = [], onCallUp, submitLabel, lead, mode = 'advanced' }: RolePickerProps) {
   const [roleId, setRoleId] = useState('assistant');
   const people = onCallUp ? roster : [];
   // El plantel manda: si hay a quién convocar, arranca elegido el primero.
@@ -1128,7 +1130,7 @@ export function RolePicker({ roles, choices, primaryLabel, primaryDetail, primar
     <div className="role-list" role="radiogroup" aria-label={t('team.rolePicker.group')}>
       {roles.map(role => { const name = roleLabel(role); return <button key={role.id} role="radio" aria-checked={!person && roleId === role.id} className={'role-card' + (!person && roleId === role.id ? ' selected' : '')} onClick={() => { setPersonId(null); setRoleId(role.id); }}><Avatar params={parseAvatar(role.avatar)} roleId={role.id} name={name} size="lg" /><span><strong>{name}</strong><small>{roleSummary(role)}</small></span>{!person && roleId === role.id && <Check size={14} />}</button>; })}
     </div>
-    {!person && <>
+    {!person && mode === 'advanced' && <>
     <TierPicker tier={tier} busy={busy || opening} onChange={setTier} />
     <label className="field-label" htmlFor="member-runtime">{t('ui.auto.293')}</label>
     {/*

@@ -1,6 +1,7 @@
 import { translate as t } from './i18n';
 import { X } from 'lucide-react';
 import type { CoordinationMemberSupport } from '../shared/contracts';
+import type { LatteMode } from './TeamPanel';
 
 /**
  * The engram install docs. `Gentleman-Programming/engram` is third-party
@@ -27,15 +28,19 @@ export interface MemoryNoticeProps {
   support: readonly CoordinationMemberSupport[];
   dismissed: boolean;
   onDismiss: () => void;
+  /** Modo simple: la razón de infraestructura ("falta el binario «engram»") queda detrás de un detalle avanzado. Sin la prop, se comporta como hoy (avanzado). */
+  mode?: LatteMode;
 }
 
-export function MemoryNotice({ support, dismissed, onDismiss }: MemoryNoticeProps) {
+export function MemoryNotice({ support, dismissed, onDismiss, mode = 'advanced' }: MemoryNoticeProps) {
   const affected = support.some((row) => row.reason === 'engram_not_installed');
   if (!affected || dismissed) return null;
   return <div className="memory-notice" role="status">
     <div>
       <strong>{t('memory.notice.missingTitle')}</strong>
-      <p>{t('memory.notice.missingBody')}</p>
+      {mode === 'advanced'
+        ? <p>{t('memory.notice.missingBody')}</p>
+        : <><p>{t('memory.notice.missingBodySimple')}</p><details className="memory-notice-detail"><summary>{t('memory.notice.detailToggle')}</summary><p>{t('memory.notice.missingBody')}</p></details></>}
       <a href={ENGRAM_INSTALL_HREF} target="_blank" rel="noreferrer">{t('memory.notice.installLink')}</a>
     </div>
     <button type="button" className="memory-notice-dismiss" aria-label={t('ui.auto.044')} onClick={onDismiss}><X size={14} /></button>

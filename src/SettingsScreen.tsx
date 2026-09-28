@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ArrowLeft, HardDrive, Info, Plug, SlidersHorizontal, Sparkles } from 'lucide-react';
 import type { AppInfo, CoordinationGlobalBudgetView } from '../shared/contracts';
 import { api, isDesktop } from './browser-api';
+import { ConnectAI } from './ConnectAI';
 import { ProvidersView } from './ProvidersView';
 import { ProfilesView } from './ProfilesView';
 import { SkillsView } from './SkillsView';
@@ -65,10 +66,7 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
     <main className="settings-main">
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('settings.dismiss')} onClick={onDismiss}>×</button></div>}
       {section === 'agents' && <section className="settings-section">
-        <h2>{t('settings.agents')}</h2>
-        <p className="settings-lead">{t('settings.agentsLead')}</p>
-        <ProvidersView onChanged={onChanged} onNotice={onNotice} onError={onError} />
-        {terminal}
+        <ConnectAI onError={onError} advanced={<><ProvidersView onChanged={onChanged} onNotice={onNotice} onError={onError} />{terminal}</>} />
       </section>}
       {section === 'profiles' && <ProfilesView onChanged={onChanged} onError={onError} onNotice={onNotice} onDirtyChange={setProfileDirty} />}
       {section === t('ui.auto.390') && <SkillsView onNotice={onNotice} onError={onError} />}

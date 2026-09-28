@@ -1610,4 +1610,47 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .modal.work-catalog-modal{width:760px}
 .work-catalog-groups{grid-template-columns:repeat(2,1fr)}
 @media(max-width:680px){.work-catalog-groups{grid-template-columns:1fr}}
+
+/* ConnectAI (Entrega 1C, Maqueta E): "¿Con qué cuenta trabaja tu equipo?" —
+   tres tarjetas (Claude, ChatGPT, Otra cuenta), la fila de recomprobar y el
+   diagnóstico, y la caja plegada de Configuración avanzada. Sólo tokens
+   existentes: el estado nunca se dice por color solo (texto + `.connect-ai-dot`). */
+.connect-ai{max-width:900px}
+.connect-ai h1{font:22px/1.25 var(--serif);font-weight:400;letter-spacing:-.3px;margin:0 0 8px}
+.connect-ai-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:var(--space-3);margin:var(--space-4) 0}
+.connect-ai-card{display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--foam);padding:var(--space-4)}
+.connect-ai-card.is-attention{border-color:var(--rust-soft)}
+.connect-ai-card-name{font:15px var(--serif);font-weight:400}
+.connect-ai-card-status{display:inline-flex;align-items:center;gap:6px;font-size:var(--text-sm);color:var(--muted)}
+.connect-ai-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.connect-ai-dot.dot-green-ok{background:var(--green-ok)}
+.connect-ai-dot.dot-rust{background:var(--rust)}
+.connect-ai-dot.dot-line-strong{background:var(--line-strong)}
+.connect-ai-card>p{margin:0;font-size:var(--text-sm);line-height:1.6;color:var(--ink-soft)}
+.connect-ai-card-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+.connect-ai-guide-link{font-size:var(--text-sm);color:var(--rust)}
+.connect-ai-progress{width:100%}
+.connect-ai-progress-bar{height:4px;border-radius:var(--radius-pill);background:var(--paper-deep);overflow:hidden;margin-bottom:6px}
+.connect-ai-progress-bar span{display:block;height:100%;width:40%;background:var(--rust);animation:connect-ai-indeterminate 1.1s ease-in-out infinite}
+@keyframes connect-ai-indeterminate{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+.connect-ai-transcript{width:100%;max-height:160px;overflow:auto;background:var(--ink);color:var(--on-dark);font:11px/1.5 var(--mono);padding:var(--space-2);border-radius:var(--radius-sm)}
+.connect-ai-login-flight{display:flex;flex-direction:column;gap:var(--space-2);width:100%}
+.connect-ai-login-flight small{color:var(--muted);font-size:var(--text-sm)}
+.connect-ai-other{min-width:0}
+.connect-ai-other-pick{display:flex;flex-wrap:wrap;gap:var(--space-2)}
+.connect-ai-other-back{align-self:flex-start;padding:2px 4px;font-size:var(--text-sm);border:0}
+.connect-ai-recheck-row{display:flex;align-items:center;gap:var(--space-3);margin:var(--space-2) 0 var(--space-4)}
+.connect-ai-recheck-row small{color:var(--muted);font-size:var(--text-sm)}
+.connect-ai-diagnostic{border:1px solid var(--line);border-radius:var(--radius-md);background:var(--paper-raised);padding:var(--space-4);margin-bottom:var(--space-4);display:flex;flex-direction:column;gap:var(--space-2)}
+.connect-ai-diagnostic-head{display:flex;align-items:center;justify-content:space-between}
+.connect-ai-diagnostic ul{margin:0;padding-left:18px;font-size:var(--text-sm);line-height:1.7}
+.connect-ai-diagnostic-text{width:100%;min-height:100px;font:11px/1.5 var(--mono)}
+.connect-ai-advanced{border:1px dashed var(--line);border-radius:var(--radius-md);padding:var(--space-3) var(--space-4);background:var(--paper-raised)}
+.connect-ai-advanced summary{cursor:pointer;font-size:var(--text-sm);color:var(--muted);list-style:none;display:flex;align-items:center;gap:6px}
+.connect-ai-advanced summary::-webkit-details-marker{display:none}
+.connect-ai-advanced summary svg{transition:transform var(--dur-fast)}
+.connect-ai-advanced[open] summary svg{transform:rotate(90deg)}
+.onboarding-connect-head{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3)}
+.memory-notice-detail{margin-top:6px}
+.memory-notice-detail summary{cursor:pointer;font-size:var(--text-sm);color:var(--muted)}
 .work-catalog-head-actions{display:flex;align-items:center;gap:var(--space-2);flex-shrink:0}

@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowLeft, ArrowRight, ArrowUpRight, Check, ExternalLink, Folder, FolderOpen, LogIn, Plug, Plus, Settings2, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Folder, FolderOpen, Plus, Settings2, Sparkles, X } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { AgentRole, AgentRuntimeInfo, Brand, ChatRuntimeStatus, OnboardingDraft, PrimaryAgent, ProviderInfo, ProviderOAuthStart } from '../shared/contracts';
+import type { AgentRole, Brand, ChatRuntimeStatus, OnboardingDraft, PrimaryAgent } from '../shared/contracts';
 import { useI18n } from './i18n';
 import { roleLabel } from './pack-i18n';
-import { agentBus, api, isDesktop } from './browser-api';
-import { TerminalPane } from './TerminalPane';
+import { api, isDesktop } from './browser-api';
+import { ConnectAI } from './ConnectAI';
 import { confirmFolderLink } from './folder-link';
 import {
   FREE_FORM_WORK_TYPE,
@@ -31,7 +31,6 @@ import {
 
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const STEP_ORDER: OnboardingStep[] = ['intent', 'context', 'brand', 'connect', 'prepare'];
-const RUNTIME_LABEL: Record<'claude' | 'codex', string> = { claude: 'Claude Code', codex: 'Codex' };
 
 function isDemoBrand(b: Brand): boolean {
   return b.id === 'demo' || b.id === 'brd_demo_casa_oliva' || /\bdemo\b/i.test(b.name);
@@ -86,8 +85,6 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
   // of the draft: the write goes straight to `brands.context`, the one source.
   const [brandContext, setBrandContext] = useState('');
   const [primary, setPrimary] = useState<PrimaryAgent | null>(null);
-  const [runtimes, setRuntimes] = useState<AgentRuntimeInfo[]>([]);
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [chatStatus, setChatStatus] = useState<ChatRuntimeStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -98,11 +95,6 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
    */
   const [retryAction, setRetryAction] = useState<'completion' | 'skip' | null>(null);
   const [notice, setNotice] = useState('');
-  const [connecting, setConnecting] = useState<string | null>(null);
-  const [login, setLogin] = useState<{ runtime: 'claude' | 'codex'; accountId: string; sessionId: string | null; url: string | null; instructions: string; ended: boolean } | null>(null);
-  const [oauth, setOauth] = useState<{ providerId: string; methodIndex: number; start: ProviderOAuthStart } | null>(null);
-  const [oauthCode, setOauthCode] = useState('');
-  const [showProviders, setShowProviders] = useState(false);
   /**
    * Progressive disclosure on the summary: the brief is READ as a document by
    * default, because a marketer reads "## Objetivo" as broken code, not as a
@@ -146,24 +138,13 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
   }, [state.step]);
 
   // Step 4 queries provider state honestly: never pretend a provider is present.
+  // The runtime cards themselves (ConnectAI) do their own detection; this is
+  // only for the "Configuración avanzada" summary line below them.
   useEffect(() => {
     if (state.step !== 'connect') return;
     void api.getPrimaryAgent().then(setPrimary).catch(() => setPrimary(null));
-    void api.listAgentRuntimes().then(setRuntimes).catch(() => setRuntimes([]));
-    void api.listProviders().then(setProviders).catch(() => setProviders([]));
     void api.chatStatus().then(setChatStatus).catch(() => setChatStatus(null));
   }, [state.step]);
-
-  // A terminal login ends when the CLI exits: re-check and finish the connect.
-  useEffect(() => {
-    if (!login || login.ended || !login.sessionId) return;
-    return agentBus.subscribe(login.sessionId, event => {
-      if (event.type === 'exit') {
-        setLogin(current => (current && current.sessionId === login.sessionId ? { ...current, ended: true } : current));
-        void finishRuntimeConnect(login.runtime, login.accountId);
-      }
-    }, false);
-  }, [login?.sessionId]);
 
   const workType = state.workTypeId ? findWorkType(state.workTypeId) : null;
   const demoBrand = brands.find(isDemoBrand) ?? null;
@@ -260,97 +241,6 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
   };
 
   const advance = () => { setError(''); setNotice(''); setRetryAction(null); setState((prev) => ({ ...prev, step: 'prepare' })); };
-
-  /**
-   * Connect a subscription runtime (Claude Code / Codex) for real: reuse the
-   * existing account + login flow, then make it the primary agent so the
-   * recommended team actually works. Honest unavailable states only.
-   */
-  const connectRuntime = async (runtime: 'claude' | 'codex') => {
-    setError(''); setNotice(''); setConnecting(runtime);
-    try {
-      const info = runtimes.find((r) => r.runtime === runtime);
-      if (!info?.installed) {
-        setError(t('onboarding.connect.notInstalled', { name: RUNTIME_LABEL[runtime] }));
-        return;
-      }
-      let account = info.accounts.find((a) => a.loggedIn) ?? info.accounts[0] ?? null;
-      if (!account) account = await api.addAgentAccount(runtime, RUNTIME_LABEL[runtime]);
-      if (!account.loggedIn) {
-        const start = await api.startAccountLogin(runtime, account.id);
-        setLogin({ runtime, accountId: account.id, sessionId: start.mode === 'terminal' ? start.sessionId : null, url: start.mode === 'browser' ? start.url : null, instructions: start.instructions, ended: false });
-        return;
-      }
-      await api.setPrimaryAgent({ runtime, model: null, accountId: account.id });
-      setPrimary(await api.getPrimaryAgent());
-      setNotice(t('onboarding.connect.connectedPrimary', { name: RUNTIME_LABEL[runtime] }));
-      advance();
-    } catch (e) {
-      setError(displayError(e));
-    } finally {
-      setConnecting(null);
-    }
-  };
-
-  const finishRuntimeConnect = async (runtime: 'claude' | 'codex', accountId: string) => {
-    setError(''); setConnecting(runtime);
-    try {
-      const list = await api.listAgentRuntimes();
-      setRuntimes(list);
-      const info = list.find((r) => r.runtime === runtime);
-      const account = info?.accounts.find((a) => a.id === accountId);
-      if (!account?.loggedIn) {
-        setError(t('onboarding.connect.stillWaiting'));
-        setLogin(null);
-        return;
-      }
-      await api.setPrimaryAgent({ runtime, model: null, accountId });
-      setPrimary(await api.getPrimaryAgent());
-      setLogin(null);
-      setNotice(t('onboarding.connect.connectedPrimary', { name: RUNTIME_LABEL[runtime] }));
-      advance();
-    } catch (e) {
-      setError(displayError(e));
-    } finally {
-      setConnecting(null);
-    }
-  };
-
-  /** "Conectar otro proveedor": OAuth-first, never raw API-key jargon up front. */
-  const connectProvider = async (provider: ProviderInfo) => {
-    setError(''); setNotice(''); setConnecting('provider:' + provider.id);
-    try {
-      const method = provider.methods.find((m) => m.type === 'oauth');
-      if (!method) {
-        setError(t('onboarding.connect.noOAuth'));
-        return;
-      }
-      const start = await api.startProviderOAuth(provider.id, method.index, {});
-      setOauth({ providerId: provider.id, methodIndex: method.index, start });
-      setOauthCode('');
-    } catch (e) {
-      setError(displayError(e));
-    } finally {
-      setConnecting(null);
-    }
-  };
-
-  const completeProvider = async () => {
-    if (!oauth) return;
-    setError(''); setConnecting('provider:' + oauth.providerId);
-    try {
-      await api.completeProviderOAuth(oauth.providerId, oauth.methodIndex, oauth.start.method === 'code' ? oauthCode.trim() || null : null);
-      setOauth(null);
-      await api.setPrimaryAgent({ runtime: 'opencode', model: null, accountId: null });
-      setPrimary(await api.getPrimaryAgent());
-      setNotice(t('onboarding.connect.providerConnected'));
-      advance();
-    } catch (e) {
-      setError(displayError(e));
-    } finally {
-      setConnecting(null);
-    }
-  };
 
   const startWork = async () => {
     if (busy) return;
@@ -644,89 +534,21 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
 
           {state.step === 'connect' && (
             <>
-              <h1>{t('onboarding.connect.title')}</h1>
-              <p className="intro">{runtimes.length === 0 && providers.length === 0 ? t('onboarding.connect.unavailable') : t('onboarding.connect.demoAvailable')}</p>
-              <div className="onboarding-groups">
-                <section className="onboarding-group onboarding-group-full">
-                  <div className="onboarding-cards">
-                    {([
-                      { runtime: 'claude' as const, label: t('onboarding.connect.claude') },
-                      { runtime: 'codex' as const, label: t('onboarding.connect.codex') },
-                    ]).map((option) => {
-                      const installed = runtimes.some((r) => r.runtime === option.runtime && r.installed);
-                      const loggedIn = runtimes.some((r) => r.runtime === option.runtime && r.accounts.some((a) => a.loggedIn));
-                      const busyHere = connecting === option.runtime;
-                      return (
-                        <button className="onboarding-card" key={option.runtime} disabled={Boolean(connecting)} onClick={() => void connectRuntime(option.runtime)}>
-                          <strong>{busyHere ? <Loading size={16} /> : <LogIn size={14} />}{option.label}</strong>
-                          <small>{busyHere ? t('onboarding.connect.connecting', { name: RUNTIME_LABEL[option.runtime] }) : loggedIn ? t('ui.auto.346') : installed ? t('onboarding.connect.primary') : t('onboarding.connect.notInstalled', { name: RUNTIME_LABEL[option.runtime] })}</small>
-                        </button>
-                      );
-                    })}
-                    <button className="onboarding-card" disabled={Boolean(connecting)} onClick={() => setShowProviders((v) => !v)}>
-                      <strong><Plug size={14} />{t('onboarding.connect.other')}</strong>
-                      <small>{providers.length === 0 ? t('onboarding.connect.unavailable') : t('onboarding.connect.otherProvider')}</small>
-                    </button>
-                    <button className="onboarding-card selected-option" disabled={Boolean(connecting)} onClick={advance}>
-                      <strong><Sparkles size={14} />{t('onboarding.connect.demo')}</strong>
-                      <small>{t('onboarding.connect.demoAvailable')}</small>
-                    </button>
-                  </div>
-                </section>
-
-                {showProviders && providers.some((p) => !p.connected) && (
-                  <section className="onboarding-group onboarding-group-full">
-                    <h2>{t('onboarding.connect.other')}</h2>
-                    <div className="onboarding-cards">
-                      {providers.filter((p) => !p.connected).map((p) => {
-                        const oauthMethod = p.methods.some((m) => m.type === 'oauth');
-                        return (
-                          <button className="onboarding-card" key={p.id} disabled={Boolean(connecting) || !oauthMethod} onClick={() => void connectProvider(p)}>
-                            <strong>{connecting === 'provider:' + p.id ? <Loading size={16} /> : <ExternalLink size={14} />}{p.name}</strong>
-                            <small>{oauthMethod ? t('onboarding.connect.connect') : t('onboarding.connect.noOAuth')}</small>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </section>
-                )}
-
-                {login && (
-                  <section className="onboarding-group onboarding-group-full">
-                    <h2>{login.ended ? t('onboarding.connect.loginDone') : t('onboarding.connect.connecting', { name: RUNTIME_LABEL[login.runtime] })}</h2>
-                    <p className="intro">{login.instructions}</p>
-                    {login.url && <p><a href={login.url} target="_blank" rel="noreferrer">{login.url} <ExternalLink size={12} /></a></p>}
-                    {!login.ended && login.sessionId && <TerminalPane sessionId={login.sessionId} onError={setError} />}
-                    <div className="onboarding-footer">
-                      <button className="primary" disabled={Boolean(connecting)} onClick={() => void finishRuntimeConnect(login.runtime, login.accountId)}><Check size={14} />{t('onboarding.connect.loginDone')}</button>
-                      <button disabled={Boolean(connecting)} onClick={() => setLogin(null)}>{t('onboarding.back')}</button>
-                    </div>
-                  </section>
-                )}
-
-                {oauth && (
-                  <section className="onboarding-group onboarding-group-full">
-                    <h2>{t('onboarding.connect.connecting', { name: providers.find((p) => p.id === oauth.providerId)?.name ?? oauth.providerId })}</h2>
-                    <p className="intro">{oauth.start.instructions || t('onboarding.connect.demoAvailable')}</p>
-                    {oauth.start.url && <p><a href={oauth.start.url} target="_blank" rel="noreferrer">{t('onboarding.connect.connect')} <ExternalLink size={12} /></a></p>}
-                    {oauth.start.method === 'code' && <input aria-label="código" placeholder="Código" value={oauthCode} onChange={(e) => setOauthCode(e.target.value)} />}
-                    <div className="onboarding-footer">
-                      <button className="primary" disabled={Boolean(connecting) || (oauth.start.method === 'code' && !oauthCode.trim())} onClick={() => void completeProvider()}><Check size={14} />{t('onboarding.connect.loginDone')}</button>
-                      <button disabled={Boolean(connecting)} onClick={() => setOauth(null)}>{t('onboarding.back')}</button>
-                    </div>
-                  </section>
-                )}
-
-                <details className="onboarding-details">
-                  <summary>{t('onboarding.advanced')}</summary>
-                  <p className="runtime-detail">
-                    {primary ? t('onboarding.connect.primary') + ' · ' + primary.label : t('onboarding.connect.unavailable')}
-                  </p>
-                  {chatStatus && <p className="runtime-detail">{chatStatus.detail}</p>}
-                  <p className="runtime-detail">{t('onboarding.advancedLead')}</p>
-                  {onAdvanced && <button className="subtle" onClick={onAdvanced}><Settings2 size={14} />{t('onboarding.openSettings')}</button>}
-                </details>
+              <div className="onboarding-connect-head">
+                <h1>{t('onboarding.connect.title')}</h1>
+                <button className="subtle" disabled={busy} onClick={advance}><Sparkles size={14} />{t('onboarding.connect.demo')}</button>
               </div>
+              <p className="intro">{t('onboarding.connect.demoAvailable')}</p>
+              <ConnectAI showHeader={false} onConnected={advance} onError={setError} />
+              <details className="onboarding-details">
+                <summary>{t('onboarding.advanced')}</summary>
+                <p className="runtime-detail">
+                  {primary ? t('onboarding.connect.primary') + ' · ' + primary.label : t('onboarding.connect.unavailable')}
+                </p>
+                {chatStatus && <p className="runtime-detail">{chatStatus.detail}</p>}
+                <p className="runtime-detail">{t('onboarding.advancedLead')}</p>
+                {onAdvanced && <button className="subtle" onClick={onAdvanced}><Settings2 size={14} />{t('onboarding.openSettings')}</button>}
+              </details>
               <div className="onboarding-footer">
                 <button onClick={goBack}><ArrowLeft size={15} />{t('onboarding.back')}</button>
               </div>
