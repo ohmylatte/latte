@@ -90,6 +90,8 @@ interface LoginRecord {
   raw: string;
   url: string | null;
   runtimeOpened: boolean;
+  /** Latte already opened the captured URL once (the runtime said it could not). */
+  latteOpened: boolean;
   executable: string | null;
   timers: Array<() => void>;
   polling: boolean;
@@ -426,6 +428,7 @@ export class RuntimeSetupService {
       raw: '',
       url: null,
       runtimeOpened: false,
+      latteOpened: false,
       executable: null,
       timers: [],
       polling: false,
@@ -533,8 +536,14 @@ export class RuntimeSetupService {
     if (record.job.done) return;
     record.raw = (record.raw + data).slice(-64_000);
     const login = this.catalog[record.job.runtime].login;
-    if (!login?.browser || record.url) return;
+    if (!login?.browser) return;
     const text = stripAnsi(record.raw);
+    const openFailed = login.browserOpenFailed?.test(text) ?? false;
+    if (record.url) {
+      // The runtime was going to open the browser and then said it could not: Latte opens it, once.
+      if (openFailed && !record.latteOpened) this.openCaptured(record, record.url);
+      return;
+    }
     if (login.openedByRuntime?.test(text)) record.runtimeOpened = true;
     const url = recognizeLoginUrl(extractUrls(record.raw, LOGIN_COLS), login.urlHosts);
     if (url) {
@@ -544,10 +553,12 @@ export class RuntimeSetupService {
       const complete = hyperlinkTargets(record.raw).includes(url) || (at !== -1 && /\s/.test(text.charAt(at + lastFragment.length)));
       if (!complete) return;
       record.url = url;
-      if (record.runtimeOpened) {
+      // Grok opens the browser next to the URL it prints and only says so when it could not.
+      if ((record.runtimeOpened || login.opensBrowserItself) && !openFailed) {
+        record.runtimeOpened = true;
         this.setLogin(record, { state: 'browser_opened', url, openedBy: 'runtime' }, false);
       } else {
-        void this.deps.openExternal(url).catch((error: unknown) => record.transcript.note(`openExternal failed: ${error instanceof Error ? error.message : String(error)}`));
+        this.openCaptured(record, url);
         this.setLogin(record, { state: 'browser_opened', url, openedBy: 'latte' }, false);
       }
       this.startPolling(record);
@@ -557,6 +568,11 @@ export class RuntimeSetupService {
       this.setLogin(record, { state: 'browser_opened', url: null, openedBy: 'runtime' }, false);
       this.startPolling(record);
     }
+  }
+
+  private openCaptured(record: LoginRecord, url: string): void {
+    record.latteOpened = true;
+    void this.deps.openExternal(url).catch((error: unknown) => record.transcript.note(`openExternal failed: ${error instanceof Error ? error.message : String(error)}`));
   }
 
   private async onLoginExit(record: LoginRecord, code: number): Promise<void> {

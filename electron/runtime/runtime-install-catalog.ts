@@ -45,6 +45,10 @@ export interface LoginSpec {
   urlHosts: readonly RegExp[];
   /** Output meaning "the CLI opened the browser by itself" (so Latte does not open a second tab). */
   openedByRuntime?: RegExp;
+  /** The CLI always opens the browser next to the URL it prints, without saying so (Latte then only offers "Abrir de nuevo"). */
+  opensBrowserItself?: boolean;
+  /** Output meaning the CLI tried to open the browser and could not: Latte opens the captured URL instead. */
+  browserOpenFailed?: RegExp;
   /** Output meaning the login finished; the runtime's status check still confirms it. */
   success?: RegExp;
   verified: boolean;
@@ -178,6 +182,10 @@ export const RUNTIME_INSTALL_CATALOG: Readonly<Record<Provider, RuntimeCatalogEn
       args: ['login'],
       urlHosts: [/^(.+\.)?x\.ai$/i, /^(.+\.)?grok\.com$/i, /^(.+\.)?x\.com$/i],
       openedByRuntime: /opening (?:your )?browser|opened (?:your |the )?browser/i,
+      // Read from the grok 1.0.x binary: `grok login` prints "To sign in, open this URL in your browser:" + the URL,
+      // opens the browser itself, and only prints "(Could not open browser automatically …)" when that fails.
+      opensBrowserItself: true,
+      browserOpenFailed: /could not open (?:a |the )?browser/i,
       verified: false,
       source: GROK_DOCS,
       note: 'Docs: "On first launch, Grok opens a browser for authentication". `grok login` is what Latte already runs (measured on 1.0.41); the URL line is not documented.',

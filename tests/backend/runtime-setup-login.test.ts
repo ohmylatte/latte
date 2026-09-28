@@ -4,6 +4,8 @@ import { LIMITS, settleAll, setupHarness } from './runtime-setup-fakes';
 
 const CLAUDE_EXE = 'C:\\Users\\ana\\.local\\bin\\claude.exe';
 const ACC = 'acc_0123456789abcdef';
+const GROK_EXE = 'C:\\Users\\ana\\.grok\\bin\\grok.exe';
+const GROK_URL = 'https://auth.x.ai/oauth2/authorize?client_id=grok-cli&response_type=code&state=s1&code_challenge=c1';
 const CLAUDE_URL = 'https://claude.ai/oauth/authorize?code=true&client_id=9d1c250a&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A54545%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile&state=abc123';
 
 function loginStates(events: Array<{ kind: string; state: unknown }>): unknown[] {
@@ -193,6 +195,47 @@ describe('RuntimeSetupService: browser login', () => {
     expect(b.jobId).toBe(a.jobId);
     await settleAll();
     expect(h.terminal.started).toHaveLength(1);
+  });
+
+  it('keeps one login per account even when two starts race: one PTY, one job', async () => {
+    const h = setupHarness();
+    h.resolved.set('grok', { executable: GROK_EXE, version: '1.0.41' });
+    const setup = new RuntimeSetupService(h.deps);
+    const [a, b] = await Promise.all([setup.startLogin('grok', ACC), setup.startLogin('grok', ACC)]);
+    expect(b.jobId).toBe(a.jobId);
+    await settleAll();
+    expect(h.terminal.started).toHaveLength(1);
+  });
+
+  // `grok login` (1.0.x) prints "To sign in, open this URL in your browser:" + the URL and opens
+  // the browser itself; it only says so when it could NOT ("Could not open browser automatically").
+  it('Grok opens the browser itself: Latte never opens a second window, and "Abrir de nuevo" opens the captured URL', async () => {
+    const h = setupHarness();
+    h.resolved.set('grok', { executable: GROK_EXE, version: '1.0.41' });
+    const setup = new RuntimeSetupService(h.deps);
+    const job = await setup.startLogin('grok', ACC);
+    await settleAll();
+    h.terminal.print(0, `Sign in to Grok\r\nTo sign in, open this URL in your browser:\r\n${GROK_URL}\r\n`);
+    await settleAll();
+    expect(h.opened).toEqual([]);
+    expect(loginStates(h.events).at(-1)).toEqual({ state: 'browser_opened', url: GROK_URL, openedBy: 'runtime' });
+    await setup.reopenLogin(job.jobId);
+    expect(h.opened).toEqual([GROK_URL]);
+  });
+
+  it('Grok could not open the browser: Latte opens the captured URL, once', async () => {
+    const h = setupHarness();
+    h.resolved.set('grok', { executable: GROK_EXE, version: '1.0.41' });
+    const setup = new RuntimeSetupService(h.deps);
+    await setup.startLogin('grok', ACC);
+    await settleAll();
+    h.terminal.print(0, `To sign in, open this URL in your browser:\r\n${GROK_URL}\r\n`);
+    await settleAll();
+    h.terminal.print(0, '(Could not open browser automatically — open the URL above manually.)\r\n');
+    await settleAll();
+    h.terminal.print(0, 'Waiting for login to complete...\r\n');
+    await settleAll();
+    expect(h.opened).toEqual([GROK_URL]);
   });
 });
 
