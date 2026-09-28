@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { CHAT_RUNTIMES, DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type BrandDnaField, type BrandDnaFields, type BrandDnaProposal, type BrandDnaValue, type CoordinationSuspendReason, type CoordinationTaskAudience, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
+import { CHAT_RUNTIMES, DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type BrandDnaField, type BrandDnaFields, type BrandDnaIdea, type BrandDnaProposal, type BrandDnaValue, type CoordinationSuspendReason, type CoordinationTaskAudience, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
 import type { ArtifactCheck, DeliveryEvidence, GenerationReceipt } from '../../shared/generationContracts';
 import { GenerationContractError } from '../generation/errors';
 import { hashGenerationContext } from '../generation/canon';
@@ -32,6 +32,7 @@ interface BrandContextProposalRow extends SqlRow {
 interface DocumentRow extends SqlRow { id: string; work_id: string; kind: string; title: string; file_name: string; status: string; funnel_stages: string; proposed_stages: string; base_doc_id: string | null; base_rev_id: string | null; base_print: string | null; last_print: string | null; created_at: string; updated_at: string }
 interface BrandContextRevisionRow extends SqlRow { id: string; brand_id: string; source: string; origin: string | null; content: string; fingerprint: string; created_at: string }
 interface BrandDnaDraftRow extends SqlRow { brand_id: string; fields_json: string; updated_at: string }
+interface BrandDnaIdeasRow extends SqlRow { brand_id: string; ideas_json: string; updated_at: string }
 interface BrandDnaVersionRow extends SqlRow { brand_id: string; version: number; fields_json: string; hash: string; approved_at: string }
 interface BrandDnaProposalRow extends SqlRow {
   id: string; brand_id: string; work_id: string; field: string; next_json: string; reason: string;
@@ -1380,6 +1381,18 @@ export class LatteRepository {
   /** La fila nunca se borra: `pending` pasa a aceptada, rechazada o supersedeada, con su fecha. */
   setDnaProposalStatus(id: string, status: BrandDnaProposalRecord['status'], at: string): void {
     this.db.run('UPDATE brand_dna_proposals SET status = ?, decided_at = ? WHERE id = ?', [status, at, id]);
+  }
+
+  /** Las ideas vigentes de la marca con su fecha. Sin fila: todavía no hubo. */
+  getDnaIdeas(brandId: string): { ideas: BrandDnaIdea[]; updatedAt: string } | null {
+    const row = this.db.get<BrandDnaIdeasRow>('SELECT * FROM brand_dna_ideas WHERE brand_id = ?', [brandId]);
+    if (!row) return null;
+    return { ideas: JSON.parse(row.ideas_json) as BrandDnaIdea[], updatedAt: row.updated_at };
+  }
+
+  /** Reemplaza el set completo: las ideas son "las 4 vigentes", no un histórico. */
+  saveDnaIdeas(brandId: string, ideas: BrandDnaIdea[], at: string): void {
+    this.db.run('INSERT OR REPLACE INTO brand_dna_ideas(brand_id, ideas_json, updated_at) VALUES (?, ?, ?)', [brandId, JSON.stringify(ideas), at]);
   }
 
   // Brand context history (immutable) ----------------------------------------

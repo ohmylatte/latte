@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { HomeView, type HomeViewProps } from './HomeView';
 import { I18nProvider } from './i18n';
-import type { Brand, BrandDnaView, Decision, DocumentState, WorkDocument } from '../shared/contracts';
+import type { Brand, BrandDnaIdea, BrandDnaView, Decision, DocumentState, WorkDocument } from '../shared/contracts';
 
 /**
  * Inicio · la caja "¿Qué querés hacer hoy…?" y la tarjeta Primeros pasos.
@@ -43,7 +43,28 @@ const dna = (patch: Partial<BrandDnaView> = {}): BrandDnaView => ({
   approved: { version: 1, approvedAt: '2026-09-20T10:00:00.000Z', fields },
   changedSinceApproval: false,
   proposals: [],
+  ideas: [],
+  ideasUpdatedAt: null,
   ...patch,
+});
+
+const agentIdea = (patch: Partial<BrandDnaIdea> = {}): BrandDnaIdea => ({
+  id: 'idea-1',
+  title: 'Lanzamiento de la colección de otoño',
+  why: 'La colección nueva todavía no tiene campaña.',
+  workTypeId: 'campaign-new',
+  basedOn: [{ kind: 'document', label: 'brief de primavera' }],
+  createdAt: '2026-09-27',
+  ...patch,
+});
+
+/** Una idea cuyo TIPO no está en el título: sólo el forzado puede hacer que la línea lo diga. */
+const auditIdea = (): BrandDnaIdea => agentIdea({
+  id: 'idea-auditoria',
+  title: 'Revisá las últimas piezas contra el ADN',
+  why: 'Dos piezas usan palabras que la marca no usa.',
+  workTypeId: 'paid-media-audit',
+  basedOn: [{ kind: 'identity', label: 'ADN v1' }],
 });
 
 const handlers = () => ({
@@ -103,14 +124,92 @@ describe('Inicio · la caja', () => {
     expect((screen.getByRole('button', { name: 'Enviar' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('una sugerencia rellena la caja con el tipo y el dato del ADN', () => {
+  it('sin ideas del agente, las de respaldo cubren la grilla con fecha, temporada y ADN', () => {
     const { container } = mount(props({ dna: dna() }));
-    const suggestions = [...container.querySelectorAll<HTMLButtonElement>('.home-suggest')];
-    expect(suggestions).toHaveLength(4);
-    expect(suggestions[0].querySelector('strong')!.textContent).toBe('Campaña nueva');
-    expect(suggestions[0].querySelector('small')!.textContent).toBe('Personas que eligen menos, con más intención.');
-    fireEvent.click(suggestions[0]);
-    expect(box().value).toBe('Campaña nueva: Personas que eligen menos, con más intención.');
+    const items = [...container.querySelectorAll<HTMLButtonElement>('.home-suggest')];
+    // La fecha comercial depende del día real: entre 2 y 4 ideas estables.
+    expect(items.length).toBeGreaterThanOrEqual(2);
+    expect(items.length).toBeLessThanOrEqual(4);
+    const titles = items.map((item) => item.querySelector('strong')!.textContent ?? '');
+    expect(titles.some((label) => label.startsWith('Contenido de temporada:'))).toBe(true);
+    expect(titles).toContain('Llevá tu propuesta a cada pieza');
+    // Las de respaldo no llevan la marca de las del agente.
+    expect(container.querySelector('.home-ideas-tag')).toBeNull();
+    expect(container.querySelector('.home-ideas-head')).toBeNull();
+  });
+
+  it('con ideas del agente se muestran ESAS, con la marca discreta y su motivo', () => {
+    const { container } = mount(props({ dna: dna({ ideas: [agentIdea()] }) }));
+    const items = [...container.querySelectorAll<HTMLButtonElement>('.home-suggest')];
+    expect(items).toHaveLength(1);
+    expect(items[0]!.querySelector('strong')!.textContent).toBe('Lanzamiento de la colección de otoño');
+    expect(items[0]!.querySelector('small')!.textContent).toBe('La colección nueva todavía no tiene campaña.');
+    expect(items[0]!.querySelector('.home-ideas-tag')!.textContent).toBe('Idea de Latte');
+    // Las del agente reemplazan a las de respaldo, no se suman.
+    expect(container.textContent).not.toContain('Contenido de temporada:');
+  });
+
+  it('tocar una idea llena la caja con el título y se arma con el TIPO de la idea', () => {
+    const input = props({ dna: dna({ ideas: [auditIdea()] }) });
+    mount(input);
+    const item = [...document.querySelectorAll<HTMLButtonElement>('.home-suggest')][0]!;
+    fireEvent.click(item);
+    expect(box().value).toBe('Revisá las últimas piezas contra el ADN');
+    // El tipo de la IDEA manda, aunque las palabras del título no lo digan.
+    expect(document.querySelector('.home-ask-classify')!.textContent).toContain('Se arma como Análisis de paid media');
+    // Y el envío cumple lo que la línea mostró.
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+    expect(input.onStartWork).toHaveBeenCalledWith('Revisá las últimas piezas contra el ADN', 'paid-media-audit');
+    expect(box().value).toBe('');
+  });
+
+  it('reescribir la caja suelta el tipo de la idea y vuelve a clasificar por palabras', () => {
+    const input = props({ dna: dna({ ideas: [auditIdea()] }) });
+    mount(input);
+    fireEvent.click([...document.querySelectorAll<HTMLButtonElement>('.home-suggest')][0]!);
+    fireEvent.change(box(), { target: { value: 'Armame una campaña para primavera' } });
+    expect(document.querySelector('.home-ask-classify')!.textContent).toContain('Se arma como Campaña nueva');
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+    expect(input.onStartWork).toHaveBeenCalledWith('Armame una campaña para primavera');
+  });
+
+  it('sin IA el botón de ideas se deshabilita con su motivo en una línea', () => {
+    const { container } = mount(props({ onRefreshIdeas: vi.fn(), ideasReady: false }));
+    const button = screen.getByRole('button', { name: /Actualizar ideas/ }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(container.textContent).toContain('Escribir ideas necesita un agente de IA.');
+  });
+
+  it('con ideas en vuelo el botón muestra el estado honesto y no se aprieta de nuevo', () => {
+    const onRefreshIdeas = vi.fn();
+    const job = {
+      jobId: 'bdj_live', brandId: 'b1', mode: 'ideas' as const,
+      steps: [{ key: 'compose' as const, state: 'running' as const, detail: null }],
+      done: false, outcome: null, reason: null,
+    };
+    mount(props({ onRefreshIdeas, ideasReady: true, ideasJob: job }));
+    const button = screen.getByRole('button', { name: /Actualizando las ideas/ }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(onRefreshIdeas).not.toHaveBeenCalled();
+  });
+
+  it('un build que falló dice el código, y el botón vuelve a estar disponible', () => {
+    const onRefreshIdeas = vi.fn();
+    const { container } = mount(props({
+      onRefreshIdeas,
+      ideasReady: true,
+      ideasJob: {
+        jobId: 'bdj_failed', brandId: 'b1', mode: 'ideas' as const,
+        steps: [{ key: 'compose' as const, state: 'failed' as const, detail: 'No se pudo componer (NOT_INSTALLED)' }],
+        done: true, outcome: 'failed', reason: 'NOT_INSTALLED',
+      },
+    }));
+    expect(container.textContent).toContain('No se pudieron actualizar las ideas (NOT_INSTALLED).');
+    const button = screen.getByRole('button', { name: /Actualizar ideas/ }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    expect(onRefreshIdeas).toHaveBeenCalledTimes(1);
   });
 
   it('la línea de la caja dice el ADN y las decisiones reales de la marca', () => {

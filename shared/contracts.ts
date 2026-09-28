@@ -195,7 +195,7 @@ export interface BrandIdentityView {
  * aprueba. Cada dato dice de dónde salió; lo inferido sin fuente firme es un
  * supuesto y se marca como tal. Nunca se inventa un dato.
  */
-export type BrandDnaSourceKind = 'web' | 'instagram' | 'file' | 'context' | 'document' | 'decision' | 'memory' | 'identity' | 'correction' | 'human';
+export type BrandDnaSourceKind = 'web' | 'instagram' | 'file' | 'context' | 'document' | 'decision' | 'memory' | 'identity' | 'correction' | 'human' | 'calendar';
 export interface BrandDnaSource {
   kind: BrandDnaSourceKind;
   /** Lo que ve la persona: "web · home", "brief-2026.pdf p.2", "decisión del 12 sep". Nunca una ruta. */
@@ -238,6 +238,27 @@ export interface BrandDnaView {
   changedSinceApproval: boolean;
   /** Cambios que el motor aprendió (de correcciones o de trabajo aprobado) y esperan el sí de la persona. */
   proposals: BrandDnaProposal[];
+  /** Ideas concretas para esta marca, hasta 4 vigentes, que el agente escribió. Vacías: todavía no hay. */
+  ideas: BrandDnaIdea[];
+  /** Cuándo se actualizaron las ideas por última vez. `null`: nunca. */
+  ideasUpdatedAt: string | null;
+}
+/**
+ * 3 (ronda 3): UNA IDEA para empezar, no una plantilla. Concreta, accionable
+ * y con base: sin `basedOn` no se guarda, porque una idea sin de dónde salió
+ * es una invención.
+ */
+export interface BrandDnaIdea {
+  id: string;
+  /** Corto y accionable: "Lanzamiento de la colección de otoño". */
+  title: string;
+  /** Una línea con el motivo: "La colección nueva todavía no tiene campaña". */
+  why: string;
+  /** Un id del catálogo de tipos de trabajo (`src/work-catalog.ts`), o "Empezar libremente". */
+  workTypeId: string;
+  /** En qué se apoya. Nunca vacío. */
+  basedOn: BrandDnaSource[];
+  createdAt: string;
 }
 export interface BrandDnaProposal {
   id: string;
@@ -249,7 +270,11 @@ export interface BrandDnaProposal {
   source: BrandDnaSource;
   createdAt: string;
 }
-export type BrandDnaBuildMode = 'sources' | 'existing';
+/**
+ * `ideas`: sólo las ideas (tarea liviana, sin recomponer el ADN). Las otras
+ * dos recomponen el borrador y, si el agente puede, escriben ideas también.
+ */
+export type BrandDnaBuildMode = 'sources' | 'existing' | 'ideas';
 export interface BrandDnaSourcesInput {
   url: string | null;
   instagram: string | null;
@@ -264,8 +289,11 @@ export interface BrandDnaBuildJob {
   mode: BrandDnaBuildMode;
   steps: BrandDnaBuildStep[];
   done: boolean;
-  /** `proposed`: el borrador quedó listo para revisar. */
-  outcome: 'proposed' | 'failed' | 'cancelled' | null;
+  /**
+   * `proposed`: el borrador quedó listo para revisar.
+   * `updated`: las ideas quedaron guardadas (build del modo `ideas`).
+   */
+  outcome: 'proposed' | 'updated' | 'failed' | 'cancelled' | null;
   /** Código del motor cuando falló (`NOT_INSTALLED`, `UNAVAILABLE`, ...). */
   reason: string | null;
 }

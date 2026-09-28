@@ -153,7 +153,7 @@ import type { LearningRepository } from '../storage/learningRepository';
 import { briefDocumentId, type BrandDnaProposalRecord, type CoordinationRunRecord, type DocumentRecord, type LatteRepository } from '../storage/repository';
 import { collectBrandMemory, hasBrandMemory, hasInheritedContent, renderBrandMemory, type BrandMemorySnapshot } from '../workspace/brandMemory';
 import { brandContextNudge, electBrandContextOwner } from '../workspace/brandContextNudge';
-import { DRAFTS_DIR, INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
+import { DRAFTS_DIR, FUNNEL_STAGES, INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
 import { checkFolder, contains, importFileName, kindFromFileName, readFunnelProposal, readHandoff, scanFolder, titleFromFileName } from '../workspace/linkFolder';
 import { renderDocumentTemplate } from '../workspace/templates';
 import { openItems, renderContinuation } from '../workspace/continuation';
@@ -163,6 +163,8 @@ import { IDENTITY_DIR, IDENTITY_DOC, identityExtractionSpec, projectIdentity } f
 import {
   DNA_AGENT_STEP_KEYS,
   DNA_DRAFT_DIR,
+  DNA_IDEAS_JSON,
+  DNA_IDEAS_RELATIVE,
   DNA_JSON,
   DNA_JSON_RELATIVE,
   DNA_STEPS_JSON,
@@ -170,14 +172,26 @@ import {
   brandDnaFingerprint,
   brandDnaIsEmpty,
   dnaBuildSpec,
+  dnaIdeasSpec,
   emptyBrandDnaFields,
   parseDnaStepReport,
   projectBrandDna,
+  renderBrandDnaMarkdown,
   requireBrandDnaFields,
   requireBrandDnaFieldValue,
+  requireBrandDnaIdeas,
   type BrandDnaProjection,
   type DnaStepReport,
 } from '../branding/dna';
+import {
+  commercialDateName,
+  countryLabel,
+  countryOf,
+  fullDateLabel,
+  seasonLabel,
+  seasonOn,
+  upcomingCommercialDates,
+} from '../../shared/commercial-dates';
 import { brandDnaProtocolBlocks, requireBrandDnaProposalInput, type BrandDnaProposalInput } from '../workspace/dnaProtocol';
 import { reportedFiles } from '../../shared/reportFiles';
 import { canonicalJson } from '../core/canonical';
@@ -202,7 +216,9 @@ function emptyRefreshReport(): BrandContextRefreshReport {
 /** 1B: los ocho pasos de un build, en el orden en que los cuenta el contrato. */
 const DNA_BUILD_STEP_KEYS: readonly BrandDnaBuildStepKey[] = ['web', 'instagram', 'files', 'context', 'documents', 'decisions', 'memory', 'compose'];
 
-function initialDnaSteps(): BrandDnaBuildStep[] {
+function initialDnaSteps(mode: BrandDnaBuildMode): BrandDnaBuildStep[] {
+  // 3: el modo ideas es una tarea liviana: un solo paso, el que existe de verdad.
+  if (mode === 'ideas') return [{ key: 'compose', state: 'pending', detail: null }];
   return DNA_BUILD_STEP_KEYS.map((key) => ({ key, state: 'pending' as const, detail: null }));
 }
 
@@ -876,7 +892,7 @@ export class LatteService implements BackendApi {
    */
   async buildBrandDna(brandId: string, mode: BrandDnaBuildMode, sources: BrandDnaSourcesInput | null): Promise<BrandDnaBuildJob> {
     const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
-    if (mode !== 'sources' && mode !== 'existing') throw new ValidationError('Invalid brand DNA build mode');
+    if (mode !== 'sources' && mode !== 'existing' && mode !== 'ideas') throw new ValidationError('Invalid brand DNA build mode');
     const input = this.requireDnaSources(sources, mode);
 
     const running = this.activeDnaJob(brand.id);
@@ -886,7 +902,7 @@ export class LatteService implements BackendApi {
     if (!work) throw new ValidationError('Creá un trabajo en esta marca: el ADN se compone adentro de un trabajo');
 
     const record: DnaJobRecord = {
-      job: { jobId: newId('bdj'), brandId: brand.id, mode, steps: initialDnaSteps(), done: false, outcome: null, reason: null },
+      job: { jobId: newId('bdj'), brandId: brand.id, mode, steps: initialDnaSteps(mode), done: false, outcome: null, reason: null },
       workId: work.id,
       taskId: null,
       runId: null,
@@ -898,7 +914,8 @@ export class LatteService implements BackendApi {
     if (unavailable) return this.dnaJobSnapshot(this.finishDnaJob(record, 'failed', unavailable));
 
     try {
-      this.gatherDnaSources(record, brand, work, input);
+      if (mode !== 'ideas') this.gatherDnaSources(record, brand, work, input);
+      this.gatherIdeasInputs(brand, work);
     } catch (error) {
       this.deps.log?.(`[latte] dna sources gathering failed (brand=${brand.id}): ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -906,25 +923,32 @@ export class LatteService implements BackendApi {
     try {
       const workDir = this.deps.files.workDir(brand.id, work.id);
       const locale = this.deps.repo.getMeta(`work_content_locale:${work.id}`) === 'en-US' ? 'en-US' : 'es-AR';
-      const title = locale === 'en-US' ? `Compose the brand DNA of ${brand.name}` : `Componer el ADN de ${brand.name}`;
+      const today = this.clock().slice(0, 10);
+      const title = mode === 'ideas'
+        ? (locale === 'en-US' ? `Refresh ideas for ${brand.name}` : `Actualizar ideas de ${brand.name}`)
+        : (locale === 'en-US' ? `Compose the brand DNA of ${brand.name}` : `Componer el ADN de ${brand.name}`);
       let team: TeamMember[] = [];
       try { team = this.deps.hub.listTeam(work.id).filter((m) => m.status !== 'ended'); } catch { team = []; }
       const coordinator = this.effectiveCoordinator(work.id) ?? team.find((m) => m.roleId === ASSISTANT_ROLE_ID)?.id ?? team[0]?.id ?? null;
-      const spec = dnaBuildSpec({
-        jobId: record.job.jobId,
-        brandName: brand.name,
-        mode,
-        url: input.url,
-        instagram: input.instagram,
-        prepared: this.dnaPreparedSources(workDir),
-        language: locale,
-      });
+      const prepared = this.dnaPreparedSources(workDir);
+      const spec = mode === 'ideas'
+        ? dnaIdeasSpec({ jobId: record.job.jobId, brandName: brand.name, prepared, language: locale, today })
+        : dnaBuildSpec({
+            jobId: record.job.jobId,
+            brandName: brand.name,
+            mode,
+            url: input.url,
+            instagram: input.instagram,
+            prepared,
+            language: locale,
+            today,
+          });
       const result = await this.coordination.requestPersonTask(work.id, { roleId: REVIEWER_ROLE_ID, title, spec }, coordinator);
       record.taskId = result.taskId;
       try { record.runId = this.deps.repo.findActiveCoordinationRun(work.id)?.id ?? null; } catch { record.runId = null; }
       switch (result.outcome) {
         case 'dispatched':
-          setDnaStep(record.job, 'compose', 'running', 'El equipo está componiendo el ADN');
+          setDnaStep(record.job, 'compose', 'running', mode === 'ideas' ? 'El equipo está componiendo las ideas' : 'El equipo está componiendo el ADN');
           break;
         case 'pending_approval':
           setDnaStep(record.job, 'compose', 'pending', 'Esperando que la persona despache la tarea del equipo');
@@ -1040,12 +1064,15 @@ export class LatteService implements BackendApi {
     const approved = this.deps.repo.dnaHead(brandId);
     const proposals: BrandDnaProposal[] = this.deps.repo.listPendingDnaProposals(brandId)
       .map((p) => ({ id: p.id, field: p.field, next: p.next, reason: p.reason, source: p.source, createdAt: p.createdAt }));
+    const ideas = this.deps.repo.getDnaIdeas(brandId);
     return {
       brandId,
       draft,
       approved: approved ? { version: approved.version, approvedAt: approved.approvedAt, fields: approved.fields } : null,
       changedSinceApproval: draft !== null && (approved === null || brandDnaFingerprint(draft) !== brandDnaFingerprint(approved.fields)),
       proposals,
+      ideas: ideas?.ideas ?? [],
+      ideasUpdatedAt: ideas?.updatedAt ?? null,
     };
   }
 
@@ -1101,13 +1128,13 @@ export class LatteService implements BackendApi {
    * libre para arrancar otro. Un `proposed` NO toca los pasos: lo que quedó
    * `pending` sigue siendo "no se pudo saber", y eso es lo honesto.
    */
-  private finishDnaJob(record: DnaJobRecord, outcome: 'proposed' | 'failed' | 'cancelled', reason: string | null): BrandDnaBuildJob {
+  private finishDnaJob(record: DnaJobRecord, outcome: 'proposed' | 'updated' | 'failed' | 'cancelled', reason: string | null): BrandDnaBuildJob {
     const job = record.job;
     if (!job.done) {
       job.done = true;
       job.outcome = outcome;
       job.reason = reason;
-      if (outcome !== 'proposed') {
+      if (outcome === 'failed' || outcome === 'cancelled') {
         for (const step of job.steps) {
           if (step.state === 'done' || step.state === 'skipped') continue;
           if (step.key === 'compose' && outcome === 'failed') {
@@ -1255,6 +1282,59 @@ export class LatteService implements BackendApi {
     } else setDnaStep(job, 'memory', 'skipped', 'Sin memoria de trabajos anteriores');
   }
 
+  /**
+   * 3: LOS INSUMOS DE LAS IDEAS, juntados con las manos de Latte en la misma
+   * carpeta de fuentes: el ADN (aprobado o borrador), la fecha con país y
+   * estación, los trabajos recientes, las etapas del embudo sin piezas y las
+   * fechas comerciales de las próximas 6 semanas con su fecha exacta. En el
+   * idioma del contenido del trabajo, como el ADN.
+   */
+  private gatherIdeasInputs(brand: Brand, work: Work): void {
+    const workDir = this.deps.files.workDir(brand.id, work.id);
+    const fuentes = nodePath.join(workDir, DRAFTS_DIR, DNA_DRAFT_DIR, 'fuentes');
+    const write = (relative: string, content: string): void => {
+      const target = nodePath.join(fuentes, ...relative.split('/'));
+      nodeFs.mkdirSync(nodePath.dirname(target), { recursive: true });
+      nodeFs.writeFileSync(target, content, 'utf8');
+    };
+    const locale = this.deps.repo.getMeta(`work_content_locale:${work.id}`) === 'en-US' ? 'en-US' : 'es-AR';
+    const en = locale === 'en-US';
+    const today = this.clock().slice(0, 10);
+    const country = countryOf(locale);
+    const season = seasonOn(country, today);
+
+    const approved = this.deps.repo.dnaHead(brand.id);
+    const draft = this.deps.repo.getDnaDraft(brand.id);
+    if (approved) {
+      write('adn.md', renderBrandDnaMarkdown({ brandName: brand.name, version: approved.version, approvedAt: approved.approvedAt, fields: approved.fields }));
+    } else if (draft && !brandDnaIsEmpty(draft)) {
+      write('adn.md', renderBrandDnaMarkdown({ brandName: brand.name, version: null, approvedAt: null, fields: draft }));
+    }
+
+    write('fecha.md', en
+      ? `Today: ${fullDateLabel(today, locale)}.\nCountry: ${countryLabel(country, locale)} (${country === 'AR' ? 'southern' : 'northern'} hemisphere).\nSeason: ${seasonLabel(season, locale)}.`
+      : `Hoy: ${fullDateLabel(today, locale)}.\nPaís: ${countryLabel(country, locale)} (hemisferio ${country === 'AR' ? 'sur' : 'norte'}).\nEstación: ${seasonLabel(season, locale)}.`);
+
+    const works = [...this.deps.repo.listWorks(brand.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10);
+    const workLines = works.length > 0
+      ? works.map((other) => `- ${other.updatedAt.slice(0, 10)} · ${other.title}`)
+      : [en ? '- None yet.' : '- Ninguno todavía.'];
+    write('trabajos.md', `${en ? `# Recent works of ${brand.name}` : `# Trabajos recientes de ${brand.name}`}\n\n${workLines.join('\n')}\n`);
+
+    const tracked = works.flatMap((other) => this.deps.repo.listDocuments(other.id));
+    const emptyStages = FUNNEL_STAGES.filter((stage) => !tracked.some((doc) => doc.funnelStages.includes(stage)));
+    const stageLines = emptyStages.length > 0
+      ? emptyStages.map((stage) => `- ${stage}`)
+      : [en ? '- none: every stage has a piece.' : '- ninguna: todas las etapas tienen piezas.'];
+    write('embudo.md', `${en ? '# Funnel stages with no pieces yet' : '# Etapas del embudo sin piezas'}\n\n${stageLines.join('\n')}\n`);
+
+    const dates = upcomingCommercialDates(country, today);
+    const dateLines = dates.length > 0
+      ? dates.map((date) => `- ${date.date} · ${commercialDateName(date.id, locale)}${date.approximate ? (en ? ' (approximate date)' : ' (fecha aproximada)') : ''}`)
+      : [en ? '- None in the next 6 weeks.' : '- Ninguna en las próximas 6 semanas.'];
+    write('fechas-comerciales.md', `${en ? '# Commercial dates in the next 6 weeks' : '# Fechas comerciales de las próximas 6 semanas'}\n\n${dateLines.join('\n')}\n`);
+  }
+
   /** Las fuentes ya preparadas, como rutas relativas para el pedido al agente. */
   private dnaPreparedSources(workDir: string): string[] {
     const base = nodePath.join(workDir, DRAFTS_DIR, DNA_DRAFT_DIR, 'fuentes');
@@ -1280,7 +1360,11 @@ export class LatteService implements BackendApi {
     record.taskId = task.id;
     if (task.status === 'done') {
       const files = reportedFiles(task.resultFilesJson) ?? [];
-      if (files.some((file) => file.replace(/\\/g, '/').toLowerCase() === DNA_JSON_RELATIVE.toLowerCase())) this.importDnaResult(record);
+      const reports = (relative: string) => files.some((file) => file.replace(/\\/g, '/').toLowerCase() === relative.toLowerCase());
+      if (record.job.mode === 'ideas') {
+        if (reports(DNA_IDEAS_RELATIVE)) this.importIdeasResult(record);
+        else this.finishDnaJob(record, 'failed', 'NO_IDEAS_FILE');
+      } else if (reports(DNA_JSON_RELATIVE)) this.importDnaResult(record);
       else this.finishDnaJob(record, 'failed', 'NO_ADN_FILE');
     } else if (task.status === 'failed') {
       this.finishDnaJob(record, 'failed', 'AGENT_FAILED');
@@ -1312,8 +1396,13 @@ export class LatteService implements BackendApi {
       && (candidate.taskId === input.taskId || (candidate.workId === input.workId && this.dnaTaskBelongsTo(input.taskId, candidate))));
     if (!record) return;
     record.taskId = input.taskId;
-    const reportsDna = input.files.some((file) => file.replace(/\\/g, '/').toLowerCase() === DNA_JSON_RELATIVE.toLowerCase());
-    if (reportsDna) { this.importDnaResult(record); return; }
+    const reports = (relative: string) => input.files.some((file) => file.replace(/\\/g, '/').toLowerCase() === relative.toLowerCase());
+    if (record.job.mode === 'ideas') {
+      if (reports(DNA_IDEAS_RELATIVE)) this.importIdeasResult(record);
+      else this.settleDnaJob(record);
+      return;
+    }
+    if (reports(DNA_JSON_RELATIVE)) { this.importDnaResult(record); return; }
     // Reportó sin el ADN: si la tarea cerró, el build no se queda colgado.
     this.settleDnaJob(record);
   }
@@ -1343,10 +1432,47 @@ export class LatteService implements BackendApi {
         else if (record.job.mode === 'sources') setDnaStep(record.job, key, 'pending', 'El agente no reportó este paso');
       }
       setDnaStep(record.job, 'compose', 'done', 'ADN.json validado y guardado como borrador');
+      // 3: el mismo agente también escribe las ideas al terminar el build.
+      this.importIdeasIfPresent(record);
       this.finishDnaJob(record, 'proposed', null);
     } catch (error) {
       this.deps.log?.(`[latte] invalid ADN.json (job=${record.job.jobId}): ${error instanceof Error ? error.message : String(error)}`);
       this.finishDnaJob(record, 'failed', 'INVALID_ADN');
+    }
+  }
+
+  /**
+   * 3: las ideas de un build normal. Si el agente las escribió bien se guardan;
+   * si no, se ignoran con un log — el build es del ADN, y un `IDEAS.json`
+   * ilegible no puede tirar abajo un borrador que sí salió.
+   */
+  private importIdeasIfPresent(record: DnaJobRecord): void {
+    const work = this.deps.repo.getWork(record.workId);
+    const file = nodePath.join(this.deps.files.workDir(work.brandId, work.id), DRAFTS_DIR, DNA_DRAFT_DIR, DNA_IDEAS_JSON);
+    try {
+      if (!nodeFs.existsSync(file)) return;
+      const ideas = requireBrandDnaIdeas(JSON.parse(nodeFs.readFileSync(file, 'utf8')));
+      this.deps.repo.saveDnaIdeas(work.brandId, ideas, this.clock());
+    } catch (error) {
+      this.deps.log?.(`[latte] ideas ignored (job=${record.job.jobId}): ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * 3: el build del modo `ideas` vive o muere con `IDEAS.json`. Misma vara
+   * estricta que el ADN: forma exacta, máximo 4 y con base.
+   */
+  private importIdeasResult(record: DnaJobRecord): void {
+    const work = this.deps.repo.getWork(record.workId);
+    const file = nodePath.join(this.deps.files.workDir(work.brandId, work.id), DRAFTS_DIR, DNA_DRAFT_DIR, DNA_IDEAS_JSON);
+    try {
+      const ideas = requireBrandDnaIdeas(JSON.parse(nodeFs.readFileSync(file, 'utf8')));
+      this.deps.repo.saveDnaIdeas(work.brandId, ideas, this.clock());
+      setDnaStep(record.job, 'compose', 'done', `${ideas.length} ideas guardadas`);
+      this.finishDnaJob(record, 'updated', null);
+    } catch (error) {
+      this.deps.log?.(`[latte] invalid IDEAS.json (job=${record.job.jobId}): ${error instanceof Error ? error.message : String(error)}`);
+      this.finishDnaJob(record, 'failed', 'INVALID_IDEAS');
     }
   }
 

@@ -59,6 +59,8 @@ const view = (patch: Partial<BrandDnaFields> | null, version = 2): BrandDnaView 
   approved: patch === null ? null : { version, approvedAt: '2026-09-20T10:00:00.000Z', fields: fields(patch) },
   changedSinceApproval: false,
   proposals: [],
+  ideas: [],
+  ideasUpdatedAt: null,
 });
 
 const work: Work = {

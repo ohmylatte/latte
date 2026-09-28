@@ -1,5 +1,5 @@
 import { composeBrandContext } from '../shared/brandContext';
-import type { AgentRole, Brand, BrandContextProposal, BrandContextRevision, BrandContextStatus, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput, OnboardingDraft, BrandDnaFields, BrandDnaProposal, BrandDnaBuildJob, BrandDnaView, BrandDnaBuildMode, BrandDnaBuildStepKey } from '../shared/contracts';
+import type { AgentRole, Brand, BrandContextProposal, BrandContextRevision, BrandContextStatus, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput, OnboardingDraft, BrandDnaFields, BrandDnaIdea, BrandDnaProposal, BrandDnaBuildJob, BrandDnaView, BrandDnaBuildMode, BrandDnaBuildStepKey } from '../shared/contracts';
 import { isOnboardingDraft, RUNTIME_GUIDE_URLS } from '../shared/contracts';
 import type { AccountRuntimeName, InstallFailureCode, Provider, RuntimeInstallJob, RuntimeInstallState, RuntimeLoginJob, RuntimeLoginState, RuntimeSetupEvent, RuntimeSetupInfo, RuntimeSetupJob } from '../shared/contracts';
 import { avatarFromSeed, parseAvatar, serializeAvatar } from '../shared/avatar';
@@ -214,13 +214,18 @@ export function enableRuntimeSetupPreviewDemo(scenario: RuntimeSetupPreviewScena
 // una secuencia simulada que la interfaz puede dibujar entera. En el
 // escritorio lo arma un agente leyendo fuentes reales.
 // ---------------------------------------------------------------------------
-type DnaStore = { draft: BrandDnaFields | null; approved: { version: number; approvedAt: string; fields: BrandDnaFields } | null; proposals: BrandDnaProposal[] };
+type DnaStore = { draft: BrandDnaFields | null; approved: { version: number; approvedAt: string; fields: BrandDnaFields } | null; proposals: BrandDnaProposal[]; ideas: BrandDnaIdea[]; ideasUpdatedAt: string | null };
 const dnaByBrand = new Map<string, DnaStore>();
 const dnaJobs = new Map<string, BrandDnaBuildJob>();
 /** Milisegundos entre pasos de la construcción simulada. Los tests lo bajan a 0. */
 let dnaStepMs = 700;
 export function setBrandDnaPreviewStepMs(ms: number): void { dnaStepMs = ms; }
 export function resetBrandDnaPreview(): void { dnaByBrand.clear(); dnaJobs.clear(); }
+const demoIdeas = (): BrandDnaIdea[] => ([
+  { id: 'idea-lanzamiento', title: 'Lanzamiento de la colección de otoño', why: 'La colección nueva todavía no tiene campaña.', workTypeId: 'campaign-new', basedOn: [{ kind: 'document', label: 'brief de primavera' }], createdAt: '2026-09-20' },
+  { id: 'idea-tono', title: 'Revisar el tono de tus últimos posts: 3 piezas usan «oferta»', why: 'El ADN marca «oferta» como palabra que la marca no usa.', workTypeId: 'copy-pieces', basedOn: [{ kind: 'identity', label: 'ADN v1' }, { kind: 'document', label: 'piezas de la semana' }], createdAt: '2026-09-20' },
+  { id: 'idea-temporada', title: 'Contenido de temporada: primavera', why: 'Hoy 20 de septiembre en Argentina.', workTypeId: 'content-calendar', basedOn: [{ kind: 'calendar', label: 'primavera' }], createdAt: '2026-09-20' },
+]);
 const demoDna = (): BrandDnaFields => ({
   tone: { value: { adjectives: ['Cálido', 'Preciso', 'Cercano'], example: 'Diseño que acompaña tu manera de vivir.' }, sources: [{ kind: 'context', label: 'contexto de marca' }], assumption: false },
   audience: { value: 'Personas que eligen menos objetos, con más intención.', sources: [{ kind: 'document', label: 'brief de primavera' }], assumption: false },
@@ -233,16 +238,18 @@ const demoDna = (): BrandDnaFields => ({
 });
 const dnaOf = (brandId: string): DnaStore => {
   let d = dnaByBrand.get(brandId);
-  if (!d) { d = { draft: null, approved: null, proposals: [] }; dnaByBrand.set(brandId, d); }
+  if (!d) { d = { draft: null, approved: null, proposals: [], ideas: [], ideasUpdatedAt: null }; dnaByBrand.set(brandId, d); }
   return d;
 };
 const dnaView = (brandId: string): BrandDnaView => {
   const d = dnaOf(brandId);
-  return { brandId, draft: d.draft, approved: d.approved, changedSinceApproval: Boolean(d.draft && (!d.approved || JSON.stringify(d.draft) !== JSON.stringify(d.approved.fields))), proposals: d.proposals };
+  return { brandId, draft: d.draft, approved: d.approved, changedSinceApproval: Boolean(d.draft && (!d.approved || JSON.stringify(d.draft) !== JSON.stringify(d.approved.fields))), proposals: d.proposals, ideas: d.ideas, ideasUpdatedAt: d.ideasUpdatedAt };
 };
+const savePreviewIdeas = (brandId: string): void => { const d = dnaOf(brandId); d.ideas = demoIdeas(); d.ideasUpdatedAt = now(); };
 const DNA_STEPS: Record<BrandDnaBuildMode, BrandDnaBuildStepKey[]> = {
   sources: ['web', 'instagram', 'files', 'compose'],
   existing: ['context', 'documents', 'decisions', 'memory', 'compose'],
+  ideas: ['compose'],
 };
 
 export const browserAPI: LatteAPI = {
@@ -366,7 +373,12 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
     const tickDna=()=>{const j=dnaJobs.get(job.jobId);if(!j||j.done)return;
       if(i>0)j.steps[i-1]={...j.steps[i-1]!,state:'done'};
       if(i<j.steps.length){j.steps[i]={...j.steps[i]!,state:'running'};i++;setTimeout(tickDna,dnaStepMs);return;}
-      j.done=true;j.outcome='proposed';dnaOf(brandId).draft=demoDna();};
+      j.done=true;
+      // Como en el escritorio: el agente deja las ideas con cada build; el modo
+      // sólo ideas guarda las ideas y no toca el borrador.
+      savePreviewIdeas(brandId);
+      if(mode==='ideas'){j.outcome='updated';return;}
+      j.outcome='proposed';dnaOf(brandId).draft=demoDna();};
     setTimeout(tickDna,dnaStepMs);
     return job;},
   readBrandDnaBuildJob:async(jobId)=>{const j=dnaJobs.get(jobId);if(!j)throw new Error('Construcción no encontrada');return {...j,steps:j.steps.map(s=>({...s}))};},

@@ -118,7 +118,7 @@ export function renderOutcomeContext(work: Work, resultExists: boolean | undefin
 }
 
 /** The funnel, in the order a person moves through it. Mirrors FunnelStage. */
-const FUNNEL_STAGES: readonly FunnelStage[] = ['discovery', 'consideration', 'conversion', 'retention'];
+export const FUNNEL_STAGES: readonly FunnelStage[] = ['discovery', 'consideration', 'conversion', 'retention'];
 
 /** How much of the working document is echoed into the instructions. */
 const DOCUMENT_EXCERPT_CHARS = 6_000;

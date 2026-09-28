@@ -22,8 +22,8 @@ const css = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8');
 
 /** El bloque que agrupa lo nuevo de esta entrega. */
 const BLOCK = '/* Entrega 4 · microinteracciones */';
-/** El último bloque de entrega agregado a la hoja. */
-const LAST_BLOCK = '/* ADN · interfaz */';
+/** El último bloque de entrega agregado a la hoja (las ideas del ADN, ronda 3). */
+const LAST_BLOCK = '/* ADN · ideas */';
 
 const GUARD = '@media (prefers-reduced-motion: reduce)';
 
@@ -53,7 +53,7 @@ describe('Entrega 4 — movimiento', () => {
     expect(at, 'falta el bloque comentado `/* Entrega 4 · microinteracciones */`').toBeGreaterThan(-1);
     expect(css.lastIndexOf(BLOCK)).toBe(at);
     const last = css.indexOf(LAST_BLOCK);
-    expect(last, 'falta el bloque `/* ADN · interfaz */`').toBeGreaterThan(at);
+    expect(last, 'falta el bloque `/* ADN · ideas */`').toBeGreaterThan(at);
     expect(css.lastIndexOf(LAST_BLOCK)).toBe(last);
     expect(css.length - last, 'el bloque del ADN no cierra la hoja').toBeLessThan(16_000);
   });
