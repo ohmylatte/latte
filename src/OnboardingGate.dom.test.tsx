@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { configure, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { App, VIEWS } from './App';
 import { I18nProvider } from './i18n';
-import { api } from './browser-api';
+import { api, resetBrandDnaPreview, setBrandDnaPreviewStepMs } from './browser-api';
 import type { ChatSession, OnboardingDraft, SaveOutcome } from '../shared/contracts';
 
 // Mounts the whole app, gate included. The library's 1s default is a race
@@ -132,6 +132,16 @@ function chooseDemoBrand() {
 
 const connectHeading = () => screen.findByRole('heading', { name: '¿Con qué cuenta trabajás?' });
 
+/**
+ * Conectar la IA → el paso nuevo "Traé tu marca" (F). El recorrido que estos
+ * tests prueban es el de SIEMPRE —el Resumen y el trabajo—, que sale de F por
+ * su enlace discreto "Empezar sin marca".
+ */
+const advanceFromConnect = async () => {
+  clickCard(/Explorar con un proyecto demo/);
+  fireEvent.click(await screen.findByRole('button', { name: /Empezar sin marca/ }));
+};
+
 /** A resumed draft parked on the summary step, as the walk can land there. */
 const summaryDraft = (brief: string, overrides: Partial<OnboardingDraft> = {}): OnboardingDraft => ({
   step: 'prepare',
@@ -161,6 +171,11 @@ describe('first-run onboarding gate', () => {
     state.draftReads = 0;
     state.holdRehydration = null;
     localStorage.clear();
+    // El build simulado del ADN pasa a ser inmediato y arranca de cero: el
+    // sondeo de la interfaz sigue siendo el de siempre (~1 s), sólo que con un
+    // motor que no tarda.
+    setBrandDnaPreviewStepMs(0);
+    resetBrandDnaPreview();
   });
 
   afterEach(() => { vi.restoreAllMocks(); });
@@ -299,7 +314,7 @@ describe('first-run onboarding gate', () => {
     fireEvent.change(screen.getByPlaceholderText('¿Qué querés lograr?'), { target: { value: 'Lanzar la cosecha 2026' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
     chooseDemoBrand();
-    clickCard(/Explorar con un proyecto demo/);
+    await advanceFromConnect();
     const enabled = await screen.findByRole('button', { name: /Empezar trabajo/ });
     await waitFor(() => expect((enabled as HTMLButtonElement).disabled).toBe(false));
     expect(screen.getByText('Audiencia: la propongo a partir de la marca.')).toBeDefined();
@@ -443,7 +458,7 @@ describe('first-run onboarding gate', () => {
     clickCard(/Empezar libremente/);
     await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
     chooseDemoBrand();
-    clickCard(/Explorar con un proyecto demo/);
+    await advanceFromConnect();
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
 
     await waitFor(() => expect(shell(container)).not.toBeNull());
@@ -467,7 +482,7 @@ describe('first-run onboarding gate', () => {
     clickCard(/Empezar libremente/);
     await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
     chooseDemoBrand();
-    clickCard(/Explorar con un proyecto demo/);
+    await advanceFromConnect();
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
 
     // The completion did not land, so the gate is still the only thing on screen.
@@ -495,7 +510,7 @@ describe('first-run onboarding gate', () => {
     clickCard(/Empezar libremente/);
     await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
     chooseDemoBrand();
-    clickCard(/Explorar con un proyecto demo/);
+    await advanceFromConnect();
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
 
     // `createWork` succeeded and `saveBrief` did not: the work EXISTS, so the
@@ -521,7 +536,7 @@ describe('first-run onboarding gate', () => {
     clickCard(/Empezar libremente/);
     await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
     chooseDemoBrand();
-    clickCard(/Explorar con un proyecto demo/);
+    await advanceFromConnect();
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
 
     await waitFor(() => expect(shell(container)).not.toBeNull());
@@ -542,7 +557,7 @@ describe('first-run onboarding gate', () => {
     // Ask to link a folder, then decline the confirmation.
     fireEvent.click(screen.getByRole('button', { name: /Vincular una carpeta/ }));
     chooseDemoBrand();
-    clickCard(/Explorar con un proyecto demo/);
+    await advanceFromConnect();
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
 
     await waitFor(() => expect(shell(container)).not.toBeNull());
@@ -567,7 +582,7 @@ describe('first-run onboarding gate', () => {
     await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
     fireEvent.click(screen.getByRole('button', { name: /Vincular una carpeta/ }));
     chooseDemoBrand();
-    clickCard(/Explorar con un proyecto demo/);
+    await advanceFromConnect();
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
 
     await waitFor(() => expect(shell(container)).not.toBeNull());
@@ -585,7 +600,7 @@ describe('first-run onboarding gate', () => {
     await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
     fireEvent.click(screen.getByRole('button', { name: /Vincular una carpeta/ }));
     chooseDemoBrand();
-    clickCard(/Explorar con un proyecto demo/);
+    await advanceFromConnect();
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
 
     // The human said yes and the link itself failed. The gate unmounts here, so
@@ -652,8 +667,76 @@ describe('first-run onboarding gate', () => {
     expect(screen.getByRole('button', { name: /Explorar con un proyecto demo/ }).classList.contains('primary')).toBe(false);
   });
 
+  /**
+   * ADN · F → G → Aprobar ADN → INICIO.
+   *
+   * El recorrido nuevo: después de "Conectá tu IA" se trae la marca, el motor
+   * arma la ficha y, al aprobarla, la persona aterriza en Inicio SIN ningún
+   * trabajo creado — el primero lo pide desde la caja de ahí, y "Pedí tu
+   * primer trabajo" sigue siendo un paso pendiente de la tarjeta.
+   */
+  it('F → G → Aprobar ADN → Inicio: aterriza en Inicio sin crear ningún trabajo', async () => {
+    const works = () => (JSON.parse(localStorage.getItem('latte-preview-v1') ?? '{}') as { works?: unknown[] }).works?.length ?? 0;
+    const { container } = mount();
+    await gateHeading();
+    clickCard(/Empezar libremente/);
+    await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
+    chooseDemoBrand();
+    await connectHeading();
+
+    // F · TRAE TU MARCA
+    clickCard(/Explorar con un proyecto demo/);
+    expect(await screen.findByRole('heading', { name: 'Traé tu marca' })).toBeDefined();
+    expect(screen.getByText('Latte arma su ADN con lo que ya tenés.')).toBeDefined();
+    // La marca elegida en el paso anterior es la que recibe el ADN.
+    expect(screen.getByText('Para Casa Oliva · Ejemplo')).toBeDefined();
+    // Es un paso de la barra, con su entrada propia.
+    expect(screen.getByLabelText('Paso 5 de 6')).toBeDefined();
+    // Sin ninguna fuente no hay ADN que armar: el CTA lo dice con su estado.
+    expect((screen.getByRole('button', { name: /Armar mi marca/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Elegí una fuente/)).toBeDefined();
+
+    fireEvent.change(screen.getByPlaceholderText('https://tuweb.com'), { target: { value: 'https://casoliva.com.ar' } });
+    expect((screen.getByRole('button', { name: /Armar mi marca/ }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: /Armar mi marca/ }));
+
+    // G · EL ADN DE TU MARCA
+    expect(await screen.findByRole('heading', { name: 'El ADN de tu marca' })).toBeDefined();
+    const approve = (await screen.findByRole('button', { name: /Aprobar ADN/ }, { timeout: 5_000 })) as HTMLButtonElement;
+    await waitFor(() => expect(approve.disabled).toBe(false));
+    // Los pasos del build se narran con PALABRA, no sólo con color.
+    const stepStates = [...container.querySelectorAll('.dna-step-state')];
+    expect(stepStates.length).toBeGreaterThan(1);
+    for (const state of stepStates) expect(state.textContent).toBeTruthy();
+    // La ficha, con sus bloques y la fuente de cada dato.
+    expect(container.querySelector('.dna-card')).not.toBeNull();
+    expect(screen.getByRole('heading', { name: 'Tono' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Audiencia' })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Corregir/ })).toBeDefined();
+    expect(container.querySelector('.dna-card .chip')?.textContent).toBe('Propuesta');
+
+    const before = works();
+    fireEvent.click(approve);
+
+    // INICIO
+    await waitFor(() => expect(shell(container)).not.toBeNull());
+    expect(container.querySelector('.home-view')).not.toBeNull();
+    expect(container.querySelector('.home-ask-title')).not.toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Esto es lo que entendí' })).toBeNull();
+    // Ningún trabajo se creó en el camino.
+    expect(works()).toBe(before);
+    // Y "Traé tu marca" quedó marcado con el dato real del ADN aprobado.
+    await waitFor(() => {
+      const first = container.querySelector('.first-steps .first-step');
+      expect(first).not.toBeNull();
+      expect(first!.getAttribute('data-done')).toBe('true');
+    });
+  });
+
   it('keeps the gate a pre-shell branch: no new workspace view was added', () => {
-    expect([...VIEWS]).toEqual(['home', 'resumen', 'trabajo', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'roster', 'identity', 'decisions', 'resultados']);
+    // `dna` no es del recorrido: es Marca → ADN, la vista de la marca para
+    // quien ya usa Latte. El guard real es la línea de abajo.
+    expect([...VIEWS]).toEqual(['home', 'resumen', 'trabajo', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'roster', 'identity', 'dna', 'decisions', 'resultados']);
     expect((VIEWS as readonly string[])).not.toContain('onboarding');
   });
 });

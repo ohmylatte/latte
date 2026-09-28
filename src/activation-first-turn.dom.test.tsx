@@ -58,10 +58,11 @@ const gateHeading = () => screen.findByRole('heading', { name: '¿En qué queré
 const shell = (container: HTMLElement) => container.querySelector('.app-shell');
 const clickCard = (title: RegExp) => fireEvent.click(screen.getByRole('button', { name: title }));
 
-/** El mismo recorrido que ya prueba `OnboardingGate.dom.test.tsx`: marca demo → conectar con el demo. */
+/** El mismo recorrido que ya prueba `OnboardingGate.dom.test.tsx`: marca demo → conectar con el demo → "Traé tu marca" → el Resumen de siempre. */
 async function chooseDemoBrandAndConnect() {
   fireEvent.click(screen.getByRole('button', { name: /Recorrer el demo/ }));
   clickCard(/Explorar con un proyecto demo/);
+  fireEvent.click(await screen.findByRole('button', { name: /Empezar sin marca/ }));
 }
 
 beforeEach(() => {

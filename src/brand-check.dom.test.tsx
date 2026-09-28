@@ -313,12 +313,14 @@ describe('5 · copy en los dos idiomas y CSS sólo con tokens', () => {
     }
   });
 
-  it('el CSS nuevo está al final, en su bloque, y habla sólo tokens', () => {
+  it('el CSS nuevo vive en su bloque, una sola vez, y habla sólo tokens', () => {
     const css = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8');
     const at = css.indexOf('/* ADN · chequeo de marca */');
     expect(at).toBeGreaterThan(-1);
-    const block = css.slice(at);
-    expect(block.indexOf('/* ADN', 1)).toBe(-1);
+    expect(css.indexOf('/* ADN · chequeo de marca */', at + 1)).toBe(-1);
+    // The block runs until the next delivery's block (the ADN interface, when it follows) or the end of the sheet.
+    const next = css.indexOf('/* ADN · interfaz */', at);
+    const block = next > at ? css.slice(at, next) : css.slice(at);
     expect(block).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     expect(block).not.toContain('--text-xs');
     expect(block).not.toMatch(/font-size:\s*(?!var\()/);
