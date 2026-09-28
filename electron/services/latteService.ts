@@ -86,6 +86,12 @@ import type {
   TeamMemberOptions,
   BrandMember,
   BrandIdentityExtractionResult,
+  BrandDnaBuildJob,
+  BrandDnaBuildMode,
+  BrandDnaField,
+  BrandDnaFields,
+  BrandDnaSourcesInput,
+  BrandDnaView,
   BrandIdentityView,
   UntrackedFile,
   Work,
@@ -763,6 +769,18 @@ export class LatteService implements BackendApi {
   async readWorkBrandContext(workId: string) {
     return this.branding.readWorkBrandContext(workId);
   }
+
+  // ADN de marca (Entrega 1B): contrato fijado; el motor lo implementa la rama del motor.
+  async readBrandDna(brandId: string): Promise<BrandDnaView> {
+    const brand = this.deps.repo.getBrand(requireId(brandId, 'brandId'));
+    return { brandId: brand.id, draft: null, approved: null, changedSinceApproval: false, proposals: [] };
+  }
+  async updateBrandDnaField(_brandId: string, _field: BrandDnaField, _value: BrandDnaFields[BrandDnaField]): Promise<BrandDnaView> { throw new UnavailableError('El ADN de marca todavía no está disponible'); }
+  async approveBrandDna(_brandId: string): Promise<BrandDnaView> { throw new UnavailableError('El ADN de marca todavía no está disponible'); }
+  async buildBrandDna(_brandId: string, _mode: BrandDnaBuildMode, _sources: BrandDnaSourcesInput | null): Promise<BrandDnaBuildJob> { throw new UnavailableError('El ADN de marca todavía no está disponible'); }
+  async readBrandDnaBuildJob(_jobId: string): Promise<BrandDnaBuildJob> { throw new UnavailableError('El ADN de marca todavía no está disponible'); }
+  async cancelBrandDnaBuild(_jobId: string): Promise<BrandDnaBuildJob> { throw new UnavailableError('El ADN de marca todavía no está disponible'); }
+  async resolveBrandDnaProposal(_brandId: string, _proposalId: string, _accept: boolean): Promise<BrandDnaView> { throw new UnavailableError('El ADN de marca todavía no está disponible'); }
 
   // Marca → Identidad (E4) ----------------------------------------------------
 

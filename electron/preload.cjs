@@ -34,6 +34,7 @@ const METHODS = [
   'setWorkBrandChoice',
   'readWorkBrandContext',
   'readBrandIdentity','addBrandIdentityFiles','removeBrandIdentityFile','approveBrandIdentity','revokeBrandIdentity','requestBrandIdentityExtraction',
+  'readBrandDna','updateBrandDnaField','approveBrandDna','buildBrandDna','readBrandDnaBuildJob','cancelBrandDnaBuild','resolveBrandDnaProposal',
   'listWorks',
   'createWork',
   'updateWork',

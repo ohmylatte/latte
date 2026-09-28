@@ -184,6 +184,96 @@ export interface BrandIdentityView {
   changedSinceApproval: boolean;
   revokedAt: string | null;
 }
+/**
+ * ADN DE MARCA (Latte 2.0 · Entrega 1B).
+ *
+ * La identidad ESTRUCTURADA de una marca: lo que viaja a cada trabajo, lo que
+ * el chequeo de marca compara y lo que aprende de las correcciones. Es un
+ * motor: arranca de cero con fuentes (web, Instagram, archivos) o se
+ * reconstruye con lo que la marca ya tiene (contexto, documentos aprobados,
+ * decisiones, memoria, identidad), y crece con propuestas que la persona
+ * aprueba. Cada dato dice de dónde salió; lo inferido sin fuente firme es un
+ * supuesto y se marca como tal. Nunca se inventa un dato.
+ */
+export type BrandDnaSourceKind = 'web' | 'instagram' | 'file' | 'context' | 'document' | 'decision' | 'memory' | 'identity' | 'correction' | 'human';
+export interface BrandDnaSource {
+  kind: BrandDnaSourceKind;
+  /** Lo que ve la persona: "web · home", "brief-2026.pdf p.2", "decisión del 12 sep". Nunca una ruta. */
+  label: string;
+}
+export interface BrandDnaEntry<T> {
+  value: T;
+  sources: BrandDnaSource[];
+  /** Inferido sin fuente firme: la ficha lo muestra como "Supuesto". */
+  assumption: boolean;
+}
+export interface BrandDnaColor { hex: string; name: string | null }
+export interface BrandDnaFields {
+  tone: BrandDnaEntry<{ adjectives: string[]; example: string | null }> | null;
+  audience: BrandDnaEntry<string> | null;
+  valueProp: BrandDnaEntry<string> | null;
+  /** Palabras y giros que la marca usa. */
+  wordsYes: BrandDnaEntry<string[]> | null;
+  /** Palabras que la marca no usa: el chequeo de marca las busca literal en cada pieza. */
+  wordsNo: BrandDnaEntry<string[]> | null;
+  /** Afirmaciones que la marca puede hacer, con su respaldo. */
+  claims: BrandDnaEntry<string[]> | null;
+  colors: BrandDnaEntry<BrandDnaColor[]> | null;
+  fonts: BrandDnaEntry<string[]> | null;
+}
+export type BrandDnaField = keyof BrandDnaFields;
+export const BRAND_DNA_FIELDS: readonly BrandDnaField[] = ['tone', 'audience', 'valueProp', 'wordsYes', 'wordsNo', 'claims', 'colors', 'fonts'];
+export interface BrandDnaView {
+  brandId: string;
+  /** El borrador que se edita y se aprueba. `null`: la marca todavía no tiene ADN. */
+  draft: BrandDnaFields | null;
+  /** La versión vigente: la que viaja a los trabajos y contra la que se chequea. */
+  approved: { version: number; approvedAt: string; fields: BrandDnaFields } | null;
+  changedSinceApproval: boolean;
+  /** Cambios que el motor aprendió (de correcciones o de trabajo aprobado) y esperan el sí de la persona. */
+  proposals: BrandDnaProposal[];
+}
+export interface BrandDnaProposal {
+  id: string;
+  field: BrandDnaField;
+  /** El valor que quedaría si se acepta (mismo tipo que el campo). */
+  next: BrandDnaFields[BrandDnaField];
+  /** Una frase: por qué lo propone. */
+  reason: string;
+  source: BrandDnaSource;
+  createdAt: string;
+}
+export type BrandDnaBuildMode = 'sources' | 'existing';
+export interface BrandDnaSourcesInput {
+  url: string | null;
+  instagram: string | null;
+  /** Archivos ya importados al borrador de identidad (`addBrandIdentityFiles`) que el agente tiene que leer. */
+  useIdentityFiles: boolean;
+}
+export type BrandDnaBuildStepKey = 'web' | 'instagram' | 'files' | 'context' | 'documents' | 'decisions' | 'memory' | 'compose';
+export interface BrandDnaBuildStep { key: BrandDnaBuildStepKey; state: 'pending' | 'running' | 'done' | 'skipped' | 'failed'; detail: string | null }
+export interface BrandDnaBuildJob {
+  jobId: string;
+  brandId: string;
+  mode: BrandDnaBuildMode;
+  steps: BrandDnaBuildStep[];
+  done: boolean;
+  /** `proposed`: el borrador quedó listo para revisar. */
+  outcome: 'proposed' | 'failed' | 'cancelled' | null;
+  /** Código del motor cuando falló (`NOT_INSTALLED`, `UNAVAILABLE`, ...). */
+  reason: string | null;
+}
+/** Resultado del chequeo de marca de una pieza contra el ADN aprobado. */
+export type BrandCheckKind = 'wordsNo' | 'wordsYes' | 'claims' | 'tone' | 'identity';
+export interface BrandCheckFinding {
+  kind: BrandCheckKind;
+  status: 'ok' | 'warn' | 'unknown';
+  /** Para `wordsNo`: cada palabra encontrada y cuántas veces. */
+  hits?: { word: string; count: number }[];
+  /** Una frase corta, ya en el idioma de la persona (la arma el renderer con i18n). */
+  note?: string | null;
+}
+export interface BrandCheckResult { dnaVersion: number | null; findings: BrandCheckFinding[]; warnings: number }
 export interface BrandIdentityExtractionResult {
   /** `proposed`: una propuesta de una tarea que la persona aprueba en el chat del coordinador. */
   outcome: 'proposed' | 'dispatched' | 'pending_approval' | 'not_dispatched' | 'blocked';
@@ -1634,6 +1724,16 @@ export interface LatteAPI {
   approveBrandIdentity(brandId: string): Promise<BrandIdentityView>;
   revokeBrandIdentity(brandId: string): Promise<BrandIdentityView>;
   requestBrandIdentityExtraction(brandId: string): Promise<BrandIdentityExtractionResult>;
+  /** ADN de marca (Entrega 1B). */
+  readBrandDna(brandId: string): Promise<BrandDnaView>;
+  /** La persona edita un campo del borrador: su fuente pasa a `human` y deja de ser supuesto. */
+  updateBrandDnaField(brandId: string, field: BrandDnaField, value: BrandDnaFields[BrandDnaField]): Promise<BrandDnaView>;
+  approveBrandDna(brandId: string): Promise<BrandDnaView>;
+  /** Arranca el motor: de cero con fuentes, o reconstruyendo con lo que la marca ya tiene. Un solo build por marca a la vez. */
+  buildBrandDna(brandId: string, mode: BrandDnaBuildMode, sources: BrandDnaSourcesInput | null): Promise<BrandDnaBuildJob>;
+  readBrandDnaBuildJob(jobId: string): Promise<BrandDnaBuildJob>;
+  cancelBrandDnaBuild(jobId: string): Promise<BrandDnaBuildJob>;
+  resolveBrandDnaProposal(brandId: string, proposalId: string, accept: boolean): Promise<BrandDnaView>;
   /** Installation feature switches. Default off; no secrets. */
   featureFlags(): Promise<FeatureFlags>;
   listWorks(brandId: string): Promise<Work[]>;
