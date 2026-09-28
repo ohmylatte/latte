@@ -917,6 +917,7 @@ export class LatteService implements BackendApi {
         url: input.url,
         instagram: input.instagram,
         prepared: this.dnaPreparedSources(workDir),
+        language: locale,
       });
       const result = await this.coordination.requestPersonTask(work.id, { roleId: REVIEWER_ROLE_ID, title, spec }, coordinator);
       record.taskId = result.taskId;

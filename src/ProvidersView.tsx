@@ -176,7 +176,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
 
 
   if (!isDesktop) {
-    return <div className="document-scroll"><div className="document-kicker">PROVEEDORES</div><h1>Tus modelos,<br />tus credenciales.</h1><p className="intro">{t('ui.auto.223')}</p></div>;
+    return <div className="document-scroll"><div className="document-kicker">{t('providers.kicker')}</div><h1>{t('providers.hero.1')}<br />{t('providers.hero.2')}</h1><p className="intro">{t('ui.auto.223')}</p></div>;
   }
 
   const connected = providers?.filter(p => p.connected) ?? [];
@@ -259,7 +259,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
                 <button disabled={busy || !chosen || (isPrimary && primary?.model === `${p.id}/${chosen}`)} onClick={() => makePrimary({ runtime: 'opencode', model: `${p.id}/${chosen}`, accountId: null })}><Star size={13} />{t('ui.auto.384')}</button>
               </div>}
             </div>
-            <div className="provider-actions"><button disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.389', { p0: p.name }))) void run(() => api.disconnectProvider(p.id), `${p.name} desconectado`); }} title="Quitar credenciales del runtime"><Unplug size={14} />{t('ui.auto.251')}</button></div>
+            <div className="provider-actions"><button disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.389', { p0: p.name }))) void run(() => api.disconnectProvider(p.id), t('providers.disconnected', { name: p.name })); }} title={t('providers.removeCredentials')}><Unplug size={14} />{t('ui.auto.251')}</button></div>
           </div>;
         })}
       </div>

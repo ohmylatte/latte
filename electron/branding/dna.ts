@@ -276,6 +276,8 @@ export interface DnaBuildSpecInput {
   instagram: string | null;
   /** Rutas relativas al trabajo que Latte ya dejó en `borradores/adn/fuentes/`. */
   prepared: readonly string[];
+  /** El idioma del contenido del trabajo: el ADN se escribe en ése, porque el chequeo de marca compara palabras literales. */
+  language: 'es-AR' | 'en-US';
 }
 
 /**
@@ -307,6 +309,7 @@ export function dnaBuildSpec(input: DnaBuildSpecInput): string {
     '- `assumption` is true ONLY when you inferred the value without a firm source. Never invent a datum: leave the key null when the sources do not support it.',
     '- Shapes: tone is {"adjectives": [...], "example": ...}; colours are {"hex": "#rrggbb", "name": ...}; audience, valueProp are strings; wordsYes, wordsNo, claims, fonts are arrays of strings.',
     '- In `wordsNo` only what the brand explicitly avoids; in `claims` only what the sources back.',
+    `- Write every human-readable value (tone adjectives and example, audience, valueProp, wordsYes, wordsNo, claims, font names as written, source labels) in ${input.language === 'en-US' ? 'English (United States)' : 'Spanish (Argentina)'}, the language this brand's content is written in. Words in wordsYes/wordsNo are the literal words as they appear in that language: Latte matches them word by word. Keep JSON keys and \`kind\` values exactly as specified.`,
     '',
     `Also write ./${DNA_STEPS_RELATIVE} reporting every source step you attempted: {"web": {"state": "done|failed|skipped", "detail": "..."}, "instagram": {...}}. A step you could not read is "failed" with the reason; saying so is the point — guessing is not.`,
     '',

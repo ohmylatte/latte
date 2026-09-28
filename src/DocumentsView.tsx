@@ -527,7 +527,7 @@ export function NewDocumentDialog({ documents, busy, onCancel, onCreate }: {
       {canDerive.length > 0 && <>
         <label className="field-label" htmlFor="doc-base">{t('ui.auto.182')}</label>
         <select id="doc-base" value={base} onChange={e => setBase(e.target.value)}>
-          <option value="">No, empieza solo</option>
+          <option value="">{t('documents.base.none')}</option>
           {documents.map(d => <option key={d.id} value={d.id}>{KIND_LABEL[d.kind]} · {d.title}</option>)}
         </select>
         <p className="footnote">{t('ui.auto.183')}</p>
