@@ -1,4 +1,4 @@
-import { MessageSquare, RotateCcw, Save, Trash2, X, Check } from 'lucide-react';
+import { Archive, MessageSquare, RotateCcw, Save, Trash2, X, Check } from 'lucide-react';
 import type { Brand, BrandContextProposal, Work } from '../shared/contracts';
 import { translate as t } from './i18n';
 import { CONTEXT_STATE_KEYS, REVISION_SOURCE_KEYS, decidedReasonKey, deriveContextView, isCurrentRevision, revisionList, revisionPreview, type ContextStatusView } from './context-view';
@@ -43,6 +43,8 @@ export interface ContextViewProps {
   onReload?: () => void;
   /** Keeps the draft and writes it against the value that is on disk now. */
   onOverride?: () => void;
+  /** Opens the "¿Archivar {marca}?" dialog. A quiet action at the end of the brand's own page. */
+  onArchive?: () => void;
 }
 
 export function ContextView(props: ContextViewProps) {
@@ -147,5 +149,9 @@ export function ContextView(props: ContextViewProps) {
           </li>)}</ul>}
       {history.hidden > 0 && <p className="footnote">{t('context.history.more', { count: history.hidden })}</p>}
     </section>}
+
+    {props.onArchive && <div className="context-archive">
+      <button type="button" className="subtle" disabled={props.busy} onClick={props.onArchive}><Archive size={14} aria-hidden="true" />{t('brand.archive')}</button>
+    </div>}
   </div>;
 }

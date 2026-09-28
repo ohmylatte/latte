@@ -23,6 +23,8 @@ import { UpdateBanner } from './UpdateBanner';
 import { ALL_BRAND_SCOPE, inKnowledgeScope, selectWorkBrief, workBrief, workTitles, type KnowledgeScope } from './brand-knowledge';
 import { KnowledgeScopeFilter } from './KnowledgeScope';
 import { ContextView } from './ContextView';
+import { BrandMenu } from './BrandMenu';
+import { ConfirmDialog } from './ConfirmDialog';
 import { BrandTeamView } from './BrandTeamView';
 import { HomeView } from './HomeView';
 import { ResumenView } from './ResumenView';
@@ -286,6 +288,7 @@ export function App() {
   const [brands, setBrands] = useState<Brand[]>([]), [brand, setBrand] = useState<Brand | null>(null);
   const [archivedBrands, setArchivedBrands] = useState<Brand[]>([]);
   const [showArchived, setShowArchived] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<Brand | null>(null);
   const [works, setWorks] = useState<Work[]>([]), [work, setWork] = useState<Work | null>(null);
   const [context, setContext] = useState('');
   // A returning user lands on Inicio; a just-onboarded one is landed by
@@ -1239,23 +1242,36 @@ export function App() {
     setArchivedBrands(archived);
     return { list, archived };
   };
-  const archiveSelectedBrand = async () => {
-    if (!brand) return;
-    if (!window.confirm(t('brand.archiveConfirm', { name: brand.name }))) return;
-    await api.archiveBrand(brand.id);
+  /**
+   * "Archivar marca" asks first, in the app's own dialog. The unsaved-changes
+   * guard runs before the question, so leaving an edit is decided up front.
+   */
+  const askArchiveBrand = () => { if (brand && guard()) setArchiveTarget(brand); };
+  /**
+   * After archiving the brand in view, the next active brand opens on Inicio;
+   * with none left, Inicio shows its "add a brand" empty state.
+   */
+  const confirmArchiveBrand = () => run(async () => {
+    const target = archiveTarget;
+    if (!target) return;
+    await api.archiveBrand(target.id);
+    setArchiveTarget(null);
     const { list } = await reloadBrandLists();
-    const next = list[0] ?? null;
-    setBrand(next);
-    setContext(next?.context ?? '');
-    setWork(null);
-    setWorks([]);
-    setView('brief');
-    setNotice(t('brand.archived'));
-  };
+    if (brand?.id === target.id) {
+      const next = list[0] ?? null;
+      setBrand(next);
+      setContext(next?.context ?? '');
+      setWork(null);
+      setWorks([]);
+      setMemory(''); setMemoryAvailable(false); memoryGeneration.current++;
+      setView('home');
+    }
+    setNotice(t('brand.archived', { name: target.name }));
+  });
   const restoreArchivedBrand = async (id: string) => {
     const restored = await api.restoreBrand(id);
     const { list } = await reloadBrandLists();
-    setNotice(t('brand.restored'));
+    setNotice(t('brand.restored', { name: restored.name }));
     if (!brand) {
       const next = list.find(x => x.id === restored.id) ?? list[0] ?? null;
       if (next) { setBrand(next); setContext(next.context); }
@@ -1538,11 +1554,11 @@ export function App() {
     <AvatarSprite />
     <aside className="sidebar">
       <div className="wordmark"><span className="logo-mark" aria-hidden="true" />Latte<button className="rail-toggle" aria-expanded={!railed} aria-label={railed ? t('ui.auto.029') : t('ui.auto.030')} title={railed ? t('ui.auto.029') : t('ui.auto.030')} onClick={() => setRailed(v => !v)}>{railed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button></div>
-      <div className="brand-picker"><select aria-label={t('ui.auto.031')} value={brand?.id ?? ''} onChange={e => { const b = brands.find(b => b.id === e.target.value); if (b) selectBrand(b); }}>{!brands.length && <option value="">{t('ui.auto.032')}</option>}{brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select><ChevronDown size={15} /></div>
+      <div className="brand-picker-row"><div className="brand-picker"><select aria-label={t('ui.auto.031')} value={brand?.id ?? ''} onChange={e => { const b = brands.find(b => b.id === e.target.value); if (b) selectBrand(b); }}>{!brands.length && <option value="">{t('ui.auto.032')}</option>}{brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select><ChevronDown size={15} /></div>{brand && <BrandMenu brandName={brand.name} disabled={busy || transitioning} onArchive={askArchiveBrand} />}</div>
       <ActiveTeamsStrip runs={coordination.activeRuns} onOpen={openActiveRun} onOpenHome={() => setView('home')} />
       <button className="subtle sidebar-add" disabled={transitioning} onClick={() => { setName(''); setModal('brand'); }}><Plus size={14} />  {t('ui.auto.033')}</button>
       <button type="button" className="subtle sidebar-add" onClick={() => setShowArchived(v => !v)} aria-expanded={showArchived}><Archive size={14} />{t('brand.archivedToggle')}{archivedBrands.length ? ` (${archivedBrands.length})` : ''}</button>
-      {showArchived && <div className="archived-brands">{archivedBrands.length === 0 ? <p className="sidebar-hint">{t('brand.noneArchived')}</p> : archivedBrands.map(b => <div key={b.id} className="archived-brand-row"><span title={b.name}>{b.name}</span><button type="button" className="subtle" disabled={busy} onClick={() => run(() => restoreArchivedBrand(b.id))}>{t('brand.restore')}</button></div>)}</div>}
+      {showArchived && <div className="archived-brands">{archivedBrands.length === 0 ? <p className="sidebar-hint">{t('brand.noneArchived')}</p> : archivedBrands.map(b => <div key={b.id} className="archived-brand-row"><span title={b.name}>{b.name}</span><button type="button" className="subtle" disabled={busy} aria-label={t('brand.restoreNamed', { name: b.name })} onClick={() => run(() => restoreArchivedBrand(b.id))}>{t('brand.restore')}</button></div>)}</div>}
       <nav><button type="button" title={t('home.nav')} className={view === 'home' ? 'nav-active' : ''} onClick={() => setView('home')}><Home size={18} />{t('home.nav')}</button></nav>
       <div className="nav-label">{t('ui.auto.034')}</div>
       <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button><button disabled={!brand} title={t('roster.nav')} className={view === 'roster' ? 'nav-active' : ''} onClick={() => setView('roster')}><Users size={18} />{t('roster.nav')}</button></nav>
@@ -1586,6 +1602,7 @@ export function App() {
         conflict={contextConflict}
         onReload={() => void reloadContext()}
         onOverride={() => void overrideContext()}
+        onArchive={askArchiveBrand}
       />}
       {view === 'roster' && brand && <BrandTeamView brandName={brand.name} roster={roster} work={work} busy={busy || startingChat}
         onCallUp={isDesktop ? (id) => void callUpMember(id) : undefined}
@@ -1617,6 +1634,7 @@ export function App() {
       </details>
     </aside>
     <footer className="statusbar"><span><Circle size={11} />{isDesktop ? t('ui.auto.354', { p0: activeChats, p1: activeTerminals }) : t('ui.auto.074')}</span><span>{busy ? t('ui.auto.355') : dirty || contextDirty ? t('ui.auto.075') : t('app.allSaved')}<Check size={13} /></span>{appInfo && <span>Latte <span className="status-version">{appInfo.version}</span></span>}</footer>
+    {archiveTarget && <ConfirmDialog titleId="archive-brand-title" title={t('brand.archiveTitle', { name: archiveTarget.name })} body={t('brand.archiveConfirm')} confirmLabel={t('brand.archiveAction')} busy={busy} onConfirm={() => void confirmArchiveBrand()} onCancel={() => setArchiveTarget(null)} />}
     {modal === 'brand' && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setModal(null); }}><section ref={createModalRef} role="dialog" aria-modal="true" aria-labelledby="dialog-title" className="modal"><div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="dialog-title">{t('ui.auto.077')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setModal(null)}><X size={20} /></button></div><div className="modal-body"><form onSubmit={e => { e.preventDefault(); void create(); }}><label className="field-label" htmlFor="new-name">{t('ui.auto.079')}</label><input autoFocus id="new-name" maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder={t('brand.namePlaceholder')} /><p className="footnote">{t('ui.auto.082')}</p><button className="primary" disabled={!name.trim() || busy}>{t('ui.auto.083')} {t('ui.auto.084')}<ArrowUpRight size={16} /></button></form></div></section></div>}
     {/* ENTREGA 1A (Brief 01, tarea 3): "Nuevo trabajo" abre el mismo catálogo
         que el recorrido inicial (intención → preguntas adaptativas → brief),
