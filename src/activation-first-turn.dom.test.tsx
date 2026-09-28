@@ -60,8 +60,7 @@ const clickCard = (title: RegExp) => fireEvent.click(screen.getByRole('button', 
 
 /** El mismo recorrido que ya prueba `OnboardingGate.dom.test.tsx`: marca demo → conectar con el demo. */
 async function chooseDemoBrandAndConnect() {
-  const section = screen.getByRole('heading', { name: 'Explorar con el proyecto demo' }).closest('section') as HTMLElement;
-  fireEvent.click(section.querySelector('button') as HTMLButtonElement);
+  fireEvent.click(screen.getByRole('button', { name: /Recorrer el demo/ }));
   clickCard(/Explorar con un proyecto demo/);
 }
 

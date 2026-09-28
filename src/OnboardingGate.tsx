@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Folder, FolderOpen, Plus, Settings2, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, ChevronDown, FolderOpen, Plus, Settings2, Sparkles, X } from 'lucide-react';
 import { Loading } from './brand-marks';
 import type { AgentRole, Brand, ChatRuntimeStatus, OnboardingDraft, PrimaryAgent } from '../shared/contracts';
 import { useI18n } from './i18n';
@@ -12,13 +12,13 @@ import { confirmFolderLink } from './folder-link';
 import {
   FREE_FORM_WORK_TYPE,
   findWorkType,
-  intentGroups,
   recommendRole,
-  workTypesForIntent,
   type Answer,
   type WorkType,
 } from './work-catalog';
+import { WorkCatalogBlocks } from './WorkCatalogBlocks';
 import {
+  brandChoices,
   completeOnboarding,
   declareAssumptions,
   initialState,
@@ -31,10 +31,6 @@ import {
 
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const STEP_ORDER: OnboardingStep[] = ['intent', 'context', 'brand', 'connect', 'prepare'];
-
-function isDemoBrand(b: Brand): boolean {
-  return b.id === 'demo' || b.id === 'brd_demo_casa_oliva' || /\bdemo\b/i.test(b.name);
-}
 
 export interface OnboardingResult {
   workId: string;
@@ -102,6 +98,14 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
    * a correction still reaches the created work's brief.
    */
   const [editingBrief, setEditingBrief] = useState(false);
+  /**
+   * QA1 · B: the brand step's disclosure. `create` shows the name form (a clean
+   * install shows it from the start), `others` shows the rest of the person's
+   * brands. `justCreated` is the brand this walk created: it stays on the step
+   * with its optional context field until "Continuar".
+   */
+  const [brandPanel, setBrandPanel] = useState<'none' | 'create' | 'others'>('none');
+  const [justCreatedId, setJustCreatedId] = useState<string | null>(null);
 
   useEffect(() => {
     void api.listBrands().then(setBrands).catch((e) => setError(displayError(e)));
@@ -147,8 +151,11 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
   }, [state.step]);
 
   const workType = state.workTypeId ? findWorkType(state.workTypeId) : null;
-  const demoBrand = brands.find(isDemoBrand) ?? null;
+  const choices = brandChoices(brands, state.usedDemo ? null : state.brandId);
+  const demoBrand = choices.demo;
   const selectedBrand = brands.find((b) => b.id === state.brandId) ?? null;
+  const justCreated = justCreatedId ? brands.find((b) => b.id === justCreatedId) ?? null : null;
+  const cleanInstall = choices.userBrands.length === 0;
 
   const selectWorkType = (w: WorkType) => {
     setError('');
@@ -202,6 +209,8 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
       const brand = await api.createBrand(brandName.trim());
       setBrands((prev) => [...prev, brand]);
       setBrandName('');
+      setJustCreatedId(brand.id);
+      setBrandPanel('none');
       // Stay on the brand step on purpose: a brand created seconds ago has no
       // context, and the optional field below is where it can arrive before
       // the first agent conversation has to ask for it.
@@ -362,7 +371,27 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
   const missingRequiredLabels = missingRequired.map((q) => t(q.labelKey)).join(', ');
   // The optional field is for a brand this walk just created: it has no context
   // yet, and this is the only moment the human is already thinking about it.
-  const showBrandContext = state.step === 'brand' && Boolean(selectedBrand) && selectedBrand!.context.trim() === '';
+  const showBrandContext = state.step === 'brand' && Boolean(justCreated) && justCreated!.id === state.brandId && justCreated!.context.trim() === '';
+  const createForm = (
+    <form className="onboarding-brand-create" onSubmit={(e) => { e.preventDefault(); void createBrand(); }}>
+      <input aria-label={t('onboarding.brand.createName')} value={brandName} onChange={(e) => setBrandName(e.target.value)} placeholder={t('onboarding.brand.createName')} autoFocus={!cleanInstall} />
+      <button className="primary" disabled={!brandName.trim() || busy}>{busy ? <Loading size={16} /> : <Plus size={15} aria-hidden="true" />}{t('onboarding.brand.createMine')}</button>
+    </form>
+  );
+  const folderToggle = (
+    <button
+      type="button"
+      className="subtle onboarding-folder-toggle"
+      aria-pressed={state.linkFolderRequested}
+      title={isDesktop ? undefined : t('onboarding.brand.linkFolderWebNote')}
+      onClick={() => setState((prev) => ({ ...prev, linkFolderRequested: !prev.linkFolderRequested }))}
+    >
+      {state.linkFolderRequested ? <Check size={14} aria-hidden="true" /> : <FolderOpen size={14} aria-hidden="true" />}{t('onboarding.brand.linkFolder')}
+    </button>
+  );
+  const demoLink = demoBrand && (
+    <button type="button" className="subtle onboarding-demo-link" onClick={() => chooseBrand(demoBrand, true)}><Sparkles size={14} aria-hidden="true" />{t('onboarding.brand.tourDemo')}</button>
+  );
 
   return (
     <div className="onboarding-shell">
@@ -397,38 +426,16 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
           {state.step === 'intent' && (
             <>
               <h1>{t('onboarding.title')}</h1>
-              <p className="intro">{t('onboarding.subtitle')}</p>
-              <div className="onboarding-groups">
-                {intentGroups.map((group) => (
-                  <section className="onboarding-group" key={group.id}>
-                    <h2>{t(group.nameKey)}</h2>
-                    <div className="onboarding-cards">
-                      {workTypesForIntent(group.id).map((w) => (
-                        <button className="onboarding-card" key={w.id} onClick={() => selectWorkType(w)}>
-                          <strong>{t(w.titleKey)}</strong>
-                          <small>{t(w.descriptionKey)}</small>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                ))}
-                <section className="onboarding-group">
-                  <h2>{t('onboarding.step.context')}</h2>
-                  <div className="onboarding-cards">
-                    <button className="onboarding-card" onClick={() => selectWorkType(FREE_FORM_WORK_TYPE)}>
-                      <strong>{t(FREE_FORM_WORK_TYPE.titleKey)}</strong>
-                      <small>{t(FREE_FORM_WORK_TYPE.descriptionKey)}</small>
-                    </button>
-                  </div>
-                </section>
-              </div>
+              <WorkCatalogBlocks onSelect={selectWorkType} disabled={busy} />
+              <button type="button" className="subtle catalog-free" title={t(FREE_FORM_WORK_TYPE.descriptionKey)} onClick={() => selectWorkType(FREE_FORM_WORK_TYPE)}>
+                {t(FREE_FORM_WORK_TYPE.titleKey)}<ArrowRight size={14} aria-hidden="true" />
+              </button>
             </>
           )}
 
           {state.step === 'context' && workType && (
             <>
               <h1>{t(workType.titleKey)}</h1>
-              <p className="intro">{t(workType.descriptionKey)}</p>
               {workType.questions.map((q) => (
                 <div className="onboarding-question" key={q.id}>
                   <label className="field-label">
@@ -468,66 +475,60 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
           {state.step === 'brand' && (
             <>
               <h1>{t('onboarding.brand.title')}</h1>
-              <p className="intro">{t('onboarding.brand.folderNote')}</p>
-              <div className="onboarding-groups">
-                {brands.length > 0 && (
-                  <section className="onboarding-group">
-                    <h2>{t('onboarding.brand.existing')}</h2>
-                    <div className="onboarding-cards">
-                      {brands.map((b) => (
-                        <button className={'onboarding-card' + (state.brandId === b.id ? ' selected-option' : '')} key={b.id} onClick={() => chooseBrand(b)}>
-                          <strong><Folder size={14} />{b.name}</strong>
-                          <small>{isDemoBrand(b) ? t('onboarding.brand.demo') : b.context || ''}</small>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                )}
-                <section className="onboarding-group onboarding-group-wide">
-                  <h2>{t('onboarding.brand.create')}</h2>
-                  <div className="onboarding-footer" style={{ marginTop: 0 }}>
-                    <input value={brandName} onChange={(e) => setBrandName(e.target.value)} placeholder={t('onboarding.brand.createName')} style={{ flex: 1 }} />
-                    <button className="primary" disabled={!brandName.trim() || busy} onClick={() => void createBrand()}>{busy ? <Loading size={16} /> : <Plus size={15} />}{t('onboarding.continue')}</button>
-                  </div>
-                </section>
-                {showBrandContext && (
-                  <section className="onboarding-group onboarding-group-wide">
-                    <h2>{t('onboarding.brand.context')}</h2>
-                    <div className="onboarding-context-field">
-                      <label className="field-label" htmlFor="onboarding-brand-context">{t('onboarding.brand.context')}</label>
-                      <textarea id="onboarding-brand-context" value={brandContext} onChange={(e) => setBrandContext(e.target.value)} />
-                      <small>{t('onboarding.brand.contextNote')}</small>
-                    </div>
-                  </section>
-                )}
-                <section className="onboarding-group">
-                  <h2>{t('onboarding.brand.demo')}</h2>
-                  <div className="onboarding-cards">
-                    {demoBrand ? (
-                      <button className="onboarding-card" onClick={() => chooseBrand(demoBrand, true)}>
-                        <strong><Sparkles size={14} />{demoBrand.name}</strong>
-                        <small>{t('onboarding.brand.folderNote')}</small>
+              {justCreated ? (
+                // A brand this walk just created: confirm it, offer its optional
+                // context, and let "Continuar" carry both to the next step.
+                <div className="onboarding-brand-created">
+                  <strong><Check size={16} aria-hidden="true" />{justCreated.name}</strong>
+                  <button type="button" className="subtle" onClick={() => { setJustCreatedId(null); setBrandContext(''); }}>{t('onboarding.brand.change')}</button>
+                </div>
+              ) : cleanInstall ? (
+                // Clean install: the demo is never "an existing brand". Two ways in.
+                <div className="onboarding-brand-choices">
+                  {createForm}
+                  {demoLink}
+                </div>
+              ) : (
+                <div className="onboarding-brand-choices">
+                  {choices.primary && (
+                    <button type="button" className="primary onboarding-brand-primary" onClick={() => chooseBrand(choices.primary!)}>
+                      {t('onboarding.brand.continueWith', { name: choices.primary.name })}<ArrowRight size={15} aria-hidden="true" />
+                    </button>
+                  )}
+                  <div className="onboarding-brand-secondary">
+                    {choices.others.length > 0 && (
+                      <button type="button" aria-expanded={brandPanel === 'others'} onClick={() => setBrandPanel((v) => (v === 'others' ? 'none' : 'others'))}>
+                        {t('onboarding.brand.other')}<ChevronDown size={14} aria-hidden="true" />
                       </button>
-                    ) : (
-                      <button className="onboarding-card" disabled><strong>{t('onboarding.brand.demo')}</strong><small>{t('onboarding.connect.unavailable')}</small></button>
                     )}
+                    <button type="button" aria-expanded={brandPanel === 'create'} onClick={() => setBrandPanel((v) => (v === 'create' ? 'none' : 'create'))}>
+                      <Plus size={14} aria-hidden="true" />{t('onboarding.brand.createAnother')}
+                    </button>
                   </div>
-                </section>
-                <section className="onboarding-group">
-                  <h2>{t('onboarding.brand.linkFolder')}</h2>
-                  <button
-                    className={'onboarding-card' + (state.linkFolderRequested ? ' selected-option' : '')}
-                    onClick={() => setState((prev) => ({ ...prev, linkFolderRequested: !prev.linkFolderRequested }))}
-                  >
-                    <strong><FolderOpen size={14} />{t('onboarding.brand.linkFolder')}</strong>
-                    <small>{state.linkFolderRequested ? t('onboarding.brand.linkFolderOn') : (isDesktop ? t('onboarding.brand.linkFolderNote') : t('onboarding.brand.linkFolderWebNote'))}</small>
-                  </button>
-                </section>
-              </div>
+                  {brandPanel === 'others' && (
+                    <ul className="onboarding-brand-list">
+                      {choices.others.map((b) => (
+                        <li key={b.id}><button type="button" className="catalog-row" onClick={() => chooseBrand(b)}><span>{b.name}</span></button></li>
+                      ))}
+                    </ul>
+                  )}
+                  {brandPanel === 'create' && createForm}
+                  {demoLink}
+                </div>
+              )}
+              {showBrandContext && (
+                <div className="onboarding-context-field">
+                  <label className="field-label" htmlFor="onboarding-brand-context">{t('onboarding.brand.context')}</label>
+                  <textarea id="onboarding-brand-context" value={brandContext} onChange={(e) => setBrandContext(e.target.value)} />
+                  <small>{t('onboarding.brand.contextNote')}</small>
+                </div>
+              )}
+              {folderToggle}
+              {state.linkFolderRequested && <p className="onboarding-note">{isDesktop ? t('onboarding.brand.linkFolderOn') : t('onboarding.brand.linkFolderWebNote')}</p>}
               <div className="onboarding-footer">
                 <button onClick={goBack}><ArrowLeft size={15} />{t('onboarding.back')}</button>
                 <span className="spacer" />
-                <button className="primary" disabled={!selectedBrand || busy} onClick={() => void continueFromBrand()}>{busy ? <Loading size={16} /> : <ArrowRight size={15} />}{t('onboarding.continue')}</button>
+                {justCreated && <button className="primary" disabled={!selectedBrand || busy} onClick={() => void continueFromBrand()}>{busy ? <Loading size={16} /> : <ArrowRight size={15} />}{t('onboarding.continue')}</button>}
               </div>
             </>
           )}
@@ -536,9 +537,8 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
             <>
               <div className="onboarding-connect-head">
                 <h1>{t('onboarding.connect.title')}</h1>
-                <button className="subtle" disabled={busy} onClick={advance}><Sparkles size={14} />{t('onboarding.connect.demo')}</button>
+                <button className="subtle" disabled={busy} onClick={advance}><Sparkles size={14} aria-hidden="true" />{t('onboarding.connect.demo')}</button>
               </div>
-              <p className="intro">{t('onboarding.connect.demoAvailable')}</p>
               <ConnectAI showHeader={false} onConnected={advance} onError={setError} />
               <details className="onboarding-details">
                 <summary>{t('onboarding.advanced')}</summary>

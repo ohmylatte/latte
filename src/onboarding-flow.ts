@@ -1,5 +1,5 @@
 import type { MessageKey } from './i18n';
-import type { OnboardingDraft, OnboardingStep } from '../shared/contracts';
+import type { Brand, OnboardingDraft, OnboardingStep } from '../shared/contracts';
 import { findWorkType, isAnswered, type Answer, type OnboardingQuestion, type WorkType } from './work-catalog';
 
 /**
@@ -105,6 +105,48 @@ export function declareAssumptions(workType: WorkType, answers: Record<string, A
  */
 export function missingRequiredQuestions(workType: WorkType, answers: Record<string, Answer>): OnboardingQuestion[] {
   return workType.questions.filter((question) => question.required && !isAnswered(answers[question.id]));
+}
+
+/**
+ * The demo brand's ids: the one the desktop seeds (`electron/services/seed.ts`
+ * `DEMO_BRAND_ID`) and the one the web preview seeds (`browser-api.ts`). A test
+ * reads both sources, so a renamed id fails loudly instead of leaking the demo
+ * into the "existing brands" list. Never matched by name: a real brand called
+ * "Demo Studio" belongs to the person.
+ */
+export const DEMO_BRAND_IDS: readonly string[] = ['brd_demo_casa_oliva', 'demo'];
+
+export function isDemoBrand(brand: Pick<Brand, 'id'>): boolean {
+  return DEMO_BRAND_IDS.includes(brand.id);
+}
+
+export interface BrandChoices {
+  /** The seeded demo, when present. Offered as its own secondary action, never as a brand. */
+  demo: Brand | null;
+  /** The person's own brands, most relevant first. */
+  userBrands: Brand[];
+  /** "Seguir con {marca}": the brand used last in this walk, else the last one created. */
+  primary: Brand | null;
+  /** Every other user brand, for "Otra marca". */
+  others: Brand[];
+}
+
+/**
+ * QA1 · B: what the brand step offers. A clean install (only the demo) has no
+ * primary brand; an existing one leads with the brand the person used last.
+ */
+export function brandChoices(brands: Brand[], lastUsedBrandId: string | null): BrandChoices {
+  const demo = brands.find(isDemoBrand) ?? null;
+  const own = brands
+    .map((brand, index) => ({ brand, index }))
+    .filter(({ brand }) => !isDemoBrand(brand))
+    // Newest first; the later one in the list wins a tie (same-millisecond creations).
+    .sort((a, b) => b.brand.createdAt.localeCompare(a.brand.createdAt) || b.index - a.index)
+    .map(({ brand }) => brand);
+  const lastUsed = lastUsedBrandId ? own.find((b) => b.id === lastUsedBrandId) ?? null : null;
+  const userBrands = lastUsed ? [lastUsed, ...own.filter((b) => b.id !== lastUsed.id)] : own;
+  const primary = userBrands[0] ?? null;
+  return { demo, userBrands, primary, others: userBrands.slice(1) };
 }
 
 /**

@@ -9,12 +9,11 @@ import { api } from './browser-api';
 import {
   FREE_FORM_WORK_TYPE,
   findWorkType,
-  intentGroups,
   recommendRole,
-  workTypesForIntent,
   type Answer,
   type WorkType,
 } from './work-catalog';
+import { WorkCatalogBlocks } from './WorkCatalogBlocks';
 import { declareAssumptions, missingRequiredQuestions } from './onboarding-flow';
 import { roleLabel } from './pack-i18n';
 import { useModalA11y } from './useModalA11y';
@@ -28,6 +27,8 @@ const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e)
  * recorrido inicial — `work-catalog.ts` (intención → tipo de trabajo →
  * preguntas → brief) y `onboarding-flow.ts` (`declareAssumptions`,
  * `missingRequiredQuestions`) — nunca una segunda copia de esas decisiones.
+ * QA1: la grilla de inicio TAMBIÉN es la misma — `WorkCatalogBlocks`, los
+ * cuatro bloques del embudo —, así que el catálogo se ve igual en los dos.
  * Lo que NO reutiliza es la cromía de `OnboardingGate.tsx`: esa pantalla
  * REEMPLAZA el shell entero (controles de ventana, paso "conectar la IA",
  * persistencia de borrador entre reinicios) porque puede abandonarse y
@@ -145,31 +146,14 @@ export function WorkCatalogModal({ brand, roles, busy, onClose, onCreated, onErr
               QA encontró que había que bajar toda la lista de intenciones para
               llegar a este camino rápido. Acá queda a la vista sin scrollear,
               en cualquier paso del catálogo. */}
-          {step === 'intent' && <button type="button" className="subtle" disabled={creating} onClick={() => setStep('freeform')}>{t(FREE_FORM_WORK_TYPE.titleKey)}</button>}
+          {step === 'intent' && <button type="button" className="subtle catalog-free" title={t(FREE_FORM_WORK_TYPE.descriptionKey)} disabled={creating} onClick={() => setStep('freeform')}>{t(FREE_FORM_WORK_TYPE.titleKey)}</button>}
           <button className="modal-close" aria-label={t('ui.auto.001')} disabled={creating} onClick={onClose}><X size={20} /></button>
         </div>
       </div>
       <div className="modal-body">
         {error && <div role="alert" className="message error onboarding-message"><span>{error}</span><button aria-label={t('ui.auto.001')} onClick={() => setError('')}><X size={16} /></button></div>}
 
-        {step === 'intent' && <>
-          <p className="intro">{t('onboarding.subtitle')}</p>
-          {/* Grilla propia (`work-catalog-groups`), no la de pantalla completa
-              de `OnboardingGate`: acá el modal es angosto, así que necesita su
-              propio número de columnas en vez del `auto-fill` que asume un
-              `.onboarding-main` de ancho libre. "Empezar libremente" ya está
-              en el encabezado — no se repite acá. */}
-          <div className="onboarding-groups work-catalog-groups">
-            {intentGroups.map((group) => <section className="onboarding-group" key={group.id}>
-              <h2>{t(group.nameKey)}</h2>
-              <div className="onboarding-cards">
-                {workTypesForIntent(group.id).map((w) => <button className="onboarding-card" key={w.id} onClick={() => selectWorkType(w)}>
-                  <strong>{t(w.titleKey)}</strong><small>{t(w.descriptionKey)}</small>
-                </button>)}
-              </div>
-            </section>)}
-          </div>
-        </>}
+        {step === 'intent' && <WorkCatalogBlocks onSelect={selectWorkType} disabled={creating} />}
 
         {step === 'freeform' && <>
           <h1>{t(FREE_FORM_WORK_TYPE.titleKey)}</h1>
@@ -186,7 +170,6 @@ export function WorkCatalogModal({ brand, roles, busy, onClose, onCreated, onErr
 
         {step === 'context' && workType && <>
           <h1>{t(workType.titleKey)}</h1>
-          <p className="intro">{t(workType.descriptionKey)}</p>
           {workType.questions.map((q) => <div className="onboarding-question" key={q.id}>
             <label className="field-label">{t(q.labelKey)}{q.required && <span className="onboarding-required">*</span>}</label>
             {q.kind === 'text' && <input value={typeof answers[q.id] === 'string' ? answers[q.id] as string : ''} onChange={(e) => setAnswer(q.id, e.target.value)} placeholder={t(q.labelKey)} />}

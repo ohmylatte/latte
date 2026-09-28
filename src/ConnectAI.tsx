@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, ChevronRight, Copy, ExternalLink, LogIn, RefreshCw, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
+import { ChevronRight, CircleHelp, CodeXml, Copy, ExternalLink, Feather, MessageCircle, RefreshCw, Sparkles, X, Zap, type LucideProps } from 'lucide-react';
 import { Loading } from './brand-marks';
 import type {
   AccountRuntimeName, ChatRuntime, InstallFailureCode, LoginFailureCode, Provider,
@@ -9,6 +9,7 @@ import { RUNTIME_GUIDE_URLS } from '../shared/contracts';
 import { translate, useI18n } from './i18n';
 import { agentBus, api } from './browser-api';
 import { TerminalPane } from './TerminalPane';
+import { ConfirmDialog } from './ConfirmDialog';
 
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -20,6 +21,22 @@ const PREREQ_KEY: Record<SetupPrereq, 'connectAI.prereq.git_for_windows' | 'conn
   git_for_windows: 'connectAI.prereq.git_for_windows', winget: 'connectAI.prereq.winget', node: 'connectAI.prereq.node',
 };
 const OTHER_RUNTIMES = ['grok', 'hermes', 'opencode'] as const satisfies readonly Provider[];
+/** Decorative chip icons (never third-party logos): the chip's text is the label. */
+const OTHER_ICON: Record<(typeof OTHER_RUNTIMES)[number], ComponentType<LucideProps>> = { grok: Zap, hermes: Feather, opencode: CodeXml };
+/** Decorative card icons, one per provider: two initials "C" side by side read as the same thing. */
+const RUNTIME_ICON: Record<Provider, ComponentType<LucideProps>> = { claude: Sparkles, codex: MessageCircle, ...OTHER_ICON };
+/**
+ * What "Usar {name}" installs when it is missing, and whose official app it is.
+ * Proper nouns, identical in both languages, so they live here and not in the
+ * catalogs; the sentence around them is translated.
+ */
+const INSTALLED_APP: Record<Provider, { app: string; vendor: string }> = {
+  claude: { app: 'Claude Code', vendor: 'Anthropic' },
+  codex: { app: 'Codex', vendor: 'OpenAI' },
+  grok: { app: 'Grok', vendor: 'xAI' },
+  hermes: { app: 'Hermes', vendor: 'Nous Research' },
+  opencode: { app: 'OpenCode', vendor: 'OpenCode' },
+};
 const isAccountRuntime = (p: Provider): p is AccountRuntimeName => p === 'claude' || p === 'codex' || p === 'grok' || p === 'hermes';
 /** Claude/Codex accept the person's own local CLI session ("system"); Grok/Hermes (ACP) can only ever be primary through a Latte-managed profile (`hub.ts` `setPrimary`). */
 const isSubscriptionRuntime = (rt: AccountRuntimeName): rt is 'claude' | 'codex' => rt === 'claude' || rt === 'codex';
@@ -44,14 +61,20 @@ interface RuntimeCardApi {
   phase: CardPhase;
   showDetail: boolean;
   transcript: string;
-  install: (installPrereqs?: boolean) => void;
+  /** Installs and, once installed, chains into the login and then into "use". */
+  installAndUse: (installPrereqs?: boolean) => void;
   cancelInstall: () => void;
   toggleDetail: () => void;
-  login: () => void;
   reopen: () => void;
   cancelLogin: () => void;
-  use: () => void;
-  retry: () => void;
+  /**
+   * The card's one action, "Usar {name}". Uses a ready runtime, starts the
+   * browser login for a signed-out one, and answers `'confirm'` when the
+   * runtime is missing: installing needs the person's yes first.
+   */
+  startUse: () => 'confirm' | 'started';
+  /** Whether "Usar {name}" can do something in the current phase. */
+  canUse: boolean;
 }
 
 /**
@@ -60,12 +83,18 @@ interface RuntimeCardApi {
  * before something is picked): the hook then just sits idle, so the three
  * main cards and the expandable one can all call this the same way.
  */
-function useRuntimeCard(runtime: Provider | null, refreshToken: number, onError: (text: string) => void, onConnected?: (runtime: AccountRuntimeName, accountId: string) => void): RuntimeCardApi {
+function useRuntimeCard(runtime: Provider | null, refreshToken: number, onError: (text: string) => void, onConnected?: () => void): RuntimeCardApi {
   const [phase, setPhase] = useState<CardPhase>({ kind: 'idle' });
   const [showDetail, setShowDetail] = useState(false);
   const [transcript, setTranscript] = useState('');
   const jobIdRef = useRef<string | null>(null);
   const runtimeRef = useRef(runtime); runtimeRef.current = runtime;
+  /**
+   * QA1 · C: one click on "Usar {name}" is the person's whole intent. While it
+   * holds, every step that lands (installed → signed in → ready) chains into
+   * the next one; a cancel, a failure or a recheck drops it.
+   */
+  const chainRef = useRef(false);
 
   const checkLogin = useCallback(async (rt: AccountRuntimeName) => {
     try {
@@ -88,7 +117,7 @@ function useRuntimeCard(runtime: Provider | null, refreshToken: number, onError:
   }, [checkLogin, onError]);
 
   useEffect(() => {
-    setShowDetail(false); setTranscript(''); jobIdRef.current = null;
+    setShowDetail(false); setTranscript(''); jobIdRef.current = null; chainRef.current = false;
     if (!runtime) { setPhase({ kind: 'idle' }); return; }
     void detect(runtime);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -106,8 +135,8 @@ function useRuntimeCard(runtime: Provider | null, refreshToken: number, onError:
       else if (s.state === 'cancelled') { jobIdRef.current = null; if (rt) void detect(rt); }
     } else {
       const s: RuntimeLoginState = event.state;
-      // Logging in is not the same as choosing to use it: the card still shows
-      // "Usar {name}" and `onConnected` fires from THAT click, never from here.
+      // Signing in alone never picks the runtime: only the "Usar {name}" click
+      // that started this chain does (see `chainRef`).
       if (s.state === 'connected') { jobIdRef.current = null; setPhase({ kind: 'connected', accountId: event.accountId, displayName: s.displayName }); }
       else if (s.state === 'failed') { jobIdRef.current = null; setPhase({ kind: 'login_failed', code: s.code, detail: s.detail, guideUrl: rt ? RUNTIME_GUIDE_URLS[rt] : '' }); }
       else if (s.state === 'cancelled') { jobIdRef.current = null; if (rt && isAccountRuntime(rt)) void checkLogin(rt); }
@@ -137,6 +166,7 @@ function useRuntimeCard(runtime: Provider | null, refreshToken: number, onError:
   }, [runtime, onError]);
 
   const cancelInstall = useCallback(() => {
+    chainRef.current = false;
     const jobId = jobIdRef.current; if (!jobId) return;
     void api.cancelRuntimeInstall(jobId).catch(e => onError(displayError(e)));
   }, [onError]);
@@ -179,25 +209,50 @@ function useRuntimeCard(runtime: Provider | null, refreshToken: number, onError:
   }, [onError]);
 
   const cancelLogin = useCallback(() => {
+    chainRef.current = false;
     const jobId = jobIdRef.current; if (!jobId) return;
     void api.cancelBrowserLogin(jobId).catch(e => onError(displayError(e)));
   }, [onError]);
 
   const use = useCallback(() => {
-    if (!runtime || phase.kind !== 'connected') return;
-    const accountId = phase.accountId;
-    void api.setPrimaryAgent({ runtime: runtime as ChatRuntime, model: null, accountId })
-      .then(() => onConnected?.(runtime as AccountRuntimeName, accountId))
+    if (!runtime) return;
+    // OpenCode has no accounts: it becomes primary with its own provider keys.
+    const choice = phase.kind === 'connected'
+      ? { runtime: runtime as ChatRuntime, model: null, accountId: phase.accountId }
+      : phase.kind === 'opencode_ready' ? { runtime: 'opencode' as ChatRuntime, model: null, accountId: null } : null;
+    if (!choice) return;
+    void api.setPrimaryAgent(choice)
+      .then(() => onConnected?.())
       .catch(e => onError(displayError(e)));
   }, [runtime, phase, onError, onConnected]);
 
-  const retry = useCallback(() => {
-    if (!runtime) return;
-    if (phase.kind === 'login_failed') { if (isAccountRuntime(runtime)) void checkLogin(runtime); return; }
-    void detect(runtime);
-  }, [runtime, phase.kind, detect, checkLogin]);
+  const installAndUse = useCallback((installPrereqs = false) => {
+    chainRef.current = true;
+    install(installPrereqs);
+  }, [install]);
 
-  return { runtime, phase, showDetail, transcript, install, cancelInstall, toggleDetail, login, reopen, cancelLogin, use, retry };
+  const startUse = useCallback((): 'confirm' | 'started' => {
+    switch (phase.kind) {
+      case 'connected': case 'opencode_ready': chainRef.current = false; use(); return 'started';
+      case 'needs_login': case 'login_failed': chainRef.current = true; login(); return 'started';
+      case 'not_installed': case 'install_failed': return 'confirm';
+      default: return 'started';
+    }
+  }, [phase.kind, use, login]);
+
+  // The chain: each phase the engine reports moves the one intent forward.
+  useEffect(() => {
+    if (!chainRef.current) return;
+    if (phase.kind === 'needs_login') login();
+    else if (phase.kind === 'connected' || phase.kind === 'opencode_ready') { chainRef.current = false; use(); }
+    else if (phase.kind === 'install_failed' || phase.kind === 'login_failed' || phase.kind === 'not_installed' || phase.kind === 'needs_prereq') chainRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  const canUse = phase.kind === 'connected' || phase.kind === 'opencode_ready' || phase.kind === 'needs_login' || phase.kind === 'login_failed'
+    || phase.kind === 'install_failed' || (phase.kind === 'not_installed' && phase.canInstall);
+
+  return { runtime, phase, showDetail, transcript, installAndUse, cancelInstall, toggleDetail, reopen, cancelLogin, startUse, canUse };
 }
 
 function InstallProgress({ phase }: { phase: 'prereq' | 'downloading' | 'checking' }) {
@@ -208,81 +263,85 @@ function InstallProgress({ phase }: { phase: 'prereq' | 'downloading' | 'checkin
   </div>;
 }
 
-/** One card: Claude / ChatGPT / a picked "otra cuenta" runtime. */
+/**
+ * One card: Claude / ChatGPT / a picked "otra cuenta" runtime. QA1 · C: one
+ * action, "Usar {name}", in every state; the status line (dot + short text)
+ * says where the runtime is, once.
+ */
 function RuntimeCard({ card, onError }: { card: RuntimeCardApi; onError: (text: string) => void }) {
   const { t } = useI18n();
+  const [asking, setAsking] = useState(false);
   if (!card.runtime) return null;
   const runtime = card.runtime;
   const name = t(RUNTIME_DISPLAY_KEY[runtime]);
   const phase = card.phase;
+  const inFlight = phase.kind === 'installing' || phase.kind === 'logging_in' || phase.kind === 'loading' || phase.kind === 'idle';
 
   let dot: 'green-ok' | 'rust' | 'line-strong' = 'line-strong';
-  let statusKey: 'connectAI.status.connected' | 'connectAI.status.needsLogin' | 'connectAI.status.notInstalled' | 'connectAI.status.checking' = 'connectAI.status.checking';
+  let statusKey: 'connectAI.status.connected' | 'connectAI.status.needsLogin' | 'connectAI.status.notInstalled' | 'connectAI.status.checking' | 'connectAI.status.installing' | 'connectAI.status.signingIn' = 'connectAI.status.checking';
   if (phase.kind === 'connected' || phase.kind === 'opencode_ready') { dot = 'green-ok'; statusKey = 'connectAI.status.connected'; }
-  else if (phase.kind === 'needs_login' || phase.kind === 'logging_in' || phase.kind === 'login_failed') { dot = 'rust'; statusKey = 'connectAI.status.needsLogin'; }
-  else if (phase.kind === 'not_installed' || phase.kind === 'needs_prereq' || phase.kind === 'installing' || phase.kind === 'install_failed') { dot = 'line-strong'; statusKey = 'connectAI.status.notInstalled'; }
+  else if (phase.kind === 'logging_in') { dot = 'rust'; statusKey = 'connectAI.status.signingIn'; }
+  else if (phase.kind === 'needs_login' || phase.kind === 'login_failed') { dot = 'rust'; statusKey = 'connectAI.status.needsLogin'; }
+  else if (phase.kind === 'installing') { statusKey = 'connectAI.status.installing'; }
+  else if (phase.kind === 'not_installed' || phase.kind === 'needs_prereq' || phase.kind === 'install_failed') { statusKey = 'connectAI.status.notInstalled'; }
 
-  return <div className={'connect-ai-card' + (dot === 'rust' ? ' is-attention' : '')} role="group" aria-label={name}>
-    <strong className="connect-ai-card-name">{name}</strong>
-    <span className="connect-ai-card-status"><i className={'connect-ai-dot dot-' + dot} aria-hidden="true" />{t(statusKey)}</span>
+  const onUse = () => { if (card.startUse() === 'confirm') setAsking(true); };
+  const guide = (url: string) => <a className="connect-ai-guide-link" href={url} target="_blank" rel="noreferrer">{t('connectAI.action.officialGuide')} <ExternalLink size={12} aria-hidden="true" /></a>;
 
-    {(phase.kind === 'idle' || phase.kind === 'loading') && <p>{t('connectAI.status.checking')}</p>}
-
-    {phase.kind === 'not_installed' && <>
-      <p>{t('connectAI.body.notInstalled')}</p>
-      {phase.canInstall
-        ? <button className="primary" onClick={() => card.install()}><LogIn size={14} />{t('connectAI.action.install')}</button>
-        : <a className="connect-ai-guide-link" href={phase.guideUrl} target="_blank" rel="noreferrer">{t('connectAI.action.officialGuide')} <ExternalLink size={12} /></a>}
-    </>}
-
-    {phase.kind === 'needs_prereq' && <>
-      <p>{t('connectAI.prereq.ask', { name, prereq: t(PREREQ_KEY[phase.prereq]) })}</p>
-      {phase.canInstall
-        ? <button className="primary" onClick={() => card.install(true)}>{t('connectAI.prereq.installToo')}</button>
-        : <><p>{t('connectAI.prereq.onlyGuide', { name, prereq: t(PREREQ_KEY[phase.prereq]) })}</p><a className="connect-ai-guide-link" href={phase.guideUrl} target="_blank" rel="noreferrer">{t('connectAI.action.officialGuide')} <ExternalLink size={12} /></a></>}
-    </>}
-
-    {phase.kind === 'installing' && <>
-      <InstallProgress phase={phase.phase} />
-      <div className="connect-ai-card-actions">
-        <button className="subtle" onClick={card.toggleDetail}>{t(card.showDetail ? 'connectAI.action.hideDetail' : 'connectAI.action.viewDetail')}</button>
-        <button onClick={card.cancelInstall}><X size={13} />{t('connectAI.action.cancel')}</button>
+  return <>
+    <div className={'connect-ai-card' + (dot === 'rust' ? ' is-attention' : '')} role="group" aria-label={name}>
+      <div className="connect-ai-card-head">
+        {(() => { const Icon = RUNTIME_ICON[runtime]; return <span className="connect-ai-monogram" aria-hidden="true"><Icon size={18} /></span>; })()}
+        <strong className="connect-ai-card-name">{name}</strong>
       </div>
-      {card.showDetail && <pre className="connect-ai-transcript">{card.transcript}</pre>}
-    </>}
+      <span className="connect-ai-card-status"><i className={'connect-ai-dot dot-' + dot} aria-hidden="true" />{t(statusKey)}</span>
 
-    {phase.kind === 'install_failed' && <>
-      <p>{t(`connectAI.error.install.${phase.code}` as 'connectAI.error.install.unknown')}</p>
-      <div className="connect-ai-card-actions">
-        <button className="primary" onClick={card.retry}><RefreshCw size={13} />{t('connectAI.action.retryDetect')}</button>
-        <a className="connect-ai-guide-link" href={phase.guideUrl} target="_blank" rel="noreferrer">{t('connectAI.action.officialGuide')} <ExternalLink size={12} /></a>
-      </div>
-    </>}
+      {phase.kind === 'not_installed' && !phase.canInstall && guide(phase.guideUrl)}
 
-    {phase.kind === 'opencode_ready' && <>
-      <p>{t('connectAI.opencode.installedBody')}</p>
-    </>}
+      {phase.kind === 'needs_prereq' && <>
+        <p>{t('connectAI.prereq.ask', { name, prereq: t(PREREQ_KEY[phase.prereq]) })}</p>
+        {phase.canInstall
+          ? <button className="primary" onClick={() => card.installAndUse(true)}>{t('connectAI.prereq.installToo')}</button>
+          : <><p>{t('connectAI.prereq.onlyGuide', { name, prereq: t(PREREQ_KEY[phase.prereq]) })}</p>{guide(phase.guideUrl)}</>}
+      </>}
 
-    {phase.kind === 'needs_login' && <>
-      <p>{t('connectAI.body.needsLogin')}</p>
-      <button className="primary" onClick={card.login}><LogIn size={14} />{t('connectAI.action.login', { name })}</button>
-    </>}
+      {phase.kind === 'installing' && <>
+        <InstallProgress phase={phase.phase} />
+        <div className="connect-ai-card-actions">
+          <button className="subtle" onClick={card.toggleDetail}>{t(card.showDetail ? 'connectAI.action.hideDetail' : 'connectAI.action.viewDetail')}</button>
+          <button onClick={card.cancelInstall}><X size={13} aria-hidden="true" />{t('connectAI.action.cancel')}</button>
+        </div>
+        {card.showDetail && <pre className="connect-ai-transcript">{card.transcript}</pre>}
+      </>}
 
-    {phase.kind === 'logging_in' && <LoginInFlight state={phase.state} card={card} onError={onError} />}
+      {phase.kind === 'install_failed' && <>
+        <p>{t(`connectAI.error.install.${phase.code}` as 'connectAI.error.install.unknown')}</p>
+        {guide(phase.guideUrl)}
+      </>}
 
-    {phase.kind === 'login_failed' && <>
-      <p>{t(`connectAI.error.login.${phase.code}` as 'connectAI.error.login.unknown')}</p>
-      <div className="connect-ai-card-actions">
-        <button className="primary" onClick={card.retry}><RefreshCw size={13} />{t('connectAI.action.retryDetect')}</button>
-        <a className="connect-ai-guide-link" href={phase.guideUrl} target="_blank" rel="noreferrer">{t('connectAI.action.officialGuide')} <ExternalLink size={12} /></a>
-      </div>
-    </>}
+      {phase.kind === 'logging_in' && <LoginInFlight state={phase.state} card={card} onError={onError} />}
 
-    {phase.kind === 'connected' && <>
-      <p>{t('connectAI.body.connected')}</p>
-      <button className="primary" onClick={card.use}><Check size={14} />{t('connectAI.action.use', { name })}</button>
-    </>}
-  </div>;
+      {phase.kind === 'login_failed' && <>
+        <p>{t(`connectAI.error.login.${phase.code}` as 'connectAI.error.login.unknown')}</p>
+        {guide(phase.guideUrl)}
+      </>}
+
+      {phase.kind !== 'needs_prereq' && (
+        <button className="primary connect-ai-use" disabled={!card.canUse} onClick={onUse}>
+          {inFlight && phase.kind !== 'idle' && phase.kind !== 'loading' && <Loading size={14} />}{t('connectAI.action.use', { name })}
+        </button>
+      )}
+    </div>
+    {asking && <ConfirmDialog
+      titleId={`connect-ai-install-${runtime}`}
+      title={t('connectAI.install.title', { name, app: INSTALLED_APP[runtime].app })}
+      body={t('connectAI.install.body', { vendor: INSTALLED_APP[runtime].vendor })}
+      confirmLabel={t('connectAI.install.confirm')}
+      cancelLabel={t('connectAI.action.cancel')}
+      onConfirm={() => { setAsking(false); card.installAndUse(); }}
+      onCancel={() => setAsking(false)}
+    />}
+  </>;
 }
 
 function LoginInFlight({ state, card, onError }: { state: RuntimeLoginState; card: RuntimeCardApi; onError: (text: string) => void }) {
@@ -290,16 +349,15 @@ function LoginInFlight({ state, card, onError }: { state: RuntimeLoginState; car
   if (state.state === 'needs_terminal') return <div className="connect-ai-login-flight">
     <p>{t('connectAI.login.needsTerminal')}</p>
     <TerminalPane sessionId={state.sessionId} onError={onError} />
-    <button onClick={card.cancelLogin}><X size={13} />{t('connectAI.action.cancel')}</button>
+    <button onClick={card.cancelLogin}><X size={13} aria-hidden="true" />{t('connectAI.action.cancel')}</button>
   </div>;
   if (state.state === 'connected') return <p>{state.displayName ? t('connectAI.login.connectedAs', { name: state.displayName }) : t('connectAI.login.connectedPlain')}</p>;
   const url = state.state === 'browser_opened' || state.state === 'waiting' ? state.url : null;
   return <div className="connect-ai-login-flight">
-    <p>{state.state === 'starting' ? t('connectAI.status.checking') : t('connectAI.login.opened')}</p>
-    {state.state === 'waiting' && <small>{t('connectAI.login.waiting')}</small>}
+    {state.state !== 'starting' && <p>{t('connectAI.login.opened')}</p>}
     <div className="connect-ai-card-actions">
-      {url && <button onClick={card.reopen}><ExternalLink size={13} />{t('connectAI.action.reopen')}</button>}
-      <button onClick={card.cancelLogin}><X size={13} />{t('connectAI.action.cancel')}</button>
+      {url && <button onClick={card.reopen}><ExternalLink size={13} aria-hidden="true" />{t('connectAI.action.reopen')}</button>}
+      <button onClick={card.cancelLogin}><X size={13} aria-hidden="true" />{t('connectAI.action.cancel')}</button>
     </div>
   </div>;
 }
@@ -348,7 +406,7 @@ export interface ConnectAIProps {
 }
 
 /**
- * Maqueta E — "¿Con qué cuenta trabaja tu equipo?": three cards (Claude,
+ * Maqueta E — "¿Con qué cuenta trabajás?": three cards (Claude,
  * ChatGPT, Otra cuenta), a recheck row and a collapsed advanced box. Built on
  * top of the "onboarding sin terminal" engine (runtimeSetupCatalog,
  * detectRuntime, startRuntimeInstall, startBrowserLogin — shared/contracts.ts);
@@ -381,9 +439,8 @@ export function ConnectAI({ onConnected, showHeader = true, advanced, onError }:
       <div className="connect-ai-card connect-ai-other">
         {!otherRuntime ? <>
           <strong className="connect-ai-card-name">{t('connectAI.other.title')}</strong>
-          <p>{t('connectAI.other.body')}</p>
           <div className="connect-ai-other-pick" role="group" aria-label={t('connectAI.other.pick')}>
-            {OTHER_RUNTIMES.map(r => <button key={r} onClick={() => setOtherRuntime(r)}>{t(RUNTIME_DISPLAY_KEY[r])}</button>)}
+            {OTHER_RUNTIMES.map(r => { const Icon = OTHER_ICON[r]; return <button key={r} onClick={() => setOtherRuntime(r)}><Icon size={14} aria-hidden="true" />{t(RUNTIME_DISPLAY_KEY[r])}</button>; })}
           </div>
         </> : <>
           <button className="subtle connect-ai-other-back" onClick={() => setOtherRuntime(null)}>{t('connectAI.other.back')}</button>
@@ -393,9 +450,9 @@ export function ConnectAI({ onConnected, showHeader = true, advanced, onError }:
     </div>
 
     <div className="connect-ai-recheck-row">
-      <button className="subtle" onClick={recheck}><RefreshCw size={13} />{t('team.recheck')}</button>
+      <button className="subtle" onClick={recheck}><RefreshCw size={13} aria-hidden="true" />{t('team.recheck')}</button>
       <small>{elapsed == null ? t('connectAI.recheck.never') : t('connectAI.recheck.last', { seconds: elapsed })}</small>
-      <button className="subtle" onClick={() => setDiagnosticOpen(v => !v)}>{t('connectAI.diagnostic.button')}</button>
+      <button className="subtle" aria-expanded={diagnosticOpen} onClick={() => setDiagnosticOpen(v => !v)}><CircleHelp size={13} aria-hidden="true" />{t('connectAI.diagnostic.button')}</button>
     </div>
     {diagnosticOpen && <DiagnosticPanel onClose={() => setDiagnosticOpen(false)} />}
 

@@ -23,8 +23,7 @@ const gateHeading = () => screen.findByRole('heading', { name: '¿En qué queré
 const clickCard = (title: RegExp) => fireEvent.click(screen.getByRole('button', { name: title }));
 
 function chooseDemoBrandCard() {
-  const section = screen.getByRole('heading', { name: 'Explorar con el proyecto demo' }).closest('section') as HTMLElement;
-  fireEvent.click(section.querySelector('button') as HTMLButtonElement);
+  fireEvent.click(screen.getByRole('button', { name: /Recorrer el demo/ }));
 }
 
 beforeEach(() => { localStorage.clear(); });
@@ -45,7 +44,7 @@ describe('Entrega 1A — QA: recorrido completo en la vista previa web (sin IA r
     await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
     chooseDemoBrandCard();
 
-    await screen.findByRole('heading', { name: '¿Cómo querés conectar la IA?' });
+    await screen.findByRole('heading', { name: '¿Con qué cuenta trabajás?' });
     clickCard(/Explorar con un proyecto demo/);
 
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));

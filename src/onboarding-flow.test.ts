@@ -1,9 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { OnboardingDraft } from '../shared/contracts';
+import type { Brand, OnboardingDraft } from '../shared/contracts';
 import { findWorkType, type Answer } from './work-catalog';
 import {
+  DEMO_BRAND_IDS,
   ONBOARDING_STEPS,
+  brandChoices,
   completeOnboarding,
+  isDemoBrand,
   declareAssumptions,
   initialState,
   missingRequiredQuestions,
@@ -183,5 +187,64 @@ describe('draft resumability', () => {
   it('falls back to a safe role when the draft has none', () => {
     const s = initialState({ ...draft, recommendedRoleId: '' });
     expect(s.recommendedRoleId).toBe('assistant');
+  });
+});
+
+/**
+ * QA1 · B: EL DEMO NO ES UNA MARCA EXISTENTE.
+ *
+ * El demo se reconoce por id — el que siembra el escritorio
+ * (`electron/services/seed.ts`) y el de la vista previa web
+ * (`src/browser-api.ts`) —, nunca por el nombre: una marca real que se llame
+ * "Demo Studio" es de la persona.
+ */
+describe('demo brand vs. user brands', () => {
+  const brand = (id: string, name: string, createdAt: string): Brand => ({ id, name, context: '', createdAt, archivedAt: null });
+  const demoDesktop = brand('brd_demo_casa_oliva', 'Casa Oliva (demo)', '2026-01-01T00:00:00.000Z');
+  const demoPreview = brand('demo', 'Casa Oliva · Ejemplo', '2026-01-01T00:00:00.000Z');
+
+  it('knows the demo ids the desktop seed and the web preview actually use', () => {
+    const seed = readFileSync(new URL('../electron/services/seed.ts', import.meta.url), 'utf8');
+    const seedId = /export const DEMO_BRAND_ID = '([^']+)'/.exec(seed)?.[1];
+    expect(seedId).toBeTruthy();
+    expect(DEMO_BRAND_IDS).toContain(seedId);
+    const preview = readFileSync(new URL('./browser-api.ts', import.meta.url), 'utf8');
+    const previewId = /brands: \[\{ id: '([^']+)'/.exec(preview)?.[1];
+    expect(previewId).toBeTruthy();
+    expect(DEMO_BRAND_IDS).toContain(previewId);
+  });
+
+  it('recognizes the demo by id, never by name', () => {
+    expect(isDemoBrand(demoDesktop)).toBe(true);
+    expect(isDemoBrand(demoPreview)).toBe(true);
+    expect(isDemoBrand(brand('b1', 'Demo Studio', '2026-02-01'))).toBe(false);
+  });
+
+  it('a clean install has no user brands: only the demo', () => {
+    const c = brandChoices([demoDesktop], null);
+    expect(c.demo?.id).toBe(demoDesktop.id);
+    expect(c.primary).toBeNull();
+    expect(c.others).toEqual([]);
+    expect(c.userBrands).toEqual([]);
+  });
+
+  it('an existing install proposes the last created user brand and keeps the demo out of the picker', () => {
+    const a = brand('a', 'Almacén Norte', '2026-03-01T00:00:00.000Z');
+    const b = brand('b', 'Bodega Sur', '2026-05-01T00:00:00.000Z');
+    const c = brandChoices([demoPreview, a, b], null);
+    expect(c.primary?.id).toBe('b');
+    expect(c.others.map((x) => x.id)).toEqual(['a']);
+    expect(c.userBrands.map((x) => x.id)).toEqual(['b', 'a']);
+    expect(c.demo?.id).toBe('demo');
+  });
+
+  it('the brand used last in this walk wins over the last created one', () => {
+    const a = brand('a', 'Almacén Norte', '2026-03-01T00:00:00.000Z');
+    const b = brand('b', 'Bodega Sur', '2026-05-01T00:00:00.000Z');
+    const c = brandChoices([demoPreview, a, b], 'a');
+    expect(c.primary?.id).toBe('a');
+    expect(c.others.map((x) => x.id)).toEqual(['b']);
+    // The demo id is never "the last used user brand".
+    expect(brandChoices([demoPreview, a], 'demo').primary?.id).toBe('a');
   });
 });

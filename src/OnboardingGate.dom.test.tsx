@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { configure, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { App, VIEWS } from './App';
 import { I18nProvider } from './i18n';
+import { api } from './browser-api';
 import type { ChatSession, OnboardingDraft, SaveOutcome } from '../shared/contracts';
 
 // Mounts the whole app, gate included. The library's 1s default is a race
@@ -116,17 +117,20 @@ const pageFooter = (container: HTMLElement) => {
 };
 
 /** Creates a brand in the gate and stays on the brand step, as designed. */
-function createBrand(container: HTMLElement, name: string) {
-  const input = screen.getByPlaceholderText('Nombre de la marca');
-  fireEvent.change(input, { target: { value: name } });
-  fireEvent.click(input.parentElement!.querySelector('button') as HTMLButtonElement);
+function createBrand(_container: HTMLElement, name: string) {
+  // An existing install folds the form behind "Crear una marca"; a clean one shows it.
+  const reveal = screen.queryByRole('button', { name: 'Crear una marca' });
+  if (reveal) fireEvent.click(reveal);
+  fireEvent.change(screen.getByPlaceholderText('Nombre de la marca'), { target: { value: name } });
+  fireEvent.click(screen.getByRole('button', { name: 'Crear mi marca' }));
 }
 
-/** The demo brand lives in its own section; the same name appears in "existing". */
+/** QA1 · B: the demo is its own secondary action, never listed as a brand. */
 function chooseDemoBrand() {
-  const section = screen.getByRole('heading', { name: 'Explorar con el proyecto demo' }).closest('section') as HTMLElement;
-  fireEvent.click(section.querySelector('button') as HTMLButtonElement);
+  fireEvent.click(screen.getByRole('button', { name: /Recorrer el demo/ }));
 }
+
+const connectHeading = () => screen.findByRole('heading', { name: '¿Con qué cuenta trabajás?' });
 
 /** A resumed draft parked on the summary step, as the walk can land there. */
 const summaryDraft = (brief: string, overrides: Partial<OnboardingDraft> = {}): OnboardingDraft => ({
@@ -166,11 +170,16 @@ describe('first-run onboarding gate', () => {
     await gateHeading();
     expect(shell(container)).toBeNull();
     expect(container.querySelector('main.workspace')).toBeNull();
-    // The catalog is data-driven: six intents plus the free-form entry.
-    for (const intent of ['Planificar', 'Producir', 'Operar', 'Analizar', 'Optimizar', 'Reportar']) {
-      expect(screen.getByRole('heading', { name: intent })).toBeDefined();
+    // The catalog is data-driven: four funnel blocks plus the free-form link.
+    for (const block of ['Planificar', 'Producir', 'Operar y optimizar', 'Medir y reportar']) {
+      expect(screen.getByRole('heading', { name: block })).toBeDefined();
     }
-    expect(screen.getByRole('button', { name: /Empezar libremente/ })).toBeDefined();
+    const freeForm = screen.getByRole('button', { name: /Empezar libremente/ });
+    // QA1: a small secondary link, not a card inside the grid.
+    expect(freeForm.closest('.catalog-blocks')).toBeNull();
+    expect(freeForm.classList.contains('onboarding-card')).toBe(false);
+    // One short title, no subtitle.
+    expect(container.querySelector('.onboarding-content .intro')).toBeNull();
   });
 
   it('shows the workspace and NOT the gate for a returning user', async () => {
@@ -293,7 +302,7 @@ describe('first-run onboarding gate', () => {
     clickCard(/Explorar con un proyecto demo/);
     const enabled = await screen.findByRole('button', { name: /Empezar trabajo/ });
     await waitFor(() => expect((enabled as HTMLButtonElement).disabled).toBe(false));
-    expect(screen.getByText('Sigo sin audiencia definida; la confirmamos después.')).toBeDefined();
+    expect(screen.getByText('Audiencia: la propongo a partir de la marca.')).toBeDefined();
     expect(pageFooter(container)).toBeDefined();
   });
 
@@ -405,7 +414,7 @@ describe('first-run onboarding gate', () => {
     createBrand(container, 'Casa Nueva');
     // It stays on the brand step so the context can arrive before the walk ends.
     const field = await screen.findByLabelText('Contexto de marca (opcional)');
-    expect(screen.getByText('Si lo dejás vacío, el agente te lo va a preguntar en la primera conversación.')).toBeDefined();
+    expect(screen.getByText('El agente lo completa con vos en la primera conversación.')).toBeDefined();
     fireEvent.change(field, { target: { value: '  Tono cálido y preciso.  ' } });
     fireEvent.click(pageFooter(container).querySelector('button.primary') as HTMLButtonElement);
 
@@ -413,7 +422,7 @@ describe('first-run onboarding gate', () => {
     expect(state.saveBrandContextCalls[0].text).toBe('Tono cálido y preciso.');
     // A brand created seconds ago has nothing to compare against: null is safe.
     expect(state.saveBrandContextCalls[0].fingerprint).toBeNull();
-    expect(await screen.findByRole('heading', { name: '¿Cómo querés conectar la IA?' })).toBeDefined();
+    expect(await connectHeading()).toBeDefined();
   });
 
   it('never writes an empty brand context', async () => {
@@ -424,7 +433,7 @@ describe('first-run onboarding gate', () => {
     createBrand(container, 'Casa Vacía');
     await screen.findByLabelText('Contexto de marca (opcional)');
     fireEvent.click(pageFooter(container).querySelector('button.primary') as HTMLButtonElement);
-    expect(await screen.findByRole('heading', { name: '¿Cómo querés conectar la IA?' })).toBeDefined();
+    expect(await connectHeading()).toBeDefined();
     expect(state.saveBrandContextCalls).toHaveLength(0);
   });
 
@@ -531,7 +540,7 @@ describe('first-run onboarding gate', () => {
     clickCard(/Empezar libremente/);
     await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
     // Ask to link a folder, then decline the confirmation.
-    fireEvent.click(screen.getByRole('button', { name: /Vincular una carpeta o archivos/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Vincular una carpeta/ }));
     chooseDemoBrand();
     clickCard(/Explorar con un proyecto demo/);
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
@@ -556,7 +565,7 @@ describe('first-run onboarding gate', () => {
     await gateHeading();
     clickCard(/Empezar libremente/);
     await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
-    fireEvent.click(screen.getByRole('button', { name: /Vincular una carpeta o archivos/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Vincular una carpeta/ }));
     chooseDemoBrand();
     clickCard(/Explorar con un proyecto demo/);
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
@@ -574,7 +583,7 @@ describe('first-run onboarding gate', () => {
     await gateHeading();
     clickCard(/Empezar libremente/);
     await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
-    fireEvent.click(screen.getByRole('button', { name: /Vincular una carpeta o archivos/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Vincular una carpeta/ }));
     chooseDemoBrand();
     clickCard(/Explorar con un proyecto demo/);
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
@@ -586,6 +595,61 @@ describe('first-run onboarding gate', () => {
     expect(state.useFolderCalls).toBe(1);
     const notices = await screen.findAllByText(/No se pudo vincular la carpeta/);
     expect(notices.length).toBeGreaterThan(0);
+  });
+
+  it('QA1 · B: a clean install offers "Crear mi marca" and "Recorrer el demo", never the demo as an existing brand', async () => {
+    const { container } = mount();
+    await gateHeading();
+    clickCard(/Empezar libremente/);
+    await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
+    // The preview seeds only the demo brand: nothing is "existing" yet.
+    expect(screen.queryByText('Casa Oliva · Ejemplo')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Seguir con/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Otra marca' })).toBeNull();
+    const create = screen.getByRole('button', { name: 'Crear mi marca' });
+    expect(create.classList.contains('primary')).toBe(true);
+    const demo = screen.getByRole('button', { name: /Recorrer el demo/ });
+    expect(demo.classList.contains('primary')).toBe(false);
+    // One short title; folder linking stays as a short secondary option.
+    expect(container.querySelector('.onboarding-content .intro')).toBeNull();
+    expect(screen.getByRole('button', { name: /Vincular una carpeta/ }).getAttribute('aria-pressed')).toBe('false');
+
+    chooseDemoBrand();
+    expect(await connectHeading()).toBeDefined();
+  });
+
+  it('QA1 · B: an existing install continues with the last brand and keeps the demo as a small link', async () => {
+    await api.createBrand('Almacén Norte');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await api.createBrand('Bodega Sur');
+    mount();
+    await gateHeading();
+    clickCard(/Empezar libremente/);
+    await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
+
+    const primary = screen.getByRole('button', { name: 'Seguir con Bodega Sur' });
+    expect(primary.classList.contains('primary')).toBe(true);
+    // The rest live behind "Otra marca", and the demo is never among them.
+    expect(screen.queryByRole('button', { name: /Almacén Norte/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Otra marca' }));
+    expect(screen.getByRole('button', { name: /Almacén Norte/ })).toBeDefined();
+    expect(screen.queryByText('Casa Oliva · Ejemplo')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Crear una marca' })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Recorrer el demo/ }).classList.contains('primary')).toBe(false);
+
+    fireEvent.click(primary);
+    expect(await connectHeading()).toBeDefined();
+  });
+
+  it('QA1 · C: the connect step has one short title, no demo sentence, and the demo as a ghost action', async () => {
+    mount();
+    await gateHeading();
+    clickCard(/Empezar libremente/);
+    await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
+    chooseDemoBrand();
+    await connectHeading();
+    expect(screen.queryByText(/El proyecto demo está siempre disponible/)).toBeNull();
+    expect(screen.getByRole('button', { name: /Explorar con un proyecto demo/ }).classList.contains('primary')).toBe(false);
   });
 
   it('keeps the gate a pre-shell branch: no new workspace view was added', () => {

@@ -15,11 +15,46 @@ import {
 } from './work-catalog';
 
 describe('work catalog', () => {
-  it('covers the six marketing intents, each with a distinct name key', () => {
-    const ids = intentGroups.map((g) => g.id);
-    expect(new Set(ids).size).toBe(6);
+  it('groups the catalog in four funnel blocks, each with a distinct name key', () => {
+    expect(intentGroups.map((g) => g.id)).toEqual(['plan', 'produce', 'operate', 'measure']);
     const names = intentGroups.map((g) => g.nameKey);
-    expect(new Set(names).size).toBe(6);
+    expect(new Set(names).size).toBe(4);
+  });
+
+  it('QA1: every block offers two or three start options, in the documented order', () => {
+    for (const g of intentGroups) {
+      const list = workTypesForIntent(g.id);
+      expect(list.length, g.id).toBeGreaterThanOrEqual(2);
+      expect(list.length, g.id).toBeLessThanOrEqual(3);
+    }
+    expect(workTypesForIntent('plan').map((w) => w.id)).toEqual(['campaign-new', 'strategy', 'content-calendar']);
+    expect(workTypesForIntent('produce').map((w) => w.id)).toEqual(['copy-pieces', 'adapt-pieces', 'presentation']);
+    expect(workTypesForIntent('operate').map((w) => w.id)).toEqual(['campaign-ops', 'campaign-optimize', 'budget-review']);
+    expect(workTypesForIntent('measure').map((w) => w.id)).toEqual(['paid-media-audit', 'period-compare', 'report-build']);
+  });
+
+  it('QA1: the new work types ask a short set: one required question, every optional one declares its assumption', () => {
+    for (const id of ['strategy', 'content-calendar', 'adapt-pieces', 'presentation', 'budget-review', 'period-compare']) {
+      const w = findWorkType(id)!;
+      expect(w, id).not.toBeNull();
+      expect(w.questions.length, id).toBeGreaterThanOrEqual(2);
+      expect(w.questions.length, id).toBeLessThanOrEqual(4);
+      expect(w.questions.filter((q) => q.required), id).toHaveLength(1);
+    }
+  });
+
+  it('every optional question in the catalog declares the assumption it falls back to', () => {
+    for (const w of ALL_WORK_TYPES) {
+      for (const q of w.questions) if (!q.required) expect(q.assumptionKey, `${w.id}.${q.id}`).toBeTruthy();
+    }
+  });
+
+  it('every question id has a localized brief heading (never the raw id)', () => {
+    for (const w of workTypes) {
+      const brief = w.brief({}, { locale: 'es-AR' });
+      for (const q of w.questions) expect(brief, `${w.id}.${q.id}`).not.toContain(`## ${q.id}
+`);
+    }
   });
 
   it('has unique work type ids and every work type belongs to a known intent', () => {
@@ -64,6 +99,12 @@ describe('work catalog', () => {
     expect(byId['paid-media-audit'].recommendedRoleId).toBe('paid-media');
     expect(byId['campaign-optimize'].recommendedRoleId).toBe('analyst');
     expect(byId['report-build'].recommendedRoleId).toBe('assistant');
+    expect(byId['strategy'].recommendedRoleId).toBe('strategist');
+    expect(byId['content-calendar'].recommendedRoleId).toBe('strategist');
+    expect(byId['adapt-pieces'].recommendedRoleId).toBe('sales-copywriter');
+    expect(byId['presentation'].recommendedRoleId).toBe('strategist');
+    expect(byId['budget-review'].recommendedRoleId).toBe('paid-media');
+    expect(byId['period-compare'].recommendedRoleId).toBe('analyst');
     expect(byId[FREE_FORM_WORK_TYPE.id].recommendedRoleId).toBe('assistant');
   });
 

@@ -50,54 +50,107 @@ describe('ConnectAI', () => {
   let off: (() => void) | null = null;
   afterEach(() => { off?.(); off = null; accountsStore.byRuntime.clear(); });
 
-  it('is honest by default: no demo means "No instalado" with the official guide, never a fake install button', async () => {
+  it('is honest by default: no demo means "No instalado" with the official guide, and "Usar" cannot promise an install', async () => {
     render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
     const cards = await screen.findAllByText('No instalado');
     expect(cards.length).toBe(2); // Claude + ChatGPT; "Otra cuenta" is not expanded yet
     expect(screen.getAllByText('Ver la guía oficial').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /Instalar/ })).toBeNull();
+    const use = within(screen.getByRole('group', { name: 'Claude' })).getByRole('button', { name: 'Usar Claude' }) as HTMLButtonElement;
+    expect(use.disabled).toBe(true);
   });
 
-  it('walks the full happy path: install → connect → "Usar Claude" fires onConnected', async () => {
+  it('QA1: one action per card — "Usar {name}" — and the status said once, never twice', async () => {
+    off = enableRuntimeSetupPreviewDemo('success', 0);
+    render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
+    const claudeCard = () => screen.getByRole('group', { name: 'Claude' });
+    // While detecting, "Buscando…" is the status line and nothing else.
+    expect(claudeCard().textContent!.match(/Buscando…/g) ?? []).toHaveLength(1);
+    await waitFor(() => expect(claudeCard().textContent).toContain('No instalado'));
+    expect(within(claudeCard()).getAllByRole('button')).toHaveLength(1);
+    expect(within(claudeCard()).getByRole('button', { name: 'Usar Claude' })).toBeDefined();
+    expect(within(screen.getByRole('group', { name: 'ChatGPT' })).getByRole('button', { name: 'Usar ChatGPT' })).toBeDefined();
+    // Each provider gets its own decorative icon (never a third-party logo), so two "C" initials can't be confused.
+    expect(claudeCard().querySelector('.connect-ai-monogram svg')).not.toBeNull();
+    expect(claudeCard().querySelector('.connect-ai-monogram')?.innerHTML).not.toBe(within(screen.getByRole('group', { name: 'ChatGPT' })).getByText('ChatGPT').parentElement?.querySelector('.connect-ai-monogram')?.innerHTML);
+    expect(claudeCard().querySelector('img')).toBeNull();
+  });
+
+  it('QA1: not installed → a small confirmation names what Latte installs; cancelling installs nothing', async () => {
     off = enableRuntimeSetupPreviewDemo('success', 0);
     const onConnected = vi.fn();
-    const { container } = render(<I18nProvider><ConnectAI onConnected={onConnected} onError={() => {}} /></I18nProvider>);
+    render(<I18nProvider><ConnectAI onConnected={onConnected} onError={() => {}} /></I18nProvider>);
+    const codexCard = () => screen.getByRole('group', { name: 'ChatGPT' });
+    await waitFor(() => expect(codexCard().textContent).toContain('No instalado'));
+    fireEvent.click(within(codexCard()).getByRole('button', { name: 'Usar ChatGPT' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Para usar ChatGPT, Latte va a instalar Codex' });
+    expect(dialog.textContent).toContain('Es la app oficial de OpenAI. Tarda un par de minutos.');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancelar' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await tick(30);
+    expect(codexCard().textContent).toContain('No instalado');
+    expect(onConnected).not.toHaveBeenCalled();
+  });
 
+  it('walks the whole chain from ONE click: confirm → install → browser login → use', async () => {
+    off = enableRuntimeSetupPreviewDemo('success', 0);
+    const onConnected = vi.fn();
+    render(<I18nProvider><ConnectAI onConnected={onConnected} onError={() => {}} /></I18nProvider>);
     const claudeCard = () => screen.getByRole('group', { name: 'Claude' });
     await waitFor(() => expect(claudeCard().textContent).toContain('No instalado'));
-    fireEvent.click(within(claudeCard()).getByRole('button', { name: /Instalar/ }));
-    await waitFor(() => expect(claudeCard().textContent).toContain('Falta iniciar sesión'), { timeout: 3000 });
-
-    fireEvent.click(within(claudeCard()).getByRole('button', { name: /Iniciar sesión en Claude/ }));
-    // `stepMs: 0` can race past the intermediate "browser_opened"/"waiting"
-    // states before this poll ever samples them; the real proof of the whole
-    // pipeline is the terminal "Conectado" state, not catching every step.
-    await waitFor(() => expect(claudeCard().textContent).toContain('Conectado'), { timeout: 3000 });
-
-    fireEvent.click(within(claudeCard()).getByRole('button', { name: /Usar Claude/ }));
-    await waitFor(() => expect(onConnected).toHaveBeenCalledTimes(1));
-    expect(container).toBeTruthy();
+    fireEvent.click(within(claudeCard()).getByRole('button', { name: 'Usar Claude' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Para usar Claude, Latte va a instalar Claude Code' });
+    expect(dialog.textContent).toContain('Es la app oficial de Anthropic. Tarda un par de minutos.');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Instalar y usar' }));
+    // No second click: installing chains into the login, the login into "use".
+    await waitFor(() => expect(onConnected).toHaveBeenCalledTimes(1), { timeout: 3000 });
   });
+
+  it('installed but signed out: "Usar" starts the browser login directly, no confirmation', async () => {
+    off = enableRuntimeSetupPreviewDemo('already_installed', 0);
+    const onConnected = vi.fn();
+    render(<I18nProvider><ConnectAI onConnected={onConnected} onError={() => {}} /></I18nProvider>);
+    const claudeCard = () => screen.getByRole('group', { name: 'Claude' });
+    await waitFor(() => expect(claudeCard().textContent).toContain('Falta iniciar sesión'));
+    fireEvent.click(within(claudeCard()).getByRole('button', { name: 'Usar Claude' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(onConnected).toHaveBeenCalledTimes(1), { timeout: 3000 });
+  });
+
+  it('installed and signed in: "Usar" uses it right away', async () => {
+    accountsStore.byRuntime.set('claude', [{ runtime: 'claude', id: 'acc-claude', label: 'Claude', system: false, loggedIn: true, detail: '', models: [] }]);
+    off = enableRuntimeSetupPreviewDemo('already_installed', 0);
+    const onConnected = vi.fn();
+    render(<I18nProvider><ConnectAI onConnected={onConnected} onError={() => {}} /></I18nProvider>);
+    const claudeCard = () => screen.getByRole('group', { name: 'Claude' });
+    await waitFor(() => expect(claudeCard().textContent).toContain('Conectado'));
+    fireEvent.click(within(claudeCard()).getByRole('button', { name: 'Usar Claude' }));
+    await waitFor(() => expect(onConnected).toHaveBeenCalledTimes(1));
+  });
+
+  const confirmInstall = async (card: () => HTMLElement, name: string) => {
+    await waitFor(() => expect(card().textContent).toContain('No instalado'));
+    fireEvent.click(within(card()).getByRole('button', { name: `Usar ${name}` }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Instalar y usar' }));
+  };
 
   it('needs_prereq: asks before installing an optional prerequisite', async () => {
     off = enableRuntimeSetupPreviewDemo('needs_prereq', 0);
     render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
     const claudeCard = () => screen.getByRole('group', { name: 'Claude' });
-    await waitFor(() => expect(claudeCard().textContent).toContain('No instalado'));
-    fireEvent.click(within(claudeCard()).getByRole('button', { name: /Instalar/ }));
+    await confirmInstall(claudeCard, 'Claude');
     await waitFor(() => expect(claudeCard().textContent).toContain('Git para Windows'), { timeout: 3000 });
     expect(within(claudeCard()).getByRole('button', { name: 'Instalarlo también' })).not.toBeNull();
   });
 
-  it('install failure: one plain sentence, a way to recheck, and the official guide — never the raw terminal dump', async () => {
+  it('install failure: one plain sentence, "Usar" to try again, and the official guide — never the raw terminal dump', async () => {
     off = enableRuntimeSetupPreviewDemo('blocked_by_antivirus', 0);
     const onError = vi.fn();
     render(<I18nProvider><ConnectAI onError={onError} /></I18nProvider>);
     const codexCard = () => screen.getByRole('group', { name: 'ChatGPT' });
-    await waitFor(() => expect(codexCard().textContent).toContain('No instalado'));
-    fireEvent.click(within(codexCard()).getByRole('button', { name: /Instalar/ }));
+    await confirmInstall(codexCard, 'ChatGPT');
     await waitFor(() => expect(codexCard().textContent).toContain('El antivirus bloqueó el instalador.'), { timeout: 3000 });
-    expect(within(codexCard()).getByRole('button', { name: /Ya lo hice, buscar de nuevo/ })).not.toBeNull();
+    expect(within(codexCard()).getByRole('button', { name: 'Usar ChatGPT' })).not.toBeNull();
     expect(within(codexCard()).getByText('Ver la guía oficial')).not.toBeNull();
     expect(codexCard().textContent).not.toMatch(/Operation did not complete/);
   });
@@ -120,11 +173,8 @@ describe('ConnectAI', () => {
     off = enableRuntimeSetupPreviewDemo('login_needs_terminal', 0);
     render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
     const claudeCard = () => screen.getByRole('group', { name: 'Claude' });
-    await waitFor(() => expect(claudeCard().textContent).toContain('No instalado'));
-    fireEvent.click(within(claudeCard()).getByRole('button', { name: /Instalar/ }));
-    await waitFor(() => expect(claudeCard().textContent).toContain('Falta iniciar sesión'), { timeout: 3000 });
-    fireEvent.click(within(claudeCard()).getByRole('button', { name: /Iniciar sesión en Claude/ }));
-    await waitFor(() => expect(claudeCard().textContent).toContain('Este paso necesita que termines el ingreso acá abajo.'), { timeout: 3000 });
+    await confirmInstall(claudeCard, 'Claude');
+    await waitFor(() => expect(claudeCard().textContent).toContain('Terminá de iniciar sesión acá abajo.'), { timeout: 3000 });
     expect(claudeCard().querySelector('.terminal-host')).not.toBeNull();
   });
 
@@ -132,30 +182,30 @@ describe('ConnectAI', () => {
     off = enableRuntimeSetupPreviewDemo('login_not_confirmed', 0);
     render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
     const claudeCard = () => screen.getByRole('group', { name: 'Claude' });
-    await waitFor(() => expect(claudeCard().textContent).toContain('No instalado'));
-    fireEvent.click(within(claudeCard()).getByRole('button', { name: /Instalar/ }));
-    await waitFor(() => expect(claudeCard().textContent).toContain('Falta iniciar sesión'), { timeout: 3000 });
-    fireEvent.click(within(claudeCard()).getByRole('button', { name: /Iniciar sesión en Claude/ }));
+    await confirmInstall(claudeCard, 'Claude');
     await waitFor(() => expect(claudeCard().textContent).toContain('Terminaste el ingreso, pero todavía no vemos la sesión iniciada.'), { timeout: 3000 });
+    expect(within(claudeCard()).getByRole('button', { name: 'Usar Claude' })).not.toBeNull();
   });
 
   it('"Otra cuenta" expands to pick Grok, Hermes or OpenCode, each with its own full card', async () => {
     render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
+    for (const name of ['Grok', 'Hermes', 'OpenCode']) expect(screen.getByRole('button', { name }).querySelector('svg[aria-hidden="true"]')).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Grok' }));
+    await waitFor(() => expect(within(screen.getByRole('group', { name: 'Grok' })).getByRole('button', { name: 'Usar Grok' })).toBeDefined());
     await waitFor(() => expect(screen.getByRole('group', { name: 'Grok' })).not.toBeNull());
     fireEvent.click(screen.getByRole('button', { name: /Otra cuenta/ }));
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Grok' })).toBeNull());
     expect(screen.getByRole('button', { name: 'Hermes' })).not.toBeNull();
   });
 
-  it('OpenCode has no login concept here: once installed, it points at Configuración avanzada instead of a login button', async () => {
+  it('OpenCode has no login concept here: "Usar OpenCode" installs it and uses it, no sign-in step', async () => {
     off = enableRuntimeSetupPreviewDemo('success', 0);
-    render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
+    const onConnected = vi.fn();
+    render(<I18nProvider><ConnectAI onConnected={onConnected} onError={() => {}} /></I18nProvider>);
     fireEvent.click(screen.getByRole('button', { name: 'OpenCode' }));
     const opencodeCard = () => screen.getByRole('group', { name: 'OpenCode' });
-    await waitFor(() => expect(opencodeCard().textContent).toContain('No instalado'));
-    fireEvent.click(within(opencodeCard()).getByRole('button', { name: /Instalar/ }));
-    await waitFor(() => expect(opencodeCard().textContent).toContain('Configuración avanzada'), { timeout: 3000 });
+    await confirmInstall(opencodeCard, 'OpenCode');
+    await waitFor(() => expect(onConnected).toHaveBeenCalledTimes(1), { timeout: 3000 });
     expect(within(opencodeCard()).queryByRole('button', { name: /Iniciar sesión/ })).toBeNull();
   });
 
@@ -163,7 +213,11 @@ describe('ConnectAI', () => {
     render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
     await screen.findByText('Última comprobación: hace 0s');
     await tick(1100);
-    fireEvent.click(screen.getByRole('button', { name: /Volver a comprobar/ }));
+    const recheck = screen.getByRole('button', { name: /Volver a comprobar/ });
+    // QA1: compact icon + text buttons.
+    expect(recheck.querySelector('svg')).not.toBeNull();
+    expect(screen.getByRole('button', { name: '¿Qué falta?' }).querySelector('svg')).not.toBeNull();
+    fireEvent.click(recheck);
     await waitFor(() => expect(screen.getByText(/Última comprobación: hace \ds/).textContent).toBe('Última comprobación: hace 0s'));
   });
 
@@ -203,9 +257,11 @@ describe('ConnectAI', () => {
       const { unmount, container } = render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
       const claudeCard = () => screen.getByRole('group', { name: 'Claude' });
       await waitFor(() => expect(claudeCard().textContent).not.toContain('Buscando'));
-      // "already_installed" starts past the install step (no button to click).
-      const installButton = within(claudeCard()).queryByRole('button', { name: /Instalar/ });
-      if (installButton) fireEvent.click(installButton);
+      const use = within(claudeCard()).getByRole('button', { name: 'Usar Claude' }) as HTMLButtonElement;
+      if (!use.disabled) fireEvent.click(use);
+      // "already_installed" starts past the install step (no confirmation).
+      const confirm = screen.queryByRole('button', { name: 'Instalar y usar' });
+      if (confirm) fireEvent.click(confirm);
       await tick(30);
       expect(container.textContent, scenario).not.toContain('undefined');
       unmount();

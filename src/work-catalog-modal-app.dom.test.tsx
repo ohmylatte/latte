@@ -52,9 +52,9 @@ describe('Entrega 1A: "Nuevo trabajo" abre el catálogo en un shell ya vivo', ()
     // El botón del pie de la barra lateral, no el de Inicio (los dos se
     // llaman "Nuevo trabajo"): éste es el que siempre está, en cualquier vista.
     fireEvent.click(container.querySelector('.sidebar-bottom button') as HTMLButtonElement);
-    // El catálogo, no el formulario de sólo título: hay grupos de intención.
+    // El catálogo, no el formulario de sólo título: hay bloques del embudo.
     expect(await screen.findByRole('heading', { name: '¿En qué querés trabajar?' })).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Analizar' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Medir y reportar' })).toBeDefined();
 
     fireEvent.click(screen.getByRole('button', { name: /Análisis de paid media/ }));
     fireEvent.change(screen.getByPlaceholderText('¿Qué cuenta administramos?'), { target: { value: 'Cuenta principal' } });

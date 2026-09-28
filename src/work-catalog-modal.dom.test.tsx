@@ -48,10 +48,11 @@ function mount(handlers: Partial<{ onCreated: (w: Work, options: { recommendedRo
 }
 
 describe('WorkCatalogModal: "Nuevo trabajo" usa el catálogo', () => {
-  it('muestra los grupos de intención y "Empezar libremente" aparte', () => {
+  it('muestra los cuatro bloques del catálogo y "Empezar libremente" aparte', () => {
     mount();
-    expect(screen.getByRole('heading', { name: 'Planificar' })).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Reportar' })).toBeDefined();
+    for (const block of ['Planificar', 'Producir', 'Operar y optimizar', 'Medir y reportar']) {
+      expect(screen.getByRole('heading', { name: block })).toBeDefined();
+    }
     expect(screen.getByRole('button', { name: /Campaña nueva/ })).toBeDefined();
     expect(screen.getByRole('button', { name: /Empezar libremente/ })).toBeDefined();
   });
@@ -70,10 +71,37 @@ describe('WorkCatalogModal: "Nuevo trabajo" usa el catálogo', () => {
     expect(screen.getAllByRole('button', { name: /Empezar libremente/ })).toHaveLength(1);
   });
 
-  it('QA: los grupos de intención usan la grilla de dos columnas del modal, no el auto-fill de pantalla completa', () => {
+  it('QA1: usa el MISMO componente de catálogo que el onboarding, sin subtítulo', () => {
     const { view } = mount();
-    const groups = view.container.querySelector('.onboarding-groups');
-    expect(groups?.classList.contains('work-catalog-groups')).toBe(true);
+    expect(view.container.querySelector('.catalog-blocks')).not.toBeNull();
+    expect(view.container.querySelector('.catalog-blocks')!.querySelectorAll('.catalog-block')).toHaveLength(4);
+    expect(view.container.querySelector('.modal-body .intro')).toBeNull();
+  });
+
+  it('QA1: cada opción es una fila compacta y clickeable, sin texto de descripción', () => {
+    const { view } = mount();
+    const row = screen.getByRole('button', { name: 'Campaña nueva' });
+    expect(row.classList.contains('catalog-row')).toBe(true);
+    expect(row.querySelector('small')).toBeNull();
+    // La descripción queda como tooltip de una línea, no como texto visible.
+    expect(row.getAttribute('title')).toBeTruthy();
+    expect(view.container.querySelector('.onboarding-card')).toBeNull();
+  });
+
+  it('QA1: el pie de "Nuevo trabajo" alcanza los tipos nuevos del catálogo', async () => {
+    const created = work('Comparar períodos');
+    mocks.createWork.mockResolvedValue(created);
+    mocks.saveBrief.mockResolvedValue({ status: 'saved', document: {} as never, fingerprint: 'f1', work: created });
+    const { onCreated } = mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Comparar períodos' }));
+    expect(screen.getByRole('heading', { name: 'Comparar períodos' })).toBeDefined();
+    // Sin la descripción repetida debajo del título.
+    expect(screen.queryByText(/Mismo indicador/)).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText('¿Qué período miramos?'), { target: { value: 'Septiembre 2026' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
+    await vi.waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    expect(onCreated.mock.calls[0]![1]).toMatchObject({ recommendedRoleId: 'analyst' });
   });
 
   it('bloquea el paso de preguntas hasta responder la requerida', () => {

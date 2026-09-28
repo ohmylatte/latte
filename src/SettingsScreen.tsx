@@ -215,7 +215,8 @@ function CoordinationGlobalBudgetSection({ onError }: { onError: (text: string) 
       <label>{t('coordination.globalBudget.setLabel')}
         <input className="coordination-global-budget-input" type="number" min={1} value={draft} onChange={e => setDraft(e.target.value)} />
       </label>
-      <button className="coordination-global-budget-save" disabled={saving || !draft.trim()} onClick={save}>{t('coordination.globalBudget.save')}</button>
+    </div>
+    <div className="settings-actions">
       {/* `budget == null` era un guard MUERTO: quedó de cuando el getter
           devolvía `CoordinationBudget | null`. Desde que devuelve la vista de
           tres estados, ese objeto nunca es `null`, así que la condición era
@@ -223,6 +224,7 @@ function CoordinationGlobalBudgetSection({ onError }: { onError: (text: string) 
           `invalid` SÍ lo habilita: ése es justo el estado del que hay que
           poder salir. */}
       <button className="coordination-global-budget-clear" disabled={saving || budget.state === 'unset'} onClick={clear}>{t('coordination.globalBudget.clear')}</button>
+      <button className="coordination-global-budget-save primary" disabled={saving || !draft.trim()} onClick={save}>{t('coordination.globalBudget.save')}</button>
     </div>
   </section>;
 }
