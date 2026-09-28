@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 
 /**
  * Flat SVG marks shared by the Layer 2 microinteractions.
@@ -67,10 +67,23 @@ export function SteamWisp({ className, style }: { className?: string; style?: CS
 
 /**
  * The loading cup: the rim stays put while the coffee (rust) fills the
- * paper-deep interior in a 2.6s loop. Replaces the spinner for waits over
- * ~400ms. `label` is announced to assistive tech and hidden visually.
+ * paper-deep interior in a 2.6s loop. Replaces the spinner.
+ *
+ * `delay` (400 ms by default) is the brief's rule made structural: a wait
+ * shorter than that shows NOTHING — no cup, no flicker — so the gate lives
+ * here instead of in each of the thirty call sites. `label` is announced to
+ * assistive tech and hidden visually; without it the status says nothing,
+ * which is worse than no status at all.
  */
-export function Loading({ size = 16, label }: { size?: number; label?: string }) {
+export function Loading({ size = 16, label, delay = 400 }: { size?: number; label?: string; delay?: number }) {
+  const [ready, setReady] = useState(delay <= 0);
+  useEffect(() => {
+    if (delay <= 0) { setReady(true); return; }
+    setReady(false);
+    const timer = window.setTimeout(() => setReady(true), delay);
+    return () => window.clearTimeout(timer);
+  }, [delay]);
+  if (!ready) return null;
   return (
     <span className="loading-cup" role="status" aria-label={label}>
       <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">

@@ -21,8 +21,34 @@ const KIND_LABEL: Record<DocumentKind, string> = new Proxy({} as Record<Document
 const KIND_HINT: Record<DocumentKind, string> = new Proxy({} as Record<DocumentKind,string>, { get: (_, key: DocumentKind) => t(`kindHint.${key}` as 'kindHint.brief') });
 const NEW_KINDS: DocumentKind[] = ['strategy', 'calendar', 'research', 'copy', 'note'];
 const POLL_MS = 2500;
+/** M4: hasta cinco anillos a la vista; el resto se cuenta con `+N`. */
+const MAX_RINGS = 5;
 const date = (value: string) => new Date(value).toLocaleString(currentLocale(), { dateStyle: 'short', timeStyle: 'short' });
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/**
+ * M4 — "los anillos son versiones": el control de versiones de la barra.
+ *
+ * Vive al lado del botón que abre el modal, para que cuántas versiones tiene
+ * un documento se vea sin abrir nada. Nunca dibuja todos: a partir de cinco
+ * se ocultan y el contador `+N`, en `--mono`, dice cuántas quedaron afuera.
+ * El anillo se DIBUJA sólo cuando `drawnId` coincide con la versión recién
+ * creada — abrir la vista no dibuja nada.
+ */
+function VersionStrip({ revisions, approved, drawnId }: {
+  revisions: Revision[];
+  approved: boolean;
+  drawnId: string | null;
+}) {
+  if (revisions.length === 0) return null;
+  const visible = revisions.slice(0, MAX_RINGS);
+  const hidden = revisions.length - visible.length;
+  return <span className="version-strip" role="group" aria-label={t('versions.stripLabel')}>
+    {hidden > 0 && <span className="version-more" title={t('versions.hidden', { count: hidden })}>+{hidden}</span>}
+    {visible.map((r, i) => <VersionRing key={r.id} filled={i === 0} drawing={i === 0 && r.id === drawnId} />)}
+    <span className="version-label">v{revisions.length}{approved ? ` · ${t('versions.approved')}` : ''}</span>
+  </span>;
+}
 
 /** What the editor is holding for one document. Mirrored in documentDrafts so it survives unmounting. */
 interface Editing { content: string; fingerprint: string; dirty: boolean }
@@ -83,6 +109,8 @@ export function DocumentsView(props: DocumentsViewProps) {
   const [external, setExternal] = useState<string | null>(null);
   const [baseOutdated, setBaseOutdated] = useState(false);
   const [revisions, setRevisions] = useState<Revision[]>([]);
+  /** M4: la única versión cuyo anillo se está dibujando ahora. `null` = ninguna. */
+  const [drawnRevisionId, setDrawnRevisionId] = useState<string | null>(null);
   const [showVersions, setShowVersions] = useState(false);
   const [pickedRevision, setPicked] = useState<Revision | null>(null);
   const [saving, setSaving] = useState(false);
@@ -128,6 +156,22 @@ export function DocumentsView(props: DocumentsViewProps) {
     void load(selected.id);
   }, [selected?.id]);
   useEffect(() => { setOrganizing(false); }, [selected?.id]);
+  /**
+   * M4: la barra del documento muestra sus anillos sin abrir el modal, así
+   * que las versiones se leen al cambiar de documento. Se vacían primero:
+   * durante un instante no hay nada que mostrar antes que las versiones de
+   * OTRO documento.
+   */
+  useEffect(() => {
+    setDrawnRevisionId(null);
+    if (!selected) { setRevisions([]); return; }
+    let live = true;
+    setRevisions([]);
+    api.listDocumentRevisions(selected.id)
+      .then(list => { if (live) setRevisions(list); })
+      .catch(() => { if (live) setRevisions([]); });
+    return () => { live = false; };
+  }, [selected?.id]);
   // Editor text, document metadata and the work's expected output are all unsaved work.
   const reportDirty = (extra: boolean) => props.onDirtyChange(extra || Boolean(editing?.dirty) || hasMetadataDrafts() || hasOutcomeDrafts());
   useEffect(() => { reportDirty(false); }, [editing?.dirty]);
@@ -204,8 +248,14 @@ export function DocumentsView(props: DocumentsViewProps) {
     setSaving(true);
     try {
       // The human's text is archived before it leaves the editor: both variants survive.
-      await api.keepDraftAsVersion(selected.id, conflict.mine);
+      const kept = await api.keepDraftAsVersion(selected.id, conflict.mine);
       if (token !== loadToken.current) return;
+      // Conservar el borrador crea una versión: su anillo es el que se dibuja.
+      const keptList = await api.listDocumentRevisions(selected.id).catch(() => null);
+      if (token === loadToken.current) {
+        if (keptList) setRevisions(keptList);
+        setDrawnRevisionId(kept.id);
+      }
       setEditing({ content: conflict.disk, fingerprint: conflict.diskFingerprint, dirty: false });
       setConflict(null);
       props.onNotice(t('ui.auto.141'));
@@ -215,8 +265,10 @@ export function DocumentsView(props: DocumentsViewProps) {
   const snapshot = async () => {
     if (!selected) return;
     try {
-      await api.snapshotDocument(selected.id);
+      // M4: el anillo de la versión nueva se dibuja; los viejos no.
+      const created = await api.snapshotDocument(selected.id);
       setRevisions(await api.listDocumentRevisions(selected.id));
+      setDrawnRevisionId(created.id);
       props.onNotice(t('ui.auto.142'));
     } catch (e) { props.onError(displayError(e)); }
   };
@@ -279,10 +331,11 @@ export function DocumentsView(props: DocumentsViewProps) {
     {selected && <div className="document-toolbar">
       <span><FileText size={16} />{selected.title}{selected.status === 'approved' && <span className="approval-badge" role="status"><ApprovalStamp size={34} className="approval-stamp" /><em>{t('approval.byYou')}</em></span>}<small>{kindLabel} · {editing?.dirty ? t('ui.auto.148') : selected.status === 'approved' ? t('status.approved') : selected.status === 'review' ? t('ui.auto.149') : t('status.draft')}</small><KnowledgeOrigin workId={selected.workId} currentWorkId={props.currentWorkId} titles={props.workTitles} /></span>
       <div className="doc-actions">
-        <button className="primary" disabled={!editing?.dirty || saving || props.busy} onClick={() => void save()}>{saving ? <Loading size={16} /> : <Save size={14} />}{t('ui.auto.150')}</button>
+        <button className="primary" disabled={!editing?.dirty || saving || props.busy} onClick={() => void save()}>{saving ? <Loading size={16} label={t('ui.auto.150')} /> : <Save size={14} />}{t('ui.auto.150')}</button>
         <button disabled={props.busy || saving} onClick={() => setMode(mode === 'edit' ? 'read' : 'edit')}>{mode === 'edit' ? t('document.modeRead') : t('document.modeEdit')}</button>
         <button aria-expanded={organizing} onClick={() => setOrganizing(o => !o)} disabled={props.busy}><SlidersHorizontal size={14} />{t('ui.auto.376')}</button>
         <button disabled={props.busy || saving} onClick={() => void snapshot()}><Layers size={14} />{t('ui.auto.151')}</button>
+        <VersionStrip revisions={revisions} approved={selected.status === 'approved'} drawnId={drawnRevisionId} />
         <button disabled={props.busy} onClick={() => void openVersions()}><History size={14} />{t('ui.auto.377')}</button>
         <button className="icon-button" aria-label={t('ui.auto.152')} title={t('ui.auto.152')} disabled={props.busy} onClick={() => void api.exportDocument(selected.id).then(p => p && props.onNotice(t('ui.auto.153'))).catch(e => props.onError(displayError(e)))}><Download size={15} /></button>
       </div>
@@ -331,7 +384,7 @@ export function DocumentsView(props: DocumentsViewProps) {
 
     <div className="document-scroll">
       <div className="document-kicker" data-origin-work={selected?.workId ?? work.id}>{props.brandName} / {documentOriginTitle(selected?.workId, work.title, props.workTitles)}{selected ? ` / ${kindLabel}` : ''}</div>
-      {loading && !editing && <p className="footnote"><Loading size={16} />  {t('ui.auto.168')}</p>}
+      {loading && !editing && <p className="footnote"><Loading size={32} label={t('ui.auto.168')} />  {t('ui.auto.168')}</p>}
       {editing && mode === 'edit' && <textarea className="markdown-editor" aria-label={t('ui.auto.169')} value={editing.content} spellCheck={false} onChange={e => setEditing({ ...editing, content: e.target.value, dirty: true })} />}
       {editing && mode === 'read' && <article className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{editing.content || t('ui.auto.170')}</ReactMarkdown></article>}
     </div>
@@ -351,8 +404,9 @@ export function DocumentsView(props: DocumentsViewProps) {
         <p className="intro">{t('ui.auto.172')}</p>
         <div className="revision-layout">
           <div className="revision-list">
-            {revisions.map((r, i) => <button key={r.id} className={pickedRevision?.id === r.id ? 'selected-revision' : ''} onClick={() => setPicked(r)}>
-              <VersionRing filled={i === 0} drawing={i === 0} /><span><span className="revision-version">v{revisions.length - i} · {r.source === 'external' ? 'cambio externo' : r.source === 'latte' ? 'referencia' : t('ui.auto.174')}</span><small>{date(r.createdAt)}</small></span>
+            {revisions.length > MAX_RINGS && <span className="version-more" title={t('versions.hidden', { count: revisions.length - MAX_RINGS })}>+{revisions.length - MAX_RINGS}</span>}
+            {revisions.slice(0, MAX_RINGS).map((r, i) => <button key={r.id} className={pickedRevision?.id === r.id ? 'selected-revision' : ''} onClick={() => setPicked(r)}>
+              <VersionRing filled={i === 0} drawing={i === 0 && r.id === drawnRevisionId} /><span><span className="revision-version">v{revisions.length - i} · {i === 0 && selected?.status === 'approved' ? t('versions.approved') : r.source === 'external' ? 'cambio externo' : r.source === 'latte' ? 'referencia' : t('ui.auto.174')}</span><small>{date(r.createdAt)}</small></span>
             </button>)}
             {!revisions.length && <p>{t('ui.auto.175')}</p>}
           </div>

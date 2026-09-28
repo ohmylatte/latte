@@ -205,7 +205,7 @@ export function ConnectionsContent(props: ConnectionsContentProps) {
       <button className="subtle" disabled={busy} onClick={props.onRefresh}><RefreshCw size={13} />{t('connections.refresh')}</button>
     </div>
 
-    {connections === null && <p className="footnote"><Loading size={16} /> {t('connections.loading')}</p>}
+    {connections === null && <p className="footnote"><Loading size={32} label={t('connections.loading')} /> {t('connections.loading')}</p>}
     {connections !== null && rows.length === 0 && <p className="footnote">{t('connections.empty')}</p>}
 
     {rows.length > 0 && <div className="connections-list">

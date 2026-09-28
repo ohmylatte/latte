@@ -3,14 +3,14 @@ import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Archive, ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, Home, MessageSquare, Minus, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, Users, X } from 'lucide-react';
-import { Loading } from './brand-marks';
+import { Loading, SteamWisp, roleColor } from './brand-marks';
 import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatRuntime, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, BrandMember, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, HandoffTaskBridgeResult, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
 import { api, chatStore, isDesktop } from './browser-api';
 import { DocumentsView, NewDocumentDialog } from './DocumentsView';
 import { hasMetadataDrafts } from './DocumentMetadata';
 import { hasOutcomeDrafts } from './WorkOutcome';
 import { documentDrafts } from './document-drafts';
-import { useActiveEdits, useChatState } from './chat-store';
+import { useActiveEdits, useChatState, useChatStatuses } from './chat-store';
 import { activationSteps } from './activation-progress';
 import { activityLine } from './coordination/activity';
 import { hasFirstResult, momentoDeValor } from './momento-de-valor';
@@ -1525,6 +1525,16 @@ export function App() {
   const removeMember = (memberId: string) => run(async () => { await api.removeTeamMember(memberId); dropChat(memberId); if (work) { setSelectedMembers(prev => { const next = { ...prev }; if (next[work.id] === memberId) delete next[work.id]; return next; }); await loadTeam(work.id); } });
   const liveChatIds = new Set(Object.keys(chats));
   const workHasLiveChat = (workId: string) => Object.values(chats).some(c => c.workId === workId);
+  /**
+   * M3: el hilo de vapor de la barra lateral.
+   *
+   * Un punto verde decía "hay un chat acá"; eso no es lo mismo que "está
+   * trabajando". El estado sale del store del chat, por id, así que el hilo
+   * sólo aparece mientras el rol hace algo —y se va en cuanto se queda quieto—.
+   * El color del rol, en su wash: sobre la tinta el tono pleno no se ve.
+   */
+  const chatStatuses = useChatStatuses(chatStore, Object.keys(chats));
+  const workSteamChat = (workId: string) => Object.values(chats).find(c => c.workId === workId && chatStatuses[c.id] !== 'idle') ?? null;
   const sessionWork = works.find(w => w.id === session?.workId);
   const activeTerminals = Object.values(sessions).filter(s => !endedSessions.has(s.id)).length, activeChats = liveChatIds.size;
   // The update notice follows the user into Ajustes: it is about the app, not about the view.
@@ -1563,7 +1573,16 @@ export function App() {
       <div className="nav-label">{t('ui.auto.034')}</div>
       <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button><button disabled={!brand} title={t('roster.nav')} className={view === 'roster' ? 'nav-active' : ''} onClick={() => setView('roster')}><Users size={18} />{t('roster.nav')}</button></nav>
       <div className="sidebar-rule" /><div className="nav-label">{t('app.navWorks')} <span>{works.length.toString().padStart(2, '0')}</span></div>
-      <nav className="work-nav">{works.map(w => <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'funnel' || view === 'decisions' || view === 'resumen' || view === 'trabajo' || view === 'evidencia' || view === 'resultados') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{(workHasLiveChat(w.id) || sessions[w.id]) && <i className={sessions[w.id] && endedSessions.has(sessions[w.id].id) && !workHasLiveChat(w.id) ? 'ended-dot' : 'live-dot'} />}</button>)}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
+      <nav className="work-nav">{works.map(w => {
+        // M3: el vapor sólo donde alguien está trabajando ahora mismo; el
+        // punto de siempre sigue para el chat abierto que no está trabajando.
+        const steam = workSteamChat(w.id);
+        const liveChat = workHasLiveChat(w.id);
+        const closedSession = Boolean(sessions[w.id]) && endedSessions.has(sessions[w.id].id) && !liveChat;
+        return <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'funnel' || view === 'decisions' || view === 'resumen' || view === 'trabajo' || view === 'evidencia' || view === 'resultados') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{steam
+          ? <SteamWisp className="work-steam" style={{ color: roleColor(steam.roleId).wash }} />
+          : (liveChat || sessions[w.id]) && <i className={closedSession ? 'ended-dot' : 'live-dot'} />}</button>;
+      })}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
       <div className="sidebar-bottom"><button disabled={!brand || transitioning} title={t('ui.auto.038')} onClick={() => { setName(''); setModal('work'); }}><Plus size={20} />{t('ui.auto.038')}</button><div className="sidebar-rule" /><nav><button onClick={() => setSettings('agents')} title={t('ui.auto.348')}><Settings2 size={17} />{t('ui.auto.348')}</button></nav><div className="profile"><span className="avatar">G</span><div>{t('app.yourStudio')}<small>{t('ui.auto.039')}</small></div></div></div>
     </aside>
     <header className="topbar"><div className="breadcrumb">{brand?.name ?? t('app.welcomeBrand')}<span>/</span><strong>{work?.title ?? t('app.welcomeWork')}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>

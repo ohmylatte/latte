@@ -58,7 +58,7 @@ function AcpTierModelsForm({ runtime, busy, onSaved, onError }: { runtime: AcpRu
         onChange={e => setDraft(prev => ({ ...prev, [tier]: e.target.value }))} />
     </div>)}
     <small>{t(runtime === 'grok' ? 'provider.tierModels.grok' : 'provider.tierModels.hermes')}</small>
-    <div><button disabled={busy || saving || !changed || !valid} onClick={() => void save()}>{saving ? <Loading size={14} /> : <Check size={13} />}{t('provider.tierModels.save')}</button></div>
+    <div><button disabled={busy || saving || !changed || !valid} onClick={() => void save()}>{saving ? <Loading size={16} /> : <Check size={13} />}{t('provider.tierModels.save')}</button></div>
   </div>;
 }
 
@@ -194,7 +194,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
 
     <section className="providers-section">
       <div className="field-label">{t('ui.auto.228')}</div>
-      {loading && !runtimes && <p className="footnote"><Loading size={16} />  {t('ui.auto.229')}</p>}
+      {loading && !runtimes && <p className="footnote"><Loading size={32} label={t('loading.agents')} />  {t('ui.auto.229')}</p>}
       {runtimes?.map(rt => <div className="runtime-card" key={rt.runtime}>
         <div className="runtime-head"><strong>{RUNTIME_NAME[rt.runtime]}</strong><small>{rt.detail}</small>{isAcp(rt.runtime) && <small>{t('provider.managedOnly')}</small>}</div>
         {rt.installed && <div className="provider-list">
@@ -245,7 +245,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
 
     <section className="providers-section">
       <div className="field-label">{t('ui.auto.246')} {providers ? `· ${connected.length} conectados` : ''}</div>
-      {loading && !providers && <p className="footnote"><Loading size={16} />  {t('ui.auto.247')}</p>}
+      {loading && !providers && <p className="footnote"><Loading size={32} label={t('ui.auto.247')} />  {t('ui.auto.247')}</p>}
       {providers && connected.length === 0 && <p className="footnote">{t('ui.auto.248')}</p>}
       <div className="provider-list">
         {connected.map(p => {

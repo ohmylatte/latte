@@ -44,7 +44,9 @@ describe('brand marks', () => {
   });
 
   it('Loading announces itself and fills the cup', () => {
-    const { container } = render(<Loading size={32} label="Abriendo el trabajo" />);
+    // `delay={0}`: por defecto la taza espera 400 ms (M2) y este test mira la
+    // marca ya dibujada, no el gate. El gate tiene su propio test.
+    const { container } = render(<Loading size={32} label="Abriendo el trabajo" delay={0} />);
     const status = container.querySelector('[role="status"]');
     expect(status).not.toBeNull();
     expect(status!.getAttribute('aria-label')).toBe('Abriendo el trabajo');
