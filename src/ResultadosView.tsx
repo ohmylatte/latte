@@ -31,6 +31,8 @@ export interface ResultadosViewProps {
   formatDate: (value: string) => string;
   /** ADN · chequeo de marca: el enlace a Marca cuando todavía no hay ADN. */
   onOpenBrand?: () => void;
+  /** El nombre de la marca, para la línea de "respeta el ADN". */
+  brandName?: string;
 }
 
 export function ResultadosView(props: ResultadosViewProps) {
@@ -73,6 +75,7 @@ export function ResultadosView(props: ResultadosViewProps) {
             mandar, contra el ADN aprobado de la marca. */}
         <BrandCheck
           className="resultados-brand-check"
+          brandName={props.brandName}
           brandId={props.work.brandId}
           text={(props.work.expectedOutput ?? '').trim()}
           open={checkOpen}
