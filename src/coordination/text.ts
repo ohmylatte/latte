@@ -20,6 +20,8 @@
  * `piezas-para-produccion-cm.md`, eso es un hecho que se puede mostrar. Si no
  * lo nombra, no hay ficha.
  */
+import { fileBaseName } from '../../shared/reportFiles';
+
 const FILE_EXTENSIONS = [
   'md', 'txt', 'csv', 'json', 'yaml', 'yml',
   'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg',
@@ -37,6 +39,16 @@ const FILE_PATTERN = new RegExp(
  * aparecen. Vacío cuando no nombra ninguno — que es la mayoría de las veces, y
  * está bien: una ficha de archivo inventada sería peor que ninguna.
  */
+/**
+ * E2: los archivos de un reporte, de la LISTA que trajo cuando la trajo —y
+ * sólo el nombre de cada uno: ninguna pantalla muestra rutas—; si no, los que
+ * nombra el resumen, como siempre.
+ */
+export function reportFileNames(files: readonly string[] | null | undefined, text: string | null | undefined, max = 6): string[] {
+  if (!files || files.length === 0) return fileNames(text, max);
+  return [...new Set(files.map(fileBaseName))].slice(0, max);
+}
+
 export function fileNames(text: string | null | undefined, max = 6): string[] {
   if (!text) return [];
   const out: string[] = [];

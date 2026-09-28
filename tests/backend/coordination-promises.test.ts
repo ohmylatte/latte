@@ -156,7 +156,8 @@ describe('lo que se publica existe y lo que entra se valida (crítico 12)', () =
 
       const justo = 'a'.repeat(LIMITS.chatMessage);
       await b.service.resolveCoordinationGate(dispatchId, 'approve', justo);
-      expect(b.hub.send).toHaveBeenCalledWith(expect.any(String), justo);
+      // E6: el texto de la persona, tal cual, más la línea de cierre de todo despacho.
+      expect(String(vi.mocked(b.hub.send).mock.calls[0]![1]).startsWith(`${justo}\n\n---\nTask \``)).toBe(true);
     });
 
     it('una cadena vacía (o sólo espacios) se rechaza: un prompt vacío no es una edición', async () => {
@@ -173,7 +174,14 @@ describe('lo que se publica existe y lo que entra se valida (crítico 12)', () =
       await b.service.resolveCoordinationGate(dispatchId, 'approve', editado);
 
       expect(b.hub.send).toHaveBeenCalledTimes(1);
-      expect(b.hub.send).toHaveBeenCalledWith(expect.any(String), editado);
+      // E6: el texto de la persona llega intacto, seguido de la línea de cierre
+      // (id y cómo reportar) que lleva todo despacho; la fila guarda lo editado.
+      const sent = String(vi.mocked(b.hub.send).mock.calls[0]![1]);
+      expect(sent.startsWith(`${editado}
+
+---
+Task \``)).toBe(true);
+      expect(sent).toContain('latte_report');
       expect(b.repo.getCoordinationDispatch(dispatchId).prompt).toBe(editado);
     });
 

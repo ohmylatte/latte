@@ -6,6 +6,7 @@ import { isValidId } from '../core/ids';
 // sería exactamente la forma de que los dos se separen.
 import { MAX_CALLED_UP_MEMBERS_PER_RUN, MAX_DEPENDENCY_DEPTH, MAX_TASKS_PER_RUN } from '../coordination/limits';
 import { TASK_TITLE_STORED } from '../../shared/taskTitle';
+import { COORDINATION_TASK_AUDIENCES, type CoordinationTaskAudience } from '../../shared/contracts';
 
 export const LIMITS = {
   name: 120,
@@ -201,6 +202,12 @@ export function assertCoordinationProposal(parsed: unknown): void {
     requireText(task.spec, `Plan task ${index} spec`, LIMITS.chatMessage);
     // N2: el título es opcional; si viene, es texto y corto.
     if (task.title !== undefined && task.title !== null) requireText(task.title, `Plan task ${index} title`, TASK_TITLE_STORED);
+    // E1: la audiencia es opcional; si viene, es una de las dos. Un valor
+    // inventado ("cliente", "todos") no se lee como interno en silencio: se
+    // rechaza, porque decide si algo pasa por la revisión antes de publicarse.
+    if (task.audience !== undefined && task.audience !== null && !COORDINATION_TASK_AUDIENCES.includes(task.audience as CoordinationTaskAudience)) {
+      throw new ValidationError(`Plan task ${index} audience must be "internal" or "client"`);
+    }
     if (task.dependsOn !== undefined) {
       if (!Array.isArray(task.dependsOn)) throw new ValidationError(`Plan task ${index} dependsOn must be an array`);
       // Q6: SÓLO HACIA ATRÁS. Un índice hacia adelante —o hacia sí misma—

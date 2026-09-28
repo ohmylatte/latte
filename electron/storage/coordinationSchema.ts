@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS coordination_task (
   role_id            TEXT NOT NULL,
   spec               TEXT NOT NULL,
   title              TEXT,
+  audience           TEXT NOT NULL DEFAULT 'internal',
   status             TEXT NOT NULL CHECK (status IN ('pending','ready','dispatched','running','done','failed','blocked')),
   depth              INTEGER NOT NULL DEFAULT 0,
   attempts           INTEGER NOT NULL DEFAULT 0,

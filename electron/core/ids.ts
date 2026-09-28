@@ -16,7 +16,9 @@ export type IdPrefix =
   // El plantel de la marca (esquema 14): una persona que los trabajos convocan.
   | 'bm'
   // Onboarding sin terminal: an install or login job (in memory only, never on disk).
-  | 'job';
+  | 'job'
+  // E4: la evidencia de una entrega publicada (`delivery_evidence`).
+  | 'dev';
 
 export function newId(prefix: IdPrefix): string {
   return `${prefix}_${randomBytes(10).toString('hex')}`;

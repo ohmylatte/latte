@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
+import { withClosingLine } from '../../electron/coordination/engine';
 import { approveCoordinationRoles, fakeCoordinationHub, makeBackend, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
@@ -94,7 +95,8 @@ describe('R7: la respuesta a una pregunta vuelve al agente', () => {
     await call('latte_dispatch', { taskId });
 
     expect(send.mock.calls).toHaveLength(1);
-    expect(send.mock.calls[0][1]).toBe('Escribí el post');
+    // E6: más la línea de cierre (id y cómo reportar), que va en todo despacho.
+    expect(send.mock.calls[0][1]).toBe(withClosingLine('Escribí el post', { id: taskId }));
   });
 
   // --- (b) `latte_ask_status`, para la pregunta que no traba ninguna tarea ---

@@ -6,7 +6,9 @@ import { contains } from '../workspace/linkFolder';
 import { sha256Bytes } from '../core/canonical';
 import type { ManifestAsset } from './payload';
 
-const MAX_ASSET_BYTES = 8 * 1024 * 1024;
+// E4: un manual de marca en PDF pesa más que un logo. 32 MB alcanza para los
+// manuales reales sin dejar entrar cualquier cosa.
+export const MAX_ASSET_BYTES = 32 * 1024 * 1024;
 const BLOCKED_SVG = /<script|onload\s*=|onerror\s*=|javascript:|<foreignObject|<iframe|<embed|<object/i;
 
 export type StagedAsset = {

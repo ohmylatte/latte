@@ -91,6 +91,8 @@ export type ManifestAsset = {
   kind: 'logo' | 'font' | 'reference' | 'other';
   relativePath: string;
   required: boolean;
+  /** E4: el nombre con el que la persona trajo el archivo, para mostrarlo. No entra en el hash del kit. */
+  label?: string;
 };
 
 export type BrandManifest = {
@@ -119,7 +121,7 @@ export function parseManifest(raw: string): BrandManifest {
   const seen = new Set<string>();
   for (const item of obj.assets) {
     const asset = requirePlainObject(item, 'manifest asset');
-    rejectUnknownKeys(asset, ['id', 'kind', 'relativePath', 'required'], 'manifest asset');
+    rejectUnknownKeys(asset, ['id', 'kind', 'relativePath', 'required', 'label'], 'manifest asset');
     if (typeof asset.id !== 'string' || !ASSET_ID.test(asset.id)) throw new ValidationError('Invalid asset id');
     if (seen.has(asset.id)) throw new ValidationError(`Duplicate asset id: ${asset.id}`);
     seen.add(asset.id);
@@ -128,11 +130,15 @@ export function parseManifest(raw: string): BrandManifest {
       throw new ValidationError(`Unsafe asset path: ${String(asset.relativePath)}`);
     }
     if (typeof asset.required !== 'boolean') throw new ValidationError('asset.required must be a boolean');
+    if (asset.label !== undefined && (typeof asset.label !== 'string' || asset.label.length > 180 || asset.label.includes('\0'))) {
+      throw new ValidationError('asset.label must be a short text');
+    }
     assets.push({
       id: asset.id,
       kind: asset.kind as ManifestAsset['kind'],
       relativePath: asset.relativePath,
       required: asset.required,
+      ...(typeof asset.label === 'string' ? { label: asset.label } : {}),
     });
   }
   return {

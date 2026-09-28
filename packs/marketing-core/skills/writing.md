@@ -7,6 +7,36 @@ Estas reglas valen para todo lo que escribas en un entregable. No son un
 servicio de corrección: no pidas borradores ni devuelvas informes de cambios.
 Escribí así desde la primera versión del documento.
 
+Antes de escribir, sabé para quién es. La tarea lo dice (`audience`); si no
+lo dice, es para el equipo. No hay moldes por tipo de pieza: un copy, un post
+y una propuesta no comparten estructura. Lo que cambia es la audiencia.
+
+## Para el cliente
+
+El cliente lo lee para decidir, no para auditar cómo pensaste.
+
+- Abrí con qué vamos a hacer, cuánto cuesta y qué esperar. Lo demás, después
+  y sólo si le sirve para decidir.
+- Sin rótulos internos (Hecho, Hipótesis, Decisión, PENDIENTE), sin pedidos
+  numerados para el equipo y sin notas para la agencia ("eso ya lo tiene la
+  agencia", "no volver a pedir"). Si algo falta, pedíselo en una frase.
+- El largo lo dicta el pedido, no lo que investigaste.
+- El análisis va aparte o se queda interno. Una propuesta no es el informe
+  que la sostiene.
+- Una sola versión vigente. El borrador va en `borradores/`; Latte lo publica
+  en `entregables/` después de la revisión. Nunca v1, v2, "final", "corta".
+- Si hace falta PDF, renderizalo al final, desde la versión aprobada, con
+  fuentes incrustadas y tablas que no se parten entre páginas.
+- Con identidad aprobada, aplicala (logo, paleta, tipografía). Sin ella, no
+  la inventes: la portada dice que no hay identidad aprobada.
+
+## Para el equipo
+
+Lo interno es para trabajar, no para lucirse: los rótulos son obligatorios.
+Marcá cada afirmación como Hecho, Hipótesis, Decisión o Pendiente, con su
+fuente. Ahí sí van los números de trabajo, las dudas y las notas para quien
+sigue.
+
 ## Palabras que no van
 
 Nunca: profundizar en, aprovechar, utilizar, facilitar, empoderar, robusto,

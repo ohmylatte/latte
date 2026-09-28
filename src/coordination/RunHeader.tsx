@@ -1,6 +1,7 @@
 import { CircleCheck, CircleHelp, CircleX, Clock, Flag, MessageSquare, Pause, Play, Send, X } from 'lucide-react';
 import { translate as t } from '../i18n';
 import { CoordAvatar } from './anatomy';
+import { AudienceBadge, isClientTask } from './audience';
 import { avatarOfRole } from './avatar-of';
 import { roleDisplayName } from './names';
 import { taskTitle, TASK_TITLE_LONG } from '../../shared/taskTitle';
@@ -243,9 +244,12 @@ export function RunHeader(props: RunHeaderProps) {
       {props.tasks!.map((task) => {
         const state = taskChipState(task, askedTaskIds);
         const owner = roleDisplayName(task.roleId, roles, team);
-        return <li key={task.id} className={'coord-task is-' + state} data-task-state={state} title={taskLabel(state) + ' · ' + taskTitle(task.spec, task.title, TASK_TITLE_LONG)}>
+        const client = isClientTask(task);
+        return <li key={task.id} className={'coord-task is-' + state} data-task-state={state} data-audience={client ? 'client' : undefined}
+          title={taskLabel(state) + ' · ' + taskTitle(task.spec, task.title, TASK_TITLE_LONG) + (client ? ' · ' + t('coord.audience.client') : '')}>
           <TaskIcon state={state} />
           <span className="coord-task-title">{taskTitle(task.spec, task.title)}</span>
+          {client && <AudienceBadge compact />}
           <CoordAvatar name={owner} small roleId={task.roleId} avatar={avatarOfRole(task.roleId, roles, team)} />
           <span className="visually-hidden">{taskLabel(state)}</span>
         </li>;

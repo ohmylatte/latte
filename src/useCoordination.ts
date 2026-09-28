@@ -10,6 +10,8 @@ export { shouldRefreshWork } from './coordination-event-routing';
 
 export interface CoordinationState {
   authority: CoordinationAuthorityMode;
+  /** E2: "revisión antes de publicar" del Trabajo abierto. Prendida por defecto. */
+  review: boolean;
   budget: CoordinationBudgetView;
   coordinatorGrant: CoordinatorGrant;
   run: CoordinationRunView | null;
@@ -95,6 +97,8 @@ export interface CoordinationState {
    * que escribir.
    */
   setBudget: (maxDispatches: number) => void;
+  /** E2: prende o apaga la revisión antes de publicar del Trabajo abierto. */
+  setReview: (on: boolean) => void;
   /**
    * Elegir quién coordina el Trabajo abierto (el permiso del trabajo). Pasa por
    * `mutate`: refresca, reporta el error por el canal de la app y nunca
@@ -158,6 +162,7 @@ export function useCoordination(
   onWorkTouched?: (workId: string) => void,
 ): CoordinationState {
   const [authority, setAuthority] = useState<CoordinationAuthorityMode>('manual');
+  const [review, setReviewState] = useState(true);
   const [budget, setBudget] = useState<CoordinationBudgetView>({ state: 'unset' });
   const [coordinatorGrant, setCoordinatorGrant] = useState<CoordinatorGrant>(null);
   const [run, setRun] = useState<CoordinationRunView | null>(null);
@@ -210,6 +215,7 @@ export function useCoordination(
     const n = ++generation.current;
     const fresh = () => n === generation.current;
     void api.getCoordinationAuthority(id).then((v) => { if (fresh()) setAuthority(v); }).catch((e) => { report(e); if (fresh()) setAuthority('manual'); });
+    void api.getCoordinationReview(id).then((v) => { if (fresh()) setReviewState(v); }).catch((e) => { report(e); if (fresh()) setReviewState(true); });
     void api.getCoordinationBudget(id).then((v) => { if (fresh()) setBudget(v); }).catch((e) => { report(e); if (fresh()) setBudget({ state: 'unset' }); });
     void api.getCoordinatorGrant(id).then((v) => { if (fresh()) setCoordinatorGrant(v); }).catch((e) => { report(e); if (fresh()) setCoordinatorGrant(null); });
     void api.coordinationRuntimeSupport(id).then((v) => { if (fresh()) setSupport(v); }).catch((e) => { report(e); if (fresh()) setSupport([]); });
@@ -244,7 +250,7 @@ export function useCoordination(
   useEffect(() => {
     if (!workId) {
       generation.current += 1; // toda respuesta en vuelo queda huérfana
-      setAuthority('manual'); setBudget({ state: 'unset' }); setCoordinatorGrant(null);
+      setAuthority('manual'); setReviewState(true); setBudget({ state: 'unset' }); setCoordinatorGrant(null);
       setRun(null); setGates([]); setLog([]); setHires([]); setTasks([]); setSupport([]); setOpenAsks([]); setMessages([]);
       return;
     }
@@ -321,7 +327,7 @@ export function useCoordination(
   };
 
   return {
-    authority, budget, coordinatorGrant, run, gates, log, messages, hires, tasks, support, openAsks, activeRuns, pending,
+    authority, review, budget, coordinatorGrant, run, gates, log, messages, hires, tasks, support, openAsks, activeRuns, pending,
     // Comparado contra el `workId` de ESTE render: el `true` del Trabajo
     // anterior no puede sobrevivir a la navegación ni un solo render.
     workLoaded: workId != null && loadedWorkId === workId,
@@ -332,6 +338,7 @@ export function useCoordination(
     resumeRun: (runId) => mutate(`run:${runId}`, api.resumeCoordinationRun(runId)),
     cancelRun: (runId) => mutate(`run:${runId}`, api.cancelCoordinationRun(runId)),
     setBudget: (maxDispatches) => { if (workId) mutate(`budget:${workId}`, api.setCoordinationBudget(workId, { maxDispatches })); },
+    setReview: (on) => { if (workId) mutate(`review:${workId}`, api.setCoordinationReview(workId, on)); },
     setCoordinator: (memberId) => (workId
       ? mutate(`coordinator:${workId}`, api.setCoordinatorGrant(workId, memberId))
       : Promise.resolve(false)),

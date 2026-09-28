@@ -35,7 +35,7 @@ describe('optional MCP working rules', () => {
     expect(text).toContain('A timeout is not proof of failure');
     expect(text).toContain('do not retry blindly');
     expect(text).toContain('report the outcome as unconfirmed');
-    expect(text).toContain('result files in ./entregables/');
+    expect(text).toContain('result files in ./borradores/;');
     expect(text).toContain('remote IDs, observed status and pending steps');
     expect(text).toContain('never include credentials or secrets');
   });
