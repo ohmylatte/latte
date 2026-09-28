@@ -169,13 +169,20 @@ describe('siempre hay una salida de un run activo', () => {
     expect(container.querySelector('.team-cancel-coordination')).not.toBeNull();
   });
 
-  it('con el equipo VACÍO y un run corriendo, Pausar y Cancelar siguen ahí', () => {
+  it('con el equipo VACÍO y un run corriendo, Pausar y Cancelar siguen ahí; Cancelar pide confirmación antes de disparar', () => {
     const onCancelCoordination = vi.fn();
     const { container } = mount({ coordinationRun: run({ status: 'running' }), onCancelCoordination, onPauseCoordination: () => {} }, []);
     expect(container.querySelector('.team-pause-coordination')).not.toBeNull();
     const cancel = container.querySelector('.team-cancel-coordination') as HTMLButtonElement;
     expect(cancel).not.toBeNull();
     fireEvent.click(cancel);
+    // No dispara todavia: primero pide confirmar, con la consecuencia en
+    // texto plano ("no se puede deshacer").
+    expect(onCancelCoordination).not.toHaveBeenCalled();
+    const dialog = container.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('No se puede deshacer');
+    const confirm = Array.from(dialog.querySelectorAll('button')).find(b => b.className.includes('danger'))!;
+    fireEvent.click(confirm);
     expect(onCancelCoordination).toHaveBeenCalledWith('run1');
   });
 

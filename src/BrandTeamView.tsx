@@ -5,6 +5,7 @@ import type { BrandMember, TeamMemberOptions, Work } from '../shared/contracts';
 import { translate as t } from './i18n';
 import { CoordAvatar } from './coordination/anatomy';
 import { RolePicker, type RolePickerProps } from './TeamPanel';
+import { useModalA11y } from './useModalA11y';
 
 /**
  * MARCA → EQUIPO: EL PLANTEL (brief `docs/briefs/2026-09-23-equipo-de-marca.md`, 5).
@@ -41,6 +42,7 @@ export interface BrandTeamViewProps {
 
 export function BrandTeamView(props: BrandTeamViewProps) {
   const [adding, setAdding] = useState(false);
+  const addDialogRef = useModalA11y<HTMLElement>(adding, () => setAdding(false), props.busy);
   const active = props.roster.filter((m) => m.retiredAt === null);
   const retired = props.roster.filter((m) => m.retiredAt !== null);
   const workId = props.work?.id ?? null;
@@ -90,7 +92,7 @@ export function BrandTeamView(props: BrandTeamViewProps) {
       </li>}
     </ul>
     {adding && props.onAdd && props.picker && <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget && !props.busy) setAdding(false); }}>
-      <section role="dialog" aria-modal="true" aria-labelledby="roster-add-title" className="modal">
+      <section ref={addDialogRef} role="dialog" aria-modal="true" aria-labelledby="roster-add-title" className="modal">
         <div className="modal-head"><div><h2 id="roster-add-title">{t('roster.addTitle')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setAdding(false)}><X size={20} /></button></div>
         <div className="modal-body"><RolePicker {...props.picker} busy={props.busy} canCancel={false} onCancel={() => setAdding(false)}
           onAdd={async (roleId, options) => { await props.onAdd!(roleId, options); setAdding(false); }} /></div>

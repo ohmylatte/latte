@@ -19,6 +19,8 @@ import { memberSignal, type MemberDot } from './coordination/member-line';
 import { hourOf } from './coordination/time';
 import { taskTitle as taskTitleOf } from '../shared/taskTitle';
 import { TeamView } from './TeamView';
+import { useModalA11y } from './useModalA11y';
+import { ConfirmDialog } from './ConfirmDialog';
 
 /** A runtime the user can pick for a new member instead of the primary agent. */
 export interface RuntimeChoice { key: string; label: string; runtime: ChatRuntime; accountId: string | null }
@@ -270,8 +272,17 @@ export function teamChatTarget(
 export function TeamPanel(props: TeamPanelProps) {
   const { work, team, chats, selectedId, roles, busy, isDesktop, mode } = props;
   const [adding, setAdding] = useState(false);
+  const addMemberDialogRef = useModalA11y<HTMLElement>(adding, () => setAdding(false), busy);
   // Member whose work is being handed over; the dialog stays tied to it.
   const [continuing, setContinuing] = useState<string | null>(null);
+  // The team run's "Cancelar" needs a plain-language confirmation before it
+  // fires: it closes the coordination and frees its slot, and that cannot be
+  // undone. Holds the runId while the confirm dialog is open; both places
+  // that render a cancel button (the empty-team header controls and
+  // TeamView's RunHeader) are wired to open this instead of calling
+  // `onCancelCoordination` straight away.
+  const [confirmCancelRunId, setConfirmCancelRunId] = useState<string | null>(null);
+  const requestCancelCoordination = props.onCancelCoordination ? (runId: string) => setConfirmCancelRunId(runId) : undefined;
   /**
    * B3.1: EL MODO DE ESTA COLUMNA.
    *
@@ -503,7 +514,7 @@ export function TeamPanel(props: TeamPanelProps) {
           pantalla vacia), asi que un run que todavia esta planificando se
           quedaria sin ninguna salida. Ahi, y solo ahi, siguen aca. */}
       {rail === 'chat' && team.length === 0 && <CoordinationRunControls run={props.coordinationRun ?? null} busy={busy} pending={props.pending}
-        onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={props.onCancelCoordination} />}
+        onPause={props.onPauseCoordination} onResume={props.onResumeCoordination} onCancel={requestCancelCoordination} />}
       {work && (memberTabs.length > 0 || coordinatorChatOpen) && <div className="team-rail-modes" role="group" aria-label={t('team.rail.group')}>
         <button type="button" className={'team-rail-chat' + (rail === 'chat' ? ' selected' : '')} aria-pressed={rail === 'chat'} onClick={showChat}><MessageSquare size={13} />{t('team.rail.chat')}</button>
         {/* El contador es del TRABAJO entero: gates mas preguntas. No promete a
@@ -545,7 +556,7 @@ export function TeamPanel(props: TeamPanelProps) {
       onOpenChat={openMemberChat}
       coordinationRun={props.coordinationRun} pending={props.pending}
       onPauseCoordination={props.onPauseCoordination} onResumeCoordination={props.onResumeCoordination}
-      onCancelCoordination={props.onCancelCoordination}
+      onCancelCoordination={requestCancelCoordination}
       onResumeMember={isDesktop ? (memberId) => { void props.onOpen(memberId).catch(() => undefined); } : undefined}
       coordinationLog={props.coordinationLog} coordinationMessages={props.coordinationMessages}
       coordinationAsks={props.coordinationAsks} coordinationHires={props.coordinationHires}
@@ -586,7 +597,7 @@ export function TeamPanel(props: TeamPanelProps) {
       deja en el modo Equipo, que es de donde lo pediste.
     */}
     {adding && !firstTeam && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setAdding(false); }}>
-      <section role="dialog" aria-modal="true" aria-labelledby="add-member-title" className="modal">
+      <section ref={addMemberDialogRef} role="dialog" aria-modal="true" aria-labelledby="add-member-title" className="modal">
         <div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="add-member-title">{t('ui.auto.275')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setAdding(false)}><X size={20} /></button></div>
         <div className="modal-body"><RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={false} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} {...rosterPicker} /></div>
       </section></div>}
@@ -624,6 +635,10 @@ export function TeamPanel(props: TeamPanelProps) {
     </>}
     {firstTeam && <RolePicker roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryDetail={props.primaryDetail} primaryReady={props.primaryReady} checking={props.checking} busy={busy} isDesktop={isDesktop} canCancel={team.length > 0} onCancel={() => setAdding(false)} onProviders={props.onProviders} onRecheck={props.onRecheck} onAdd={async (roleId, options) => { await props.onAdd(roleId, options); setAdding(false); }} {...rosterPicker} />}
     {continuingMember && <ContinueDialog source={continuingMember} roles={roles} choices={props.choices} primaryLabel={props.primaryLabel} primaryReady={props.primaryReady} primaryRuntime={props.primaryRuntime} primaryAccountId={props.primaryAccountId} primaryModel={props.primaryModel} checking={props.checking} busy={busy} isDesktop={isDesktop} onClose={() => setContinuing(null)} onProviders={props.onProviders} onRecheck={props.onRecheck} onContinue={async (roleId, options, text) => { await props.onContinue(continuingMember.id, roleId, options, text); setContinuing(null); }} />}
+    {/* "Cancelar" cierra la coordinación del Trabajo y libera su cupo, y no se
+        puede deshacer -- antes disparaba directo desde el botón. La confirmación
+        dice la consecuencia en el mismo texto que ya usaba el tooltip. */}
+    {confirmCancelRunId && <ConfirmDialog titleId="cancel-run-confirm-title" title={t('coordination.run.cancelConfirmTitle')} body={t('coordination.run.cancelHelp')} confirmLabel={t('coordination.run.cancel')} destructive busy={busy} onCancel={() => setConfirmCancelRunId(null)} onConfirm={() => { const runId = confirmCancelRunId; setConfirmCancelRunId(null); props.onCancelCoordination?.(runId); }} />}
     {!work && <div className="agent-idle"><div className="agent-symbol"><MessageSquare size={27} /></div><h3>{t('ui.auto.276')}<br />{t('ui.auto.277')}</h3><p className="footnote">{t('ui.auto.278')}</p></div>}
     {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} onAttachFiles={props.onAttachFiles} coordination={props.chatCoordination && { ...props.chatCoordination, formatTime: props.formatTime, onShowTeam: showTeam }} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}
     {!showPicker && !selected && team.length > 0 && <p className="chat-empty">{t('ui.auto.279')}</p>}
@@ -1171,9 +1186,13 @@ function ContinueDialog({ source, roles, choices, primaryLabel, primaryReady, pr
     setOpening(true); setFailure('');
     try { await onContinue(roleId, continuationOptions(picked, model), text); } catch (e) { setFailure(displayError(e)); } finally { setOpening(false); }
   };
+  // Used a hand-rolled `onKeyDown` for Escape and nothing for Tab/focus: the
+  // shared hook replaces it. `close()` already gates on `opening` and the
+  // unsaved-edits confirm, so the hook's own `busy` gate stays off here.
+  const dialogRef = useModalA11y<HTMLElement>(true, close, false);
 
   return <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) close(); }}>
-    <section role="dialog" aria-modal="true" aria-labelledby="continue-title" className="modal continuation" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } }}>
+    <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="continue-title" className="modal continuation">
       <div className="modal-head"><div><div className="document-kicker">{t('continue.kicker')}</div><h2 id="continue-title">{t('continue.title', { role: source.roleName })}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={close}><X size={20} /></button></div>
       <div className="modal-body">
         <p className="agent-explanation">{t('continue.lead', { role: source.roleName, label: source.label })}</p>

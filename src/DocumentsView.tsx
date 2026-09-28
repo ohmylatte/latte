@@ -15,6 +15,7 @@ import { documentDrafts } from './document-drafts';
 import { WorkOutcome, hasOutcomeDrafts, isWorkBrief } from './WorkOutcome';
 import { KnowledgeOrigin } from './KnowledgeScope';
 import { documentOriginTitle } from './brand-knowledge';
+import { useModalA11y } from './useModalA11y';
 
 const KIND_LABEL: Record<DocumentKind, string> = new Proxy({} as Record<DocumentKind,string>, { get: (_, key: DocumentKind) => t(`kind.${key}` as 'kind.brief') });
 const KIND_HINT: Record<DocumentKind, string> = new Proxy({} as Record<DocumentKind,string>, { get: (_, key: DocumentKind) => t(`kindHint.${key}` as 'kindHint.brief') });
@@ -88,6 +89,7 @@ export function DocumentsView(props: DocumentsViewProps) {
   // Metadata is a per-document detour, not a permanent strip above the text.
   const [organizing, setOrganizing] = useState(false);
   const loadToken = useRef(0);
+  const versionsDialogRef = useModalA11y<HTMLElement>(showVersions, () => setShowVersions(false), props.busy);
   const funnel = props.funnel;
   const { states, failed, checking, refresh: refreshStates } = useDocumentStates(work?.id ?? '', documents, Boolean(work));
 
@@ -275,14 +277,14 @@ export function DocumentsView(props: DocumentsViewProps) {
       : <><DocumentList documents={documents} workId={work.id} currentWorkId={work.id} workTitles={props.workTitles} selectedId={selected?.id ?? null} states={states} failed={failed} checking={checking} onRefresh={refreshStates} onSelect={id => { if (!saving) props.onSelect(id); }} onCreate={props.onCreate} onUseFolder={props.onUseFolder} folder={linked} untracked={props.untracked} onTrack={props.onTrack} busy={props.busy || saving} suggestion={suggestion} showWorkDelta={props.showWorkDelta} onImported={names => { void props.onDocumentsChanged(); props.onNotice(names.length === 1 ? t('ui.auto.374', { p0: names[0] }) : t('ui.auto.375', { p0: names.length })); }} />
     <div className="doc-pane">
     {selected && <div className="document-toolbar">
-      <span><FileText size={16} />{selected.title}{selected.status === 'approved' && <span className="approval-badge" role="status"><ApprovalStamp size={34} className="approval-stamp" /><em>{t('approval.byYou')}</em></span>}<small>{kindLabel} · {editing?.dirty ? t('ui.auto.148') : selected.status === 'approved' ? 'Aprobado' : selected.status === 'review' ? t('ui.auto.149') : 'Borrador'}</small><KnowledgeOrigin workId={selected.workId} currentWorkId={props.currentWorkId} titles={props.workTitles} /></span>
+      <span><FileText size={16} />{selected.title}{selected.status === 'approved' && <span className="approval-badge" role="status"><ApprovalStamp size={34} className="approval-stamp" /><em>{t('approval.byYou')}</em></span>}<small>{kindLabel} · {editing?.dirty ? t('ui.auto.148') : selected.status === 'approved' ? t('status.approved') : selected.status === 'review' ? t('ui.auto.149') : t('status.draft')}</small><KnowledgeOrigin workId={selected.workId} currentWorkId={props.currentWorkId} titles={props.workTitles} /></span>
       <div className="doc-actions">
         <button className="primary" disabled={!editing?.dirty || saving || props.busy} onClick={() => void save()}>{saving ? <Loading size={16} /> : <Save size={14} />}{t('ui.auto.150')}</button>
-        <button disabled={props.busy || saving} onClick={() => setMode(mode === 'edit' ? 'read' : 'edit')}>{mode === 'edit' ? 'Leer' : 'Editar'}</button>
+        <button disabled={props.busy || saving} onClick={() => setMode(mode === 'edit' ? 'read' : 'edit')}>{mode === 'edit' ? t('document.modeRead') : t('document.modeEdit')}</button>
         <button aria-expanded={organizing} onClick={() => setOrganizing(o => !o)} disabled={props.busy}><SlidersHorizontal size={14} />{t('ui.auto.376')}</button>
         <button disabled={props.busy || saving} onClick={() => void snapshot()}><Layers size={14} />{t('ui.auto.151')}</button>
         <button disabled={props.busy} onClick={() => void openVersions()}><History size={14} />{t('ui.auto.377')}</button>
-        <button className="icon-button" title={t('ui.auto.152')} disabled={props.busy} onClick={() => void api.exportDocument(selected.id).then(p => p && props.onNotice(t('ui.auto.153'))).catch(e => props.onError(displayError(e)))}><Download size={15} /></button>
+        <button className="icon-button" aria-label={t('ui.auto.152')} title={t('ui.auto.152')} disabled={props.busy} onClick={() => void api.exportDocument(selected.id).then(p => p && props.onNotice(t('ui.auto.153'))).catch(e => props.onError(displayError(e)))}><Download size={15} /></button>
       </div>
     </div>}
 
@@ -293,7 +295,7 @@ export function DocumentsView(props: DocumentsViewProps) {
     {selected && selected.proposedFunnelStages.length > 0 && <div className="doc-banner proposal" role="status">
       <SlidersHorizontal size={14} />
       <span>{t('ui.auto.154')} <strong>{selected.proposedFunnelStages.map(s => t(STAGE_LABEL[s])).join(' + ')}</strong>.</span>
-      <button className="primary" disabled={props.busy} onClick={() => void api.applyFunnelProposal(selected.id).then(props.onDocumentsChanged).then(() => props.onNotice('Etapas aplicadas.')).catch(e => props.onError(displayError(e)))}>{t('ui.auto.378')}</button>
+      <button className="primary" disabled={props.busy} onClick={() => void api.applyFunnelProposal(selected.id).then(props.onDocumentsChanged).then(() => props.onNotice(t('funnel.stagesApplied'))).catch(e => props.onError(displayError(e)))}>{t('ui.auto.378')}</button>
       <button disabled={props.busy} onClick={() => void api.dismissFunnelProposal(selected.id).then(props.onDocumentsChanged).catch(e => props.onError(displayError(e)))}>{t('ui.auto.379')}</button>
     </div>}
 
@@ -318,7 +320,7 @@ export function DocumentsView(props: DocumentsViewProps) {
     {!conflict && external && <div className="doc-banner" role="status">
       <RefreshCw size={14} /><span>{t('ui.auto.162')}</span>
       <button onClick={() => void load(selected!.id)}>{t('ui.auto.163')}</button>
-      <button onClick={() => setExternal(null)}>Seguir editando</button>
+      <button onClick={() => setExternal(null)}>{t('document.keepEditing')}</button>
     </div>}
 
     {baseOutdated && selected?.baseDocumentId && <div className="doc-banner base" role="status">
@@ -337,7 +339,7 @@ export function DocumentsView(props: DocumentsViewProps) {
     </div></>}
 
     {showVersions && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) setShowVersions(false); }}>
-      <section role="dialog" aria-modal="true" aria-labelledby="versions-title" className="modal wide">
+      <section ref={versionsDialogRef} role="dialog" aria-modal="true" aria-labelledby="versions-title" className="modal wide">
         <div className="modal-head">
           <div>
             <div className="document-kicker">{kindLabel}</div>
@@ -377,8 +379,9 @@ export function NewDocumentDialog({ documents, busy, onCancel, onCreate }: {
   const [base, setBase] = useState('');
   const suggestion = KIND_LABEL[kind];
   const canDerive = documents.filter(d => d.kind !== kind || d.id !== base);
+  const dialogRef = useModalA11y<HTMLElement>(true, onCancel, busy);
   return <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
-    <section role="dialog" aria-modal="true" aria-labelledby="new-doc-title" className="modal roomy">
+    <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="new-doc-title" className="modal roomy">
       <div className="modal-head">
         <div>
           <div className="document-kicker">{t('ui.auto.177')}</div>

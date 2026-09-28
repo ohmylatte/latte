@@ -51,31 +51,51 @@ describe('settling the in-flight dispatch from the bitácora (task 7.11)', () =>
     expect(container.querySelector('.resumen-bitacora-settle')).not.toBeNull();
   });
 
-  it('calls onSettleDispatch with the taskId, "succeeded" and the entered summary', () => {
+  const findDialog = (container: HTMLElement) => container.querySelector<HTMLElement>('[aria-labelledby="settle-dispatch-title"]');
+  const submitButton = (dialog: HTMLElement) => dialog.querySelector<HTMLButtonElement>('form button[type="submit"]')!;
+
+  it('calls onSettleDispatch with the taskId, "succeeded" and the entered summary, from an in-app dialog — never window.prompt', () => {
     const onSettleDispatch = vi.fn();
-    vi.spyOn(window, 'prompt').mockReturnValue('Brief listo');
+    const promptSpy = vi.spyOn(window, 'prompt');
     const { container } = mount({ coordinationLog: [logEntry({ taskId: 'task-xyz', status: 'running' })], onSettleDispatch });
     fireEvent.click(container.querySelector('.resumen-bitacora-settle-succeeded')!);
+    const dialog = findDialog(container);
+    expect(dialog).not.toBeNull();
+    fireEvent.change(dialog!.querySelector('textarea, input')!, { target: { value: 'Brief listo' } });
+    fireEvent.click(submitButton(dialog!));
     expect(onSettleDispatch).toHaveBeenCalledWith('task-xyz', 'succeeded', 'Brief listo');
+    expect(promptSpy).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
 
   it('calls onSettleDispatch with "failed" from the other button', () => {
     const onSettleDispatch = vi.fn();
-    vi.spyOn(window, 'prompt').mockReturnValue('El runtime se cayó');
     const { container } = mount({ coordinationLog: [logEntry({ taskId: 'task-xyz', status: 'dispatched' })], onSettleDispatch });
     fireEvent.click(container.querySelector('.resumen-bitacora-settle-failed')!);
+    const dialog = findDialog(container)!;
+    fireEvent.change(dialog.querySelector('textarea, input')!, { target: { value: 'El runtime se cayó' } });
+    fireEvent.click(submitButton(dialog));
     expect(onSettleDispatch).toHaveBeenCalledWith('task-xyz', 'failed', 'El runtime se cayó');
-    vi.restoreAllMocks();
   });
 
-  it('does not settle when the summary prompt is cancelled — never a blank summary', () => {
+  it('does not settle when the dialog is cancelled — never a blank summary', () => {
     const onSettleDispatch = vi.fn();
-    vi.spyOn(window, 'prompt').mockReturnValue(null);
     const { container } = mount({ coordinationLog: [logEntry({ status: 'running' })], onSettleDispatch });
     fireEvent.click(container.querySelector('.resumen-bitacora-settle-succeeded')!);
+    const dialog = findDialog(container)!;
+    fireEvent.click(Array.from(dialog.querySelectorAll('button')).find(b => b.textContent?.includes('Cancelar'))!);
     expect(onSettleDispatch).not.toHaveBeenCalled();
-    vi.restoreAllMocks();
+    expect(findDialog(container)).toBeNull();
+  });
+
+  it('does not settle on an empty summary — the field is required, next to the field', () => {
+    const onSettleDispatch = vi.fn();
+    const { container } = mount({ coordinationLog: [logEntry({ status: 'running' })], onSettleDispatch });
+    fireEvent.click(container.querySelector('.resumen-bitacora-settle-succeeded')!);
+    const dialog = findDialog(container)!;
+    fireEvent.click(submitButton(dialog));
+    expect(onSettleDispatch).not.toHaveBeenCalled();
+    expect(dialog.querySelector('[role="alert"]')).not.toBeNull();
   });
 
   it('a hire row (not a dispatch) never gets a settle control', () => {

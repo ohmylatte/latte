@@ -37,6 +37,8 @@ import { ActiveTeamsStrip } from './ActiveTeamsStrip';
 import { MemoryNotice } from './MemoryNotice';
 import { sinceLastVisitFromActiveRuns } from './home-summary';
 import { AvatarSprite } from './coordination/Avatar';
+import { useModalA11y } from './useModalA11y';
+import { PromptDialog } from './PromptDialog';
 
 /**
  * Every workspace view, in one place.
@@ -265,8 +267,8 @@ export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
   useEffect(() => api.onWindowState(state => setMaximized(state.maximized)), []);
   return <div className="window-controls">
-    <button aria-label="Minimizar" title="Minimizar" onClick={() => api.windowControl('minimize')}><Minus size={15} /></button>
-    <button aria-label={maximized ? 'Restaurar' : 'Maximizar'} title={maximized ? 'Restaurar' : 'Maximizar'} onClick={() => api.windowControl('maximize')}>{maximized ? <Copy size={13} /> : <Square size={12} />}</button>
+    <button aria-label={t('window.minimize')} title={t('window.minimize')} onClick={() => api.windowControl('minimize')}><Minus size={15} /></button>
+    <button aria-label={maximized ? t('window.restoreSize') : t('window.maximize')} title={maximized ? t('window.restoreSize') : t('window.maximize')} onClick={() => api.windowControl('maximize')}>{maximized ? <Copy size={13} /> : <Square size={12} />}</button>
     <button className="close" aria-label={t('ui.auto.001')} title={t('ui.auto.001')} onClick={() => api.windowControl('close')}><X size={16} /></button>
   </div>;
 }
@@ -319,6 +321,11 @@ export function App() {
   const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>(ALL_BRAND_SCOPE);
   const [decisionAuthority,setDecisionAuthority]=useState<DecisionAuthorityMode>('suggest');
   const [modal, setModal] = useState<Modal>(null), [name, setName] = useState('');
+  // Text prompts that used to be `window.prompt`, now in-app dialogs: the
+  // pending answer text waiting for a title, and the context proposal being
+  // edited (its id plus the text the dialog starts from).
+  const [savingAnswer, setSavingAnswer] = useState<{ text: string } | null>(null);
+  const [editingContextProposal, setEditingContextProposal] = useState<{ id: string; initialText: string } | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const [runtimes, setRuntimes] = useState<RuntimeStatus[]>([]), [provider, setProvider] = useState<Provider>('opencode');
   const [sessions, setSessions] = useState<Record<string, AgentSession>>({}), [starting, setStarting] = useState(false);
@@ -605,14 +612,23 @@ export function App() {
     if (workId) loadFolderDelta(workId);
     return docs;
   };
-  /** Saves an answer from the conversation as a document of this work. */
+  /**
+   * Saves an answer from the conversation as a document of this work. The
+   * title used to come from a blocking `window.prompt`; now it opens
+   * `savingAnswer`, and `confirmSaveAnswerAsDocument` below does the actual
+   * write once the person submits the dialog.
+   */
   const saveAnswerAsDocument = (text: string) => {
     if (!work) return;
-    const title = window.prompt(t('ui.auto.002'), 'Estrategia');
-    if (!title || !title.trim()) return;
+    setSavingAnswer({ text });
+  };
+  const confirmSaveAnswerAsDocument = (title: string) => {
+    if (!work || !savingAnswer) return;
+    const text = savingAnswer.text;
+    setSavingAnswer(null);
     const guess = /calendario|cronograma/i.test(title) ? 'calendar' : /estrateg/i.test(title) ? 'strategy' : /investigac|research/i.test(title) ? 'research' : /copy|pieza/i.test(title) ? 'copy' : 'note';
     void run(async () => {
-      const document = await api.saveAsDocument(work.id, guess as DocumentKind, title.trim(), text);
+      const document = await api.saveAsDocument(work.id, guess as DocumentKind, title, text);
       await loadKnowledge(work.brandId, work.id);
       setSelectedDoc(prev => ({ ...prev, [work.brandId]: document.id }));
       setLayout('review'); setView('brief');
@@ -842,15 +858,7 @@ export function App() {
   }, [unsaved]);
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer); }, [notice]);
   useEffect(() => api.onAgentEvent(event => { if (event.type === 'exit') { setEndedSessions(previous => new Set(previous).add(event.sessionId)); setNotice(t('ui.auto.004')); } if (event.type === 'error') setError(event.data); }), []);
-  useEffect(() => {
-    if (!modal) return;
-    const previous = document.activeElement as HTMLElement | null;
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
-    const controls = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input, textarea, select, [tabindex="0"]') ?? []);
-    if (!dialog?.contains(document.activeElement)) controls()[0]?.focus();
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy) setModal(null); if (e.key !== 'Tab') return; const list = controls(); const first = list[0], last = list[list.length - 1]; if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); } };
-    document.addEventListener('keydown', key); return () => { document.removeEventListener('keydown', key); previous?.focus(); };
-  }, [modal, busy]);
+  const createModalRef = useModalA11y<HTMLElement>(modal === 'brand' || modal === 'work', () => setModal(null), busy);
   const selectBrand = (b: Brand) => { if (!guard()) return; setBrand(b); setContext(b.context); setView('home'); setMemory(''); setMemoryAvailable(false); memoryGeneration.current++; };
   /**
    * Opens a work. The target defaults to the work's brief, so every existing
@@ -1090,17 +1098,21 @@ export function App() {
   });
   const decideContextProposal = async (proposalId: string, action: 'approve' | 'edit' | 'reject', acceptStale = false) => {
     if (!brand) return;
-    if (action === 'reject') await writeContext(() => api.rejectBrandContextProposal(proposalId));
-    else {
-      let edited: string | null = null;
-      if (action === 'edit') {
-        const current = contextProposals.find((p) => p.id === proposalId);
-        const next = window.prompt(t('context.editAccept'), current?.text ?? '');
-        if (!next?.trim()) return;
-        edited = next.trim();
-      }
-      await writeContext(() => api.approveBrandContextProposal(proposalId, edited, acceptStale));
+    if (action === 'reject') { await writeContext(() => api.rejectBrandContextProposal(proposalId)); return; }
+    if (action === 'edit') {
+      // The edit is a dialog, not a blocking `window.prompt`: the actual write
+      // waits for `confirmContextProposalEdit` below, once the person submits.
+      const current = contextProposals.find((p) => p.id === proposalId);
+      setEditingContextProposal({ id: proposalId, initialText: current?.text ?? '' });
+      return;
     }
+    await writeContext(() => api.approveBrandContextProposal(proposalId, null, acceptStale));
+  };
+  const confirmContextProposalEdit = async (text: string) => {
+    if (!editingContextProposal) return;
+    const { id } = editingContextProposal;
+    setEditingContextProposal(null);
+    await writeContext(() => api.approveBrandContextProposal(id, text, false));
   };
   const askStrategist = () => run(async () => {
     if (!work) { setNotice(t('context.ask.needWork')); return; }
@@ -1141,7 +1153,7 @@ export function App() {
     }
   };
   const onWorkUpdated = (updated: Work) => { setWork(updated); setWorks(prev => prev.map(x => x.id === updated.id ? updated : x)); };
-  const openMemory = () => { setView('memory'); if (!brand) return; const n = ++memoryGeneration.current; setMemory('Recuperando memoria…'); void api.readMemory(brand.id).then(r => { if (n !== memoryGeneration.current) return; setMemory(r.text); setMemoryAvailable(r.available); }).catch(e => setError(displayError(e))); };
+  const openMemory = () => { setView('memory'); if (!brand) return; const n = ++memoryGeneration.current; setMemory(t('memory.loading')); void api.readMemory(brand.id).then(r => { if (n !== memoryGeneration.current) return; setMemory(r.text); setMemoryAvailable(r.available); }).catch(e => setError(displayError(e))); };
   const create = () => run(async () => { if (!name.trim()) return; if (!guard()) return; if (modal === 'brand') { const b = await api.createBrand(name.trim()); setBrands(prev => [...prev, b]); setBrand(b); setContext(b.context); } else if (brand) { const w = await api.createWork(brand.id, name.trim()); setWorks(prev => [...prev, w]); setWork(w); setLayout('conversation'); setContext(brand.context); } setView('brief'); setModal(null); setName(''); });
   const createDocument = async (kind: DocumentKind, title: string, baseDocumentId: string | null) => {
     if (!work) return;
@@ -1247,7 +1259,7 @@ export function App() {
         await chatStore.sync(reopened.id);
       }
       await loadTeam(currentWork.id);
-      const applied = next ? 'Listo, escriben en esta carpeta sin preguntar.' : 'Vuelven a pedir permiso por cada archivo.';
+      const applied = next ? t('permission.appliedFolder') : t('permission.appliedAsk');
       setNotice(busyNames.length > 0
         ? t('ui.auto.342', { p0: applied, p1: busyNames.join(' y ') })
         : applied);
@@ -1255,7 +1267,7 @@ export function App() {
   };
   const dropChat = (memberId: string) => { setChats(prev => { const next = { ...prev }; delete next[memberId]; return next; }); chatStore.forget(memberId); };
   const pauseMember = (memberId: string) => run(async () => { await api.pauseTeamMember(memberId); dropChat(memberId); if (work) await loadTeam(work.id); });
-  const finishMember = (memberId: string) => run(async () => { await api.finishTeamMember(memberId); dropChat(memberId); if (work) await loadTeam(work.id); setNotice('Miembro marcado como finalizado'); });
+  const finishMember = (memberId: string) => run(async () => { await api.finishTeamMember(memberId); dropChat(memberId); if (work) await loadTeam(work.id); setNotice(t('team.finish.notice')); });
   /**
    * Puentea un traspaso a la coordinación (`acceptHandoffAsTask`): con un run
    * corriendo, tarea + despacho; sin run (H1), una propuesta de una tarea.
@@ -1398,9 +1410,9 @@ export function App() {
    * hatch belongs.
    */
   const terminalConsole = <section className="terminal-console">
-    <h3>Terminal · avanzado</h3>
+    <h3>{t('terminal.advancedTitle')}</h3>
     <p className="settings-lead">{work ? <>{t('ui.auto.013')} <strong>{work.title}</strong>{t('ui.auto.014')}</> : t('ui.auto.015')}</p>
-    {work && <><p className="agent-explanation">{t('ui.auto.016')}</p><label className="field-label" htmlFor="provider">RUNTIME</label><select id="provider" value={provider} disabled={Boolean(session) || starting} onChange={e => setProvider(e.target.value as Provider)}>{(['opencode', 'claude', 'codex'] as Provider[]).map(p => <option key={p} value={p}>{p === 'opencode' ? 'OpenCode' : p === 'claude' ? 'Claude Code' : 'Codex'}{runtimes.find(r => r.provider === p)?.available ? t('ui.auto.346') : ''}</option>)}</select><p className="runtime-detail">{runtimes.find(r => r.provider === provider)?.detail ?? 'Comprobando disponibilidad…'}</p>
+    {work && <><p className="agent-explanation">{t('ui.auto.016')}</p><label className="field-label" htmlFor="provider">{t('terminal.runtimeLabel')}</label><select id="provider" value={provider} disabled={Boolean(session) || starting} onChange={e => setProvider(e.target.value as Provider)}>{(['opencode', 'claude', 'codex'] as Provider[]).map(p => <option key={p} value={p}>{p === 'opencode' ? 'OpenCode' : p === 'claude' ? 'Claude Code' : 'Codex'}{runtimes.find(r => r.provider === p)?.available ? t('ui.auto.346') : ''}</option>)}</select><p className="runtime-detail">{runtimes.find(r => r.provider === provider)?.detail ?? t('terminal.checkingAvailability')}</p>
         <div className="terminal-stack">{Object.values(sessions).map(s => <div key={s.id} style={{ display: s.id === session?.id ? 'block' : 'none' }}><TerminalPane sessionId={s.id} onError={setError} /></div>)}</div>
         {session ? <><div className="session-heading"><span><i className={sessionEnded ? 'ended-dot' : 'live-dot'} />{session.provider} · {sessionWork?.title ?? t('ui.auto.017')}</span><button aria-label={t('ui.auto.018')} title={t('ui.auto.018')} onClick={() => run(async () => { await api.stopAgent(session.id); setSession(null); })}><Square size={13} /></button></div><form className="prompt-form" onSubmit={e => { e.preventDefault(); if (!prompt.trim() || sessionEnded) return; void run(async () => { await api.writeAgent(session.id, prompt + '\r'); setPrompt(''); }); }}><textarea aria-label={t('ui.auto.019')} placeholder={t('ui.auto.020')} value={prompt} onChange={e => setPrompt(e.target.value)} /><div><small>{sessionEnded ? t('ui.auto.021') : t('ui.auto.022')}</small><button className="primary icon-button" disabled={!prompt.trim() || busy || sessionEnded} aria-label={t('ui.auto.023')}><ArrowUpRight size={18} /></button></div></form></> : <div className="agent-idle"><div className="agent-symbol"><TerminalSquare size={27} /></div><h3>{t('ui.auto.024')}<br />{t('ui.auto.025')}</h3><p>{t('ui.auto.026')}</p><button className="primary" disabled={!work || starting || !runtimes.find(r => r.provider === provider)?.available} onClick={start}>{starting ? <Loading size={16} /> : <Plus size={15} />}{starting ? t('ui.auto.347') : t('ui.auto.027')}</button>{!isDesktop && <small className="preview-note">{t('ui.auto.028')}</small>}</div>}</>}
   </section>;
@@ -1422,11 +1434,11 @@ export function App() {
       <nav><button type="button" title={t('home.nav')} className={view === 'home' ? 'nav-active' : ''} onClick={() => setView('home')}><Home size={18} />{t('home.nav')}</button></nav>
       <div className="nav-label">{t('ui.auto.034')}</div>
       <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button><button disabled={!brand} title={t('roster.nav')} className={view === 'roster' ? 'nav-active' : ''} onClick={() => setView('roster')}><Users size={18} />{t('roster.nav')}</button></nav>
-      <div className="sidebar-rule" /><div className="nav-label">TRABAJOS <span>{works.length.toString().padStart(2, '0')}</span></div>
+      <div className="sidebar-rule" /><div className="nav-label">{t('app.navWorks')} <span>{works.length.toString().padStart(2, '0')}</span></div>
       <nav className="work-nav">{works.map(w => <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'funnel' || view === 'decisions' || view === 'resumen' || view === 'trabajo' || view === 'evidencia' || view === 'resultados') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{(workHasLiveChat(w.id) || sessions[w.id]) && <i className={sessions[w.id] && endedSessions.has(sessions[w.id].id) && !workHasLiveChat(w.id) ? 'ended-dot' : 'live-dot'} />}</button>)}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
-      <div className="sidebar-bottom"><button disabled={!brand || transitioning} title={t('ui.auto.038')} onClick={() => { setName(''); setModal('work'); }}><Plus size={20} />{t('ui.auto.038')}</button><div className="sidebar-rule" /><nav><button onClick={() => setSettings('agents')} title={t('ui.auto.348')}><Settings2 size={17} />{t('ui.auto.348')}</button></nav><div className="profile"><span className="avatar">G</span><div>Tu estudio<small>{t('ui.auto.039')}</small></div></div></div>
+      <div className="sidebar-bottom"><button disabled={!brand || transitioning} title={t('ui.auto.038')} onClick={() => { setName(''); setModal('work'); }}><Plus size={20} />{t('ui.auto.038')}</button><div className="sidebar-rule" /><nav><button onClick={() => setSettings('agents')} title={t('ui.auto.348')}><Settings2 size={17} />{t('ui.auto.348')}</button></nav><div className="profile"><span className="avatar">G</span><div>{t('app.yourStudio')}<small>{t('ui.auto.039')}</small></div></div></div>
     </aside>
-    <header className="topbar"><div className="breadcrumb">{brand?.name ?? 'Bienvenido a Latte'}<span>/</span><strong>{work?.title ?? 'Tu espacio de marketing'}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
+    <header className="topbar"><div className="breadcrumb">{brand?.name ?? t('app.welcomeBrand')}<span>/</span><strong>{work?.title ?? t('app.welcomeWork')}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
     <main className="workspace" aria-hidden={focusChat} inert={focusChat}>
       <MemoryNotice support={coordination.support} dismissed={Boolean(brand && memoryNoticeDismissed.has(brand.id))} onDismiss={() => { if (brand) setMemoryNoticeDismissed(prev => new Set(prev).add(brand.id)); }} />
       {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} coordinationSinceLastVisit={brand ? sinceLastVisitFromActiveRuns(coordination.activeRuns, brand.id) : []} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenCoordination={openWorkCoordination} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} />}
@@ -1471,7 +1483,7 @@ export function App() {
         picker={{ roles, choices: runtimeChoices, primaryLabel, primaryDetail, primaryReady, checking: checkingAgents, isDesktop, onProviders: () => setSettings('agents'), onRecheck: () => void refreshChatStatus(), submitLabel: t('roster.addSubmit'), lead: null }} />}
       {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} onAcceptHandoff={acceptHandoffAsTask} />}
       {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice('Aprendizaje guardado en Engram'); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
-      <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
+      <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : t('app.tagline')}</span></div>
     </main>
     <aside className="agent-panel">{focusChat && (error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}<button type="button" className={'panel-resizer' + (dragging ? ' dragging' : '')} aria-label={t('ui.auto.066')} title={t('ui.auto.067')} onPointerDown={startResize} />
       <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} roster={roster} onCallUp={callUpMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onAcceptHandoffAsTask={acceptHandoffAsTask} handoffHolds={openHandoffHolds} handoffProposal={pendingHandoffProposal} onOpenHandoffProposal={() => setCardsFromPending(true)} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} coordinationLog={work ? coordination.log : undefined} coordinationMessages={work ? coordination.messages : undefined} coordinationAsks={work ? coordination.openAsks : undefined} coordinationHires={work ? coordination.hires : undefined} coordinationGates={work ? coordination.gates : undefined} coordinationTasks={work ? coordination.tasks : undefined} formatTime={hour} formatDate={date} coordinationSupport={work ? coordination.support : undefined} coordinationAuthority={work ? coordination.authority : undefined} onSetCoordinationAuthority={changeCoordinationAuthority} coordinationBudget={work ? coordination.budget : undefined} onSetCoordinationBudget={coordination.setBudget} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} onSetCoordinator={work ? (memberId) => { void coordination.setCoordinator(memberId); } : undefined} chatCoordination={{ coordinationRun: work ? coordination.run : undefined, gates: work ? coordination.gates : undefined, openAsks: work ? coordination.openAsks : undefined, roles, team, formatDate: date, onResolveGate: coordination.resolveGate, onAnswerAsk: coordination.answerAsk, coordinationPending: coordination.pending, onSelectMember: selectMember, initiallyExpanded: cardsFromPending, teamSeen: coordination.run ? teamSeenRuns.seen(coordination.run.id) : false, onTeamOpened: () => { const r = coordination.run; if (r?.planApproved) teamSeenRuns.markSeen(r.id); } }} />
@@ -1485,9 +1497,11 @@ export function App() {
         </div>
       </details>
     </aside>
-    <footer className="statusbar"><span><Circle size={11} />{isDesktop ? t('ui.auto.354', { p0: activeChats, p1: activeTerminals }) : t('ui.auto.074')}</span><span>{busy ? t('ui.auto.355') : dirty || contextDirty ? t('ui.auto.075') : 'Todo guardado'}<Check size={13} /></span>{appInfo && <span>Latte <span className="status-version">{appInfo.version}</span></span>}</footer>
-    {(modal === 'brand' || modal === 'work') && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setModal(null); }}><section role="dialog" aria-modal="true" aria-labelledby="dialog-title" className="modal"><div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="dialog-title">{modal === 'brand' ? t('ui.auto.077') : t('ui.auto.078')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setModal(null)}><X size={20} /></button></div><div className="modal-body"><form onSubmit={e => { e.preventDefault(); void create(); }}><label className="field-label" htmlFor="new-name">{modal === 'brand' ? t('ui.auto.079') : t('ui.auto.080')}</label><input autoFocus id="new-name" maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder={modal === 'brand' ? 'Ej. Casa Oliva' : t('ui.auto.081')} /><p className="footnote">{t('ui.auto.082')}</p><button className="primary" disabled={!name.trim() || busy}>{modal === 'brand' ? <>{t('ui.auto.083')} {t('ui.auto.084')}</> : t('ui.auto.038')}<ArrowUpRight size={16} /></button></form></div></section></div>}
+    <footer className="statusbar"><span><Circle size={11} />{isDesktop ? t('ui.auto.354', { p0: activeChats, p1: activeTerminals }) : t('ui.auto.074')}</span><span>{busy ? t('ui.auto.355') : dirty || contextDirty ? t('ui.auto.075') : t('app.allSaved')}<Check size={13} /></span>{appInfo && <span>Latte <span className="status-version">{appInfo.version}</span></span>}</footer>
+    {(modal === 'brand' || modal === 'work') && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setModal(null); }}><section ref={createModalRef} role="dialog" aria-modal="true" aria-labelledby="dialog-title" className="modal"><div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="dialog-title">{modal === 'brand' ? t('ui.auto.077') : t('ui.auto.078')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setModal(null)}><X size={20} /></button></div><div className="modal-body"><form onSubmit={e => { e.preventDefault(); void create(); }}><label className="field-label" htmlFor="new-name">{modal === 'brand' ? t('ui.auto.079') : t('ui.auto.080')}</label><input autoFocus id="new-name" maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder={modal === 'brand' ? t('brand.namePlaceholder') : t('ui.auto.081')} /><p className="footnote">{t('ui.auto.082')}</p><button className="primary" disabled={!name.trim() || busy}>{modal === 'brand' ? <>{t('ui.auto.083')} {t('ui.auto.084')}</> : t('ui.auto.038')}<ArrowUpRight size={16} /></button></form></div></section></div>}
     {modal === 'document' && <NewDocumentDialog documents={documents.filter(d => d.workId === work?.id)} busy={busy} onCancel={() => setModal(null)} onCreate={createDocument} />}
+    {savingAnswer && <PromptDialog titleId="save-answer-title" title={t('chat.saveAsDocument.title')} label={t('ui.auto.002')} fieldId="save-answer-title-field" initialValue="Estrategia" submitLabel={t('chat.saveAsDocument.submit')} busy={busy} validate={v => v ? null : t('chat.saveAsDocument.required')} onSubmit={confirmSaveAnswerAsDocument} onCancel={() => setSavingAnswer(null)} />}
+    {editingContextProposal && <PromptDialog titleId="context-edit-title" title={t('context.editAccept')} label={t('context.editAccept.label')} fieldId="context-edit-field" initialValue={editingContextProposal.initialText} multiline submitLabel={t('context.accept')} busy={busy} validate={v => v ? null : t('context.editAccept.required')} onSubmit={text => void run(() => confirmContextProposalEdit(text))} onCancel={() => setEditingContextProposal(null)} />}
     <UpdateBanner />
   </div>;
 }

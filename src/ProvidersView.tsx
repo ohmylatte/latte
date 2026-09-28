@@ -154,7 +154,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
   };
 
   const makePrimary = (choice: { runtime: ChatRuntime; model: string | null; accountId: string | null }) =>
-    run(async () => { const p = await api.setPrimaryAgent(choice); setPrimary(p); }, 'Agente principal actualizado');
+    run(async () => { const p = await api.setPrimaryAgent(choice); setPrimary(p); }, t('providers.primaryUpdated'));
 
   const startLogin = (account: AgentAccount) => run(async () => {
     const start = await api.startAccountLogin(account.runtime, account.id);
@@ -221,20 +221,20 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
             </div>
             <div className="provider-actions">
               {!a.loggedIn && <button className="primary" disabled={busy || Boolean(login && !login.ended)} onClick={() => startLogin(a)}><LogIn size={13} />{t('ui.auto.233')}</button>}
-              {a.loggedIn && a.runtime !== 'hermes' && <button disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.385', { p0: RUNTIME_NAME[rt.runtime], p1: a.label }))) void run(() => api.logoutAccount(a.runtime, a.id), 'Sesión cerrada'); }}><LogOut size={13} />{t('ui.auto.234')}</button>}
-              {!a.system && <button disabled={busy} title={t('ui.auto.235')} onClick={() => { if (window.confirm(t('ui.auto.386', { p0: a.label }))) void run(() => api.removeAgentAccount(a.runtime, a.id), 'Perfil quitado'); }}><Trash2 size={13} /></button>}
+              {a.loggedIn && a.runtime !== 'hermes' && <button disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.385', { p0: RUNTIME_NAME[rt.runtime], p1: a.label }))) void run(() => api.logoutAccount(a.runtime, a.id), t('providers.loggedOut')); }}><LogOut size={13} />{t('ui.auto.234')}</button>}
+              {!a.system && <button disabled={busy} aria-label={t('ui.auto.235')} title={t('ui.auto.235')} onClick={() => { if (window.confirm(t('ui.auto.386', { p0: a.label }))) void run(() => api.removeAgentAccount(a.runtime, a.id), t('providers.profileRemoved')); }}><Trash2 size={13} /></button>}
             </div>
           </div>; })}
           {login && login.runtime === rt.runtime && <div className="chat-card login-card" role="group" aria-label={t('ui.auto.236')}>
-            <div className="chat-card-title"><Plug size={15} />{login.ended ? 'Login finalizado' : login.url ? t('ui.auto.237') : t('ui.auto.238')}</div>
+            <div className="chat-card-title"><Plug size={15} />{login.ended ? t('providers.loginEnded') : login.url ? t('ui.auto.237') : t('ui.auto.238')}</div>
             <p>{login.instructions}</p>
             {login.url && <p><a href={login.url} target="_blank" rel="noreferrer">{t('ui.auto.239')} <ExternalLink size={12} /></a></p>}
             {!login.ended && login.sessionId && <TerminalPane sessionId={login.sessionId} onError={onError} />}
             <div className="chat-card-actions">
-              {login.ended ? <button onClick={() => setLogin(null)}>{t('ui.auto.001')}</button> : login.url ? <><button className="primary" disabled={busy} onClick={() => void run(async () => { setLogin(null); }, 'Estado actualizado')}><Check size={14} />{t('ui.auto.240')}</button><button disabled={busy} onClick={() => setLogin(null)}>{t('ui.auto.241')}</button></> : <button disabled={busy} onClick={() => void run(async () => { if (login.sessionId) await api.stopAgent(login.sessionId); setLogin(null); })}>{t('ui.auto.241')}</button>}
+              {login.ended ? <button onClick={() => setLogin(null)}>{t('ui.auto.001')}</button> : login.url ? <><button className="primary" disabled={busy} onClick={() => void run(async () => { setLogin(null); }, t('providers.stateUpdated'))}><Check size={14} />{t('ui.auto.240')}</button><button disabled={busy} onClick={() => setLogin(null)}>{t('ui.auto.241')}</button></> : <button disabled={busy} onClick={() => void run(async () => { if (login.sessionId) await api.stopAgent(login.sessionId); setLogin(null); })}>{t('ui.auto.241')}</button>}
             </div>
           </div>}
-          {newAccount?.runtime === rt.runtime ? <form className="provider-key" onSubmit={e => { e.preventDefault(); if (!newAccount.label.trim()) return; void run(async () => { await api.addAgentAccount(rt.runtime, newAccount.label.trim()); setNewAccount(null); }, 'Perfil creado. Ahora iniciá sesión.'); }}>
+          {newAccount?.runtime === rt.runtime ? <form className="provider-key" onSubmit={e => { e.preventDefault(); if (!newAccount.label.trim()) return; void run(async () => { await api.addAgentAccount(rt.runtime, newAccount.label.trim()); setNewAccount(null); }, t('providers.profileCreated')); }}>
             <div className="provider-key-row"><input autoFocus aria-label={t('ui.auto.242')} placeholder={t('ui.auto.243')} value={newAccount.label} onChange={e => setNewAccount({ runtime: rt.runtime, label: e.target.value })} /><button className="primary" disabled={busy || !newAccount.label.trim()}>{t('ui.auto.083')}</button><button type="button" onClick={() => setNewAccount(null)}>{t('ui.auto.241')}</button></div>
             <p className="footnote">{t('ui.auto.244')} {RUNTIME_NAME[rt.runtime]}  {t('ui.auto.245')}</p>
           </form> : <button className="subtle" disabled={busy} onClick={() => setNewAccount({ runtime: rt.runtime, label: '' })}><Plus size={13} />{t('ui.auto.387')}</button>}
@@ -282,12 +282,12 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
           <p><a href={oauth.start.url} target="_blank" rel="noreferrer">{t('ui.auto.239')} <ExternalLink size={12} /></a></p>
           {oauth.start.method === 'code' && <input aria-label={t('ui.auto.257')} placeholder={t('ui.auto.258')} value={code} onChange={e => setCode(e.target.value)} />}
           <div className="chat-card-actions">
-            <button className="primary" disabled={busy || (oauth.start.method === 'code' && !code.trim())} onClick={() => run(async () => { await api.completeProviderOAuth(oauth.providerId, oauth.methodIndex, oauth.start.method === 'code' ? code : null); setOauth(null); }, 'Sesión iniciada con el proveedor')}>{busy ? <Loading size={16} /> : <Check size={14} />}{oauth.start.method === 'code' ? t('ui.auto.259') : t('ui.auto.240')}</button>
+            <button className="primary" disabled={busy || (oauth.start.method === 'code' && !code.trim())} onClick={() => run(async () => { await api.completeProviderOAuth(oauth.providerId, oauth.methodIndex, oauth.start.method === 'code' ? code : null); setOauth(null); }, t('providers.oauthConnected'))}>{busy ? <Loading size={16} /> : <Check size={14} />}{oauth.start.method === 'code' ? t('ui.auto.259') : t('ui.auto.240')}</button>
             <button disabled={busy} onClick={() => setOauth(null)}>{t('ui.auto.241')}</button>
           </div>
         </div>}
-        <form className="provider-key" onSubmit={e => { e.preventDefault(); if (!apiKey.trim()) return; void run(async () => { await api.connectProviderKey(current.id, apiKey); setApiKey(''); }, `${current.name} conectado. Marcá un modelo como principal para usarlo.`); }}>
-          <label className="field-label" htmlFor="provider-key">{oauthMethods.length ? t('ui.auto.260') : 'API KEY'}</label>
+        <form className="provider-key" onSubmit={e => { e.preventDefault(); if (!apiKey.trim()) return; void run(async () => { await api.connectProviderKey(current.id, apiKey); setApiKey(''); }, t('providers.keyConnected', { name: current.name })); }}>
+          <label className="field-label" htmlFor="provider-key">{oauthMethods.length ? t('ui.auto.260') : t('providers.apiKeyLabel')}</label>
           <div className="provider-key-row">
             <input id="provider-key" type="password" autoComplete="off" spellCheck={false} placeholder={`API key de ${current.name}`} value={apiKey} onChange={e => setApiKey(e.target.value)} />
             <button className="primary" disabled={busy || !apiKey.trim()}>{busy ? <Loading size={16} /> : <KeyRound size={14} />}{t('ui.auto.261')}</button>

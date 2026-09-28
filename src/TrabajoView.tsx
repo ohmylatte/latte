@@ -1,4 +1,6 @@
 import { translate as t } from './i18n';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { trabajoSummary } from './trabajo-summary';
 import type { LatteMode } from './TeamPanel';
 import type { Brand, ChatRuntime, Decision, DocumentState, HandoffRequest, TeamMember, Work, WorkDocument, WorkPermissionMode } from '../shared/contracts';
@@ -68,7 +70,12 @@ export function TrabajoView(props: TrabajoViewProps) {
       <section className="trabajo-item" data-section="encargo">
         <h2>{t('trabajo.encargo')}</h2>
         <p className="trabajo-title">{summary.title}</p>
-        <p>{summary.brief}</p>
+        {/* The brief is Markdown in the store (same as `ResumenView`'s own
+         * "Brief" section): rendered flat as plain text it read as one long
+         * run-on line ("# Campaña nueva ## Objetivo ..."). `resumen-brief`
+         * already gives a clamped, faded preview -- reused here as-is, no new
+         * CSS, so both surfaces read the brief the same way. */}
+        <div className="trabajo-brief-preview resumen-brief markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{summary.brief}</ReactMarkdown></div>
         <p className="trabajo-outcome"><strong>{t('outcome.label')}</strong> <span>{summary.expectedOutput ?? <em>{t('outcome.unset')}</em>}</span></p>
         {summary.resultPath && <p className="trabajo-result-path"><code>{summary.resultPath}</code></p>}
       </section>

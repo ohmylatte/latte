@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { translate as t } from './i18n';
+import { PromptDialog } from './PromptDialog';
 import { memberDisplayName } from './coordination/names';
 import { resumenSummary, type CoordinationHireEvent } from './resumen-summary';
 import { CycleMap } from './CycleMap';
@@ -58,6 +60,11 @@ export interface ResumenViewProps {
 const IN_FLIGHT_STATUSES = new Set(['dispatched', 'running']);
 
 export function ResumenView(props: ResumenViewProps) {
+  // The only local UI state this view owns: which in-flight dispatch (if
+  // any) is being settled, replacing what used to be a blocking
+  // `window.prompt` for the outcome summary. Declared before the early
+  // return below so the hook count never changes across renders.
+  const [settling, setSettling] = useState<{ taskId: string; outcome: 'succeeded' | 'failed' } | null>(null);
   if (!props.work) {
     return <section className="resumen-view" role="region" aria-label={t('resumen.region')} />;
   }
@@ -159,14 +166,8 @@ export function ResumenView(props: ResumenViewProps) {
                   })}</p>
             <small>{props.formatDate(row.at)}</small>
             {row.kind === 'dispatch' && IN_FLIGHT_STATUSES.has(row.status) && props.onSettleDispatch && <div className="resumen-bitacora-settle">
-              <button type="button" className="resumen-bitacora-settle-succeeded" onClick={() => {
-                const value = window.prompt(t('coordination.settle.summaryPrompt'), '');
-                if (value?.trim()) props.onSettleDispatch!(row.taskId, 'succeeded', value.trim());
-              }}>{t('coordination.settle.succeeded')}</button>
-              <button type="button" className="resumen-bitacora-settle-failed" onClick={() => {
-                const value = window.prompt(t('coordination.settle.summaryPrompt'), '');
-                if (value?.trim()) props.onSettleDispatch!(row.taskId, 'failed', value.trim());
-              }}>{t('coordination.settle.failed')}</button>
+              <button type="button" className="resumen-bitacora-settle-succeeded" onClick={() => setSettling({ taskId: row.taskId, outcome: 'succeeded' })}>{t('coordination.settle.succeeded')}</button>
+              <button type="button" className="resumen-bitacora-settle-failed" onClick={() => setSettling({ taskId: row.taskId, outcome: 'failed' })}>{t('coordination.settle.failed')}</button>
             </div>}
           </li>
         ))}</ul>}
@@ -180,5 +181,15 @@ export function ResumenView(props: ResumenViewProps) {
     </div>
 
     <CycleMap phases={summary.cycle} />
+    {settling && <PromptDialog
+      titleId="settle-dispatch-title"
+      title={t(settling.outcome === 'succeeded' ? 'coordination.settle.succeeded' : 'coordination.settle.failed')}
+      label={t('coordination.settle.summaryPrompt')}
+      fieldId="settle-dispatch-field"
+      multiline
+      submitLabel={t(settling.outcome === 'succeeded' ? 'coordination.settle.succeeded' : 'coordination.settle.failed')}
+      validate={v => v ? null : t('coordination.settle.summaryRequired')}
+      onSubmit={summary => { props.onSettleDispatch?.(settling.taskId, settling.outcome, summary); setSettling(null); }}
+      onCancel={() => setSettling(null)} />}
   </section>;
 }

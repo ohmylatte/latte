@@ -6,6 +6,7 @@ import { hourOf, minutesSince } from './coordination/time';
 import { Loading } from './brand-marks';
 import { api } from './browser-api';
 import { displayError } from './App';
+import { useModalA11y } from './useModalA11y';
 import type { Brand, ChatRuntime, Connection, ConnectionInput, ConnectionScope, ConnectionState, ImportableConnection } from '../shared/contracts';
 
 /**
@@ -322,9 +323,10 @@ export function AddConnectionDialog({ brands, initial, busy, needsClientId, onCa
   const ready = /^https?:\/\//.test(url.trim())
     && /^[a-z0-9][a-z0-9-]{0,47}$/.test(finalName)
     && (scope === 'global' || Boolean(brandId));
+  const dialogRef = useModalA11y<HTMLElement>(true, onCancel, busy);
 
   return <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
-    <section role="dialog" aria-modal="true" aria-labelledby="add-connection-title" className="modal">
+    <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="add-connection-title" className="modal">
       <div className="modal-head">
         <div><div className="document-kicker"><Plug size={13} />{t('connections.title')}</div><h2 id="add-connection-title">{t('connections.add')}</h2></div>
         <button className="modal-close" aria-label={t('connections.close')} onClick={onCancel}><X size={20} /></button>
