@@ -1,5 +1,5 @@
 import { Plus } from 'lucide-react';
-import type { AgentRole, Brand, BrandDnaView, Decision, DocumentState, WorkDocument } from '../shared/contracts';
+import type { AgentRole, Brand, BrandDnaBuildJob, BrandDnaView, Decision, DocumentState, WorkDocument } from '../shared/contracts';
 import { translate as t } from './i18n';
 import { homeSummary, type HomeSinceLastVisitInput } from './home-summary';
 import { firstSteps, firstStepsProgress, type FirstStepId } from './first-steps';
@@ -72,11 +72,17 @@ export interface HomeViewProps {
   funnelOpened?: boolean;
   /** La tarjeta fue cerrada (preferencia de vista, persistida). */
   firstStepsClosed?: boolean;
-  /** Enviar la caja: crea el trabajo con ese texto como brief. */
-  onStartWork?: (text: string) => void;
+  /** Enviar la caja: crea el trabajo con ese texto como brief. `workTypeId` es el tipo de la idea tocada, cuando la hay. */
+  onStartWork?: (text: string, workTypeId?: string) => void;
   /** A dónde lleva "Probalo": el ADN, el Embudo, Documentos. */
   onGoTo?: (target: 'dna' | 'funnel' | 'documents') => void;
   onCloseFirstSteps?: () => void;
+  /** 3 · ideas: sin la prop no hay botón, y Inicio queda como siempre. */
+  onRefreshIdeas?: () => void;
+  /** El build de ideas en vuelo (estado de carga honesto, con su paso real). */
+  ideasJob?: BrandDnaBuildJob | null;
+  /** `null` = chequeando; `false` = sin IA, el botón lo dice. */
+  ideasReady?: boolean | null;
 }
 
 export function HomeView(props: HomeViewProps) {
@@ -143,6 +149,9 @@ export function HomeView(props: HomeViewProps) {
         onOpenCatalog={props.onNewWork}
         onTryStep={tryStep}
         onCloseSteps={() => props.onCloseFirstSteps?.()}
+        onRefreshIdeas={props.onRefreshIdeas}
+        ideasJob={props.ideasJob ?? null}
+        ideasReady={props.ideasReady}
       />
     )}
     <div className="home-next" data-step={summary.step}>

@@ -9,6 +9,7 @@ import {
   type BrandDnaEntry,
   type BrandDnaField,
   type BrandDnaFields,
+  type BrandDnaIdea,
   type BrandDnaSourceKind,
 } from '../../shared/contracts';
 
@@ -39,13 +40,18 @@ export const DNA_MD = 'ADN.md';
 /** Rutas relativas al trabajo, tal como las reporta el agente. */
 export const DNA_JSON_RELATIVE = `borradores/${DNA_DRAFT_DIR}/${DNA_JSON}`;
 export const DNA_STEPS_RELATIVE = `borradores/${DNA_DRAFT_DIR}/${DNA_STEPS_JSON}`;
+/** 3: las ideas para empezar, con la misma vara estricta que el ADN. */
+export const DNA_IDEAS_JSON = 'IDEAS.json';
+export const DNA_IDEAS_RELATIVE = `borradores/${DNA_DRAFT_DIR}/${DNA_IDEAS_JSON}`;
+/** Vigentes: el máximo que guarda Latte por marca. */
+export const MAX_DNA_IDEAS = 4;
 /** Los pasos que sólo el agente puede resolver (el resto los junta Latte). */
 export const DNA_AGENT_STEP_KEYS = ['web', 'instagram'] as const;
 export type DnaAgentStepKey = (typeof DNA_AGENT_STEP_KEYS)[number];
 
 /** Las fuentes que el contrato acepta. Un `kind` fuera de esta lista es inválido. */
 export const BRAND_DNA_SOURCE_KINDS: readonly BrandDnaSourceKind[] = [
-  'web', 'instagram', 'file', 'context', 'document', 'decision', 'memory', 'identity', 'correction', 'human',
+  'web', 'instagram', 'file', 'context', 'document', 'decision', 'memory', 'identity', 'correction', 'human', 'calendar',
 ];
 
 /** Tab control: todo lo que no sea tab, salto de línea o retorno. */
@@ -192,6 +198,59 @@ export function brandDnaIsEmpty(fields: BrandDnaFields | null | undefined): bool
   return BRAND_DNA_FIELDS.every((field) => fields[field] === null);
 }
 
+/** Texto de una sola línea: título y motivo de una idea no pueden saltar de renglón. */
+function cleanLine(value: unknown, name: string, max: number): string {
+  const text = cleanText(value, name, max);
+  if (/[\r\n]/.test(text)) throw new ValidationError(`${name} cannot span lines`);
+  return text;
+}
+
+const IDEA_DATE = /^\d{4}-\d{2}-\d{2}([T][0-9:.+-]{0,40}Z?)?$/;
+const IDEA_WORK_TYPE = /^[a-z][a-z0-9-]{0,63}$/;
+
+/**
+ * 3: la forma EXACTA del `IDEAS.json`, con la misma vara que `ADN.json`.
+ * Cuatro como máximo, `workTypeId` con forma de id del catálogo, fechas con
+ * forma de fecha, y `basedOn` SIN VACÍO: una idea sin base no se guarda.
+ */
+export function requireBrandDnaIdeas(raw: unknown): BrandDnaIdea[] {
+  const record = requireObject(raw, 'IDEAS.json');
+  requireKeys(record, ['ideas'], 'IDEAS.json');
+  if (!Array.isArray(record.ideas)) throw new ValidationError('IDEAS.json ideas must be an array');
+  if (record.ideas.length > MAX_DNA_IDEAS) throw new ValidationError(`IDEAS.json has too many ideas (max ${MAX_DNA_IDEAS})`);
+  const seen = new Set<string>();
+  return record.ideas.map((value, index) => {
+    const idea = requireObject(value, `ideas[${index}]`);
+    requireKeys(idea, ['id', 'title', 'why', 'workTypeId', 'basedOn', 'createdAt'], `ideas[${index}]`);
+    const id = cleanLine(idea.id, `ideas[${index}].id`, 64);
+    if (seen.has(id)) throw new ValidationError(`IDEAS.json has a duplicate idea id: ${id}`);
+    seen.add(id);
+    const workTypeId = cleanText(idea.workTypeId, `ideas[${index}].workTypeId`, 64);
+    if (!IDEA_WORK_TYPE.test(workTypeId)) throw new ValidationError(`ideas[${index}].workTypeId must look like a catalog id`);
+    if (!Array.isArray(idea.basedOn) || idea.basedOn.length === 0 || idea.basedOn.length > 6) {
+      throw new ValidationError(`ideas[${index}].basedOn must name at least one base`);
+    }
+    const basedOn = idea.basedOn.map((source, position) => {
+      const item = requireObject(source, `ideas[${index}].basedOn[${position}]`);
+      requireKeys(item, ['kind', 'label'], `ideas[${index}].basedOn[${position}]`);
+      if (typeof item.kind !== 'string' || !BRAND_DNA_SOURCE_KINDS.includes(item.kind as BrandDnaSourceKind)) {
+        throw new ValidationError(`ideas[${index}].basedOn[${position}].kind is not a brand DNA source`);
+      }
+      return { kind: item.kind as BrandDnaSourceKind, label: cleanText(item.label, `ideas[${index}].basedOn[${position}].label`, 200) };
+    });
+    const createdAt = cleanText(idea.createdAt, `ideas[${index}].createdAt`, 40);
+    if (!IDEA_DATE.test(createdAt)) throw new ValidationError(`ideas[${index}].createdAt must be a date (YYYY-MM-DD)`);
+    return {
+      id,
+      title: cleanLine(idea.title, `ideas[${index}].title`, 160),
+      why: cleanLine(idea.why, `ideas[${index}].why`, 240),
+      workTypeId,
+      basedOn,
+      createdAt,
+    };
+  });
+}
+
 /** El archivo que el agente escribe con sus pasos. Inválido = inerte: el ADN no se pierde por el reporte. */
 export type DnaStepReport = Partial<Record<DnaAgentStepKey, { state: 'done' | 'failed' | 'skipped'; detail: string }>>;
 
@@ -233,6 +292,36 @@ function section<T>(title: string, entry: BrandDnaEntry<T> | null, render: (valu
 }
 
 /**
+ * El ADN en markdown, con la versión cuando hay. El mismo texto que proyecta
+ * `identidad/ADN.md` y el que Latte junta en las fuentes de un build de
+ * ideas: una sola render, dos destinos.
+ */
+export function renderBrandDnaMarkdown(input: { brandName: string; version: number | null; approvedAt: string | null; fields: BrandDnaFields }): string {
+  const header = input.version === null || input.approvedAt === null
+    ? `# Brand DNA — ${input.brandName} (draft, not approved yet)`
+    : `# Brand DNA — ${input.brandName} (version ${input.version}, approved ${input.approvedAt.slice(0, 10)})`;
+  const parts = [
+    header,
+    '',
+    'Structured brand identity, maintained by Latte. Do not edit this file.',
+    'Every value says where it came from: the line under each section lists its sources, and `assumption: yes` means the value was inferred without a firm source — treat it as unconfirmed.',
+    '',
+    section('Tone', input.fields.tone, (value) => [
+      `- Adjectives: ${value.adjectives.join(', ')}`,
+      ...(value.example ? [`- Example: ${value.example}`] : []),
+    ].join('\n')),
+    section('Audience', input.fields.audience, (value) => `- ${value}`),
+    section('Value proposition', input.fields.valueProp, (value) => `- ${value}`),
+    section('Words the brand uses', input.fields.wordsYes, (value) => value.map((word) => `- ${word}`).join('\n')),
+    section('Words the brand never uses', input.fields.wordsNo, (value) => value.map((word) => `- ${word}`).join('\n')),
+    section('Claims the brand can make', input.fields.claims, (value) => value.map((claim) => `- ${claim}`).join('\n')),
+    section('Colours', input.fields.colors, (value) => value.map((color) => `- \`${color.hex}\`${color.name ? ` — ${color.name}` : ''}`).join('\n')),
+    section('Fonts', input.fields.fonts, (value) => value.map((font) => `- ${font}`).join('\n')),
+  ];
+  return `${parts.join('\n').replace(/\n{3,}/g, '\n\n')}\n`;
+}
+
+/**
  * `identidad/ADN.md`: lo que un agente lee para saber quién es la marca, con
  * la versión y la procedencia de cada dato. `null` lo saca (no hay versión
  * aprobada). Idempotente: escribirlo dos veces deja el mismo archivo.
@@ -243,27 +332,8 @@ export function projectBrandDna(workDir: string, dna: BrandDnaProjection | null)
     fs.rmSync(file, { force: true });
     return false;
   }
-  const date = dna.approvedAt.slice(0, 10);
-  const parts = [
-    `# Brand DNA — ${dna.brandName} (version ${dna.version}, approved ${date})`,
-    '',
-    'Structured brand identity, maintained by Latte. Do not edit this file.',
-    'Every value says where it came from: the line under each section lists its sources, and `assumption: yes` means the value was inferred without a firm source — treat it as unconfirmed.',
-    '',
-    section('Tone', dna.fields.tone, (value) => [
-      `- Adjectives: ${value.adjectives.join(', ')}`,
-      ...(value.example ? [`- Example: ${value.example}`] : []),
-    ].join('\n')),
-    section('Audience', dna.fields.audience, (value) => `- ${value}`),
-    section('Value proposition', dna.fields.valueProp, (value) => `- ${value}`),
-    section('Words the brand uses', dna.fields.wordsYes, (value) => value.map((word) => `- ${word}`).join('\n')),
-    section('Words the brand never uses', dna.fields.wordsNo, (value) => value.map((word) => `- ${word}`).join('\n')),
-    section('Claims the brand can make', dna.fields.claims, (value) => value.map((claim) => `- ${claim}`).join('\n')),
-    section('Colours', dna.fields.colors, (value) => value.map((color) => `- \`${color.hex}\`${color.name ? ` — ${color.name}` : ''}`).join('\n')),
-    section('Fonts', dna.fields.fonts, (value) => value.map((font) => `- ${font}`).join('\n')),
-  ];
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${parts.join('\n').replace(/\n{3,}/g, '\n\n')}\n`, 'utf8');
+  fs.writeFileSync(file, renderBrandDnaMarkdown(dna), 'utf8');
   return true;
 }
 
@@ -278,12 +348,26 @@ export interface DnaBuildSpecInput {
   prepared: readonly string[];
   /** El idioma del contenido del trabajo: el ADN se escribe en ése, porque el chequeo de marca compara palabras literales. */
   language: 'es-AR' | 'en-US';
+  /** Hoy (`YYYY-MM-DD`), para que `createdAt` de las ideas no dependa del reloj del agente. */
+  today?: string;
+}
+
+/** El bloque de las ideas, igual para un build normal y para el modo `ideas`. */
+function ideasInstructions(language: 'es-AR' | 'en-US', today?: string): string[] {
+  const lang = language === 'en-US' ? 'English (United States)' : 'Spanish (Argentina)';
+  return [
+    '',
+    `Also write ./${DNA_IDEAS_RELATIVE}: up to FOUR concrete ideas for this brand RIGHT NOW — {"ideas": [{"id": "...", "title": "...", "why": "...", "workTypeId": "...", "basedOn": [{"kind": "...", "label": "..."}], "createdAt": "YYYY-MM-DD"}]}.`,
+    '- An idea is something to DO next with what the sources support: a campaign for the collection that just arrived, a review of pieces that break the DNA, a calendar for the closest commercial date. Short actionable title, one-line why, and NEVER an idea without a base: `basedOn` names where it came from (kind: web, instagram, file, context, document, decision, memory, identity, correction, human, calendar; label is what a person sees).',
+    '- `workTypeId` is one of: campaign-new, strategy, content-calendar, copy-pieces, adapt-pieces, presentation, campaign-ops, campaign-optimize, budget-review, paid-media-audit, period-compare, report-build, free-form.',
+    `- Write the ideas in ${lang}: the language this brand's content is written in. ${today ? `\`createdAt\` is ${today}.` : '`createdAt` is today\'s date.'}`,
+  ];
 }
 
 /**
  * El pedido al equipo, en inglés como todo lo que Latte le dice a un agente.
  * El resultado es `ADN.json` con la forma exacta del contrato, validada por
- * Latte antes de tocar el borrador.
+ * Latte antes de tocar el borrador — y, si el agente puede, `IDEAS.json`.
  */
 export function dnaBuildSpec(input: DnaBuildSpecInput): string {
   const lines = [
@@ -310,12 +394,42 @@ export function dnaBuildSpec(input: DnaBuildSpecInput): string {
     '- Shapes: tone is {"adjectives": [...], "example": ...}; colours are {"hex": "#rrggbb", "name": ...}; audience, valueProp are strings; wordsYes, wordsNo, claims, fonts are arrays of strings.',
     '- In `wordsNo` only what the brand explicitly avoids; in `claims` only what the sources back.',
     `- Write every human-readable value (tone adjectives and example, audience, valueProp, wordsYes, wordsNo, claims, font names as written, source labels) in ${input.language === 'en-US' ? 'English (United States)' : 'Spanish (Argentina)'}, the language this brand's content is written in. Words in wordsYes/wordsNo are the literal words as they appear in that language: Latte matches them word by word. Keep JSON keys and \`kind\` values exactly as specified.`,
+    ...ideasInstructions(input.language, input.today),
     '',
     `Also write ./${DNA_STEPS_RELATIVE} reporting every source step you attempted: {"web": {"state": "done|failed|skipped", "detail": "..."}, "instagram": {...}}. A step you could not read is "failed" with the reason; saying so is the point — guessing is not.`,
     '',
-    `Report with latte_report and files ["${DNA_JSON_RELATIVE}", "${DNA_STEPS_RELATIVE}"]. Latte validates ADN.json strictly and saves it as the draft the person reviews; a file that does not match this shape is rejected.`,
+    `Report with latte_report and files ["${DNA_JSON_RELATIVE}", "${DNA_STEPS_RELATIVE}", "${DNA_IDEAS_RELATIVE}"]. Latte validates ADN.json strictly and saves it as the draft the person reviews; a file that does not match this shape is rejected. An IDEAS.json that does not match is ignored (the DNA still stands).`,
     '',
     `Latte bookkeeping: build job ${input.jobId}.`,
   );
   return lines.join('\n');
+}
+
+export interface DnaIdeasSpecInput {
+  jobId: string;
+  brandName: string;
+  /** Rutas relativas al trabajo que Latte ya dejó en `borradores/adn/fuentes/`. */
+  prepared: readonly string[];
+  language: 'es-AR' | 'en-US';
+  /** Hoy (`YYYY-MM-DD`). */
+  today: string;
+}
+
+/**
+ * 3: la tarea LIVIANA de ideas — sólo se componen ideas, con los insumos que
+ * Latte juntó. No toca el borrador del ADN.
+ */
+export function dnaIdeasSpec(input: DnaIdeasSpecInput): string {
+  return [
+    `Task: propose up to FOUR concrete ideas for ${input.brandName} right now, into ./${DNA_IDEAS_RELATIVE}.`,
+    '',
+    input.prepared.length > 0
+      ? `Latte prepared your inputs in this work: ${input.prepared.map((file) => `./${file}`).join(', ')}. Read every one: adn.md is the brand DNA (approved or draft), fecha.md is today with the country and season, trabajos.md lists recent works, embudo.md says which funnel stages still have no pieces, and fechas-comerciales.md has the exact dates of the next 6 weeks.`
+      : 'Latte prepared no input files: ground the ideas only in what you can verify from the brand context of this work.',
+    ...ideasInstructions(input.language, input.today),
+    '',
+    `Report with latte_report and files ["${DNA_IDEAS_RELATIVE}"]. Latte validates IDEAS.json strictly: an idea with no base or a file that does not match this shape is rejected.`,
+    '',
+    `Latte bookkeeping: build job ${input.jobId}.`,
+  ].join('\n');
 }

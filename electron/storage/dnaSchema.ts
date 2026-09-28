@@ -66,4 +66,12 @@ BEFORE DELETE ON brand_dna_versions
 BEGIN
   SELECT RAISE(ABORT, 'brand dna version is immutable');
 END;
+
+-- 3 (ronda 3): las ideas para empezar, por marca, máx. 4 vigentes con su
+-- fecha. Sin fila = todavía no hubo ideas: la vista responde [], no un invento.
+CREATE TABLE IF NOT EXISTS brand_dna_ideas (
+  brand_id TEXT PRIMARY KEY REFERENCES brands(id),
+  ideas_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `;

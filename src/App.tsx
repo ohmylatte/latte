@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Archive, ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, Dna, FileText, Folder, Home, MessageSquare, Minus, Palette, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, Users, X } from 'lucide-react';
 import { Loading, SteamWisp, roleColor } from './brand-marks';
-import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatRuntime, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, BrandMember, BrandIdentityView, BrandDnaView, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, HandoffTaskBridgeResult, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
+import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatRuntime, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, BrandMember, BrandIdentityView, BrandDnaBuildJob, BrandDnaView, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, HandoffTaskBridgeResult, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
 import { api, chatStore, isDesktop } from './browser-api';
 import { DocumentsView, NewDocumentDialog } from './DocumentsView';
 import { hasMetadataDrafts } from './DocumentMetadata';
@@ -30,7 +30,7 @@ import { IdentityView } from './IdentityView';
 import { BrandDnaView as BrandDnaScreen } from './BrandDnaView';
 import { HomeView } from './HomeView';
 import { classifyWorkType } from './home-chat';
-import { recommendRole } from './work-catalog';
+import { findWorkType, recommendRole } from './work-catalog';
 import { isFirstStepsClosed, isFunnelOpened, markFunnelOpened, setFirstStepsClosed as persistFirstStepsClosed } from './first-steps';
 import { ResumenView } from './ResumenView';
 import { TrabajoView } from './TrabajoView';
@@ -493,6 +493,29 @@ export function App() {
     void api.readBrandDna(brand.id).then(v => { if (live) setDna(v); }).catch(() => { if (live) setDna(null); });
     return () => { live = false; };
   }, [brand?.id, dnaEpoch]);
+  /**
+   * 3 · el build de ideas: se lanza con "Actualizar ideas" y se sondea como el
+   * build del ADN. Mientras corre, Inicio muestra el estado del JOB (honesto);
+   * cuando termina, la ficha se recarga con `dnaEpoch` y las ideas nuevas
+   * aparecen. Un fallo queda a la vista hasta el próximo intento. El país y la
+   * estación de las ideas de respaldo salen del idioma de contenido que el
+   * provider de i18n ya tiene (`contentLocale`), no de una lectura propia.
+   */
+  const [ideasJob, setIdeasJob] = useState<BrandDnaBuildJob | null>(null);
+  const ideasJobId = ideasJob?.jobId ?? null;
+  const ideasJobDone = ideasJob?.done ?? true;
+  useEffect(() => {
+    if (!ideasJobId || ideasJobDone) return;
+    let stopped = false;
+    const timer = setInterval(() => {
+      void api.readBrandDnaBuildJob(ideasJobId).then(next => {
+        if (stopped) return;
+        setIdeasJob(next);
+        if (next.done) setDnaEpoch(n => n + 1);
+      }).catch(() => { if (!stopped) setIdeasJob(null); });
+    }, 1000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [ideasJobId, ideasJobDone]);
   /**
    * PRIMEROS PASOS: la preferencia de la tarjeta se persiste como el riel y la
    * densidad, y el Embudo se recuerda POR MARCA — el de una no es el de otra.
@@ -1067,11 +1090,13 @@ export function App() {
    * activa el rol que el catálogo recomienda para ese pedido — el mismo camino
    * de "Nuevo trabajo" (`activateWork`), nunca una segunda copia. La
    * clasificación es de `home-chat.ts`: palabras clave contra el catálogo.
+   * 3: cuando el texto viene de una IDEA, manda el tipo de la idea: la caja
+   * mostró "Se arma como {tipo}" y el envío tiene que cumplir lo que mostró.
    */
-  const startFromHome = (text: string) => {
+  const startFromHome = (text: string, workTypeId?: string) => {
     if (!brand) return;
     void run(async () => {
-      const workType = classifyWorkType(text);
+      const workType = (workTypeId ? findWorkType(workTypeId) : null) ?? classifyWorkType(text);
       const title = t(workType.titleKey);
       const created = await api.createWork(brand.id, title);
       const outcome = await api.saveBrief(created.id, `# ${title}\n\n${text}`);
@@ -1085,6 +1110,17 @@ export function App() {
       setView('brief');
       setNotice(t('home.ask.started'));
       void activateWork(saved.id, recommendRole(workType), text);
+    });
+  };
+  /**
+   * 3 · "Actualizar ideas": una tarea liviana del equipo, SÓLO de ideas. Un
+   * sólo trabajo por marca: si ya hay un build en vuelo, el motor devuelve ESE
+   * job, y el estado que se muestra es el verdadero.
+   */
+  const refreshIdeas = () => {
+    if (!brand) return;
+    void run(async () => {
+      setIdeasJob(await api.buildBrandDna(brand.id, 'ideas', null));
     });
   };
   /** "Probalo": cada paso de Primeros pasos lleva a la pantalla donde eso se hace. */
@@ -1670,7 +1706,7 @@ export function App() {
     <header className="topbar"><div className="breadcrumb">{brand?.name ?? t('app.welcomeBrand')}<span>/</span><strong>{work?.title ?? t('app.welcomeWork')}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
     <main className="workspace" aria-hidden={focusChat} inert={focusChat}>
       <MemoryNotice support={coordination.support} dismissed={Boolean(brand && memoryNoticeDismissed.has(brand.id))} onDismiss={() => { if (brand) setMemoryNoticeDismissed(prev => new Set(prev).add(brand.id)); }} mode={mode} />
-      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} coordinationSinceLastVisit={brand ? sinceLastVisitFromActiveRuns(coordination.activeRuns, brand.id) : []} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenCoordination={openWorkCoordination} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} dna={dna} roles={roles} funnelOpened={funnelVisited} firstStepsClosed={firstStepsClosed} onStartWork={startFromHome} onGoTo={goFromFirstStep} onCloseFirstSteps={closeFirstSteps} />}
+      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} coordinationSinceLastVisit={brand ? sinceLastVisitFromActiveRuns(coordination.activeRuns, brand.id) : []} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenCoordination={openWorkCoordination} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} dna={dna} roles={roles} funnelOpened={funnelVisited} firstStepsClosed={firstStepsClosed} onStartWork={startFromHome} onGoTo={goFromFirstStep} onCloseFirstSteps={closeFirstSteps} onRefreshIdeas={refreshIdeas} ideasJob={ideasJob} ideasReady={runtimes.length === 0 ? null : runtimes.some(r => r.available)} />}
       {/* The tabs and the knowledge-scope filter are in-work chrome: on Inicio
           they would read as "a work with no tab selected". */}
       {view !== 'home' && <><div className="tabs"><button className={view === 'resumen' ? 'selected' : ''} onClick={() => setView('resumen')}>{t('resumen.tab')}</button><button className={view === 'trabajo' ? 'selected' : ''} onClick={() => setView('trabajo')}>{t('trabajo.tab')}</button><button className={view === 'evidencia' ? 'selected' : ''} onClick={() => setView('evidencia')}>{t('evidencia.tab')}</button><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><button className={view === 'resultados' ? 'selected' : ''} onClick={() => setView('resultados')}>{t('resultados.tab')}</button><div className="tab-spacer" /></div>

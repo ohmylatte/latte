@@ -17,7 +17,7 @@ const BLOCK_ICON: Record<IntentId, Icon> = {
 };
 
 /** One icon per start option; a new work type without one falls back to its block's. */
-const WORK_ICON: Record<string, Icon> = {
+export const WORK_ICON: Record<string, Icon> = {
   'campaign-new': Megaphone,
   strategy: Target,
   'content-calendar': CalendarDays,
