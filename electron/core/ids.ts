@@ -18,7 +18,10 @@ export type IdPrefix =
   // Onboarding sin terminal: an install or login job (in memory only, never on disk).
   | 'job'
   // E4: la evidencia de una entrega publicada (`delivery_evidence`).
-  | 'dev';
+  | 'dev'
+  // 1B: ADN de marca — una propuesta aprendida (`brand_dna_proposals`) y un
+  // build en vuelo (en memoria, como los jobs del onboarding).
+  | 'bdp' | 'bdj';
 
 export function newId(prefix: IdPrefix): string {
   return `${prefix}_${randomBytes(10).toString('hex')}`;

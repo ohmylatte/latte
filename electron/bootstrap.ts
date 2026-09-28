@@ -3,6 +3,7 @@ import os from 'node:os';
 import type { AgentEvent, ChatEvent, CoordinationEvent, DecisionProposalInput, RuntimeSetupEvent } from '../shared/contracts';
 import { extractFencedBlocks } from './core/fenced';
 import { brandContextProtocolBlocks } from './workspace/brandContextProtocol';
+import { brandDnaProtocolBlocks } from './workspace/dnaProtocol';
 import { AccountStore } from './agents/accounts';
 import { ClaudeChatAdapter } from './agents/claude/claudeAdapter';
 import { CodexChatAdapter } from './agents/codex/codexAdapter';
@@ -322,6 +323,16 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
         void service.proposeBrandContextFromAgent(event.chatId,event.message.id,proposal).catch(error=>{
           const message = error instanceof Error ? error.message : String(error);
           options.log?.(`[latte] brand context proposal failed: ${message}`);
+          forward({ chatId: event.chatId, type: 'error', message });
+        });
+      }
+      // 1B: las correcciones de marca viajan igual, con su propio bloque. Una
+      // forma inválida es inerte (ya vino validada); esto sólo transporta lo
+      // que SÍ parseó.
+      for (const proposal of brandDnaProtocolBlocks(assistantText)) {
+        void service.proposeBrandDnaFromAgent(event.chatId,event.message.id,proposal).catch(error=>{
+          const message = error instanceof Error ? error.message : String(error);
+          options.log?.(`[latte] brand DNA proposal failed: ${message}`);
           forward({ chatId: event.chatId, type: 'error', message });
         });
       }

@@ -234,6 +234,11 @@ export interface InstructionsInput {
    * Ausente o `null`: no hay identidad aprobada y rige explicit-neutral.
    */
   identity?: { hash: string } | null;
+  /**
+   * 1B: la versión APROBADA del ADN de marca, ya proyectada en
+   * `./identidad/ADN.md`. Ausente o `null`: todavía no hay ADN aprobado.
+   */
+  dna?: { version: number } | null;
 }
 
 /** Compact receipt pointer that rides CLAUDE.md / AGENTS.md. */
@@ -496,6 +501,7 @@ function renderCore(
     `- When a PDF or DOCX is asked for, the file is the answer, not a description of it, and it is not done until the file exists (in ./${DRAFTS_DIR}/ or published in ./${DELIVERABLES_DIR}/). Do not conclude that from what you intended or planned: after writing it, check that it is there and not empty (list the folder or read its size), then give its relative path (in a team run, in \`files\` when you report). If the check fails, say so; never report a file you did not verify.`,
     '- A deliverable file holds only the finished piece for the client: no internal reasoning, thinking notes, plans or instructions to yourself.',
     identityLine(input.identity ?? null),
+    dnaLine(input.dna ?? null),
     '- Handoff: give the relative path, checks actually performed and remaining limitations, then direct the human to Entregables / Deliverables for review. If no agent tool is available for linking, ask the human to use Encargo > Resultado esperado / Expected output > Editar / Edit in the desktop app, select the file and choose Guardar / Save; never edit SQLite or managed metadata to link it, and do not claim it is linked until confirmed. File creation, QA, human approval and result linking are separate steps.',
     '',
     `- Each tracked file listed above is a deliverable of its own. Write in the one your task belongs to; \`./${WORK_FILES.brief}\` holds the ask, not every result.`,
@@ -670,6 +676,21 @@ function identityLine(identity: { hash: string } | null): string {
   return identity
     ? `- Identity: ./${IDENTITY_DIR_NAME}/IDENTIDAD.md and the files next to it (the approved brand kit, sha256 \`${identity.hash.slice(0, 12)}\`). Client deliverables apply it: logo, palette, type. Latte keeps ./${IDENTITY_DIR_NAME}/ in sync; do not edit it.`
     : '- No approved brand identity: explicit-neutral. Do not invent official colours, type or a logo; a client deliverable\'s cover says there is no approved identity.';
+}
+
+/**
+ * 1B: el ADN de marca, en una línea. Con versión aprobada apunta a lo que
+ * Latte proyectó en `./identidad/ADN.md`; enseña el bloque `latte-dna` con el
+ * que se propone una corrección — el sí es de la persona, nunca se cambia un
+ * hecho de marca en silencio (eso lo dice el pack). Corta a propósito: este
+ * bloque de Working rules no se recorta jamás, así que cada carácter que suma
+ * es presupuesto de por vida contra el techo de 20.000.
+ */
+function dnaLine(dna: { version: number } | null): string {
+  const propose = 'When the human corrects the brand, propose it with one fenced `latte-dna` JSON block: `field`, `next`, `reason`, `source` (`correction`/`document`) and a stable `clientRequestId`.';
+  return dna
+    ? `- Brand DNA: ./${IDENTITY_DIR_NAME}/ADN.md is the approved structured identity of this brand (version ${dna.version}): tone, audience, words, claims, colours. Apply it; \`assumption: yes\` values are unconfirmed. Latte keeps it in sync; do not edit it. ${propose}`
+    : `- No approved Brand DNA yet: do not treat any tone, word or claim as settled brand identity, and never invent one. ${propose}`;
 }
 
 /** Text-only form of renderInstructionBundle, for callers that never write the side files. */
