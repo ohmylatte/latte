@@ -1841,7 +1841,9 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .chip[data-tone="plain"]{background:var(--line);color:var(--ink)}
 .chip[data-tone="assumption"]{background:var(--amber-wash);color:var(--amber);border-color:var(--amber-line)}
 .chip[data-tone="avoid"]{background:transparent;color:var(--danger);border-color:var(--danger);text-decoration:line-through}
-.dna-chips .chip,.dna-word-group .chip,.dna-colors .chip{text-transform:none;letter-spacing:0}
+.dna-chips .chip,.dna-word-group .chip,.dna-colors .chip{font-family:var(--sans);font-size:var(--text-base);font-weight:var(--weight-medium);text-transform:none;letter-spacing:0}
+.dna-chips .chip[data-tone="plain"],.dna-word-group .chip[data-tone="plain"],.dna-colors .chip[data-tone="plain"]{background:var(--paper-deep);color:var(--ink);border-color:transparent}
+.dna-block .chip[data-tone="assumption"]{align-self:flex-start;width:fit-content}
 
 /* --- F · Traé tu marca ---------------------------------------------------- */
 .dna-sources{max-width:920px}
@@ -1924,7 +1926,7 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .dna-proposal-actions .subtle{margin-top:0}
 
 /* --- H · Inicio: la caja y las sugerencias -------------------------------- */
-.home-start{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,290px);gap:var(--space-6);align-items:start;margin-bottom:var(--space-7)}
+.home-start{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:var(--space-6);align-items:start;margin-bottom:var(--space-7)}
 .home-start-main{display:flex;flex-direction:column;gap:var(--space-5);min-width:0}
 .home-ask-title{font-family:var(--serif);font-size:var(--text-3xl);font-weight:400;line-height:1.2;margin:0;color:var(--ink)}
 .home-ask-brand{font-style:italic;color:var(--rust)}
@@ -1941,18 +1943,20 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .home-ask-classify .subtle{margin-top:0;color:var(--rust)}
 .home-ask-send{display:inline-flex;align-items:center;justify-content:center;margin-left:auto;flex-shrink:0;width:var(--control-h-md);height:var(--control-h-md);min-width:var(--control-h-md);border-radius:var(--radius-pill);background:var(--rust);border:1px solid var(--rust);color:var(--on-accent);cursor:pointer}
 .home-ask-send:disabled{background:var(--rust-wash);border-color:var(--rust-wash);color:var(--muted);cursor:default}
-.home-suggests{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--space-3)}
-.home-suggest{display:flex;align-items:flex-start;gap:var(--space-3);padding:var(--space-4);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--foam);text-align:left;cursor:pointer}
+.home-suggests{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-3)}
+.home-suggest{display:flex;align-items:center;justify-content:flex-start;gap:var(--space-3);padding:var(--space-4);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--foam);text-align:left;cursor:pointer}
 .home-suggest:hover{border-color:var(--rust);background:var(--rust-wash)}
 .home-suggest-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:var(--control-h-sm);height:var(--control-h-sm);border-radius:var(--radius-pill);background:var(--rust-wash);color:var(--rust)}
 .home-suggest-text{display:flex;flex-direction:column;gap:2px;min-width:0}
-.home-suggest-text strong{font-size:var(--text-base);font-weight:var(--weight-semibold);color:var(--ink)}
-.home-suggest-text small{font-size:var(--text-sm);line-height:1.5;color:var(--muted);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.home-suggest-text strong{font-size:var(--text-md);font-weight:var(--weight-medium);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.home-suggest-text small{display:block;font-size:var(--text-sm);line-height:1.5;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* --- H · Inicio: Primeros pasos ------------------------------------------- */
 .first-steps{display:flex;flex-direction:column;gap:var(--space-3);padding:var(--space-4);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--foam)}
 .first-steps-head{display:flex;align-items:center;gap:var(--space-3)}
 .first-steps-head h2{margin:0;font-family:var(--mono);font-size:var(--text-sm);font-weight:400;letter-spacing:.6px;text-transform:uppercase;color:var(--muted)}
+.first-steps-head .icon-button{border:0;background:transparent;color:var(--muted);padding:0;border-radius:var(--radius-pill);width:var(--control-icon);height:var(--control-icon);min-width:var(--control-icon);min-height:var(--control-icon)}
+.first-steps-head .icon-button:hover{background:var(--paper-deep);color:var(--ink)}
 .first-steps-count{margin-left:auto;font-family:var(--mono);font-size:var(--text-sm);color:var(--ink)}
 .first-steps-bar{height:6px;border-radius:var(--radius-pill);background:var(--line);overflow:hidden}
 .first-steps-bar>span{display:block;height:100%;border-radius:var(--radius-pill);background:var(--rust);transition:width var(--dur-base) var(--ease-standard)}
@@ -1961,14 +1965,19 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .first-step-mark{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:var(--control-h-sm);height:var(--control-h-sm);border-radius:var(--radius-pill);border:1px solid var(--line-strong);background:var(--paper);color:var(--green-ok)}
 .first-step-mark i{display:block;width:var(--space-2);height:var(--space-2);border-radius:var(--radius-pill);background:var(--line-strong)}
 .first-step[data-done="true"] .first-step-mark{border-color:var(--green-ok);background:var(--green-wash)}
-.first-step-label{flex:1;min-width:0;color:var(--ink)}
+.first-step-label{flex:1;min-width:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .first-step[data-done="true"] .first-step-label{color:var(--muted)}
 .first-step-state{font-family:var(--mono);font-size:var(--text-sm);letter-spacing:.4px;color:var(--muted)}
-.first-step-try{margin-top:0}
+.first-step-try{margin-top:0;height:var(--control-h-sm);min-height:var(--control-h-sm);padding:0 var(--space-3);font-size:var(--text-sm)}
+
+/* --- Los títulos de pantalla del ADN, en la serif de la maqueta ------------ */
+.dna-sources h1,.dna-sources h2,.onboarding-dna h1,.dna-view h1{font-family:var(--serif);font-weight:400}
+.dna-sources h2{font-size:var(--text-3xl);line-height:1.25;letter-spacing:-.3px;margin:0 0 12px}
 
 /* --- Una columna cuando la pantalla no da para las dos --------------------- */
 @media (max-width:900px){
   .home-start,.dna-build{grid-template-columns:minmax(0,1fr)}
+  .home-suggests{grid-template-columns:minmax(0,1fr)}
 }
 
 /* --- fin del bloque ADN · interfaz --- */

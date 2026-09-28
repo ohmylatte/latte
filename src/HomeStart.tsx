@@ -136,7 +136,10 @@ export function HomeStart(props: HomeStartProps) {
               <li key={step.id} className="first-step" data-done={step.done}>
                 <span className="first-step-mark" aria-hidden="true">{step.done ? <Check size={13} /> : <i />}</span>
                 <span className="first-step-label">{t(step.labelKey)}</span>
-                <span className="first-step-state">{step.done ? t('firstSteps.done') : t('firstSteps.pending')}</span>
+                {/* El estado queda para lectores de pantalla: la fila ya se lee
+                    con la tilde/círculo y con el "Probalo" que sólo aparece en
+                    lo pendiente. */}
+                <span className="first-step-state visually-hidden">{step.done ? t('firstSteps.done') : t('firstSteps.pending')}</span>
                 {!step.done && (
                   <button type="button" className="subtle first-step-try"
                     aria-label={`${t('firstSteps.try')} · ${t(step.labelKey)}`}

@@ -98,9 +98,14 @@ export function BrandDnaView(props: BrandDnaViewProps) {
         <button type="button" className="primary" disabled={state.busy || building} onClick={rebuild}>
           <RefreshCw size={15} aria-hidden="true" />{t('dna.rebuild')}
         </button>
-        <button type="button" disabled={state.busy || building} onClick={() => (showSources ? closeSources() : setShowSources(true))} aria-expanded={showSources}>
-          {showSources ? <X size={15} aria-hidden="true" /> : <Plus size={15} aria-hidden="true" />}{showSources ? t('dna.card.cancel') : t('dna.addSources')}
-        </button>
+        {/* Mientras las fuentes están abiertas, el cierre es UNO sólo: el del
+            pie, junto a "Armar mi marca". Dos "Cancelar" en la misma pantalla
+            obligan a elegir cuál de los dos es el correcto. */}
+        {!showSources && (
+          <button type="button" disabled={state.busy || building} onClick={() => setShowSources(true)}>
+            <Plus size={15} aria-hidden="true" />{t('dna.addSources')}
+          </button>
+        )}
       </div>
 
       {showSources && (

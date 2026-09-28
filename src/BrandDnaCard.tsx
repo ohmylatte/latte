@@ -53,7 +53,14 @@ export function BrandDnaCard(props: BrandDnaCardProps) {
   const fields = props.dna?.draft ?? null;
   const approved = props.dna?.approved ?? null;
   const changed = Boolean(props.dna?.changedSinceApproval);
-  const canApprove = Boolean(fields) && !props.busy && Boolean(props.onApprove);
+  /**
+   * Aprobar sólo se ofrece cuando HAY algo que aprobar: un borrador nuevo o un
+   * cambio posterior a la última aprobación. Con la versión vigente al día, el
+   * botón se reemplaza por el estado "Aprobada · v{n}" — el gesto no existe
+   * porque no hay nada que hacer con él.
+   */
+  const showApprove = Boolean(props.onApprove) && Boolean(fields) && (!approved || changed);
+  const canApprove = showApprove && !props.busy;
 
   const open = (field: BrandDnaField) => {
     setEditing(field);
@@ -149,11 +156,11 @@ export function BrandDnaCard(props: BrandDnaCardProps) {
       <header className="dna-card-head">
         <h2 className="dna-card-brand">{props.brandName}</h2>
         <span className="chip" data-tone={approved && !changed ? 'approved' : 'proposal'}>
-          {approved && !changed ? t('dna.card.approved') : t('dna.card.proposed')}
+          {approved && !changed ? t('dna.card.approved', { version: approved.version }) : t('dna.card.proposed')}
         </span>
         <div className="dna-card-actions">
           {props.onCorrect && <button type="button" className="subtle" disabled={props.busy} onClick={props.onCorrect}>{t('dna.card.correct')}</button>}
-          {props.onApprove && (
+          {showApprove && (
             <button type="button" className="primary" disabled={!canApprove} onClick={props.onApprove}>
               <Check size={15} aria-hidden="true" />{t('dna.card.approve')}
             </button>
@@ -191,7 +198,7 @@ export function BrandDnaCard(props: BrandDnaCardProps) {
         {block('colors', colors
           ? <p className="dna-colors">{colors.value.map((color, index) => color.hex
               ? <span className="dna-color" key={color.hex + index} style={{ background: color.hex }} title={color.name ?? color.hex}>
-                  <span className="sr-only">{color.name ?? color.hex}</span>
+                  <span className="visually-hidden">{color.name ?? color.hex}</span>
                 </span>
               : <span className="chip" data-tone="plain" key={(color.name ?? '') + index}>{color.name}</span>)}</p>
           : empty)}

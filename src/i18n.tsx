@@ -351,7 +351,7 @@ const es = {
   'dna.step.failed': 'Falló',
   // La ficha: los seis bloques, la edición y los orígenes.
   'dna.card.proposed': 'Propuesta',
-  'dna.card.approved': 'Aprobada',
+  'dna.card.approved': 'Aprobada · v{version}',
   'dna.card.approve': 'Aprobar ADN',
   'dna.card.correct': 'Corregir',
   'dna.card.empty': 'Esta marca todavía no tiene ADN.',
@@ -1767,7 +1767,7 @@ const en: Record<MessageKey, string> = {
   'dna.step.failed': 'Failed',
   // The card: the six blocks, the editing and the sources.
   'dna.card.proposed': 'Proposed',
-  'dna.card.approved': 'Approved',
+  'dna.card.approved': 'Approved · v{version}',
   'dna.card.approve': 'Approve DNA',
   'dna.card.correct': 'Correct',
   'dna.card.empty': 'This brand has no DNA yet.',
