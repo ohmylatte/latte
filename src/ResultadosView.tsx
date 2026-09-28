@@ -1,6 +1,7 @@
 import { translate as t } from './i18n';
 import { useState } from 'react';
 import { Deliverables } from './Deliverables';
+import { BrandCheck } from './BrandCheck';
 import { NON_DERIVED_RESULTADOS, RESULTADO_TYPE_KEYS, resultadosSummary } from './resultados-summary';
 import type { DeliverableListing, Decision, Work } from '../shared/contracts';
 import { isDesktop } from './browser-api';
@@ -28,12 +29,16 @@ export interface ResultadosViewProps {
   work: Work | null;
   decisions: readonly Decision[];
   formatDate: (value: string) => string;
+  /** ADN · chequeo de marca: el enlace a Marca cuando todavía no hay ADN. */
+  onOpenBrand?: () => void;
 }
 
 export function ResultadosView(props: ResultadosViewProps) {
   // The Deliverables panel's own listing, reported up so the linked documento
   // can be flagged present/missing without a second readdir.
   const [listing, setListing] = useState<DeliverableListing | null>(null);
+  // ADN · chequeo de marca: el detalle abierto vive acá, como en el documento.
+  const [checkOpen, setCheckOpen] = useState(false);
 
   if (!props.work) {
     return <section className="resultados-view" role="region" aria-label={t('resultados.region')} />;
@@ -64,6 +69,16 @@ export function ResultadosView(props: ResultadosViewProps) {
 
       <section className="resultados-group" data-tag="entregable">
         <h2>{t('resultados.entregable')}</h2>
+        {/* El chequeo de marca de lo que este trabajo entrega: lo que se va a
+            mandar, contra el ADN aprobado de la marca. */}
+        <BrandCheck
+          className="resultados-brand-check"
+          brandId={props.work.brandId}
+          text={(props.work.expectedOutput ?? '').trim()}
+          open={checkOpen}
+          onOpenChange={setCheckOpen}
+          onOpenBrand={props.onOpenBrand}
+        />
         <Deliverables workId={props.work.id} onListing={setListing} />
       </section>
 

@@ -1,10 +1,10 @@
 import { currentLocale, translate as t } from './i18n';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AlertTriangle, Check, Download, FileText, History, Layers, Plus, RefreshCw, Save, SlidersHorizontal, X } from 'lucide-react';
 import { ApprovalStamp, Loading, VersionRing } from './brand-marks';
-import type { DocumentContent, DocumentKind, FunnelStage, Revision, WorkDocument, Work } from '../shared/contracts';
+import type { BrandCheckResult, DocumentContent, DocumentKind, FunnelStage, Revision, WorkDocument, Work } from '../shared/contracts';
 import { api } from './browser-api';
 import { STAGE_LABEL } from './document-organizer';
 import { DocumentList } from './DocumentList';
@@ -16,6 +16,8 @@ import { WorkOutcome, hasOutcomeDrafts, isWorkBrief } from './WorkOutcome';
 import { KnowledgeOrigin } from './KnowledgeScope';
 import { documentOriginTitle } from './brand-knowledge';
 import { useModalA11y } from './useModalA11y';
+import { BrandCheck, brandCheckWarnings, highlightComponents, highlightWordsOf } from './BrandCheck';
+import { ConfirmDialog } from './ConfirmDialog';
 
 const KIND_LABEL: Record<DocumentKind, string> = new Proxy({} as Record<DocumentKind,string>, { get: (_, key: DocumentKind) => t(`kind.${key}` as 'kind.brief') });
 const KIND_HINT: Record<DocumentKind, string> = new Proxy({} as Record<DocumentKind,string>, { get: (_, key: DocumentKind) => t(`kindHint.${key}` as 'kindHint.brief') });
@@ -84,6 +86,8 @@ export interface DocumentsViewProps {
   currentWorkId: string | null;
   workTitles: Record<string, string>;
   showWorkDelta: boolean;
+  /** Marca → el enlace del chequeo cuando todavía no hay ADN aprobado. */
+  onOpenBrand?: () => void;
 }
 
 /**
@@ -114,6 +118,12 @@ export function DocumentsView(props: DocumentsViewProps) {
   const [showVersions, setShowVersions] = useState(false);
   const [pickedRevision, setPicked] = useState<Revision | null>(null);
   const [saving, setSaving] = useState(false);
+  // ADN · chequeo de marca: la línea de la barra, su detalle y el resultado que
+  // el resaltado del documento lee. El detalle abierto ES el resaltado.
+  const [checkOpen, setCheckOpen] = useState(false);
+  const [checkResult, setCheckResult] = useState<BrandCheckResult | null>(null);
+  const [confirmApprove, setConfirmApprove] = useState(false);
+  const [approving, setApproving] = useState(false);
   // Metadata is a per-document detour, not a permanent strip above the text.
   const [organizing, setOrganizing] = useState(false);
   const loadToken = useRef(0);
@@ -176,6 +186,16 @@ export function DocumentsView(props: DocumentsViewProps) {
   const reportDirty = (extra: boolean) => props.onDirtyChange(extra || Boolean(editing?.dirty) || hasMetadataDrafts() || hasOutcomeDrafts());
   useEffect(() => { reportDirty(false); }, [editing?.dirty]);
 
+  // El detalle del chequeo no sigue a otro documento: cada pieza se mira cerrada.
+  useEffect(() => { setCheckOpen(false); setConfirmApprove(false); }, [selected?.id]);
+
+  // Lo que el resaltado pinta en el markdown, sólo con el detalle abierto.
+  const highlightWords = useMemo(() => (checkOpen ? highlightWordsOf(checkResult) : []), [checkOpen, checkResult]);
+  const markdownComponents = useMemo(
+    () => (highlightWords.length > 0 ? highlightComponents(highlightWords) : undefined),
+    [highlightWords],
+  );
+
   // Bounded polling instead of a filesystem watcher: one cheap fingerprint read
   // for the open document, only while the window is focused. Survives atomic
   // writes (temp file + rename), which break inode-based watchers.
@@ -197,8 +217,9 @@ export function DocumentsView(props: DocumentsViewProps) {
     return () => { stopped = true; clearInterval(timer); };
   }, [selected?.id, editing?.fingerprint, editing?.dirty, saving]);
 
-  const save = async () => {
-    if (!selected || !editing || saving) return;
+  /** `true` sólo cuando el texto quedó guardado: aprobar no puede aprobar un borrador. */
+  const save = async (): Promise<boolean> => {
+    if (!selected || !editing || saving) return false;
     // The same token the load path uses: selecting another document bumps it,
     // so a write that resolves after that stops here instead of putting this
     // document's text and fingerprint into the editor of another one.
@@ -206,12 +227,12 @@ export function DocumentsView(props: DocumentsViewProps) {
     setSaving(true);
     try {
       const outcome = await api.saveDocument(selected.id, editing.content, editing.fingerprint);
-      if (token !== loadToken.current) return;
+      if (token !== loadToken.current) return false;
       if (outcome.status === 'conflict') {
         setConflict({ mine: editing.content, disk: outcome.disk.content, diskFingerprint: outcome.disk.fingerprint, revisionId: outcome.keptRevision.id });
         setExternal(null);
         props.onNotice(t('ui.auto.137'));
-        return;
+        return false;
       }
       setEditing({ content: editing.content, fingerprint: outcome.fingerprint, dirty: false });
       documentDrafts.clear(selected.id);
@@ -219,11 +240,38 @@ export function DocumentsView(props: DocumentsViewProps) {
       props.onWorkUpdated(outcome.work);
       await props.onDocumentsChanged();
       props.onNotice(t('ui.auto.138'));
+      return true;
     } catch (e) {
       props.onError(displayError(e));
+      return false;
     } finally {
       setSaving(false);
     }
+  };
+
+  /**
+   * ADN · APROBAR. El chequeo de marca NO bloquea: si hay avisos, la persona
+   * decide en el diálogo; si no los hay, aprueba directo como siempre. Guardar
+   * viene primero para que el sello quede sobre lo que se está viendo.
+   */
+  const approve = async () => {
+    if (!selected || !editing) return;
+    setApproving(true);
+    try {
+      if (editing.dirty && !(await save())) return;
+      await api.updateDocument(selected.id, { status: 'approved' });
+      await props.onDocumentsChanged();
+      props.onNotice(t('brandcheck.approved'));
+    } catch (e) {
+      props.onError(displayError(e));
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const requestApprove = () => {
+    if (checkResult && checkResult.warnings > 0) setConfirmApprove(true);
+    else void approve();
   };
 
   const keepMine = async () => {
@@ -331,6 +379,20 @@ export function DocumentsView(props: DocumentsViewProps) {
     {selected && <div className="document-toolbar">
       <span><FileText size={16} />{selected.title}{selected.status === 'approved' && <span className="approval-badge" role="status"><ApprovalStamp size={34} className="approval-stamp" /><em>{t('approval.byYou')}</em></span>}<small>{kindLabel} · {editing?.dirty ? t('ui.auto.148') : selected.status === 'approved' ? t('status.approved') : selected.status === 'review' ? t('ui.auto.149') : t('status.draft')}</small><KnowledgeOrigin workId={selected.workId} currentWorkId={props.currentWorkId} titles={props.workTitles} /></span>
       <div className="doc-actions">
+        {/* El chequeo de marca, al lado de "Aprobar": una línea, su detalle, y
+            el resaltado de lo que encontró dentro del documento. */}
+        <BrandCheck
+          className="doc-brand-check"
+          brandId={work.brandId}
+          text={editing?.content ?? ''}
+          open={checkOpen}
+          onOpenChange={setCheckOpen}
+          onResult={setCheckResult}
+          onOpenBrand={props.onOpenBrand}
+        />
+        <button className="doc-approve" disabled={!editing || saving || approving || props.busy} onClick={requestApprove}>
+          <Check size={14} />{t('brandcheck.approve')}
+        </button>
         <button className="primary" disabled={!editing?.dirty || saving || props.busy} onClick={() => void save()}>{saving ? <Loading size={16} label={t('ui.auto.150')} /> : <Save size={14} />}{t('ui.auto.150')}</button>
         <button disabled={props.busy || saving} onClick={() => setMode(mode === 'edit' ? 'read' : 'edit')}>{mode === 'edit' ? t('document.modeRead') : t('document.modeEdit')}</button>
         <button aria-expanded={organizing} onClick={() => setOrganizing(o => !o)} disabled={props.busy}><SlidersHorizontal size={14} />{t('ui.auto.376')}</button>
@@ -386,7 +448,7 @@ export function DocumentsView(props: DocumentsViewProps) {
       <div className="document-kicker" data-origin-work={selected?.workId ?? work.id}>{props.brandName} / {documentOriginTitle(selected?.workId, work.title, props.workTitles)}{selected ? ` / ${kindLabel}` : ''}</div>
       {loading && !editing && <p className="footnote"><Loading size={32} label={t('ui.auto.168')} />  {t('ui.auto.168')}</p>}
       {editing && mode === 'edit' && <textarea className="markdown-editor" aria-label={t('ui.auto.169')} value={editing.content} spellCheck={false} onChange={e => setEditing({ ...editing, content: e.target.value, dirty: true })} />}
-      {editing && mode === 'read' && <article className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{editing.content || t('ui.auto.170')}</ReactMarkdown></article>}
+      {editing && mode === 'read' && <article className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{editing.content || t('ui.auto.170')}</ReactMarkdown></article>}
     </div>
 
     </div></>}
@@ -418,6 +480,16 @@ export function DocumentsView(props: DocumentsViewProps) {
         </div>
       </section>
     </div>}
+    {confirmApprove && <ConfirmDialog
+      titleId="brandcheck-confirm-title"
+      title={t('brandcheck.confirmTitle')}
+      body={`${t('brandcheck.confirmBody')} ${brandCheckWarnings(checkResult).join(' · ')}`}
+      confirmLabel={t('brandcheck.confirmApprove')}
+      cancelLabel={t('brandcheck.confirmBack')}
+      busy={approving}
+      onConfirm={() => { setConfirmApprove(false); void approve(); }}
+      onCancel={() => setConfirmApprove(false)}
+    />}
   </div>;
 }
 
