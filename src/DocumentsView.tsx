@@ -16,7 +16,7 @@ import { WorkOutcome, hasOutcomeDrafts, isWorkBrief } from './WorkOutcome';
 import { KnowledgeOrigin } from './KnowledgeScope';
 import { documentOriginTitle } from './brand-knowledge';
 import { useModalA11y } from './useModalA11y';
-import { BrandCheck, brandCheckWarnings, highlightComponents, highlightWordsOf } from './BrandCheck';
+import { BrandCheck, brandCheckWarnings, highlightComponents, highlightWordsOf, warningIcon } from './BrandCheck';
 import { ConfirmDialog } from './ConfirmDialog';
 
 const KIND_LABEL: Record<DocumentKind, string> = new Proxy({} as Record<DocumentKind,string>, { get: (_, key: DocumentKind) => t(`kind.${key}` as 'kind.brief') });
@@ -379,21 +379,13 @@ export function DocumentsView(props: DocumentsViewProps) {
     {selected && <div className="document-toolbar">
       <span><FileText size={16} />{selected.title}{selected.status === 'approved' && <span className="approval-badge" role="status"><ApprovalStamp size={34} className="approval-stamp" /><em>{t('approval.byYou')}</em></span>}<small>{kindLabel} · {editing?.dirty ? t('ui.auto.148') : selected.status === 'approved' ? t('status.approved') : selected.status === 'review' ? t('ui.auto.149') : t('status.draft')}</small><KnowledgeOrigin workId={selected.workId} currentWorkId={props.currentWorkId} titles={props.workTitles} /></span>
       <div className="doc-actions">
-        {/* El chequeo de marca, al lado de "Aprobar": una línea, su detalle, y
-            el resaltado de lo que encontró dentro del documento. */}
-        <BrandCheck
-          className="doc-brand-check"
-          brandId={work.brandId}
-          text={editing?.content ?? ''}
-          open={checkOpen}
-          onOpenChange={setCheckOpen}
-          onResult={setCheckResult}
-          onOpenBrand={props.onOpenBrand}
-        />
-        <button className="doc-approve" disabled={!editing || saving || approving || props.busy} onClick={requestApprove}>
+        <button className="primary" disabled={!editing?.dirty || saving || props.busy} onClick={() => void save()}>{saving ? <Loading size={16} label={t('ui.auto.150')} /> : <Save size={14} />}{t('ui.auto.150')}</button>
+        {/* El chequeo de marca vive en SU FRANJA, debajo de la barra: acá sólo
+            queda el botón que lo cierra, junto a Guardar. */}
+        <button className={'doc-approve' + (selected.status === 'review' ? ' primary' : '')}
+          disabled={!editing || saving || approving || props.busy} onClick={requestApprove}>
           <Check size={14} />{t('brandcheck.approve')}
         </button>
-        <button className="primary" disabled={!editing?.dirty || saving || props.busy} onClick={() => void save()}>{saving ? <Loading size={16} label={t('ui.auto.150')} /> : <Save size={14} />}{t('ui.auto.150')}</button>
         <button disabled={props.busy || saving} onClick={() => setMode(mode === 'edit' ? 'read' : 'edit')}>{mode === 'edit' ? t('document.modeRead') : t('document.modeEdit')}</button>
         <button aria-expanded={organizing} onClick={() => setOrganizing(o => !o)} disabled={props.busy}><SlidersHorizontal size={14} />{t('ui.auto.376')}</button>
         <button disabled={props.busy || saving} onClick={() => void snapshot()}><Layers size={14} />{t('ui.auto.151')}</button>
@@ -402,6 +394,18 @@ export function DocumentsView(props: DocumentsViewProps) {
         <button className="icon-button" aria-label={t('ui.auto.152')} title={t('ui.auto.152')} disabled={props.busy} onClick={() => void api.exportDocument(selected.id).then(p => p && props.onNotice(t('ui.auto.153'))).catch(e => props.onError(displayError(e)))}><Download size={15} /></button>
       </div>
     </div>}
+
+    {/* La franja del chequeo: ancho completo, entre la barra y el documento. */}
+    {selected && <BrandCheck
+      className="doc-brand-check"
+      brandName={props.brandName}
+      brandId={work.brandId}
+      text={editing?.content ?? ''}
+      open={checkOpen}
+      onOpenChange={setCheckOpen}
+      onResult={setCheckResult}
+      onOpenBrand={props.onOpenBrand}
+    />}
 
     {selected && organizing && <DocumentMetadata key={selected.id} document={selected} onChanged={props.onDocumentsChanged} onError={props.onError} onDirtyChange={reportDirty}/>}
 
@@ -483,7 +487,8 @@ export function DocumentsView(props: DocumentsViewProps) {
     {confirmApprove && <ConfirmDialog
       titleId="brandcheck-confirm-title"
       title={t('brandcheck.confirmTitle')}
-      body={`${t('brandcheck.confirmBody')} ${brandCheckWarnings(checkResult).join(' · ')}`}
+      body={t('brandcheck.confirmBody')}
+      items={brandCheckWarnings(checkResult).map((warning) => ({ icon: warningIcon(warning.kind), text: warning.text }))}
       confirmLabel={t('brandcheck.confirmApprove')}
       cancelLabel={t('brandcheck.confirmBack')}
       busy={approving}

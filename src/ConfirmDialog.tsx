@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { translate as t } from './i18n';
 import { useModalA11y } from './useModalA11y';
@@ -10,12 +11,21 @@ import { useModalA11y } from './useModalA11y';
  * every other dialog uses: focus trap, Escape closes (unless `busy`), focus
  * returns to the opener.
  */
+
+/** Una fila de lo que hay que revisar: su ícono y su texto, uno por renglón. */
+export interface ConfirmDialogItem {
+  icon?: ReactNode;
+  text: string;
+}
+
 export interface ConfirmDialogProps {
   /** Id the `<h2>` gets, referenced by the dialog's `aria-labelledby`. */
   titleId: string;
   title: string;
   /** The consequence, in plain language — what happens and whether it can be undone. */
   body: string;
+  /** Lo que hay que revisar, fila por fila. Una lista, nunca una frase corrida. */
+  items?: readonly ConfirmDialogItem[];
   /** Labels the destructive/confirming button with the action itself, never a generic "OK". */
   confirmLabel: string;
   cancelLabel?: string;
@@ -37,6 +47,9 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
       </div>
       <div className="modal-body">
         <p className="intro">{props.body}</p>
+        {props.items && props.items.length > 0 && <ul className="confirm-items">
+          {props.items.map((item, index) => <li key={index}>{item.icon}<span>{item.text}</span></li>)}
+        </ul>}
         <div className="chat-card-actions">
           <button className={props.destructive ? 'danger' : 'primary'} disabled={busy} onClick={props.onConfirm}>{props.confirmLabel}</button>
           <button disabled={busy} onClick={props.onCancel}>{props.cancelLabel ?? t('ui.auto.241')}</button>

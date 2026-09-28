@@ -8,11 +8,13 @@ import { catalogs, type MessageKey } from './i18n';
 import type { BrandDnaEntry, BrandDnaFields, BrandDnaView, Work, WorkDocument } from '../shared/contracts';
 
 /**
- * ADN · CHEQUEO DE MARCA.
+ * ADN · CHEQUEO DE MARCA (ronda 2: el pulido).
  *
- *  1. La línea compacta, su detalle y el resaltado de lo encontrado en el
- *     documento (sólo tokens de color).
- *  2. "Aprobar" con avisos pasa por el diálogo y sin avisos aprueba directo.
+ *  1. La franja propia de ancho completo, DEBAJO de la barra y fuera de la
+ *     fila de botones: línea compacta, detalle en filas `ícono · qué · dónde`
+ *     y resaltado de lo encontrado en el documento (sólo tokens de color).
+ *  2. "Aprobar" en la barra, junto a Guardar, primario cuando el documento
+ *     está en revisión; con avisos pasa por el diálogo, en LISTA.
  *  3. Sin ADN aprobado: una línea discreta que ofrece armarlo, y que NUNCA
  *     bloquea aprobar.
  *  4. El chequeo también vive donde se revisa lo que el trabajo entrega.
@@ -124,8 +126,22 @@ beforeEach(() => {
 
 afterEach(() => { vi.clearAllMocks(); });
 
-describe('1 · la línea del chequeo, su detalle y el resaltado', () => {
-  it('una fila compacta con ícono y texto: Palabras y Tono, nunca sólo color', async () => {
+describe('1 · la franja, su detalle y el resaltado', () => {
+  it('la franja vive debajo de la barra, fuera de la fila de botones', async () => {
+    const { container } = render(<DocumentsView {...base} />);
+    const strip = await until(() => container.querySelector('.doc-brand-check'), '.doc-brand-check');
+    const toolbar = container.querySelector('.document-toolbar')!;
+    // No se mete en la barra, ni en los botones, ni dentro de ningún control.
+    expect(toolbar.contains(strip)).toBe(false);
+    expect(toolbar.querySelectorAll('.brand-check')).toHaveLength(0);
+    expect(container.querySelector('.doc-actions .brand-check')).toBeNull();
+    expect([...toolbar.querySelectorAll('button')].some((button) => button.classList.contains('brand-check-line'))).toBe(false);
+    // Y es suya, de ancho completo, justo entre la barra y el resto del documento.
+    expect(strip.previousElementSibling).toBe(toolbar);
+    expect(strip.className).toContain('doc-brand-check');
+  });
+
+  it('una fila compacta con ícono y texto, separada por puntos', async () => {
     const { container } = render(<DocumentsView {...base} />);
     const line = await until(() => container.querySelector('.brand-check-line'), '.brand-check-line');
     expect(line.getAttribute('aria-expanded')).toBe('false');
@@ -137,7 +153,18 @@ describe('1 · la línea del chequeo, su detalle y el resaltado', () => {
     expect(segments[0]!.getAttribute('data-status')).toBe('warn');
     expect(segments[0]!.textContent).toBe('1 palabra que la marca no usa');
     expect(segments[0]!.querySelector('svg')).not.toBeNull();
+    expect(container.querySelectorAll('.brand-check-sep')).toHaveLength(2);
     expect(container.querySelector('.brand-check')!.getAttribute('aria-label')).toBe('Chequeo de marca');
+    expect(container.querySelector('.brand-check')!.getAttribute('data-tone')).toBe('warn');
+  });
+
+  it('sin avisos, la franja dice qué respeta y contra qué versión del ADN', async () => {
+    mocks.readDocument.mockResolvedValue({ content: '# Un texto sin palabras de la marca', fingerprint: 'fp', baseOutdated: false });
+    const { container } = render(<DocumentsView {...base} />);
+    const line = await until(() => container.querySelector('.brand-check-line'), '.brand-check-line');
+    expect(line.textContent).toBe('Respeta el ADN de Casa Oliva · v2');
+    expect(line.querySelector('svg')).not.toBeNull();
+    expect(container.querySelector('.brand-check')!.getAttribute('data-tone')).toBe('ok');
   });
 
   it('al hacer clic se despliega el detalle, veredicto por veredicto', async () => {
@@ -154,6 +181,12 @@ describe('1 · la línea del chequeo, su detalle y el resaltado', () => {
     expect(detail.textContent).toContain('lo revisa la persona');
     expect(detail.querySelector('[data-kind="wordsNo"]')!.getAttribute('data-status')).toBe('warn');
     expect(detail.querySelector('[data-kind="tone"]')!.getAttribute('data-status')).toBe('unknown');
+    // Cada fila es `ícono · qué · dónde`: el dónde va en SU columna, entero.
+    const row = detail.querySelector('[data-kind="wordsNo"]')!;
+    const where = row.querySelector('.brand-check-row-where')!;
+    expect(row.querySelector('.brand-check-row-sep')!.textContent).toBe('·');
+    expect(where.querySelector('.brand-check-row-hits')!.textContent).toBe('oferta (1)');
+    expect(where.querySelector('.brand-check-row-sep')).not.toBeNull();
   });
 
   it('con el detalle abierto, lo encontrado se resalta en el documento', async () => {
@@ -181,7 +214,26 @@ describe('1 · la línea del chequeo, su detalle y el resaltado', () => {
   });
 });
 
-describe('2 · Aprobar con avisos y sin avisos', () => {
+describe('2 · Aprobar en la barra, con avisos y sin avisos', () => {
+  it('Aprobar es un botón más, junto a Guardar', async () => {
+    const { container, getByRole } = render(<DocumentsView {...base} />);
+    await until(() => container.querySelector('.brand-check-line'), '.brand-check-line');
+    const labels = [...container.querySelectorAll('.doc-actions button')].map((button) => button.textContent);
+    expect(labels).toContain('Aprobar');
+    expect(labels.indexOf('Aprobar')).toBe(labels.indexOf('Guardar') + 1);
+    // Y el chequeo no lo arrastró: el botón está en la barra, no en la franja.
+    const strip = container.querySelector('.doc-brand-check')!;
+    expect(strip.contains(getByRole('button', { name: 'Aprobar' }))).toBe(false);
+  });
+
+  it('es primario cuando el documento está en revisión, y no cuando es borrador', async () => {
+    const { container, getByRole, rerender } = render(<DocumentsView {...base} documents={[doc('review')]} />);
+    await until(() => container.querySelector('.brand-check-line'), '.brand-check-line');
+    expect(getByRole('button', { name: 'Aprobar' }).classList.contains('primary')).toBe(true);
+    rerender(<DocumentsView {...base} documents={[doc('draft')]} />);
+    expect(getByRole('button', { name: 'Aprobar' }).classList.contains('primary')).toBe(false);
+  });
+
   it('con avisos, Aprobar abre el diálogo con la lista corta y las dos salidas', async () => {
     const { container, getByRole } = render(<DocumentsView {...base} />);
     await until(() => container.querySelector('.brand-check-line'), '.brand-check-line');
@@ -194,6 +246,24 @@ describe('2 · Aprobar con avisos y sin avisos', () => {
     expect(labels).toContain('Aprobar igual');
     expect(labels).toContain('Volver a revisar');
     expect(mocks.updateDocument).not.toHaveBeenCalled();
+  });
+
+  it('los avisos van como lista: una fila por aviso, con su ícono', async () => {
+    const { container, getByRole } = render(<DocumentsView {...base} />);
+    await until(() => container.querySelector('.brand-check-line'), '.brand-check-line');
+    fireEvent.click(getByRole('button', { name: 'Aprobar' }));
+    const dialog = await until(() => container.querySelector('[role="dialog"]'), 'el diálogo');
+
+    // El intro nombran el hecho; los avisos, fila por fila.
+    expect(dialog.querySelector('.intro')!.textContent).toBe('La pieza tiene avisos de marca:');
+    const rows = [...dialog.querySelectorAll('.confirm-items li')];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.querySelector('svg')).not.toBeNull();
+    expect(rows[0]!.textContent).toBe('La marca no usa «oferta» (1)');
+    expect(rows[1]!.querySelector('svg')).not.toBeNull();
+    expect(rows[1]!.textContent).toBe('Afirmación sin respaldo: «Todo al mejor precio, 100% artesanal»');
+    // Nunca una frase corrida con "·" entre avisos.
+    expect(dialog.querySelector('.intro')!.textContent).not.toContain('·');
   });
 
   it('"Volver a revisar" cierra sin aprobar', async () => {
@@ -220,8 +290,7 @@ describe('2 · Aprobar con avisos y sin avisos', () => {
     mocks.readDocument.mockResolvedValue({ content: '# Un texto sin palabras de la marca', fingerprint: 'fp', baseOutdated: false });
     const { container, getByRole } = render(<DocumentsView {...base} />);
     const line = await until(() => container.querySelector('.brand-check-line'), '.brand-check-line');
-    expect(line.textContent).toContain('Palabras');
-    expect(line.textContent).toContain('Afirmaciones');
+    expect(line.textContent).toBe('Respeta el ADN de Casa Oliva · v2');
     fireEvent.click(getByRole('button', { name: 'Aprobar' }));
     await waitFor(() => expect(mocks.updateDocument).toHaveBeenCalledWith('a', { status: 'approved' }));
     expect(container.querySelector('[role="dialog"]')).toBeNull();
@@ -326,5 +395,27 @@ describe('5 · copy en los dos idiomas y CSS sólo con tokens', () => {
     expect(block).not.toMatch(/font-size:\s*(?!var\()/);
     expect(block).toContain('.brand-check');
     expect(block).toContain('.markdown mark.brand-hit');
+  });
+
+  it('la franja, la lista del diálogo y la barra se pintan sólo con tokens', () => {
+    const css = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8');
+    const at = css.indexOf('/* ADN · chequeo de marca */');
+    const next = css.indexOf('/* ADN · interfaz */', at);
+    const block = next > at ? css.slice(at, next) : css.slice(at);
+
+    // La franja: ancho completo, fondo según el peor estado, borde inferior.
+    expect(block).toMatch(/\.doc-brand-check\{[^}]*width:100%/);
+    expect(block).toMatch(/\.doc-brand-check\{[^}]*background:var\(--state-verified-bg\)/);
+    expect(block).toMatch(/\.doc-brand-check\[data-tone=warn\]\{[^}]*background:var\(--state-error-bg\)/);
+    expect(block).toMatch(/\.doc-brand-check\{[^}]*border-bottom:1px solid var\(--line\)/);
+    // El texto hallado va entero o con puntos suspensivos: nunca en palabras sueltas.
+    expect(block).toMatch(/\.brand-check-row-where\{[^}]*white-space:nowrap/);
+    expect(block).toMatch(/\.brand-check-row-where\{[^}]*text-overflow:ellipsis/);
+    // La lista de avisos del diálogo.
+    expect(block).toMatch(/\.confirm-items\{/);
+    // La barra: una sola fila cuando entra, y botones del mismo alto cuando no.
+    expect(block).toMatch(/\.document-toolbar\{flex-wrap:wrap\}/);
+    expect(block).toMatch(/\.doc-actions button\{[^}]*white-space:nowrap/);
+    expect(block).toMatch(/\.doc-actions button\{[^}]*min-height:var\(--control-h-md\)/);
   });
 });

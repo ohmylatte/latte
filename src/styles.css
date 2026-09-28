@@ -1801,27 +1801,55 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .folder-loading{display:flex;justify-content:center;align-items:center;margin:0;padding:16px 0}
 
 /* ADN · chequeo de marca */
-.doc-actions{flex-wrap:wrap;align-items:center}
-.doc-brand-check{flex:1 1 240px;min-width:0}
+
+/* LA FRANJA: su propio ancho completo, entre la barra y el documento. El
+   fondo dice el peor estado con un wash de tokens y el borde inferior la
+   separa del texto; nunca entra en la fila de botones. */
+.doc-brand-check{display:block;width:100%;padding:var(--space-1) var(--space-4);border-bottom:1px solid var(--line);background:var(--state-verified-bg);color:var(--state-draft-text);font-size:var(--text-sm);gap:0}
+.doc-brand-check[data-tone=warn]{background:var(--state-error-bg)}
 .resultados-brand-check{margin:0 0 var(--space-2)}
-.brand-check{display:flex;flex-direction:column;gap:var(--space-2);min-width:0}
+
+.brand-check{display:flex;flex-direction:column;gap:0;min-width:0}
 .brand-check.is-empty{flex-direction:row;align-items:center;gap:var(--space-2);flex-wrap:wrap;color:var(--state-draft-text);font-size:var(--text-sm);border:1px dashed var(--line-strong);border-radius:var(--radius-sm);padding:var(--space-1) var(--space-2);background:var(--paper);overflow-wrap:anywhere}
 .brand-check.is-empty button{font-size:var(--text-sm);min-height:var(--control-h-sm);border-color:var(--rust);color:var(--rust)}
-.brand-check-line{display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap;font-size:var(--text-sm);min-height:var(--control-h-sm);border-color:transparent;color:var(--state-draft-text)}
+.doc-brand-check.is-empty{border:0;border-bottom:1px solid var(--line);border-radius:0;padding:var(--space-2) var(--space-4);background:var(--paper)}
+
+/* LA LÍNEA CERRADA: ícono + texto, y el chevron a la derecha. */
+.brand-check-line{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;width:100%;font-size:var(--text-sm);min-height:var(--control-h-sm);padding:0 var(--space-2);border-color:transparent;color:var(--state-draft-text);text-align:left}
+.brand-check-line>svg:last-child{margin-left:auto}
 .brand-check-line .rotated{transform:rotate(180deg);transition:transform var(--dur-fast) var(--ease-standard)}
+.brand-check-sep{color:var(--muted)}
 .brand-check-seg{display:inline-flex;align-items:center;gap:var(--space-1);white-space:nowrap}
 .brand-check-seg[data-status=ok]{color:var(--state-verified-text)}
 .brand-check-seg[data-status=warn]{color:var(--state-error-text)}
 .brand-check-seg[data-status=unknown]{color:var(--state-draft-text)}
-.brand-check-detail{list-style:none;margin:0;padding:var(--space-2) var(--space-3);display:flex;flex-direction:column;gap:var(--space-1);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--paper-deep);min-width:min(280px,100%)}
-.brand-check-detail li{display:flex;justify-content:space-between;gap:var(--space-3);align-items:baseline;font-size:var(--text-sm);line-height:1.5}
-.brand-check-row-label{display:inline-flex;align-items:center;gap:var(--space-1);white-space:nowrap;color:var(--state-draft-text)}
+
+/* EL DETALLE ABIERTO: ícono · qué · dónde, a la izquierda. El texto hallado
+   no se parte en palabras sueltas: entra entero o con puntos suspensivos. */
+.brand-check-detail{list-style:none;margin:0;padding:var(--space-2) 0 0;display:flex;flex-direction:column;gap:var(--space-1);border-top:1px solid var(--line);min-width:0}
+.brand-check-detail li{display:flex;align-items:baseline;gap:var(--space-2);font-size:var(--text-sm);line-height:1.5;color:var(--state-draft-text);min-width:0}
+.brand-check-row-label{display:inline-flex;align-items:center;gap:var(--space-1);white-space:nowrap;flex:0 0 auto}
 .brand-check-detail li[data-status=ok] .brand-check-row-label{color:var(--state-verified-text)}
 .brand-check-detail li[data-status=warn] .brand-check-row-label{color:var(--state-error-text)}
-.brand-check-row-hits{color:var(--muted);text-align:right;overflow-wrap:anywhere}
+.brand-check-row-where{display:inline-flex;align-items:baseline;gap:var(--space-2);flex:0 1 auto;min-width:8ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand-check-row-sep{color:var(--muted)}
+.brand-check-row-hits{color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis}
+
+/* Los avisos del diálogo: una fila por aviso, con su ícono. */
+.confirm-items{list-style:none;margin:0 0 var(--space-4);padding:0;display:flex;flex-direction:column;gap:var(--space-2)}
+.confirm-items li{display:flex;align-items:baseline;gap:var(--space-2);font-size:var(--text-md);line-height:1.6;min-width:0}
+.confirm-items li svg{flex:0 0 auto;color:var(--state-error-text);align-self:center}
+.confirm-items li span{color:var(--ink-soft);min-width:0;overflow-wrap:anywhere}
+
+/* LA BARRA: los botones no se aprietan ni cambian de alto; el título es lo
+   flexible. Si no entran todos, cada uno va entero a su renglón. */
+.document-toolbar{flex-wrap:wrap}
+.documents>.document-toolbar>span{flex:1 1 0;min-width:0;overflow:hidden;white-space:nowrap}
+.document-toolbar>div.doc-actions{flex:0 1 auto;flex-wrap:wrap;align-items:center;gap:var(--space-1)}
+.doc-actions button{flex:0 0 auto;white-space:nowrap;min-height:var(--control-h-md);padding:6px var(--space-2);gap:5px}
+
 .markdown mark.brand-hit{background:var(--state-error-bg);color:var(--state-error-text);border-radius:var(--radius-sm);padding:0 2px}
 .markdown mark.brand-hit[data-tone=verified]{background:var(--state-verified-bg);color:var(--state-verified-text)}
-
 
 /* ADN · interfaz */
 /*
