@@ -2,9 +2,9 @@ import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Archive, ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, Home, MessageSquare, Minus, Palette, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, Users, X } from 'lucide-react';
+import { Archive, ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, Dna, FileText, Folder, Home, MessageSquare, Minus, Palette, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, Users, X } from 'lucide-react';
 import { Loading, SteamWisp, roleColor } from './brand-marks';
-import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatRuntime, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, BrandMember, BrandIdentityView, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, HandoffTaskBridgeResult, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
+import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatRuntime, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, BrandMember, BrandIdentityView, BrandDnaView, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, HandoffTaskBridgeResult, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
 import { api, chatStore, isDesktop } from './browser-api';
 import { DocumentsView, NewDocumentDialog } from './DocumentsView';
 import { hasMetadataDrafts } from './DocumentMetadata';
@@ -27,7 +27,11 @@ import { BrandMenu } from './BrandMenu';
 import { ConfirmDialog } from './ConfirmDialog';
 import { BrandTeamView } from './BrandTeamView';
 import { IdentityView } from './IdentityView';
+import { BrandDnaView as BrandDnaScreen } from './BrandDnaView';
 import { HomeView } from './HomeView';
+import { classifyWorkType } from './home-chat';
+import { recommendRole } from './work-catalog';
+import { isFirstStepsClosed, isFunnelOpened, markFunnelOpened, setFirstStepsClosed as persistFirstStepsClosed } from './first-steps';
 import { ResumenView } from './ResumenView';
 import { TrabajoView } from './TrabajoView';
 import { EvidenciaView } from './EvidenciaView';
@@ -59,7 +63,7 @@ import { PromptDialog } from './PromptDialog';
  * surface, reachable before any work is open. Opening a work still opens the
  * work (`selectWork`), so the two destinations never blur.
  */
-export const VIEWS = ['home', 'resumen', 'trabajo', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'roster', 'identity', 'decisions', 'resultados'] as const;
+export const VIEWS = ['home', 'resumen', 'trabajo', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'roster', 'identity', 'dna', 'decisions', 'resultados'] as const;
 type View = (typeof VIEWS)[number];
 type Modal = 'brand' | 'work' | 'document' | null;
 const date = (value: string) => new Date(value).toLocaleString(currentLocale(), { dateStyle: 'short', timeStyle: 'short' });
@@ -475,6 +479,34 @@ export function App() {
     void api.readBrandIdentity(brand.id).then(v => { if (live) setIdentity(v); }).catch(e => setError(displayError(e)));
     return () => { live = false; };
   }, [brand?.id, view]);
+  /**
+   * ADN DE MARCA (Entrega 1B): la ficha que Inicio lee para la caja "¿Qué
+   * querés hacer hoy…?" y para marcar "Traé tu marca". Se lee al cambiar de
+   * marca y —con `dnaEpoch`— después de aprobarla en el recorrido inicial, que
+   * puede terminar sobre la marca que ya estaba seleccionada.
+   */
+  const [dna, setDna] = useState<BrandDnaView | null>(null);
+  const [dnaEpoch, setDnaEpoch] = useState(0);
+  useEffect(() => {
+    if (!brand) { setDna(null); return; }
+    let live = true;
+    void api.readBrandDna(brand.id).then(v => { if (live) setDna(v); }).catch(() => { if (live) setDna(null); });
+    return () => { live = false; };
+  }, [brand?.id, dnaEpoch]);
+  /**
+   * PRIMEROS PASOS: la preferencia de la tarjeta se persiste como el riel y la
+   * densidad, y el Embudo se recuerda POR MARCA — el de una no es el de otra.
+   * Los otros tres pasos no se guardan: son hechos que la app ya tiene.
+   */
+  const [firstStepsClosed, setFirstStepsClosedState] = useState(() => isFirstStepsClosed());
+  const closeFirstSteps = () => { setFirstStepsClosedState(true); persistFirstStepsClosed(true); };
+  const [funnelVisited, setFunnelVisited] = useState(false);
+  useEffect(() => { setFunnelVisited(brand ? isFunnelOpened(brand.id) : false); }, [brand?.id]);
+  useEffect(() => {
+    if (view !== 'funnel' || !brand) return;
+    markFunnelOpened(brand.id);
+    setFunnelVisited(true);
+  }, [view, brand?.id]);
   const coordination = useCoordination(work?.id ?? null, (e) => setError(displayError(e)), (id) => { void loadTeam(id).catch(() => undefined); });
   // La visita a la coordinación se marca cuando la persona ABRE el panel de
   // coordinación de un Trabajo (Decisiones: gates, autoridad, presupuesto,
@@ -1030,6 +1062,38 @@ export function App() {
   };
   const openNewWork = () => { setName(''); setModal('work'); };
   const openAddBrand = () => { setName(''); setModal('brand'); };
+  /**
+   * ADN · H: la caja de Inicio crea el trabajo con EL TEXTO COMO BRIEF y
+   * activa el rol que el catálogo recomienda para ese pedido — el mismo camino
+   * de "Nuevo trabajo" (`activateWork`), nunca una segunda copia. La
+   * clasificación es de `home-chat.ts`: palabras clave contra el catálogo.
+   */
+  const startFromHome = (text: string) => {
+    if (!brand) return;
+    void run(async () => {
+      const workType = classifyWorkType(text);
+      const title = t(workType.titleKey);
+      const created = await api.createWork(brand.id, title);
+      const outcome = await api.saveBrief(created.id, `# ${title}\n\n${text}`);
+      // Un conflicto no se calla: el trabajo existe, el texto quedó como estaba.
+      if (outcome.status === 'conflict') setNotice(t('onboarding.briefConflict'));
+      const saved = outcome.status === 'saved' ? outcome.work : created;
+      setWorks(prev => [...prev, saved]);
+      setWork(saved);
+      setContext(brand.context);
+      setLayout('conversation');
+      setView('brief');
+      setNotice(t('home.ask.started'));
+      void activateWork(saved.id, recommendRole(workType), text);
+    });
+  };
+  /** "Probalo": cada paso de Primeros pasos lleva a la pantalla donde eso se hace. */
+  const goFromFirstStep = (target: 'dna' | 'funnel' | 'documents') => {
+    if (target === 'dna') { setView('dna'); return; }
+    if (target === 'funnel') { setView('funnel'); return; }
+    setLayout('review');
+    setView('brief');
+  };
   // First-run gate actions: skip sets the flag and keeps the returning-user path
   // intact; completion re-bootstraps and pre-selects the recommended role.
   //
@@ -1110,17 +1174,24 @@ export function App() {
     const list = await api.listBrands();
     setBrands(list);
     const brand = list.find(b => b.id === result.brandId) ?? list[0] ?? null;
-    pendingWorkRef.current = result.workId;
+    pendingWorkRef.current = result.workId ?? null;
     if (brand) selectBrand(brand);
+    // The extra bump re-reads the works even when the brand was already the
+    // selected one (choosing the demo), which changes no id at all.
+    setBrandEpoch(n => n + 1);
+    // Aprobar el ADN puede pasar sobre la marca que ya estaba seleccionada, y
+    // la ficha es lo que Inicio lee para la caja y para "Traé tu marca".
+    setDnaEpoch(n => n + 1);
+    setOnboarding('complete');
+    // ADN · H: el recorrido que termina aprobando el ADN NO creó ningún
+    // trabajo, así que aterriza en Inicio — donde "Pedí tu primer trabajo" es
+    // el segundo paso de la tarjeta de al lado.
+    if (result.landing === 'home') { setView('home'); return; }
     // The walk just opened a role conversation. A returning user starts on
     // Inicio; a just-onboarded one lands where the walk left them, so the
     // validated onboarding landing is preserved instead of being re-decided.
     setLayout('conversation');
     setView('brief');
-    // The extra bump re-reads the works even when the brand was already the
-    // selected one (choosing the demo), which changes no id at all.
-    setBrandEpoch(n => n + 1);
-    setOnboarding('complete');
     // The gate unmounts with this result, so the shell is the only place the
     // human can still be told what the brief or the folder link did.
     if (result.briefConflict) setNotice(t('onboarding.briefConflict'));
@@ -1130,8 +1201,8 @@ export function App() {
     // live team, same as "no AI ready" — the recovery card. `activateWork`
     // itself decides which; it must always run so the preview writes
     // `activationRecovery` instead of leaving an unexplained empty team.
-    if (result.recommendedRoleId) {
-      void activateWork(result.workId, result.recommendedRoleId, result.brief);
+    if (result.workId && result.recommendedRoleId) {
+      void activateWork(result.workId, result.recommendedRoleId, result.brief ?? '');
     }
   };
   // Reopening the walk has to close Settings with it: the Settings branch renders
@@ -1582,7 +1653,7 @@ export function App() {
       {showArchived && <div className="archived-brands">{archivedBrands.length === 0 ? <p className="sidebar-hint">{t('brand.noneArchived')}</p> : archivedBrands.map(b => <div key={b.id} className="archived-brand-row"><span title={b.name}>{b.name}</span><button type="button" className="subtle" disabled={busy} aria-label={t('brand.restoreNamed', { name: b.name })} onClick={() => run(() => restoreArchivedBrand(b.id))}>{t('brand.restore')}</button></div>)}</div>}
       <nav><button type="button" title={t('home.nav')} className={view === 'home' ? 'nav-active' : ''} onClick={() => setView('home')}><Home size={18} />{t('home.nav')}</button></nav>
       <div className="nav-label">{t('ui.auto.034')}</div>
-      <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button><button disabled={!brand} title={t('roster.nav')} className={view === 'roster' ? 'nav-active' : ''} onClick={() => setView('roster')}><Users size={18} />{t('roster.nav')}</button><button disabled={!brand} title={t('identity.nav')} className={view === 'identity' ? 'nav-active' : ''} onClick={() => setView('identity')}><Palette size={18} />{t('identity.nav')}</button></nav>
+      <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button><button disabled={!brand} title={t('roster.nav')} className={view === 'roster' ? 'nav-active' : ''} onClick={() => setView('roster')}><Users size={18} />{t('roster.nav')}</button><button disabled={!brand} title={t('identity.nav')} className={view === 'identity' ? 'nav-active' : ''} onClick={() => setView('identity')}><Palette size={18} />{t('identity.nav')}</button><button disabled={!brand} title={t('dna.nav')} className={view === 'dna' ? 'nav-active' : ''} onClick={() => setView('dna')}><Dna size={17} />{t('dna.nav')}</button></nav>
       <div className="sidebar-rule" /><div className="nav-label">{t('app.navWorks')} <span>{works.length.toString().padStart(2, '0')}</span></div>
       <nav className="work-nav">{works.map(w => {
         // M3: el vapor sólo donde alguien está trabajando ahora mismo; el
@@ -1599,7 +1670,7 @@ export function App() {
     <header className="topbar"><div className="breadcrumb">{brand?.name ?? t('app.welcomeBrand')}<span>/</span><strong>{work?.title ?? t('app.welcomeWork')}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
     <main className="workspace" aria-hidden={focusChat} inert={focusChat}>
       <MemoryNotice support={coordination.support} dismissed={Boolean(brand && memoryNoticeDismissed.has(brand.id))} onDismiss={() => { if (brand) setMemoryNoticeDismissed(prev => new Set(prev).add(brand.id)); }} mode={mode} />
-      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} coordinationSinceLastVisit={brand ? sinceLastVisitFromActiveRuns(coordination.activeRuns, brand.id) : []} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenCoordination={openWorkCoordination} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} />}
+      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} coordinationSinceLastVisit={brand ? sinceLastVisitFromActiveRuns(coordination.activeRuns, brand.id) : []} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenCoordination={openWorkCoordination} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} dna={dna} roles={roles} funnelOpened={funnelVisited} firstStepsClosed={firstStepsClosed} onStartWork={startFromHome} onGoTo={goFromFirstStep} onCloseFirstSteps={closeFirstSteps} />}
       {/* The tabs and the knowledge-scope filter are in-work chrome: on Inicio
           they would read as "a work with no tab selected". */}
       {view !== 'home' && <><div className="tabs"><button className={view === 'resumen' ? 'selected' : ''} onClick={() => setView('resumen')}>{t('resumen.tab')}</button><button className={view === 'trabajo' ? 'selected' : ''} onClick={() => setView('trabajo')}>{t('trabajo.tab')}</button><button className={view === 'evidencia' ? 'selected' : ''} onClick={() => setView('evidencia')}>{t('evidencia.tab')}</button><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><button className={view === 'resultados' ? 'selected' : ''} onClick={() => setView('resultados')}>{t('resultados.tab')}</button><div className="tab-spacer" /></div>
@@ -1646,6 +1717,7 @@ export function App() {
         onApprove={() => void run(async () => { setIdentity(await api.approveBrandIdentity(brand.id)); })}
         onRevoke={() => void run(async () => { setIdentity(await api.revokeBrandIdentity(brand.id)); })}
         onExtract={() => void run(async () => { const r = await api.requestBrandIdentityExtraction(brand.id); setIdentityNote(t(r.outcome === 'proposed' ? 'identity.extract.proposed' : r.outcome === 'dispatched' ? 'identity.extract.dispatched' : r.outcome === 'pending_approval' ? 'identity.extract.pending' : 'identity.extract.blocked', { work: r.workTitle })); })} />}
+      {view === 'dna' && brand && <BrandDnaScreen brand={brand} formatDate={date} onChanged={setDna} />}
       {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} onAcceptHandoff={acceptHandoffAsTask} />}
       {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice('Aprendizaje guardado en Engram'); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
       <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : t('app.tagline')}</span></div>

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { configure, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ChatSession } from '../shared/contracts';
 
 configure({ asyncUtilTimeout: 5_000 });
@@ -56,7 +56,10 @@ describe('Entrega 1A: "Nuevo trabajo" abre el catálogo en un shell ya vivo', ()
     expect(await screen.findByRole('heading', { name: '¿En qué querés trabajar?' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Medir y reportar' })).toBeDefined();
 
-    fireEvent.click(screen.getByRole('button', { name: /Análisis de paid media/ }));
+    // Dentro del modal: Inicio ahora ofrece las mismas opciones como
+    // sugerencias, y una consulta sobre toda la pantalla encontraría las dos.
+    const catalog = within(screen.getByRole('dialog'));
+    fireEvent.click(catalog.getByRole('button', { name: /Análisis de paid media/ }));
     fireEvent.change(screen.getByPlaceholderText('¿Qué cuenta administramos?'), { target: { value: 'Cuenta principal' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));

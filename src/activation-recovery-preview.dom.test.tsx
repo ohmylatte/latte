@@ -46,6 +46,8 @@ describe('Entrega 1A — QA: recorrido completo en la vista previa web (sin IA r
 
     await screen.findByRole('heading', { name: '¿Con qué cuenta trabajás?' });
     clickCard(/Explorar con un proyecto demo/);
+    // El paso nuevo "Traé tu marca" (F); el recorrido de siempre sale por su enlace.
+    fireEvent.click(await screen.findByRole('button', { name: /Empezar sin marca/ }));
 
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
 

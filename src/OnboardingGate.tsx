@@ -3,12 +3,15 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowLeft, ArrowRight, ArrowUpRight, Check, ChevronDown, FolderOpen, Plus, Settings2, Sparkles, X } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { AgentRole, Brand, ChatRuntimeStatus, OnboardingDraft, PrimaryAgent } from '../shared/contracts';
+import type { AgentRole, Brand, BrandDnaSourcesInput, BrandIdentityFileView, ChatRuntimeStatus, OnboardingDraft, PrimaryAgent } from '../shared/contracts';
 import { useI18n } from './i18n';
 import { roleLabel } from './pack-i18n';
 import { api, isDesktop } from './browser-api';
 import { ConnectAI } from './ConnectAI';
 import { confirmFolderLink } from './folder-link';
+import { useBrandDna } from './brand-dna';
+import { BrandDnaPanel } from './BrandDnaPanel';
+import { BrandDnaSources } from './BrandDnaSources';
 import {
   FREE_FORM_WORK_TYPE,
   findWorkType,
@@ -30,13 +33,35 @@ import {
 } from './onboarding-flow';
 
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const STEP_ORDER: OnboardingStep[] = ['intent', 'context', 'brand', 'connect', 'prepare'];
+/**
+ * La barra de pasos del encabezado, con el paso nuevo "Traé tu marca" entre
+ * Conectar la IA y el Resumen. El recorrido persistido sigue siendo el de
+ * siempre (el contrato de pasos no cambia): esta lista es sólo lo que la
+ * persona VE, y por eso tiene una entrada más que `ONBOARDING_STEPS`.
+ */
+const STEP_LABELS: Array<{ key: OnboardingStep | 'dna'; labelKey: 'onboarding.step.intent' | 'onboarding.step.context' | 'onboarding.step.brand' | 'onboarding.step.connect' | 'onboarding.step.dna' | 'onboarding.step.prepare' }> = [
+  { key: 'intent', labelKey: 'onboarding.step.intent' },
+  { key: 'context', labelKey: 'onboarding.step.context' },
+  { key: 'brand', labelKey: 'onboarding.step.brand' },
+  { key: 'connect', labelKey: 'onboarding.step.connect' },
+  { key: 'dna', labelKey: 'onboarding.step.dna' },
+  { key: 'prepare', labelKey: 'onboarding.step.prepare' },
+];
 
 export interface OnboardingResult {
-  workId: string;
+  /**
+   * Adónde aterriza el recorrido. `work` es el camino que siempre existió —
+   * crea el trabajo y abre su conversación—; `home` es el camino nuevo, el que
+   * termina aprobando el ADN de la marca: la persona llega a Inicio y pide su
+   * primer trabajo desde la caja de ahí.
+   */
+  landing: 'work' | 'home';
+  /**
+   * The work this walk created. Absent on the `home` landing, where no work
+   * exists yet — "Pedí tu primer trabajo" is still ahead of the person.
+   */
+  workId?: string;
   brandId: string;
-  recommendedRoleId: string;
-  title: string;
   /**
    * The brief this walk composed (or the human's correction, edited on the
    * summary step) — never the `# Title\n\n` prefixed version `saveBrief`
@@ -44,7 +69,9 @@ export interface OnboardingResult {
    * chat turn, so the same text becomes both the brief document and the
    * opening message: one source, never re-derived.
    */
-  brief: string;
+  recommendedRoleId?: string;
+  title?: string;
+  brief?: string;
   /**
    * The brief kept the disk version because an unseen change was detected. The
    * work exists, but the human's brief text was not saved, and the shell has to
@@ -106,6 +133,23 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
    */
   const [brandPanel, setBrandPanel] = useState<'none' | 'create' | 'others'>('none');
   const [justCreatedId, setJustCreatedId] = useState<string | null>(null);
+  /**
+   * ADN · el paso nuevo entre "Conectá tu IA" y el Resumen.
+   *
+   * `form` es la pantalla F ("Traé tu marca") y `build` la G (pasos del motor
+   * a la izquierda, ficha a la derecha). Vive FUERA del estado persistido a
+   * propósito: el contrato de pasos (`ONBOARDING_STEPS`) es del backend y no
+   * cambia con esto, y un recorrido abandonado vuelve a "Conectar la IA", que
+   * es el paso del que este emerge.
+   */
+  const dna = useBrandDna(state.brandId);
+  const [dnaPhase, setDnaPhase] = useState<'form' | 'build' | null>(null);
+  const [dnaName, setDnaName] = useState('');
+  const [dnaUrl, setDnaUrl] = useState('');
+  const [dnaInstagram, setDnaInstagram] = useState('');
+  /** Las fuentes elegidas, para poder "Volver a armar" con lo mismo. */
+  const [dnaSources, setDnaSources] = useState<BrandDnaSourcesInput | null>(null);
+  const [dnaFiles, setDnaFiles] = useState<BrandIdentityFileView[]>([]);
 
   useEffect(() => {
     void api.listBrands().then(setBrands).catch((e) => setError(displayError(e)));
@@ -149,6 +193,16 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
     void api.getPrimaryAgent().then(setPrimary).catch(() => setPrimary(null));
     void api.chatStatus().then(setChatStatus).catch(() => setChatStatus(null));
   }, [state.step]);
+
+  // Los archivos de identidad sólo interesan en la pantalla F, y sólo cuando
+  // ya hay marca: sin marca no hay dónde guardarlos.
+  useEffect(() => {
+    setDnaFiles([]);
+    if (dnaPhase !== 'form' || !state.brandId) return;
+    let live = true;
+    void api.readBrandIdentity(state.brandId).then((view) => { if (live) setDnaFiles(view.files); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [dnaPhase, state.brandId]);
 
   const workType = state.workTypeId ? findWorkType(state.workTypeId) : null;
   const choices = brandChoices(brands, state.usedDemo ? null : state.brandId);
@@ -249,7 +303,82 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
     }
   };
 
-  const advance = () => { setError(''); setNotice(''); setRetryAction(null); setState((prev) => ({ ...prev, step: 'prepare' })); };
+  const advance = () => { setError(''); setNotice(''); setRetryAction(null); setDnaPhase('form'); };
+
+  /** Los caminos que ya existían: el Resumen de siempre, sin construir el ADN. */
+  const startWithoutBrand = () => {
+    setError('');
+    setDnaSources(null);
+    setDnaPhase(null);
+    setState((prev) => ({ ...prev, step: 'prepare' }));
+  };
+
+  const startWithDemo = () => {
+    setError('');
+    setDnaSources(null);
+    setDnaPhase(null);
+    const demo = demoBrand;
+    setState((prev) => ({ ...prev, brandId: demo ? demo.id : prev.brandId, usedDemo: demo ? true : prev.usedDemo, step: 'prepare' }));
+  };
+
+  /**
+   * "Armar mi marca": crea la marca si todavía no existe y arranca el motor
+   * con las tres fuentes. La pantalla G toma el relevo y mira el job.
+   */
+  const startBuild = async (sources: BrandDnaSourcesInput) => {
+    if (busy) return;
+    setError('');
+    setBusy(true);
+    try {
+      let brandId = state.brandId;
+      if (!brandId) {
+        const name = dnaName.trim();
+        if (!name) return;
+        const brand = await api.createBrand(name);
+        setBrands((prev) => [...prev, brand]);
+        setDnaName('');
+        brandId = brand.id;
+        setState((prev) => ({ ...prev, brandId: brand.id, usedDemo: false }));
+      }
+      setDnaSources(sources);
+      const outcome = await dna.build('sources', sources, brandId);
+      if (!outcome.ok) { setError(outcome.error); return; }
+      setDnaPhase('build');
+    } catch (e) {
+      setError(displayError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * "Aprobar ADN" cierra el recorrido y aterriza en Inicio. No se creó ningún
+   * trabajo: el primero lo pide la persona desde la caja de ahí, y "Pedí tu
+   * primer trabajo" sigue estando adelante.
+   */
+  const approveDna = async () => {
+    if (busy) return;
+    setError('');
+    setRetryAction(null);
+    setBusy(true);
+    try {
+      const outcome = await dna.approve();
+      // Falló el motor: el mensaje quedó en la ficha, que sigue en pantalla.
+      if (!outcome.ok) return;
+      const result: OnboardingResult = { landing: 'home', brandId: outcome.value.brandId };
+      pendingResult.current = result;
+      await onComplete(result);
+      pendingResult.current = null;
+      createdWork.current = null;
+    } catch (e) {
+      // El aterrizaje falló con el gate montado: el alerta y el reintento de
+      // siempre, apuntando a ESTE resultado (que no crea trabajo dos veces).
+      setError(displayError(e));
+      setRetryAction('completion');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const startWork = async () => {
     if (busy) return;
@@ -309,7 +438,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
           folderNotLinked = true;
         }
       }
-      const result: OnboardingResult = { workId, brandId, recommendedRoleId: state.recommendedRoleId, title, brief: state.brief, briefConflict, folderNotLinked, folderLinkError };
+      const result: OnboardingResult = { landing: 'work', workId, brandId, recommendedRoleId: state.recommendedRoleId, title, brief: state.brief, briefConflict, folderNotLinked, folderLinkError };
       // Remembered BEFORE the landing: if the shell cannot take over, the retry
       // lands this same work instead of creating a duplicate.
       pendingResult.current = result;
@@ -362,8 +491,8 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
       return { ...prev, step };
     });
   };
-
-  const stepIndex = STEP_ORDER.indexOf(state.step);
+  /** Qué entrada de la barra está encendida: F y G se ven como UN paso más. */
+  const activeStep = dnaPhase ? STEP_LABELS.findIndex((s) => s.key === 'dna') : STEP_LABELS.findIndex((s) => s.key === state.step);
   const canComplete = Boolean(workType) && completeOnboarding(state) && Boolean(state.brandId);
   // A required question left blank is a hard stop: the step names it and the
   // summary explains the disabled CTA, so it is never a silent trap.
@@ -397,9 +526,9 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
     <div className="onboarding-shell">
       <header className="onboarding-topbar">
         <div className="onboarding-brand"><span className="logo-mark" aria-hidden="true" />Latte</div>
-        <div className="onboarding-steps" aria-label={t('onboarding.stepOf', { current: stepIndex + 1, total: STEP_ORDER.length })}>
-          {STEP_ORDER.map((step, i) => (
-            <span key={step} className={'step' + (i <= stepIndex ? ' active' : '')}>{t(`onboarding.step.${step}` as const)}</span>
+        <div className="onboarding-steps" aria-label={t('onboarding.stepOf', { current: activeStep + 1, total: STEP_LABELS.length })}>
+          {STEP_LABELS.map((step, i) => (
+            <span key={step.key} className={'step' + (i <= activeStep ? ' active' : '')}>{t(step.labelKey)}</span>
           ))}
         </div>
         <button className="onboarding-skip" disabled={busy} onClick={() => void skipOnboarding()}>{t('onboarding.skip')}</button>
@@ -533,7 +662,7 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
             </>
           )}
 
-          {state.step === 'connect' && (
+          {state.step === 'connect' && !dnaPhase && (
             <>
               <div className="onboarding-connect-head">
                 <h1>{t('onboarding.connect.title')}</h1>
@@ -553,6 +682,60 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                 <button onClick={goBack}><ArrowLeft size={15} />{t('onboarding.back')}</button>
               </div>
             </>
+          )}
+
+          {/* F · TRAE TU MARCA. Emerge de "Conectar la IA": el paso del que
+              arranca el ADN, con las tres fuentes y los dos caminos que ya
+              existían (el Resumen y el demo) como salidas discretas. */}
+          {state.step === 'connect' && dnaPhase === 'form' && (
+            <BrandDnaSources
+              brandName={selectedBrand?.name ?? null}
+              url={dnaUrl}
+              onUrl={setDnaUrl}
+              instagram={dnaInstagram}
+              onInstagram={setDnaInstagram}
+              name={dnaName}
+              onName={setDnaName}
+              files={dnaFiles}
+              busy={busy}
+              onAddFiles={isDesktop && state.brandId
+                ? () => { void api.addBrandIdentityFiles(state.brandId!).then((view) => setDnaFiles(view.files)).catch((e) => setError(displayError(e))); }
+                : undefined}
+              onRemoveFile={isDesktop && state.brandId
+                ? (fileId) => { void api.removeBrandIdentityFile(state.brandId!, fileId).then((view) => setDnaFiles(view.files)).catch((e) => setError(displayError(e))); }
+                : undefined}
+              onBuild={(sources) => void startBuild(sources)}
+              onSkip={startWithoutBrand}
+              onDemo={demoBrand ? startWithDemo : undefined}
+              onBack={() => { setError(''); setDnaPhase(null); }}
+            />
+          )}
+
+          {/* G · EL ADN DE TU MARCA: los pasos reales del build a la izquierda,
+              la ficha a la derecha. "Aprobar ADN" cierra el recorrido. */}
+          {state.step === 'connect' && dnaPhase === 'build' && (
+            <div className="onboarding-dna">
+              <h1>{t('dna.build.title')}</h1>
+              <BrandDnaPanel
+                brandName={selectedBrand?.name ?? ''}
+                job={dna.job}
+                dna={dna.dna}
+                busy={dna.busy || busy}
+                error={dna.error}
+                onApprove={() => void approveDna()}
+                onCorrect={() => { setError(''); setDnaPhase('form'); }}
+                onEdit={(field, value) => void dna.edit(field, value)}
+              />
+              <div className="onboarding-footer">
+                <button type="button" disabled={busy} onClick={() => { setError(''); setDnaPhase('form'); }}><ArrowLeft size={15} />{t('onboarding.back')}</button>
+                <span className="spacer" />
+                {dna.job?.done && dna.job.outcome !== 'proposed' && (
+                  <button type="button" className="primary" disabled={dna.busy || busy} onClick={() => void dna.build('sources', dnaSources)}>
+                    {t('dna.build.again')}
+                  </button>
+                )}
+              </div>
+            </div>
           )}
 
           {state.step === 'prepare' && workType && (

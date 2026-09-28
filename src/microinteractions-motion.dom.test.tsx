@@ -8,14 +8,22 @@ import { join } from 'node:path';
  * jsdom no calcula animaciones, así que "con movimiento reducido no hay
  * animación" se prueba donde vive la animación: en la hoja. Cada una de las
  * cinco microinteracciones tiene SU corte en `prefers-reduced-motion`, y el
- * bloque nuevo de la entrega queda al final del archivo —CSS nuevo después
+ * bloque nuevo de la entrega quedó al final del archivo —CSS nuevo después
  * del viejo, para que la cascada se lea en el orden en que se escribió—.
+ *
+ * Ese "al final" es relativo a CUANDO se escribió: cada entrega cierra la hoja
+ * con SU bloque, y la Entrega 4 dejó de ser la última cuando "ADN · interfaz"
+ * se agregó detrás. Lo que sigue vigente es que el bloque de la Entrega 4
+ * exista, esté una sola vez y que la hoja la cierre el bloque de la última
+ * entrega, nunca reglas sueltas apiladas encima.
  */
 
 const css = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8');
 
-/** El bloque que agrupa lo nuevo de esta entrega, y que cierra la hoja. */
+/** El bloque que agrupa lo nuevo de esta entrega. */
 const BLOCK = '/* Entrega 4 · microinteracciones */';
+/** El último bloque de entrega agregado a la hoja. */
+const LAST_BLOCK = '/* ADN · interfaz */';
 
 const GUARD = '@media (prefers-reduced-motion: reduce)';
 
@@ -40,11 +48,14 @@ const reducedRule = (selector: string): string | null =>
   reducedGuards().find(guard => guard.includes(selector + '{')) ?? null;
 
 describe('Entrega 4 — movimiento', () => {
-  it('el bloque nuevo está al final de la hoja', () => {
+  it('el bloque de la Entrega 4 está entero, y la hoja la cierra la última entrega', () => {
     const at = css.indexOf(BLOCK);
     expect(at, 'falta el bloque comentado `/* Entrega 4 · microinteracciones */`').toBeGreaterThan(-1);
-    expect(css.length - at, 'el bloque de la Entrega 4 no cierra la hoja').toBeLessThan(4000);
     expect(css.lastIndexOf(BLOCK)).toBe(at);
+    const last = css.indexOf(LAST_BLOCK);
+    expect(last, 'falta el bloque `/* ADN · interfaz */`').toBeGreaterThan(at);
+    expect(css.lastIndexOf(LAST_BLOCK)).toBe(last);
+    expect(css.length - last, 'el bloque del ADN no cierra la hoja').toBeLessThan(16_000);
   });
 
   it('M1: la L en la espuma escala 400 ms con el rebote de marca, y se detiene', () => {

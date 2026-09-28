@@ -91,6 +91,8 @@ const REGION: Record<(typeof VIEWS)[number], string> = {
   // Marca → Equipo (esquema 14): el plantel de la marca.
   roster: '.brand-team-view',
   identity: '.identity-view',
+  // Marca → ADN (Entrega 1B): la ficha de la marca y sus propuestas.
+  dna: '.dna-view',
   decisions: '.document-scroll',
   resultados: '.resultados-view',
 };
@@ -106,6 +108,7 @@ const CONTROL: Record<(typeof VIEWS)[number], RegExp> = {
   memory: /^Memoria/,
   roster: /^Equipo/,
   identity: /^Identidad/,
+  dna: /^ADN/,
   decisions: /^Decisiones/,
   resultados: /^Resultados/,
 };
