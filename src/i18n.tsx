@@ -30,7 +30,7 @@ const es = {
   'settings.english': 'English (United States)',
   'settings.unsavedProfile': 'Hay cambios sin guardar en el perfil. ¿Descartarlos?',
   'settings.dismiss': 'Cerrar aviso',
-  'settings.agentsLead': 'Quién hace el trabajo cuando abrís una conversación. Latte no guarda claves ni tokens: cada runtime usa su propio almacén de credenciales.',
+  'settings.agentsLead': 'Quién hace el trabajo cuando abrís una conversación. Cada motor guarda sus propias credenciales.',
   'settings.workspaceLead': 'Todo vive en tu máquina. Latte no sincroniza ni sube nada; estos son los datos reales de esta instalación.',
   'settings.dataFolder': 'Carpeta de datos',
   'settings.database': 'Motor de base',
@@ -298,7 +298,7 @@ const es = {
   'knowledge.docsBrand': '{p0} documento{p1} · Toda la marca',
   'knowledge.docsWork': '{p0} documento{p1} en {title}',
   'onboarding.title': '¿En qué querés trabajar?',
-  'onboarding.subtitle': 'Contame qué necesitás y preparo un trabajo con el contexto justo. Sin tecnicismos y sin inventar resultados.',
+  'onboarding.subtitle': 'Elegí el tipo de trabajo. Te hago unas pocas preguntas y lo dejo listo para empezar.',
   'onboarding.skip': 'Saltar por ahora',
   'onboarding.continue': 'Continuar',
   'onboarding.back': 'Volver',
@@ -451,7 +451,7 @@ const es = {
 
   // --- Conectá tu IA (onboarding sin terminal, Maqueta E) --------------------
   'connectAI.title': '¿Con qué cuenta trabaja tu equipo?',
-  'connectAI.subtitle': 'Latte usa tu propia cuenta. No guarda claves ni ve tus contraseñas.',
+  'connectAI.subtitle': 'Latte trabaja con tu suscripción. Iniciás sesión en el sitio de cada proveedor.',
   'connectAI.name.claude': 'Claude',
   'connectAI.name.codex': 'ChatGPT',
   'connectAI.name.opencode': 'OpenCode',
@@ -1285,7 +1285,7 @@ const en: Record<MessageKey, string> = {
   'settings.languageHelp': 'The content language only affects new projects and documents. Existing projects are never rewritten.',
   'settings.spanish': 'Español (Argentina)', 'settings.english': 'English (United States)',
   'settings.unsavedProfile': 'This profile has unsaved changes. Discard them?', 'settings.dismiss': 'Dismiss notification',
-  'settings.agentsLead': 'Choose who does the work when you open a conversation. Latte never stores keys or tokens: each runtime uses its own credential store.',
+  'settings.agentsLead': 'Choose who does the work when you open a conversation. Each engine keeps its own credentials.',
   'settings.workspaceLead': 'Everything lives on your computer. Latte does not sync or upload anything; these are the actual details for this installation.',
   'settings.dataFolder': 'Data folder', 'settings.database': 'Database engine', 'settings.pack': 'Discipline pack',
   'settings.version': 'Version', 'settings.loading': 'Loading…', 'settings.webStorage': 'The web preview stores data in this browser',
@@ -1532,7 +1532,7 @@ const en: Record<MessageKey, string> = {
   'knowledge.docsBrand': '{p0} document{p1} · Whole brand',
   'knowledge.docsWork': '{p0} document{p1} in {title}',
   'onboarding.title': 'What would you like to work on?',
-  'onboarding.subtitle': 'Tell me what you need and I will set up a work item with the right context. No jargon, and nothing invented.',
+  'onboarding.subtitle': 'Pick the kind of work. I will ask a few questions and get it ready to start.',
   'onboarding.skip': 'Skip for now',
   'onboarding.continue': 'Continue',
   'onboarding.back': 'Back',
@@ -1685,7 +1685,7 @@ const en: Record<MessageKey, string> = {
 
   // --- Connect your AI (terminal-free onboarding, Mockup E) ------------------
   'connectAI.title': 'Which account does your team work with?',
-  'connectAI.subtitle': "Latte uses your own account. It never stores keys or sees your passwords.",
+  'connectAI.subtitle': "Latte works with your subscription. You sign in on each provider's own site.",
   'connectAI.name.claude': 'Claude',
   'connectAI.name.codex': 'ChatGPT',
   'connectAI.name.opencode': 'OpenCode',
