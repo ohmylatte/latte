@@ -153,4 +153,47 @@ describe('Marca → ADN', () => {
     expect(last.brandId).toBe('b1');
     expect(last.draft).not.toBeNull();
   });
+
+  it('con la versión vigente no ofrece aprobar: el estado dice Aprobada · v1', async () => {
+    const { container } = mount();
+    await rebuild(container);
+    expect(screen.getByRole('button', { name: /Aprobar ADN/ })).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: /Aprobar ADN/ }));
+
+    // No hay nada que aprobar, así que el gesto se va y queda el estado.
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Aprobar ADN/ })).toBeNull());
+    const chip = container.querySelector('.dna-card .chip')!;
+    expect(chip.textContent).toBe('Aprobada · v1');
+    expect(chip.getAttribute('data-tone')).toBe('approved');
+    expect(container.querySelector('.dna-card-meta')!.textContent).toContain('2026');
+  });
+
+  it('con cambios desde la aprobación el botón vuelve', async () => {
+    const { container } = mount();
+    await rebuild(container);
+    fireEvent.click(screen.getByRole('button', { name: /Aprobar ADN/ }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Aprobar ADN/ })).toBeNull());
+
+    // Corregir un campo deja la versión vigente atrás.
+    fireEvent.click(screen.getByRole('button', { name: 'Editar Audiencia' }));
+    const editor = await screen.findByRole('textbox', { name: 'Audiencia' });
+    fireEvent.change(editor, { target: { value: 'Marcas con oficio.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Guardar/ }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Aprobar ADN/ })).toBeDefined());
+    expect(container.querySelector('.dna-card .chip')!.textContent).toBe('Propuesta');
+    expect(container.querySelector('.dna-card-meta')!.textContent).toContain('Cambios desde la aprobación');
+  });
+
+  it('con las fuentes abiertas hay UN solo Cancelar, en el pie junto a Armar mi marca', async () => {
+    const { container } = mount();
+    fireEvent.click(screen.getByRole('button', { name: /Sumar fuentes/ }));
+    await screen.findByRole('heading', { name: 'Traé tu marca' });
+
+    const cancels = screen.getAllByRole('button', { name: 'Cancelar' });
+    expect(cancels).toHaveLength(1);
+    expect(container.querySelector('.onboarding-footer')!.contains(cancels[0])).toBe(true);
+    // El de arriba no se disfraza de cancelar: no hay dos formas de salir.
+    expect(screen.queryByRole('button', { name: /Sumar fuentes/ })).toBeNull();
+  });
 });

@@ -148,8 +148,10 @@ describe('Inicio · Primeros pasos', () => {
     expect(card.querySelector('.first-steps-count')!.textContent).toBe('2 de 4');
     const steps = [...card.querySelectorAll('.first-step')];
     expect(steps.map((step) => step.getAttribute('data-done'))).toEqual(['true', 'true', 'false', 'false']);
-    // El color no es la única señal: cada paso también dice su estado.
+    // El color no es la única señal: distingue la tilde/círculo, y el estado
+    // sigue en el árbol para lectores de pantalla aunque no se pinte.
     expect(steps[0].querySelector('.first-step-state')!.textContent).toBe('Listo');
+    expect(steps[0].querySelector('.first-step-state')!.className).toContain('visually-hidden');
     expect(steps[2].querySelector('.first-step-state')!.textContent).toBe('Pendiente');
     // Y los pendientes ofrecen el gesto que los cumple.
     expect(steps[2].querySelector('button')!.getAttribute('aria-label')).toBe('Probalo · Aprobá una pieza');
