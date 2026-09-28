@@ -24,16 +24,44 @@ export function metaPins(meta: { getMeta(key: string): string | null; setMeta(ke
   };
 }
 
-/** The catalog's install locations for this OS, expanded, that exist on disk. */
-export function knownInstallPaths(runtime: Provider, env: NodeJS.ProcessEnv, platform: NodeJS.Platform, exists: (p: string) => boolean, catalog: Readonly<Record<Provider, RuntimeCatalogEntry>> = RUNTIME_INSTALL_CATALOG): string[] {
+/**
+ * The catalog's install locations for this OS, expanded, that exist on disk:
+ * the fixed `paths` in order, then each `releases` folder's versions, newest
+ * first. Duplicates (the same file reached twice) are listed once.
+ */
+export function knownInstallPaths(runtime: Provider, env: NodeJS.ProcessEnv, platform: NodeJS.Platform, exists: (p: string) => boolean, catalog: Readonly<Record<Provider, RuntimeCatalogEntry>> = RUNTIME_INSTALL_CATALOG, listDir: (dir: string) => string[] = () => []): string[] {
   const os = setupOs(platform);
   if (!os) return [];
   const out: string[] = [];
+  const add = (candidate: string) => { if (!out.some((p) => samePath(p, candidate, platform))) out.push(candidate); };
   for (const template of catalog[runtime].paths[os] ?? []) {
     const expanded = expandCatalogPath(template, env, platform);
-    if (expanded && exists(expanded)) out.push(expanded);
+    if (expanded && exists(expanded)) add(expanded);
+  }
+  const releases = catalog[runtime].releases?.[os];
+  const join = platform === 'win32' ? path.win32.join : path.posix.join;
+  for (const template of releases?.dirs ?? []) {
+    const dir = expandCatalogPath(template, env, platform);
+    if (!dir) continue;
+    const versions = listDir(dir).filter((name) => /^\d+\.\d+\.\d+/.test(name)).sort(compareReleaseNames);
+    for (const name of versions) {
+      const candidate = join(dir, name, releases!.entry);
+      if (exists(candidate)) add(candidate);
+    }
   }
   return out;
+}
+
+/** `0.158.0-x86_64-…` before `0.99.1-…`: numeric major.minor.patch, descending. */
+function compareReleaseNames(a: string, b: string): number {
+  const parse = (name: string) => (/^(\d+)\.(\d+)\.(\d+)/.exec(name) ?? []).slice(1).map(Number);
+  const [x, y] = [parse(a), parse(b)];
+  for (let i = 0; i < 3; i += 1) if (x[i] !== y[i]) return y[i] - x[i];
+  return b.localeCompare(a);
+}
+
+function samePath(a: string, b: string, platform: NodeJS.Platform): boolean {
+  return platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 const WINDOWS_EXTENSIONS = ['.exe', '.cmd', '.bat'];

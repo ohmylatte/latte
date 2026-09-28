@@ -217,6 +217,8 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
 
   const terminal = new TerminalManager({ loadPty: options.loadPty ?? loadPty, emit: options.emit, env, platform });
   const fileExists = options.fileExists ?? (options.runner ? () => false : (target: string) => { try { return nodeFs.existsSync(target); } catch { return false; } });
+  // Same rule as `fileExists`: a test harness never lists the developer's real release folders.
+  const listDir = options.runner ? () => [] : (dir: string) => { try { return nodeFs.readdirSync(dir); } catch { return []; } };
   const pins = metaPins(repo);
   const detector = new RuntimeDetector({
     runner,
@@ -225,7 +227,8 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     env,
     // Onboarding sin terminal: what Latte installed is found by absolute path, without waiting for PATH to refresh.
     pinned: (provider) => pins.get(provider),
-    knownPaths: (provider) => knownInstallPaths(provider, env, platform, fileExists),
+    clearPinned: (provider) => pins.clear(provider),
+    knownPaths: (provider) => knownInstallPaths(provider, env, platform, fileExists, undefined, listDir),
     exists: fileExists,
   });
 

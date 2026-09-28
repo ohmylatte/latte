@@ -387,6 +387,7 @@ function DiagnosticPanel({ onClose }: { onClose: () => void }) {
         {t(r.installed ? (r.version ? 'connectAI.diagnostic.line.installed' : 'connectAI.diagnostic.line.installedNoVersion') : 'connectAI.diagnostic.line.notInstalled', { name: t(RUNTIME_DISPLAY_KEY[r.runtime]), version: r.version ?? '' })}
         {r.loggedIn != null && (r.loggedIn ? t('connectAI.diagnostic.loggedIn') : t('connectAI.diagnostic.notLoggedIn'))}
         {r.lastError && t('connectAI.diagnostic.lastError', { detail: r.lastError })}
+        {r.path && <><br /><span className="connect-ai-diagnostic-path">{t('connectAI.diagnostic.path')} <code>{r.path}</code></span></>}
       </li>)}
     </ul>}
     {report && <textarea ref={textRef} readOnly className="connect-ai-diagnostic-text" value={report.report} aria-label={t('connectAI.diagnostic.title')} />}

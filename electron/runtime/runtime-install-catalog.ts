@@ -61,6 +61,8 @@ export interface RuntimeCatalogEntry {
   install: Partial<Record<SetupOs, InstallCommand>>;
   /** Where the official installer leaves the executable, per OS, with `~` = home and `%VAR%` = env. Checked without PATH. */
   paths: Partial<Record<SetupOs, readonly string[]>>;
+  /** A folder of versioned releases (`<dir>/<version>-<target>/<entry>`); tried after `paths`, newest version first. */
+  releases?: Partial<Record<SetupOs, { dirs: readonly string[]; entry: string }>>;
   prereqs: Partial<Record<SetupOs, readonly PrereqRequirement[]>>;
   /** Arguments that print the version (verify step). */
   versionArgs: readonly string[];
@@ -111,8 +113,27 @@ export const RUNTIME_INSTALL_CATALOG: Readonly<Record<Provider, RuntimeCatalogEn
       darwin: { script: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh', verified: true, verifiedAt: CHECKED, source: CODEX_README },
       linux: { script: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh', verified: true, verifiedAt: CHECKED, source: CODEX_README },
     },
-    // Not documented: found after install through the fresh user PATH instead.
-    paths: {},
+    // Read from the official installers themselves (install.ps1 / install.sh behind the README one-liners, 2026-09-28):
+    // the visible bin (`%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`, a junction the installer puts on the user PATH;
+    // `~/.local/bin` elsewhere; both overridable with CODEX_INSTALL_DIR) points at
+    // `$CODEX_HOME/packages/standalone/current/bin`, and `current` points at `releases/<version>-<target>`.
+    // A PATH this process has not seen yet still finds it here. The Codex desktop app's own private copy is not listed: undocumented.
+    paths: {
+      win32: [
+        '%CODEX_INSTALL_DIR%\\codex.exe',
+        '%LOCALAPPDATA%\\Programs\\OpenAI\\Codex\\bin\\codex.exe',
+        '%CODEX_HOME%\\packages\\standalone\\current\\bin\\codex.exe',
+        '~\\.codex\\packages\\standalone\\current\\bin\\codex.exe',
+      ],
+      darwin: ['%CODEX_INSTALL_DIR%/codex', '~/.local/bin/codex', '%CODEX_HOME%/packages/standalone/current/bin/codex', '~/.codex/packages/standalone/current/bin/codex'],
+      linux: ['%CODEX_INSTALL_DIR%/codex', '~/.local/bin/codex', '%CODEX_HOME%/packages/standalone/current/bin/codex', '~/.codex/packages/standalone/current/bin/codex'],
+    },
+    // Without `current` (an interrupted install, a removed junction), the newest release the installer unpacked.
+    releases: {
+      win32: { dirs: ['%CODEX_HOME%\\packages\\standalone\\releases', '~\\.codex\\packages\\standalone\\releases'], entry: 'bin\\codex.exe' },
+      darwin: { dirs: ['%CODEX_HOME%/packages/standalone/releases', '~/.codex/packages/standalone/releases'], entry: 'bin/codex' },
+      linux: { dirs: ['%CODEX_HOME%/packages/standalone/releases', '~/.codex/packages/standalone/releases'], entry: 'bin/codex' },
+    },
     prereqs: {},
     versionArgs: ['--version'],
     login: {
