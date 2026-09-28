@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
-import { ChevronRight, CircleHelp, CodeXml, Copy, ExternalLink, Feather, MessageCircle, RefreshCw, Sparkles, X, Zap, type LucideProps } from 'lucide-react';
+import { Check, ChevronRight, CircleHelp, CodeXml, Copy, ExternalLink, Feather, MessageCircle, RefreshCw, Sparkles, X, Zap, type LucideProps } from 'lucide-react';
 import { Loading } from './brand-marks';
 import type {
-  AccountRuntimeName, ChatRuntime, InstallFailureCode, LoginFailureCode, Provider,
+  AccountRuntimeName, ChatRuntime, InstallFailureCode, LoginFailureCode, PrimaryAgent, Provider,
   RuntimeDiagnostic, RuntimeInstallState, RuntimeLoginState, SetupPrereq,
 } from '../shared/contracts';
 import { RUNTIME_GUIDE_URLS } from '../shared/contracts';
@@ -83,8 +83,15 @@ interface RuntimeCardApi {
  * before something is picked): the hook then just sits idle, so the three
  * main cards and the expandable one can all call this the same way.
  */
-function useRuntimeCard(runtime: Provider | null, refreshToken: number, onError: (text: string) => void, onConnected?: () => void): RuntimeCardApi {
+function useRuntimeCard(runtime: Provider | null, refreshToken: number, onError: (text: string) => void, onUsed?: () => void): RuntimeCardApi {
   const [phase, setPhase] = useState<CardPhase>({ kind: 'idle' });
+  const phaseRef = useRef(phase); phaseRef.current = phase;
+  /**
+   * One browser login at a time: a second click on "Usar", or the chain
+   * re-firing on a refreshed "needs_login", while the first one is still on its
+   * way would otherwise add a second account and open a second browser.
+   */
+  const loginPendingRef = useRef(false);
   const [showDetail, setShowDetail] = useState(false);
   const [transcript, setTranscript] = useState('');
   const jobIdRef = useRef<string | null>(null);
@@ -117,7 +124,7 @@ function useRuntimeCard(runtime: Provider | null, refreshToken: number, onError:
   }, [checkLogin, onError]);
 
   useEffect(() => {
-    setShowDetail(false); setTranscript(''); jobIdRef.current = null; chainRef.current = false;
+    setShowDetail(false); setTranscript(''); jobIdRef.current = null; chainRef.current = false; loginPendingRef.current = false;
     if (!runtime) { setPhase({ kind: 'idle' }); return; }
     void detect(runtime);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -182,6 +189,8 @@ function useRuntimeCard(runtime: Provider | null, refreshToken: number, onError:
 
   const login = useCallback(() => {
     if (!runtime || !isAccountRuntime(runtime)) return;
+    if (loginPendingRef.current || phaseRef.current.kind === 'logging_in') return;
+    loginPendingRef.current = true;
     const rt = runtime;
     void (async () => {
       try {
@@ -197,9 +206,11 @@ function useRuntimeCard(runtime: Provider | null, refreshToken: number, onError:
         if (!account) account = await api.addAgentAccount(rt, translate(RUNTIME_DISPLAY_KEY[rt]));
         if (account.loggedIn) { setPhase({ kind: 'connected', accountId: account.id, displayName: null }); return; }
         const job = await api.startBrowserLogin(rt, account.id);
+        if (runtimeRef.current !== rt) return;
         jobIdRef.current = job.jobId;
         setPhase({ kind: 'logging_in', jobId: job.jobId, state: job.state });
       } catch (e) { onError(displayError(e)); }
+      finally { loginPendingRef.current = false; }
     })();
   }, [runtime, onError]);
 
@@ -222,9 +233,9 @@ function useRuntimeCard(runtime: Provider | null, refreshToken: number, onError:
       : phase.kind === 'opencode_ready' ? { runtime: 'opencode' as ChatRuntime, model: null, accountId: null } : null;
     if (!choice) return;
     void api.setPrimaryAgent(choice)
-      .then(() => onConnected?.())
+      .then(() => onUsed?.())
       .catch(e => onError(displayError(e)));
-  }, [runtime, phase, onError, onConnected]);
+  }, [runtime, phase, onError, onUsed]);
 
   const installAndUse = useCallback((installPrereqs = false) => {
     chainRef.current = true;
@@ -268,14 +279,14 @@ function InstallProgress({ phase }: { phase: 'prereq' | 'downloading' | 'checkin
  * action, "Usar {name}", in every state; the status line (dot + short text)
  * says where the runtime is, once.
  */
-function RuntimeCard({ card, onError }: { card: RuntimeCardApi; onError: (text: string) => void }) {
+function RuntimeCard({ card, inUse, onBack, onContinue, onError }: { card: RuntimeCardApi; inUse: boolean; onBack?: () => void; onContinue?: () => void; onError: (text: string) => void }) {
   const { t } = useI18n();
   const [asking, setAsking] = useState(false);
   if (!card.runtime) return null;
   const runtime = card.runtime;
   const name = t(RUNTIME_DISPLAY_KEY[runtime]);
   const phase = card.phase;
-  const inFlight = phase.kind === 'installing' || phase.kind === 'logging_in' || phase.kind === 'loading' || phase.kind === 'idle';
+  const showInUse = inUse && (phase.kind === 'connected' || phase.kind === 'opencode_ready');
 
   let dot: 'green-ok' | 'rust' | 'line-strong' = 'line-strong';
   let statusKey: 'connectAI.status.connected' | 'connectAI.status.needsLogin' | 'connectAI.status.notInstalled' | 'connectAI.status.checking' | 'connectAI.status.installing' | 'connectAI.status.signingIn' = 'connectAI.status.checking';
@@ -293,8 +304,11 @@ function RuntimeCard({ card, onError }: { card: RuntimeCardApi; onError: (text: 
       <div className="connect-ai-card-head">
         {(() => { const Icon = RUNTIME_ICON[runtime]; return <span className="connect-ai-monogram" aria-hidden="true"><Icon size={18} /></span>; })()}
         <strong className="connect-ai-card-name">{name}</strong>
+        {onBack && <button className="subtle connect-ai-other-back" onClick={onBack}>{t('connectAI.other.back')}</button>}
       </div>
-      <span className="connect-ai-card-status"><i className={'connect-ai-dot dot-' + dot} aria-hidden="true" />{t(statusKey)}</span>
+      {showInUse
+        ? <span className="connect-ai-card-status is-in-use"><Check size={14} aria-hidden="true" />{t('connectAI.status.inUse')}</span>
+        : <span className="connect-ai-card-status"><i className={'connect-ai-dot dot-' + dot} aria-hidden="true" />{t(statusKey)}</span>}
 
       {phase.kind === 'not_installed' && !phase.canInstall && guide(phase.guideUrl)}
 
@@ -326,9 +340,11 @@ function RuntimeCard({ card, onError }: { card: RuntimeCardApi; onError: (text: 
         {guide(phase.guideUrl)}
       </>}
 
-      {phase.kind !== 'needs_prereq' && (
+      {/* Signing in has its own actions; the account in use only offers to move on (onboarding). */}
+      {showInUse && onContinue && <button className="primary connect-ai-use" onClick={onContinue}>{t('connectAI.action.continueWith', { name })}</button>}
+      {phase.kind !== 'needs_prereq' && phase.kind !== 'logging_in' && !showInUse && (
         <button className="primary connect-ai-use" disabled={!card.canUse} onClick={onUse}>
-          {inFlight && phase.kind !== 'idle' && phase.kind !== 'loading' && <Loading size={14} />}{t('connectAI.action.use', { name })}
+          {phase.kind === 'installing' && <Loading size={14} />}{t('connectAI.action.use', { name })}
         </button>
       )}
     </div>
@@ -397,7 +413,7 @@ function DiagnosticPanel({ onClose }: { onClose: () => void }) {
 }
 
 export interface ConnectAIProps {
-  /** Fires once a runtime becomes usable (connected + set as primary). Onboarding uses it to advance; Settings ignores it. */
+  /** Fires once a runtime becomes usable (connected + set as primary). Onboarding uses it to advance; the cards show "En uso" on their own. */
   onConnected?: () => void;
   /** Onboarding renders its own h1; Settings shows this component's own header. */
   showHeader?: boolean;
@@ -421,12 +437,15 @@ export function ConnectAI({ onConnected, showHeader = true, advanced, onError }:
   const [otherRuntime, setOtherRuntime] = useState<Provider | null>(null);
   const [diagnosticOpen, setDiagnosticOpen] = useState(false);
 
-  const onRuntimeConnected = useCallback(() => { onConnected?.(); }, [onConnected]);
-  const claude = useRuntimeCard('claude', refreshToken, onError, onRuntimeConnected);
-  const codex = useRuntimeCard('codex', refreshToken, onError, onRuntimeConnected);
-  const other = useRuntimeCard(otherRuntime, refreshToken, onError, onRuntimeConnected);
+  /** The account Latte starts work with: its card says "En uso". */
+  const [primary, setPrimary] = useState<PrimaryAgent | null>(null);
+  const readPrimary = useCallback(() => api.getPrimaryAgent().then(setPrimary).catch(() => undefined), []);
+  const onRuntimeUsed = useCallback(() => { void readPrimary(); onConnected?.(); }, [readPrimary, onConnected]);
+  const claude = useRuntimeCard('claude', refreshToken, onError, onRuntimeUsed);
+  const codex = useRuntimeCard('codex', refreshToken, onError, onRuntimeUsed);
+  const other = useRuntimeCard(otherRuntime, refreshToken, onError, onRuntimeUsed);
 
-  useEffect(() => { setLastChecked(Date.now()); }, [refreshToken]);
+  useEffect(() => { setLastChecked(Date.now()); void readPrimary(); }, [refreshToken, readPrimary]);
   useEffect(() => { const id = window.setInterval(() => tick(v => v + 1), 1000); return () => window.clearInterval(id); }, []);
 
   const recheck = () => setRefreshToken(v => v + 1);
@@ -435,19 +454,17 @@ export function ConnectAI({ onConnected, showHeader = true, advanced, onError }:
   return <div className="connect-ai">
     {showHeader && <><h1>{t('connectAI.title')}</h1><p className="intro">{t('connectAI.subtitle')}</p></>}
     <div className="connect-ai-cards">
-      <RuntimeCard card={claude} onError={onError} />
-      <RuntimeCard card={codex} onError={onError} />
-      <div className="connect-ai-card connect-ai-other">
-        {!otherRuntime ? <>
+      <RuntimeCard card={claude} inUse={primary?.runtime === 'claude'} onContinue={onConnected} onError={onError} />
+      <RuntimeCard card={codex} inUse={primary?.runtime === 'codex'} onContinue={onConnected} onError={onError} />
+      {/* A picked account takes the third slot as a card like the other two. */}
+      {otherRuntime
+        ? <RuntimeCard key={otherRuntime} card={other} inUse={primary?.runtime === otherRuntime} onBack={() => setOtherRuntime(null)} onContinue={onConnected} onError={onError} />
+        : <div className="connect-ai-card connect-ai-other">
           <strong className="connect-ai-card-name">{t('connectAI.other.title')}</strong>
           <div className="connect-ai-other-pick" role="group" aria-label={t('connectAI.other.pick')}>
             {OTHER_RUNTIMES.map(r => { const Icon = OTHER_ICON[r]; return <button key={r} onClick={() => setOtherRuntime(r)}><Icon size={14} aria-hidden="true" />{t(RUNTIME_DISPLAY_KEY[r])}</button>; })}
           </div>
-        </> : <>
-          <button className="subtle connect-ai-other-back" onClick={() => setOtherRuntime(null)}>{t('connectAI.other.back')}</button>
-          <RuntimeCard card={other} onError={onError} />
-        </>}
-      </div>
+        </div>}
     </div>
 
     <div className="connect-ai-recheck-row">

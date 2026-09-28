@@ -18,7 +18,7 @@ import type { AgentAccount, AgentRuntimeInfo, PrimaryAgent } from '../shared/con
  */
 
 interface FakeAccount extends AgentAccount { }
-const accountsStore = vi.hoisted(() => ({ byRuntime: new Map<string, FakeAccount[]>() }));
+const accountsStore = vi.hoisted(() => ({ byRuntime: new Map<string, FakeAccount[]>(), primary: null as string | null, logins: [] as string[] }));
 
 vi.mock('./browser-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./browser-api')>();
@@ -34,8 +34,16 @@ vi.mock('./browser-api', async (importOriginal) => {
         accountsStore.byRuntime.set(runtime, [...(accountsStore.byRuntime.get(runtime) ?? []), account]);
         return account;
       },
-      setPrimaryAgent: async (choice: { runtime: string; model: string | null; accountId: string | null }): Promise<PrimaryAgent> =>
-        ({ runtime: choice.runtime as PrimaryAgent['runtime'], model: choice.model, accountId: choice.accountId, label: choice.runtime }),
+      getPrimaryAgent: async (): Promise<PrimaryAgent | null> =>
+        accountsStore.primary ? { runtime: accountsStore.primary as PrimaryAgent['runtime'], model: null, accountId: `acc-${accountsStore.primary}`, label: accountsStore.primary } : null,
+      startBrowserLogin: async (runtime: Parameters<typeof actual.browserAPI.startBrowserLogin>[0], accountId: string) => {
+        accountsStore.logins.push(`${runtime}:${accountId}`);
+        return actual.browserAPI.startBrowserLogin(runtime, accountId);
+      },
+      setPrimaryAgent: async (choice: { runtime: string; model: string | null; accountId: string | null }): Promise<PrimaryAgent> => {
+        accountsStore.primary = choice.runtime;
+        return { runtime: choice.runtime as PrimaryAgent['runtime'], model: choice.model, accountId: choice.accountId, label: choice.runtime };
+      },
     },
   };
 });
@@ -48,7 +56,7 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('ConnectAI', () => {
   let off: (() => void) | null = null;
-  afterEach(() => { off?.(); off = null; accountsStore.byRuntime.clear(); });
+  afterEach(() => { off?.(); off = null; accountsStore.byRuntime.clear(); accountsStore.primary = null; accountsStore.logins = []; });
 
   it('is honest by default: no demo means "No instalado" with the official guide, and "Usar" cannot promise an install', async () => {
     render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
@@ -128,6 +136,52 @@ describe('ConnectAI', () => {
     await waitFor(() => expect(onConnected).toHaveBeenCalledTimes(1));
   });
 
+  it('the account in use says "En uso" instead of a button; "Usar" on another one switches it, visibly', async () => {
+    accountsStore.byRuntime.set('claude', [{ runtime: 'claude', id: 'acc-claude', label: 'Claude', system: false, loggedIn: true, detail: '', models: [] }]);
+    accountsStore.byRuntime.set('codex', [{ runtime: 'codex', id: 'acc-codex', label: 'ChatGPT', system: false, loggedIn: true, detail: '', models: [] }]);
+    accountsStore.primary = 'claude';
+    off = enableRuntimeSetupPreviewDemo('already_installed', 0);
+    render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
+    const claudeCard = () => screen.getByRole('group', { name: 'Claude' });
+    const chatgptCard = () => screen.getByRole('group', { name: 'ChatGPT' });
+    await waitFor(() => expect(claudeCard().textContent).toContain('En uso'));
+    expect(within(claudeCard()).queryByRole('button', { name: 'Usar Claude' })).toBeNull();
+    await waitFor(() => expect(chatgptCard().textContent).toContain('Conectado'));
+    fireEvent.click(within(chatgptCard()).getByRole('button', { name: 'Usar ChatGPT' }));
+    await waitFor(() => expect(chatgptCard().textContent).toContain('En uso'));
+    expect(within(claudeCard()).getByRole('button', { name: 'Usar Claude' })).toBeDefined();
+  });
+
+  it('onboarding: the account already in use says "En uso" and "Seguir con {name}" moves on', async () => {
+    accountsStore.byRuntime.set('claude', [{ runtime: 'claude', id: 'acc-claude', label: 'Claude', system: false, loggedIn: true, detail: '', models: [] }]);
+    accountsStore.primary = 'claude';
+    off = enableRuntimeSetupPreviewDemo('already_installed', 0);
+    const onConnected = vi.fn();
+    render(<I18nProvider><ConnectAI showHeader={false} onConnected={onConnected} onError={() => {}} /></I18nProvider>);
+    const claudeCard = () => screen.getByRole('group', { name: 'Claude' });
+    await waitFor(() => expect(claudeCard().textContent).toContain('En uso'));
+    expect(within(claudeCard()).queryByRole('button', { name: 'Usar Claude' })).toBeNull();
+    fireEvent.click(within(claudeCard()).getByRole('button', { name: 'Seguir con Claude' }));
+    expect(onConnected).toHaveBeenCalledTimes(1);
+  });
+
+  for (const [runtime, name] of [['claude', 'Claude'], ['codex', 'ChatGPT'], ['grok', 'Grok']] as const) {
+    it(`${name}: one "Usar" starts ONE browser login, even clicked again while it is on its way`, async () => {
+      off = enableRuntimeSetupPreviewDemo('already_installed', 50);
+      render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
+      if (runtime === 'grok') fireEvent.click(screen.getByRole('button', { name: 'Grok' }));
+      const card = () => screen.getByRole('group', { name });
+      await waitFor(() => expect(card().textContent).toContain('Falta iniciar sesión'));
+      const use = within(card()).getByRole('button', { name: `Usar ${name}` });
+      fireEvent.click(use);
+      fireEvent.click(use);
+      await waitFor(() => expect(card().textContent).toContain('Iniciando sesión'));
+      await tick(30);
+      expect(accountsStore.logins).toEqual([`${runtime}:acc-${runtime}`]);
+      expect(accountsStore.byRuntime.get(runtime)).toHaveLength(1);
+    });
+  }
+
   const confirmInstall = async (card: () => HTMLElement, name: string) => {
     await waitFor(() => expect(card().textContent).toContain('No instalado'));
     fireEvent.click(within(card()).getByRole('button', { name: `Usar ${name}` }));
@@ -196,6 +250,22 @@ describe('ConnectAI', () => {
     fireEvent.click(screen.getByRole('button', { name: /Otra cuenta/ }));
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Grok' })).toBeNull());
     expect(screen.getByRole('button', { name: 'Hermes' })).not.toBeNull();
+  });
+
+  it('a picked account replaces the third card (no card inside a card); signing in shows "Abrir de nuevo" and "Cancelar" in one row, no "Usar"', async () => {
+    off = enableRuntimeSetupPreviewDemo('success', 100);
+    const { container } = render(<I18nProvider><ConnectAI onError={() => {}} /></I18nProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Grok' }));
+    const grokCard = () => screen.getByRole('group', { name: 'Grok' });
+    expect(within(grokCard()).getByRole('button', { name: '‹ Otra cuenta' })).toBeDefined();
+    expect(container.querySelectorAll('.connect-ai-cards > .connect-ai-card')).toHaveLength(3);
+    expect(container.querySelector('.connect-ai-card .connect-ai-card')).toBeNull();
+    await confirmInstall(grokCard, 'Grok');
+    const reopen = await within(grokCard()).findByRole('button', { name: 'Abrir de nuevo' }, { timeout: 3000 });
+    const cancel = within(grokCard()).getByRole('button', { name: 'Cancelar' });
+    expect(reopen.parentElement).toBe(cancel.parentElement);
+    expect(within(grokCard()).queryByRole('button', { name: 'Usar Grok' })).toBeNull();
+    expect(accountsStore.logins).toHaveLength(1);
   });
 
   it('OpenCode has no login concept here: "Usar OpenCode" installs it and uses it, no sign-in step', async () => {

@@ -122,7 +122,7 @@ let previewSetupDemo: PreviewSetupDemo | null = null;
  */
 export function enableRuntimeSetupPreviewDemo(scenario: RuntimeSetupPreviewScenario = 'success', stepMs = 900): () => void {
   const jobs = new Map<string, { job: RuntimeSetupJob; lines: string[]; timers: number[] }>();
-  const installed = new Set<Provider>(scenario === 'already_installed' ? ['claude'] : []);
+  const installed = new Set<Provider>(scenario === 'already_installed' ? ['claude', 'codex', 'grok', 'hermes'] : []);
   const fakeExe = (runtime: Provider) => `~/.local/bin/${runtime}`;
   const push = (entry: { job: RuntimeSetupJob; lines: string[] }, state: RuntimeInstallState | RuntimeLoginState, done: boolean, line: string) => {
     entry.job = { ...entry.job, state, done } as RuntimeSetupJob;

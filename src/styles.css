@@ -1626,7 +1626,7 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
    existentes: el estado nunca se dice por color solo (texto + `.connect-ai-dot`). */
 .connect-ai{max-width:900px}
 .connect-ai h1{font:22px/1.25 var(--serif);font-weight:400;letter-spacing:-.3px;margin:0 0 8px}
-.connect-ai-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:var(--space-3);margin:var(--space-4) 0}
+.connect-ai-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));align-items:start;gap:var(--space-3);margin:var(--space-4) 0}
 .connect-ai-card{display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--foam);padding:var(--space-4)}
 .connect-ai-card.is-attention{border-color:var(--rust-soft)}
 .connect-ai-card-name{font:15px var(--serif);font-weight:400}
@@ -1647,7 +1647,8 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .connect-ai-login-flight small{color:var(--muted);font-size:var(--text-sm)}
 .connect-ai-other{min-width:0}
 .connect-ai-other-pick{display:flex;flex-wrap:wrap;gap:var(--space-2)}
-.connect-ai-other-back{align-self:flex-start;padding:2px 4px;font-size:var(--text-sm);border:0}
+.connect-ai-other-back{margin-left:auto;min-height:var(--control-h-sm);padding:var(--space-1) var(--space-2);font-size:var(--text-sm);border:0}
+.connect-ai-card-status.is-in-use{color:var(--green-ok);font-weight:600}
 .connect-ai-recheck-row{display:flex;align-items:center;gap:var(--space-3);margin:var(--space-2) 0 var(--space-4)}
 .connect-ai-recheck-row small{color:var(--muted);font-size:var(--text-sm)}
 .connect-ai-diagnostic{border:1px solid var(--line);border-radius:var(--radius-md);background:var(--paper-raised);padding:var(--space-4);margin-bottom:var(--space-4);display:flex;flex-direction:column;gap:var(--space-2)}
@@ -1704,10 +1705,10 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .onboarding-brand-created strong svg{color:var(--green-ok)}
 
 /* C · "Conectá tu IA": monograma, nombre en serif grande, estado, "Usar". */
-.connect-ai-card-head{display:flex;align-items:center;gap:var(--space-3)}
+.connect-ai-card-head{display:flex;align-items:center;flex-wrap:wrap;gap:var(--space-3);width:100%}
 .connect-ai-monogram{width:var(--control-icon);height:var(--control-icon);border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--rust-wash);color:var(--rust-deep);font:var(--text-xl) var(--serif);flex-shrink:0}
 .connect-ai-card-head .connect-ai-card-name{font-size:var(--text-3xl);line-height:1.1}
-.connect-ai-card .connect-ai-use{margin-top:auto}
+.connect-ai-card-actions button{gap:var(--space-1);min-height:var(--control-h-sm);padding:var(--space-1) var(--space-2);font-size:var(--text-sm)}
 .connect-ai-other-pick button{gap:var(--space-2)}
 .connect-ai-recheck-row button{gap:var(--space-1);min-height:var(--control-h-sm);padding:var(--space-1) var(--space-2);font-size:var(--text-sm)}
 
