@@ -222,6 +222,12 @@ export interface BrandDnaFields {
   fonts: BrandDnaEntry<string[]> | null;
 }
 export type BrandDnaField = keyof BrandDnaFields;
+/** El valor CRUDO de un campo (sin fuentes ni supuesto): lo que se edita y lo que propone el motor. */
+export type BrandDnaValue =
+  | string
+  | string[]
+  | { adjectives: string[]; example: string | null }
+  | BrandDnaColor[];
 export const BRAND_DNA_FIELDS: readonly BrandDnaField[] = ['tone', 'audience', 'valueProp', 'wordsYes', 'wordsNo', 'claims', 'colors', 'fonts'];
 export interface BrandDnaView {
   brandId: string;
@@ -236,8 +242,8 @@ export interface BrandDnaView {
 export interface BrandDnaProposal {
   id: string;
   field: BrandDnaField;
-  /** El valor que quedaría si se acepta (mismo tipo que el campo). */
-  next: BrandDnaFields[BrandDnaField];
+  /** El valor que quedaría si se acepta: el valor crudo del campo. */
+  next: BrandDnaValue | null;
   /** Una frase: por qué lo propone. */
   reason: string;
   source: BrandDnaSource;
@@ -1727,7 +1733,7 @@ export interface LatteAPI {
   /** ADN de marca (Entrega 1B). */
   readBrandDna(brandId: string): Promise<BrandDnaView>;
   /** La persona edita un campo del borrador: su fuente pasa a `human` y deja de ser supuesto. */
-  updateBrandDnaField(brandId: string, field: BrandDnaField, value: BrandDnaFields[BrandDnaField]): Promise<BrandDnaView>;
+  updateBrandDnaField(brandId: string, field: BrandDnaField, value: BrandDnaValue | null): Promise<BrandDnaView>;
   approveBrandDna(brandId: string): Promise<BrandDnaView>;
   /** Arranca el motor: de cero con fuentes, o reconstruyendo con lo que la marca ya tiene. Un solo build por marca a la vez. */
   buildBrandDna(brandId: string, mode: BrandDnaBuildMode, sources: BrandDnaSourcesInput | null): Promise<BrandDnaBuildJob>;

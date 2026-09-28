@@ -95,6 +95,7 @@ import type {
   BrandDnaProposal,
   BrandDnaSourcesInput,
   BrandDnaView,
+  BrandDnaValue,
   BrandIdentityView,
   UntrackedFile,
   Work,
@@ -835,7 +836,7 @@ export class LatteService implements BackendApi {
   }
 
   /** La persona edita un campo: su fuente pasa a `human` y deja de ser supuesto. */
-  async updateBrandDnaField(brandId: string, field: BrandDnaField, value: BrandDnaFields[BrandDnaField]): Promise<BrandDnaView> {
+  async updateBrandDnaField(brandId: string, field: BrandDnaField, value: BrandDnaValue | null): Promise<BrandDnaView> {
     const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
     if (!(BRAND_DNA_FIELDS as readonly string[]).includes(field)) throw new ValidationError('Invalid brand DNA field');
     const clean = requireBrandDnaFieldValue(field, value);
@@ -1011,7 +1012,7 @@ export class LatteService implements BackendApi {
       field: parsed.field,
       // El contrato tipa `next` como la unión de entradas; el motor guarda el
       // valor crudo validado. El casteo es la frontera entre las dos formas.
-      next: parsed.next as unknown as BrandDnaFields[BrandDnaField],
+      next: parsed.next,
       reason: parsed.reason,
       source: parsed.source,
       status: 'pending',

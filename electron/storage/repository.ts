@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { CHAT_RUNTIMES, DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type BrandDnaField, type BrandDnaFields, type BrandDnaProposal, type CoordinationSuspendReason, type CoordinationTaskAudience, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
+import { CHAT_RUNTIMES, DEFAULT_EFFORT_TIER, EFFORT_TIERS, EMPTY_USAGE, type Brand, type BrandContextProposal, type BrandContextProposalStatus, type BrandContextRevision, type BrandContextRevisionSource, type BrandDnaField, type BrandDnaFields, type BrandDnaProposal, type BrandDnaValue, type CoordinationSuspendReason, type CoordinationTaskAudience, type FunnelStage, type ChatRuntime, type ChatUsage, type Decision, type DecisionSource, type DecisionStatus, type EffortTier, type Revision, type Work } from '../../shared/contracts';
 import type { ArtifactCheck, DeliveryEvidence, GenerationReceipt } from '../../shared/generationContracts';
 import { GenerationContractError } from '../generation/errors';
 import { hashGenerationContext } from '../generation/canon';
@@ -363,7 +363,7 @@ const toBrandDnaProposal = (r: BrandDnaProposalRow): BrandDnaProposalRecord => (
   brandId: r.brand_id,
   workId: r.work_id,
   field: r.field as BrandDnaField,
-  next: JSON.parse(r.next_json) as BrandDnaFields[BrandDnaField],
+  next: JSON.parse(r.next_json) as BrandDnaValue | null,
   reason: r.reason,
   source: { kind: r.source_kind as BrandDnaProposal['source']['kind'], label: r.source_label },
   status: r.status === 'accepted' || r.status === 'rejected' || r.status === 'superseded' ? r.status : 'pending',

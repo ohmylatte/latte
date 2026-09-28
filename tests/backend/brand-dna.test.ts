@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { API_ARITY, API_METHODS } from '../../electron/ipc/channels';
 import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
 import { brandDnaProtocolBlocks, parseBrandDnaJson, type BrandDnaProposalInput } from '../../electron/workspace/dnaProtocol';
-import type { BrandDnaField, BrandDnaFields, BrandDnaProposal, BrandDnaView } from '../../shared/contracts';
+import type { BrandDnaField, BrandDnaValue, BrandDnaFields, BrandDnaProposal, BrandDnaView } from '../../shared/contracts';
 import { fakeCoordinationHub, makeBackend, settle, type FakeTeamMember, type TestBackend } from './helpers';
 
 /**
@@ -65,13 +65,9 @@ describe('ADN de marca · borrador, versión y propuestas', () => {
   const workDir = (id = workId) => b.files.workDir(brandId, id);
   const claudeMd = (id = workId) => fs.readFileSync(path.join(workDir(id), 'CLAUDE.md'), 'utf8');
   const adnMd = (id = workId) => fs.readFileSync(path.join(workDir(id), 'identidad', 'ADN.md'), 'utf8');
-  /**
-   * El contrato tipa `value` como la unión de entradas (porque también cubre
-   * `null`); en runtime el motor recibe el valor CRUDO y valida su forma. El
-   * casteo vive acá, en el límite, una sola vez.
-   */
+  /** `value` es el valor CRUDO (`BrandDnaValue`); los tests mandan formas inválidas a propósito, por eso `unknown`. */
   const update = (field: BrandDnaField, value: unknown): Promise<BrandDnaView> =>
-    b.service.updateBrandDnaField(brandId, field, value as BrandDnaFields[BrandDnaField]);
+    b.service.updateBrandDnaField(brandId, field, value as BrandDnaValue | null);
 
   beforeEach(async () => {
     b = await makeBackend();

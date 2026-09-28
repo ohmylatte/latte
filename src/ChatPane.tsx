@@ -230,7 +230,7 @@ function MessageView({ message, roleName, onSaveAsDocument, untracked, onAdoptFi
   // An answer worth keeping should not stay trapped in the conversation.
   // Decision protocol blocks are a machine channel, not conversation content.
   // Keeping them out of the transcript avoids turning an audit feature into UI noise.
-  const text = message.parts.filter(p => p.type === 'text').map(p => (p as { text: string }).text).join('\n\n').replace(/```latte-decision\s*\r?\n[\s\S]*?```/g,'').replace(/```latte-brand-context\s*\r?\n[\s\S]*?```/g,'').trim();
+  const text = stripProtocolBlocks(message.parts.filter(p => p.type === 'text').map(p => (p as { text: string }).text).join('\n\n'));
   const worthKeeping = message.completed && !message.error && text.length > 400;
   // If the agent already wrote a file, saying so with its own button is what
   // stops the work from ending with two copies of one deliverable. Two named
@@ -249,8 +249,21 @@ function MessageView({ message, roleName, onSaveAsDocument, untracked, onAdoptFi
   </div>;
 }
 
+/**
+ * Protocol blocks (`latte-decision`, `latte-brand-context`, `latte-dna`) are a
+ * machine channel: Latte reads them and turns them into proposals. The person
+ * sees the agent's prose, never the raw JSON, in the transcript and in
+ * "save as document" alike.
+ */
+export function stripProtocolBlocks(text: string): string {
+  return text.replace(/```latte-(?:decision|brand-context|dna)\s*\r?\n[\s\S]*?```/g, '').trim();
+}
+
 function PartView({ part }: { part: ChatPart }) {
-  if (part.type === 'text') return <div className="markdown chat-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown></div>;
+  if (part.type === 'text') {
+    const text = stripProtocolBlocks(part.text);
+    return text ? <div className="markdown chat-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown></div> : null;
+  }
   if (part.type === 'reasoning') return <details className="chat-reasoning"><summary><ChevronRight size={12} />{t('ui.auto.358')}</summary><pre>{part.text}</pre></details>;
   return <details className={'chat-tool ' + part.status}>
     <summary><Wrench size={12} /><span className="chat-tool-name">{part.tool}</span><span className="chat-tool-title">{part.title}</span><span className="chat-tool-status">{part.status === 'running' ? <Loading size={16} label={t('chat.tool.running')} /> : part.status === 'completed' ? <Check size={11} /> : part.status === 'error' ? <CircleAlert size={11} /> : null}{labelFor(part.status)}</span></summary>

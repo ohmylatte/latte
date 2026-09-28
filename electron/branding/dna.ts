@@ -95,11 +95,8 @@ function nullableTextList(value: unknown, name: string, maxItems: number, maxCha
  * tipa `next`/`value` como la unión de entradas; ésta es la unión de VALORES
  * que el motor valida y persiste, y en la frontera del contrato se castea.
  */
-export type BrandDnaValue =
-  | string
-  | string[]
-  | { adjectives: string[]; example: string | null }
-  | Array<{ hex: string; name: string | null }>;
+export type { BrandDnaValue } from '../../shared/contracts';
+import type { BrandDnaValue } from '../../shared/contracts';
 
 /** La forma de UN campo, sin conocer el resto. `null` sigue siendo válido: "todavía no se sabe". */
 export function requireBrandDnaFieldValue(field: BrandDnaField, value: unknown): BrandDnaValue | null {
