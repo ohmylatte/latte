@@ -187,7 +187,8 @@ export function ChatPane({ session, onStop, onError, onSaveAsDocument, untracked
  */
 export function ChatWorking({ status, detail }: { status: ChatStatus; detail?: string }) {
   if (status !== 'busy' && status !== 'retry') return null;
-  return <div className="chat-status"><Loading size={16} />{status === 'retry' ? detail || t('chat.retrying') : t('ui.auto.091')}</div>;
+  const label = status === 'retry' ? detail || t('chat.retrying') : t('ui.auto.091');
+  return <div className="chat-status"><Loading size={16} label={label} />{label}</div>;
 }
 
 /**
@@ -236,7 +237,7 @@ function MessageView({ message, roleName, onSaveAsDocument, untracked, onAdoptFi
   // buttons, no dialog: the person picks the file or the answer, on sight.
   const pending = worthKeeping ? untracked : [];
   return <div className="chat-message assistant">
-    <div className="chat-role">{roleName}{!message.completed && !message.error ? <Loading size={16} /> : null}
+    <div className="chat-role">{roleName}{!message.completed && !message.error ? <Loading size={16} label={t('ui.auto.091')} /> : null}
       {worthKeeping && onSaveAsDocument && <button className="save-as-document" title={t('ui.auto.096')} onClick={() => onSaveAsDocument(text)}><FilePlus size={12} />{pending.length > 0 ? t('ui.auto.097') : t('ui.auto.098')}</button>}
     </div>
     {pending.length > 0 && onAdoptFile && <div className="answer-file-hint">
@@ -252,7 +253,7 @@ function PartView({ part }: { part: ChatPart }) {
   if (part.type === 'text') return <div className="markdown chat-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown></div>;
   if (part.type === 'reasoning') return <details className="chat-reasoning"><summary><ChevronRight size={12} />{t('ui.auto.358')}</summary><pre>{part.text}</pre></details>;
   return <details className={'chat-tool ' + part.status}>
-    <summary><Wrench size={12} /><span className="chat-tool-name">{part.tool}</span><span className="chat-tool-title">{part.title}</span><span className="chat-tool-status">{part.status === 'running' ? <Loading size={16} /> : part.status === 'completed' ? <Check size={11} /> : part.status === 'error' ? <CircleAlert size={11} /> : null}{labelFor(part.status)}</span></summary>
+    <summary><Wrench size={12} /><span className="chat-tool-name">{part.tool}</span><span className="chat-tool-title">{part.title}</span><span className="chat-tool-status">{part.status === 'running' ? <Loading size={16} label={t('chat.tool.running')} /> : part.status === 'completed' ? <Check size={11} /> : part.status === 'error' ? <CircleAlert size={11} /> : null}{labelFor(part.status)}</span></summary>
     {part.input && <><div className="field-label">{t('ui.auto.359')}</div><pre>{part.input}</pre></>}
     {part.output && <><div className="field-label">{t('ui.auto.360')}</div><pre>{part.output}</pre></>}
     {part.error && <div className="chat-error"><CircleAlert size={13} /><span>{part.error}</span></div>}

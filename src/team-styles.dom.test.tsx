@@ -75,6 +75,8 @@ const NEW_CLASSES = [
   'roster-list', 'roster-row', 'roster-actions', 'roster-call', 'roster-empty', 'role-picker-section',
   // El coordinador habitual de la marca.
   'roster-coordinate',
+  // Entrega 4 · microinteracciones: cada marca nueva tiene su regla.
+  'team-steam', 'work-steam', 'version-strip', 'version-more', 'version-label', 'folder-loading',
 ];
 
 describe('B1.5: el CSS del equipo', () => {

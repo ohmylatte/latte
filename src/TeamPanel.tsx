@@ -14,7 +14,7 @@ import { useChatMessagesOf, useChatState } from './chat-store';
 import { canChangePermission } from './permission-ux';
 import { continuationModel, continuationOptions, type ContinuationTarget } from './provider-models';
 import { describeUsage, describeUsageDetail, formatTokens, isHeavyConversation, totalTokens } from './usage-format';
-import { Loading } from './brand-marks';
+import { Loading, SteamWisp, roleColorVar } from './brand-marks';
 import { pendingForMember, pendingForWork } from './coordination/inbox';
 import { roleLabel, roleSummary } from './pack-i18n';
 import { CoordAvatar, CoordTime } from './coordination/anatomy';
@@ -932,13 +932,28 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', pendi
    * runtime confirmo o no no se pierde: sigue dicho entero, con su frase
    * larga, al pie del modo Equipo en modo avanzado.
    *
-   * El punto habla del PROCESO cuando hay proceso --trabajando ahora mismo es
-   * el hecho mas fuerte que esta fila puede contar-- y de la coordinacion
-   * cuando el proceso esta callado.
+   * El punto habla de la COORDINACION cuando el proceso esta callado. Del
+   * PROCESO habla ahora el hilo de vapor (M3, mas abajo): mientras el rol
+   * trabaja, el vapor ES el estado y el punto se calla.
    */
   const signal: MemberDot = attention || status === 'working' ? 'live' : dot;
+  /**
+   * M3: UN HILO DE VAPOR POR ROL.
+   *
+   * El vapor dice "está haciendo algo"; el punto dice "no está" o "te espera".
+   * Son estados distintos, y la fila sólo lleva UNA marca: mientras el rol
+   * trabaja el hilo reemplaza al punto del avatar, porque dos señales para el
+   * mismo hecho es lo que el criterio 5 evita.
+   *
+   * Trabajar es un hecho con DOS estados reales y ninguno inventado: el chat
+   * a mitad de turno, o un despacho de la coordinación en vuelo. Lo que TE
+   * ESPERA —un permiso, una pregunta— no es trabajo: eso sigue siendo el
+   * punto `--rust` con halo, como hasta hoy. El color sale de un token
+   * `--role-*` del rol.
+   */
+  const working = !attention && (status === 'working' || (dot === 'live' && !urgent));
   return <button role="tab" aria-selected={selected} className={'team-tab coord-row status-' + status + (attention ? ' attention' : '')} disabled={busy} onClick={onSelect} title={lastExchange ? title + ' · ' + lastExchange : title}>
-    <CoordAvatar name={displayName} roleId={member.roleId} avatar={avatarOfMember(member)} dot={signal} small />
+    <CoordAvatar name={displayName} roleId={member.roleId} avatar={avatarOfMember(member)} dot={working ? 'none' : signal} small />
     <span className="team-tab-text coord-row-text">
       <span className="team-tab-top coord-row-top">
         <span className="team-tab-name coord-row-name">{displayName}{coordinator && <Users size={12} className="coord-row-coordinator" aria-label={t('coord.member.coordinator')} />}</span>
@@ -951,6 +966,7 @@ export function MemberTab({ member, chat, selected, busy, mode = 'simple', pendi
       </span>
       {lastExchange && <span className={'team-tab-last coord-row-line' + (urgent ? ' is-urgent' : signal === 'failed' ? ' is-failed' : '')}>{lastExchange}</span>}
     </span>
+    {working && <SteamWisp className="team-steam" style={{ color: roleColorVar(member.roleId) }} />}
     <span className="visually-hidden">{statusLabel(status, attention)}</span>
   </button>;
 }
@@ -1053,9 +1069,11 @@ function statusText(status: TeamMemberStatus, attention: boolean): string {
 }
 
 function statusLabel(status: TeamMemberStatus, attention: boolean) {
+  // M3: el hilo de vapor ya es la marca visual de "trabajando"; acá sólo el
+  // texto, y sin un `role="status"` escondido más dentro del mismo botón.
   if (attention) return <><i className="busy-dot" />{t('team.status.attention')}</>;
   switch (status) {
-    case 'working': return <><Loading size={16} />{t('ui.auto.403')}</>;
+    case 'working': return <>{t('ui.auto.403')}</>;
     case 'idle': return <><i className="live-dot" />{t('ui.auto.404')}</>;
     case 'ended': return <>{t('ui.auto.285')}<CircleCheck size={13} /></>;
     default: return <>{t('team.status.paused')}<Pause size={12} /></>;

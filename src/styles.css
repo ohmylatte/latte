@@ -1777,3 +1777,26 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .identity-actions{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 0}
 .identity-actions button{display:inline-flex;align-items:center;gap:6px}
 .identity-footnote{margin:16px 0 0;color:var(--muted);font-size:var(--text-sm)}
+/* Entrega 4 · microinteracciones */
+/* CSS nuevo, al final: la cascada se lee en el orden en que se escribió.
+   Las cinco microinteracciones viven en sus componentes; acá sólo lo que
+   las acomoda en la pantalla. El corte con movimiento reducido de cada una
+   ya está junto a su keyframes, arriba. */
+/* 3 · El hilo de vapor va al final de la pestaña, centrado, sin pisar la
+   columna de la hora. Sólo aparece mientras el rol trabaja. */
+.team-tab .team-steam{align-self:center;margin-left:auto}
+/* El mismo hilo en la barra lateral, sobre tinta: ahí el tono pleno del rol
+   no tiene contraste, así que se pinta con su wash —sigue siendo un
+   token --role-*, nunca un color suelto. */
+.work-nav .work-steam{flex-shrink:0;margin-left:auto}
+/* 4 · Los anillos de la barra del documento: fila centrada, el contador en
+   mono antes del primer anillo y el rótulo de la versión actual al lado. */
+.version-strip{display:inline-flex;align-items:center;gap:5px;flex-shrink:0;min-width:0}
+.version-more{font-family:var(--mono);font-size:var(--text-sm);color:var(--muted);letter-spacing:.4px;flex-shrink:0}
+.version-label{font-family:var(--mono);font-size:var(--text-sm);white-space:nowrap;flex-shrink:0}
+/* En el modal el contador es su propio renglón, colgado de la lista. */
+.revision-list .version-more{display:block;margin:0 0 7px}
+/* 2 · La taza grande: el panel está abierto y todavía no respondió, que es
+   un estado vacío de verdad y no un botón esperando. */
+.folder-loading{display:flex;justify-content:center;align-items:center;margin:0;padding:16px 0}
+
