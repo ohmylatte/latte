@@ -1,6 +1,7 @@
 import { composeBrandContext } from '../shared/brandContext';
 import type { AgentRole, Brand, BrandContextProposal, BrandContextRevision, BrandContextStatus, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput, OnboardingDraft } from '../shared/contracts';
-import { isOnboardingDraft } from '../shared/contracts';
+import { isOnboardingDraft, RUNTIME_GUIDE_URLS } from '../shared/contracts';
+import type { AccountRuntimeName, InstallFailureCode, Provider, RuntimeInstallJob, RuntimeInstallState, RuntimeLoginJob, RuntimeLoginState, RuntimeSetupEvent, RuntimeSetupInfo, RuntimeSetupJob } from '../shared/contracts';
 import { avatarFromSeed, parseAvatar, serializeAvatar } from '../shared/avatar';
 import { createAgentBus } from './agent-events';
 import { createChatStore } from './chat-store';
@@ -83,6 +84,129 @@ const UPDATE_WORK_ERRORS = {
   'en-US': { patch: 'Invalid work patch', notFound: 'Work not found', onlyOutcome: 'Only the expected output and the linked deliverable can change here', desktop: 'Linking a deliverable requires the desktop app. This view is a local preview.', name: 'Invalid deliverable name', expected: 'Invalid expected output' },
 } as const;
 const updateWorkError = (key: keyof (typeof UPDATE_WORK_ERRORS)['es-AR']) => new Error(UPDATE_WORK_ERRORS[localStorage.getItem('latte-ui-locale') === 'en-US' ? 'en-US' : 'es-AR'][key]);
+// --- Onboarding sin terminal: web preview --------------------------------------
+
+const SETUP_RUNTIMES = ['claude', 'codex', 'opencode', 'grok', 'hermes'] as const satisfies readonly Provider[];
+const setupListeners = new Set<(event: RuntimeSetupEvent) => void>();
+
+/** What the preview demo plays. `success` walks every happy state; the rest end in the named plan-B state. */
+export type RuntimeSetupPreviewScenario =
+  | 'success'
+  | 'already_installed'
+  | 'needs_prereq'
+  | 'blocked_by_policy'
+  | 'blocked_by_antivirus'
+  | 'network'
+  | 'unverified_installer'
+  | 'login_needs_terminal'
+  | 'login_not_confirmed';
+export const RUNTIME_SETUP_PREVIEW_SCENARIOS: readonly RuntimeSetupPreviewScenario[] = ['success', 'already_installed', 'needs_prereq', 'blocked_by_policy', 'blocked_by_antivirus', 'network', 'unverified_installer', 'login_needs_terminal', 'login_not_confirmed'];
+
+interface PreviewSetupDemo {
+  catalog(): RuntimeSetupInfo[];
+  detect(runtime: Provider): RuntimeInstallState;
+  install(runtime: Provider, installPrereqs: boolean): RuntimeInstallJob;
+  login(runtime: AccountRuntimeName, accountId: string): RuntimeLoginJob;
+  cancel(jobId: string): RuntimeSetupJob;
+  job(jobId: string): RuntimeSetupJob;
+  transcript(jobId: string): string;
+}
+let previewSetupDemo: PreviewSetupDemo | null = null;
+
+/**
+ * FAKE, preview-only: makes the web preview play a realistic install/login
+ * sequence so the onboarding screens can be built and reviewed in every state.
+ * Nothing is installed and no browser opens; every state and code is the real
+ * contract's. `stepMs` paces the sequence (0 in tests). Returns a function that
+ * turns the demo off again. Never active on desktop: `window.latte` wins.
+ */
+export function enableRuntimeSetupPreviewDemo(scenario: RuntimeSetupPreviewScenario = 'success', stepMs = 900): () => void {
+  const jobs = new Map<string, { job: RuntimeSetupJob; lines: string[]; timers: number[] }>();
+  const installed = new Set<Provider>(scenario === 'already_installed' ? ['claude'] : []);
+  const fakeExe = (runtime: Provider) => `~/.local/bin/${runtime}`;
+  const push = (entry: { job: RuntimeSetupJob; lines: string[] }, state: RuntimeInstallState | RuntimeLoginState, done: boolean, line: string) => {
+    entry.job = { ...entry.job, state, done } as RuntimeSetupJob;
+    entry.lines.push(line);
+    if (entry.job.kind === 'install' && (state.state === 'installed' || state.state === 'found')) installed.add(entry.job.runtime);
+    for (const listener of setupListeners) listener({ ...entry.job });
+  };
+  const play = (entry: { job: RuntimeSetupJob; lines: string[]; timers: number[] }, steps: Array<[RuntimeInstallState | RuntimeLoginState, boolean, string]>) => {
+    steps.forEach(([state, done, line], i) => {
+      entry.timers.push(window.setTimeout(() => { if (!entry.job.done) push(entry, state, done, line); }, stepMs * (i + 1)));
+    });
+  };
+  const demo: PreviewSetupDemo = {
+    catalog: () => SETUP_RUNTIMES.map((runtime) => ({
+      runtime,
+      canInstall: scenario !== 'unverified_installer',
+      browserLogin: runtime !== 'hermes' && runtime !== 'opencode',
+      prereqs: runtime === 'claude' ? [{ prereq: 'git_for_windows' as const, required: false, present: false, canInstall: true, guideUrl: 'https://git-scm.com/install/windows' }] : [],
+      guideUrl: RUNTIME_GUIDE_URLS[runtime],
+      verifiedAt: '2026-09-28',
+    })),
+    detect: (runtime) => (installed.has(runtime) ? { state: 'found', version: '2.1.211 (preview)', executable: fakeExe(runtime) } : { state: 'not_found', canInstall: scenario !== 'unverified_installer', guideUrl: RUNTIME_GUIDE_URLS[runtime] }),
+    install: (runtime, installPrereqs) => {
+      const entry = { job: { kind: 'install', jobId: `preview-${id()}`, runtime, state: { state: 'detecting' }, done: false } as RuntimeInstallJob as RuntimeSetupJob, lines: ['[preview] detecting'], timers: [] as number[] };
+      jobs.set(entry.job.jobId, entry);
+      const guideUrl = RUNTIME_GUIDE_URLS[runtime];
+      const fail = (code: InstallFailureCode, detail: string): Array<[RuntimeInstallState, boolean, string]> => [[{ state: 'installing', phase: 'downloading' }, false, '[preview] downloading'], [{ state: 'failed', code, detail, guideUrl }, true, `[preview] ${detail}`]];
+      let steps: Array<[RuntimeInstallState, boolean, string]>;
+      if (installed.has(runtime)) steps = [[{ state: 'found', version: '2.1.211 (preview)', executable: fakeExe(runtime) }, true, '[preview] already installed']];
+      else if (scenario === 'unverified_installer') steps = [[{ state: 'failed', code: 'unverified_installer', detail: guideUrl, guideUrl }, true, '[preview] installer not verified']];
+      else if (scenario === 'needs_prereq' && !installPrereqs) steps = [[{ state: 'needs_prereq', prereq: 'git_for_windows', canInstall: true, guideUrl: 'https://git-scm.com/install/windows' }, true, '[preview] Git for Windows missing']];
+      else if (scenario === 'blocked_by_policy') steps = fail('blocked_by_policy', 'running scripts is disabled on this system');
+      else if (scenario === 'blocked_by_antivirus') steps = fail('blocked_by_antivirus', 'Operation did not complete successfully because the file contains a virus');
+      else if (scenario === 'network') steps = fail('network', "The remote name could not be resolved: 'claude.ai'");
+      else {
+        steps = [
+          ...(installPrereqs ? [[{ state: 'installing', phase: 'prereq' }, false, '[preview] winget install Git.Git'] as [RuntimeInstallState, boolean, string]] : []),
+          [{ state: 'installing', phase: 'downloading' }, false, '[preview] downloading'],
+          [{ state: 'installing', phase: 'checking' }, false, '[preview] checking'],
+          [{ state: 'installed', version: '2.1.211 (preview)', executable: fakeExe(runtime) }, true, '[preview] installed'],
+        ];
+      }
+      for (const listener of setupListeners) listener({ ...entry.job });
+      play(entry, steps);
+      return { ...entry.job } as RuntimeInstallJob;
+    },
+    login: (runtime, accountId) => {
+      const sessionId = runtime === 'codex' ? null : `preview-ses-${id()}`;
+      const entry = { job: { kind: 'login', jobId: `preview-${id()}`, runtime, accountId, state: { state: 'starting' }, done: false, sessionId } as RuntimeLoginJob as RuntimeSetupJob, lines: ['[preview] starting login'], timers: [] as number[] };
+      jobs.set(entry.job.jobId, entry);
+      const url = 'https://example.com/latte-preview-login';
+      let steps: Array<[RuntimeLoginState, boolean, string]>;
+      if (runtime === 'hermes' || scenario === 'login_needs_terminal') steps = [[{ state: 'needs_terminal', reason: runtime === 'hermes' ? 'needs_choice' : 'url_not_recognized', sessionId: sessionId ?? 'preview-ses' }, false, '[preview] embedded terminal']];
+      else if (scenario === 'login_not_confirmed') steps = [[{ state: 'browser_opened', url, openedBy: 'latte' }, false, `[preview] ${url}`], [{ state: 'waiting', url }, false, '[preview] waiting'], [{ state: 'failed', code: 'not_confirmed', detail: 'login process exited 1' }, true, '[preview] not confirmed']];
+      else steps = [[{ state: 'browser_opened', url, openedBy: 'latte' }, false, `[preview] ${url}`], [{ state: 'waiting', url }, false, '[preview] waiting'], [{ state: 'waiting', url }, false, '[preview] still waiting'], [{ state: 'connected', displayName: 'ana@ejemplo.com' }, true, '[preview] connected']];
+      for (const listener of setupListeners) listener({ ...entry.job });
+      play(entry, steps);
+      return { ...entry.job } as RuntimeLoginJob;
+    },
+    cancel: (jobId) => {
+      const entry = jobs.get(jobId);
+      if (!entry) throw new Error(`Setup job not found: ${jobId}`);
+      for (const t of entry.timers) window.clearTimeout(t);
+      if (!entry.job.done) push(entry, { state: 'cancelled' }, true, '[preview] cancelled');
+      return { ...entry.job };
+    },
+    job: (jobId) => {
+      const entry = jobs.get(jobId);
+      if (!entry) throw new Error(`Setup job not found: ${jobId}`);
+      return { ...entry.job };
+    },
+    transcript: (jobId) => {
+      const entry = jobs.get(jobId);
+      if (!entry) throw new Error(`Setup job not found: ${jobId}`);
+      return entry.lines.join('\n');
+    },
+  };
+  previewSetupDemo = demo;
+  return () => {
+    for (const entry of jobs.values()) for (const t of entry.timers) window.clearTimeout(t);
+    if (previewSetupDemo === demo) previewSetupDemo = null;
+  };
+}
+
 export const browserAPI: LatteAPI = {
   getUiLocale: async () => localStorage.getItem('latte-ui-locale') === 'en-US' ? 'en-US' : 'es-AR',
   setUiLocale: async locale => { localStorage.setItem('latte-ui-locale', locale); return locale; },
@@ -337,6 +461,26 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   listConnections: async () => [], listAllConnections: async () => [], connectConnection: unavailable, reconnectConnection: unavailable,
   disconnectConnection: unavailable, deleteConnection: unavailable, listImportableConnections: async () => [],
   getPrimaryAgent: async () => null, setPrimaryAgent: unavailable, listAgentRuntimes: async () => [], addAgentAccount: unavailable, removeAgentAccount: unavailable, startAccountLogin: unavailable, logoutAccount: unavailable,
+  // Onboarding sin terminal: a browser tab cannot install or log in anything.
+  // Honest by default (nothing installable, guide links only); the fake
+  // sequence lives behind `enableRuntimeSetupPreviewDemo` below.
+  runtimeSetupCatalog: async () => (previewSetupDemo ? previewSetupDemo.catalog() : SETUP_RUNTIMES.map((runtime) => ({ runtime, canInstall: false, browserLogin: false, prereqs: [], guideUrl: RUNTIME_GUIDE_URLS[runtime], verifiedAt: '' }))),
+  detectRuntime: async (runtime) => (previewSetupDemo ? previewSetupDemo.detect(runtime) : { state: 'not_found' as const, canInstall: false, guideUrl: RUNTIME_GUIDE_URLS[runtime] }),
+  startRuntimeInstall: async (runtime, options) => (previewSetupDemo ? previewSetupDemo.install(runtime, options?.installPrereqs === true) : unavailable()),
+  cancelRuntimeInstall: async (jobId) => (previewSetupDemo ? previewSetupDemo.cancel(jobId) as RuntimeInstallJob : unavailable()),
+  startBrowserLogin: async (runtime, accountId) => (previewSetupDemo ? previewSetupDemo.login(runtime, accountId) : unavailable()),
+  reopenLoginUrl: async (jobId) => (previewSetupDemo ? previewSetupDemo.job(jobId) as RuntimeLoginJob : unavailable()),
+  cancelBrowserLogin: async (jobId) => (previewSetupDemo ? previewSetupDemo.cancel(jobId) as RuntimeLoginJob : unavailable()),
+  getRuntimeSetupJob: async (jobId) => (previewSetupDemo ? previewSetupDemo.job(jobId) : unavailable()),
+  getRuntimeSetupTranscript: async (jobId) => (previewSetupDemo ? previewSetupDemo.transcript(jobId) : unavailable()),
+  diagnoseRuntimes: async () => {
+    const runtimes = SETUP_RUNTIMES.map((runtime) => ({ runtime, installed: false, version: null, path: null, loggedIn: runtime === 'opencode' ? null : false, lastError: null }));
+    return { generatedAt: now(), runtimes, report: ['Latte web preview runtime report', 'os: browser (no local agents)', ...runtimes.map((r) => `${r.runtime}: installed=no`)].join('\n') };
+  },
+  onRuntimeSetupEvent: (callback) => {
+    setupListeners.add(callback);
+    return () => { setupListeners.delete(callback); };
+  },
   // No CLI to ask in a browser tab: no catalog, and no pretending there is one.
   listAccountModels: async () => ({ source: 'suggested' as const, models: [], detail: 'Esta vista previa no puede consultar los modelos de tu cuenta.' }),
   getAcpTierModels: async () => {

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import os from 'node:os';
-import type { AgentEvent, ChatEvent, CoordinationEvent, DecisionProposalInput } from '../shared/contracts';
+import type { AgentEvent, ChatEvent, CoordinationEvent, DecisionProposalInput, RuntimeSetupEvent } from '../shared/contracts';
 import { extractFencedBlocks } from './core/fenced';
 import { brandContextProtocolBlocks } from './workspace/brandContextProtocol';
 import { AccountStore } from './agents/accounts';
@@ -42,6 +42,10 @@ import { execFileRunner, type CommandRunner } from './runtime/commandRunner';
 import { RuntimeDetector } from './runtime/detect';
 import { loadPty, type PtyLoadResult } from './runtime/ptyLoader';
 import { TerminalManager } from './runtime/terminalManager';
+import nodeFs from 'node:fs';
+import { RuntimeSetupService } from './runtime/setup/runtimeSetup';
+import { childProcessLauncher, type ProcessLauncher } from './runtime/setup/processLauncher';
+import { knownInstallPaths, metaPins } from './runtime/setup/locate';
 import { LatteService } from './services/latteService';
 import { seedDemoIfEmpty } from './services/seed';
 import { prepareForMigration } from './storage/backup';
@@ -119,6 +123,22 @@ export interface BackendOptions {
    * aca solo se pasa.
    */
   appIcon?: string | null;
+  /** Onboarding sin terminal: a runtime install/login job changed. Optional so older harnesses keep working. */
+  emitRuntimeSetup?: (event: RuntimeSetupEvent) => void;
+  /**
+   * Tests: how installers are launched. The default is child_process; no test
+   * may ever run a real installer, so every test that installs passes a fake.
+   */
+  setupLaunch?: ProcessLauncher;
+  /**
+   * Whether a file exists, for the executables the official installers leave
+   * outside PATH. Default: the real disk, EXCEPT when a fake `runner` was
+   * injected — that backend is a test harness and must not "find" a CLI that
+   * happens to be installed on the developer's machine.
+   */
+  fileExists?: (target: string) => boolean;
+  /** The CPU architecture the installer targets (Hermes has no Intel macOS build). */
+  arch?: string;
 }
 
 export interface Backend {
@@ -196,7 +216,18 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
   const env = options.env ?? process.env;
 
   const terminal = new TerminalManager({ loadPty: options.loadPty ?? loadPty, emit: options.emit, env, platform });
-  const detector = new RuntimeDetector({ runner, terminalAvailability: () => terminal.availability(), platform, env });
+  const fileExists = options.fileExists ?? (options.runner ? () => false : (target: string) => { try { return nodeFs.existsSync(target); } catch { return false; } });
+  const pins = metaPins(repo);
+  const detector = new RuntimeDetector({
+    runner,
+    terminalAvailability: () => terminal.availability(),
+    platform,
+    env,
+    // Onboarding sin terminal: what Latte installed is found by absolute path, without waiting for PATH to refresh.
+    pinned: (provider) => pins.get(provider),
+    knownPaths: (provider) => knownInstallPaths(provider, env, platform, fileExists),
+    exists: fileExists,
+  });
 
   /**
    * Automatic mode: Latte answers the permission request instead of the human.
@@ -418,7 +449,34 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
   const locateEngram = () => locateExecutable(runner, 'engram', platform, env);
   const engram = new EngramClient({ runner, locate: locateEngram });
 
+  const setup = new RuntimeSetupService({
+    detector,
+    runner,
+    launch: options.setupLaunch ?? childProcessLauncher(undefined, platform),
+    terminal,
+    accounts,
+    codexLogin: async (accountId) => {
+      const start = await hub.startLogin('codex', accountId);
+      if (start.mode !== 'browser') throw new Error('Codex did not return a login URL');
+      return start.url;
+    },
+    openExternal: async (url) => {
+      if (!options.openExternal) throw new Error('No system browser available');
+      await options.openExternal(url);
+    },
+    pins,
+    exists: fileExists,
+    emit: (event) => options.emitRuntimeSetup?.(event),
+    cwd: paths.root,
+    platform,
+    arch: options.arch,
+    env,
+    appVersion: options.version,
+    log: options.log,
+  });
+
   const service = new LatteService({
+    setup,
     repo,
     learning,
     files,

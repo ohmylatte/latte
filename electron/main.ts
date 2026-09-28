@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
-import type { AgentEvent, ChatEvent, CoordinationEvent, InstallOutcome, UpdateState } from '../shared/contracts';
+import type { AgentEvent, ChatEvent, CoordinationEvent, InstallOutcome, RuntimeSetupEvent, UpdateState } from '../shared/contracts';
 import { createBackend, type Backend } from './bootstrap';
 import { errorMessage } from './core/errors';
 import { createFileLog } from './core/fileLog';
@@ -10,6 +10,7 @@ import {
   AGENT_EVENT_CHANNEL,
   CHAT_EVENT_CHANNEL,
   COORDINATION_EVENT_CHANNEL,
+  RUNTIME_SETUP_EVENT_CHANNEL,
   UPDATE_CHECK_CHANNEL,
   UPDATE_DOWNLOAD_CHANNEL,
   UPDATE_INSTALL_CHANNEL,
@@ -118,6 +119,7 @@ async function start(): Promise<void> {
       emit: emitAgentEvent,
       emitChat: emitChatEvent,
       emitCoordination: emitCoordinationEvent,
+      emitRuntimeSetup: emitRuntimeSetupEvent,
       chooseExportPath,
       chooseFolder,
       chooseFiles,
@@ -516,6 +518,12 @@ function emitChatEvent(event: ChatEvent): void {
 function emitCoordinationEvent(event: CoordinationEvent): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(COORDINATION_EVENT_CHANNEL, event);
+}
+
+/** Onboarding sin terminal: an install/login job moved. */
+function emitRuntimeSetupEvent(event: RuntimeSetupEvent): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(RUNTIME_SETUP_EVENT_CHANNEL, event);
 }
 
 async function chooseExportPath(suggestedFileName: string): Promise<string | null> {

@@ -22,7 +22,7 @@ import { rmSync as fsRmSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
 import type { CoordinationInjectionPlanner } from '../coordination/injection';
 import type { ConnectionInjectionPlanner } from '../connections/injection';
-import { NotFoundError, UnavailableError, ValidationError } from '../core/errors';
+import { NotFoundError, NotInstalledError, UnavailableError, ValidationError } from '../core/errors';
 import { newId } from '../core/ids';
 import type { ChatManager } from '../opencode/chatManager';
 import type { CommandRunner } from '../runtime/commandRunner';
@@ -296,10 +296,13 @@ export class AgentHub {
       const found = await this.deps.detector.resolve(runtime);
       const accounts = await this.deps.accounts.describe(runtime);
       let detail: string;
-      if (!found) detail = `${RUNTIME_LABEL[runtime]} no está instalado o no está en el PATH.`;
-      else if (runtime !== 'claude' && !this.adapterOrNull(runtime)) detail = `${RUNTIME_LABEL[runtime]} detectado, pero este build no incluye su adaptador de chat.`;
+      // Brief 2026-09-27: a missing runtime is a CODE the renderer turns into
+      // "Lo instalamos por vos", never a sentence about PATH. `detail` stays technical.
+      let code: AgentRuntimeInfo['code'];
+      if (!found) { detail = `${RUNTIME_LABEL[runtime]}: not installed`; code = 'not_installed'; }
+      else if (runtime !== 'claude' && !this.adapterOrNull(runtime)) { detail = `${RUNTIME_LABEL[runtime]} detectado, pero este build no incluye su adaptador de chat.`; code = 'adapter_missing'; }
       else detail = `${RUNTIME_LABEL[runtime]}${found.version ? ` ${found.version}` : ''} · ${found.executable}`;
-      out.push({ runtime, installed: Boolean(found), version: found?.version ?? null, detail, accounts });
+      out.push({ runtime, installed: Boolean(found), version: found?.version ?? null, detail, accounts, ...(code ? { code } : {}) });
     }
     return out;
   }
@@ -324,7 +327,7 @@ export class AgentHub {
     if (!AccountStore.isValidId(accountId)) throw new ValidationError('Invalid account id');
     if (managedOnly(runtime) && accountId === SYSTEM_ACCOUNT_ID) throw new ValidationError(`${RUNTIME_LABEL[runtime]} runs only with an account managed by Latte`);
     const found = await this.deps.detector.resolve(runtime);
-    if (!found) throw new UnavailableError(`${RUNTIME_LABEL[runtime]} is not installed or not on PATH`);
+    if (!found) throw new NotInstalledError(RUNTIME_LABEL[runtime]);
     const extraEnv = this.deps.accounts.envFor(runtime, accountId);
     if (runtime === 'codex' && this.deps.codex && 'startLogin' in this.deps.codex) {
       return (this.deps.codex as RuntimeAdapter & { startLogin(accountId: string): Promise<AccountLoginStart> }).startLogin(accountId);
@@ -351,7 +354,7 @@ export class AgentHub {
     // cuenta de Latte es el home entero, así que cerrar sesión es quitarla.
     if (runtime === 'hermes') throw new ValidationError('Hermes keeps one login per provider: remove this account from Latte to sign it out');
     const found = await this.deps.detector.resolve(runtime);
-    if (!found) throw new UnavailableError(`${RUNTIME_LABEL[runtime]} is not installed or not on PATH`);
+    if (!found) throw new NotInstalledError(RUNTIME_LABEL[runtime]);
     const env = { ...scrub(this.deps.env ?? process.env), ...this.deps.accounts.envFor(runtime, accountId) };
     const result = await this.deps.runner(found.executable, runtime === 'claude' ? ['auth', 'logout'] : ['logout'], { timeoutMs: 15_000, env });
     if (result.error || result.timedOut) throw new UnavailableError(`Could not log out: ${result.error ?? 'timed out'}`);

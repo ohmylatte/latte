@@ -17,6 +17,13 @@ export interface StartSessionInput {
   rows?: number;
   /** Extra environment for the agent (e.g. ENGRAM_PROJECT scoped to the brand). */
   extraEnv?: Record<string, string>;
+  /**
+   * In-process listener for a HIDDEN session (the browser login): Latte reads
+   * the output to capture the login URL. The renderer still gets the same
+   * events, so "Ver detalle" and the embedded-terminal fallback attach to the
+   * very same live session.
+   */
+  observer?: { onData?: (data: string) => void; onExit?: (exitCode: number) => void };
 }
 
 export interface TerminalManagerDeps {
@@ -119,12 +126,16 @@ export class TerminalManager {
 
     const live: LiveSession = { session, pty, disposables: [], exited: false };
     live.disposables.push(
-      pty.onData((data) => this.deps.emit({ sessionId: session.id, type: 'output', data })),
+      pty.onData((data) => {
+        this.deps.emit({ sessionId: session.id, type: 'output', data });
+        try { input.observer?.onData?.(data); } catch { /* an observer never breaks the terminal */ }
+      }),
       pty.onExit(({ exitCode, signal }) => {
         live.exited = true;
         this.cleanup(session.id);
         const suffix = signal ? ` (signal ${signal})` : '';
         this.deps.emit({ sessionId: session.id, type: 'exit', data: `${exitCode}${suffix}` });
+        try { input.observer?.onExit?.(exitCode); } catch { /* same */ }
       }),
     );
     this.sessions.set(session.id, live);

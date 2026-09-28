@@ -270,7 +270,7 @@ describe('LatteService validation', () => {
     const brand = await b.service.createBrand('Ok');
     const work = await b.service.createWork(brand.id, 'W');
     // notFoundRunner: no CLI on PATH -> clear message, no fake session.
-    await expect(b.service.startAgent(work.id, 'claude')).rejects.toThrow(/not installed or not on PATH/);
+    await expect(b.service.startAgent(work.id, 'claude')).rejects.toMatchObject({ code: 'NOT_INSTALLED' });
     const status = await b.service.runtimeStatus();
     expect(status.every((s) => s.available === false)).toBe(true);
     expect(b.events).toEqual([]);

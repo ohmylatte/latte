@@ -72,6 +72,12 @@ import type {
   Revision,
   RevisionSource,
   RuntimeStatus,
+  RuntimeDiagnostic,
+  RuntimeInstallJob,
+  RuntimeInstallState,
+  RuntimeLoginJob,
+  RuntimeSetupInfo,
+  RuntimeSetupJob,
   SaveOutcome,
   SkillCandidate,
   SkillPromoteInput,
@@ -103,13 +109,14 @@ import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 import { createHash } from 'node:crypto';
 import { writeFileAtomic } from '../core/atomicFile';
-import { LatteError, NotFoundError, UnavailableError, ValidationError } from '../core/errors';
+import { LatteError, NotFoundError, NotInstalledError, UnavailableError, ValidationError } from '../core/errors';
+import type { RuntimeSetupService } from '../runtime/setup/runtimeSetup';
 import { stripLeadingHeading } from '../../shared/markdown';
 import { wroteFile } from '../../shared/editTools';
 import { isValidId, newId, nowIso, slugify } from '../core/ids';
 import { WORK_FILES } from '../core/paths';
 import { EngramClient, memoryProjectFor } from '../memory/engram';
-import { AccountStore } from '../agents/accounts';
+import { AccountStore, managedOnly, SYSTEM_ACCOUNT_ID } from '../agents/accounts';
 import { isAccountRuntime, isChatRuntime, type AgentHub, type MemberContext } from '../agents/hub';
 import { acpTierModelDefaults, readAcpTierModels, writeAcpTierModel } from '../agents/acp/tierModels';
 import { CoordinationEngine, coordinationRequestMetaKey } from '../coordination/engine';
@@ -165,6 +172,7 @@ export type BackendApi = Omit<
   | 'onAgentEvent'
   | 'onChatEvent'
   | 'onCoordinationEvent'
+  | 'onRuntimeSetupEvent'
   | 'reportUnsaved'
   | 'windowControl'
   | 'onWindowState'
@@ -219,6 +227,8 @@ export interface LatteServiceDeps {
   pack?: InstructionPack | null;
   /** Opens an http(s) URL in the system browser (OAuth logins). */
   openExternal?: (url: string) => Promise<void>;
+  /** Onboarding sin terminal: install, browser login and diagnostic. Absent = those calls answer UNAVAILABLE. */
+  setup?: RuntimeSetupService;
   /** Why the storage engine was chosen (shown read-only in Settings). */
   engineReason?: string;
   /** The running app's version, sourced from `app.getVersion()`; tests pass a fixed string. */
@@ -2197,7 +2207,7 @@ export class LatteService implements BackendApi {
     const work = this.syncFromDisk(this.deps.repo.getWork(requireId(workId, 'workId')));
     const brand = this.deps.repo.getBrand(work.brandId);
     const runtime = await this.deps.detector.resolve(provider);
-    if (!runtime) throw new UnavailableError(`${provider} is not installed or not on PATH`);
+    if (!runtime) throw new NotInstalledError(provider);
     this.refreshInstructions(brand, work);
     return this.deps.terminal.start({
       workId: work.id,
@@ -2756,6 +2766,62 @@ export class LatteService implements BackendApi {
     await this.deps.hub.logout(runtime, accountId);
   }
 
+  // Onboarding sin terminal (brief 2026-09-27) ----------------------------------
+
+  async runtimeSetupCatalog(): Promise<RuntimeSetupInfo[]> {
+    return this.requireSetup().catalogInfo();
+  }
+
+  async detectRuntime(runtime: Provider): Promise<RuntimeInstallState> {
+    assertProvider(runtime);
+    return this.requireSetup().detect(runtime);
+  }
+
+  async startRuntimeInstall(runtime: Provider, options: { installPrereqs?: boolean } | null = null): Promise<RuntimeInstallJob> {
+    assertProvider(runtime);
+    if (options !== null && options !== undefined) {
+      if (typeof options !== 'object' || Array.isArray(options)) throw new TypeError('Invalid install options');
+      if (options.installPrereqs !== undefined && typeof options.installPrereqs !== 'boolean') throw new TypeError('Invalid installPrereqs');
+    }
+    return this.requireSetup().startInstall(runtime, options ? { installPrereqs: options.installPrereqs === true } : null);
+  }
+
+  async cancelRuntimeInstall(jobId: string): Promise<RuntimeInstallJob> {
+    return this.requireSetup().cancelInstall(requireId(jobId, 'jobId'));
+  }
+
+  async startBrowserLogin(runtime: AccountRuntimeName, accountId: string): Promise<RuntimeLoginJob> {
+    if (!isAccountRuntime(runtime)) throw new TypeError('Unknown runtime');
+    if (!AccountStore.isValidId(accountId)) throw new TypeError('Invalid account id');
+    if (managedOnly(runtime) && accountId === SYSTEM_ACCOUNT_ID) throw new ValidationError('This runtime runs only with an account managed by Latte');
+    return this.requireSetup().startLogin(runtime, accountId);
+  }
+
+  async reopenLoginUrl(jobId: string): Promise<RuntimeLoginJob> {
+    return this.requireSetup().reopenLogin(requireId(jobId, 'jobId'));
+  }
+
+  async cancelBrowserLogin(jobId: string): Promise<RuntimeLoginJob> {
+    return this.requireSetup().cancelLogin(requireId(jobId, 'jobId'));
+  }
+
+  async getRuntimeSetupJob(jobId: string): Promise<RuntimeSetupJob> {
+    return this.requireSetup().getJob(requireId(jobId, 'jobId'));
+  }
+
+  async getRuntimeSetupTranscript(jobId: string): Promise<string> {
+    return this.requireSetup().transcript(requireId(jobId, 'jobId'));
+  }
+
+  async diagnoseRuntimes(): Promise<RuntimeDiagnostic> {
+    return this.requireSetup().diagnose();
+  }
+
+  private requireSetup(): RuntimeSetupService {
+    if (!this.deps.setup) throw new UnavailableError('Runtime setup needs the desktop app');
+    return this.deps.setup;
+  }
+
   async listAccountModels(runtime: AccountRuntimeName, accountId: string): Promise<AgentModelList> {
     if (!isAccountRuntime(runtime)) throw new TypeError('Unknown runtime');
     if (!AccountStore.isValidId(accountId)) throw new TypeError('Invalid account id');
@@ -2856,6 +2922,8 @@ export class LatteService implements BackendApi {
     // Q7: el tick primero. Un barrido que arranque mientras la base se está
     // cerrando escribiría contra un repo muerto, y nada de lo que haga sirve ya.
     try { this.stopSweepTimer(); } catch { /* cerrar los recursos manda */ }
+    // Nothing hidden (an installer, a login terminal) outlives the app.
+    try { this.deps.setup?.shutdown(); } catch { /* same */ }
     // Antes de soltar los procesos: lo que quedó en vuelo se liquida acá, o
     // no se liquida nunca. Un fallo barriendo no puede impedir que la app
     // cierre sus recursos, así que se registra y se sigue.

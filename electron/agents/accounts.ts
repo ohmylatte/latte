@@ -212,7 +212,8 @@ export class AccountStore {
     return null;
   }
 
-  async status(runtime: AccountRuntime, executable: string, accountId: string): Promise<{ loggedIn: boolean; detail: string }> {
+  /** `displayName`: only what the runtime itself reports about the signed-in person (Claude: the account email). Shown in "Conectado como…", never exported. */
+  async status(runtime: AccountRuntime, executable: string, accountId: string): Promise<{ loggedIn: boolean; detail: string; displayName?: string | null }> {
     const env = { ...scrubEnv(this.env), ...this.envFor(runtime, accountId) };
     if (runtime === 'claude') {
       const result = await this.deps.runner(executable, ['auth', 'status', '--json'], { timeoutMs: this.timeoutMs, env });
@@ -221,7 +222,7 @@ export class AccountStore {
         const parsed = JSON.parse(result.stdout.trim()) as { loggedIn?: boolean; authMethod?: string; subscriptionType?: string; email?: string };
         if (!parsed.loggedIn) return { loggedIn: false, detail: 'Sin sesión iniciada' };
         const bits = [parsed.subscriptionType ? `Plan ${parsed.subscriptionType}` : null, parsed.authMethod ?? null, parsed.email ?? null].filter(Boolean);
-        return { loggedIn: true, detail: bits.join(' · ') || 'Sesión iniciada' };
+        return { loggedIn: true, detail: bits.join(' · ') || 'Sesión iniciada', displayName: typeof parsed.email === 'string' && parsed.email.length > 0 ? parsed.email : null };
       } catch {
         return { loggedIn: false, detail: result.code === 0 ? 'Respuesta no reconocida de Claude Code' : 'Sin sesión iniciada' };
       }

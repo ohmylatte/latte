@@ -29,6 +29,18 @@ export class UnavailableError extends LatteError {
   }
 }
 
+/**
+ * The runtime's CLI is not on this machine. A code, not a sentence: the
+ * renderer turns it into "Lo instalamos por vos" (brief 2026-09-27) instead of
+ * the old dead end about PATH.
+ */
+export class NotInstalledError extends LatteError {
+  constructor(runtime: string) {
+    super('NOT_INSTALLED', `${runtime} is not installed`);
+    this.name = 'NotInstalledError';
+  }
+}
+
 export class ConflictError extends LatteError {
   constructor(message: string) {
     super('CONFLICT', message);

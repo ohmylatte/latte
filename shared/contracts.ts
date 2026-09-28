@@ -486,7 +486,11 @@ export interface BrandContextSaveResult {
 }
 export interface AgentEvent { sessionId: string; type: 'output' | 'exit' | 'error'; data: string }
 export interface AgentSession { id: string; provider: Provider; workId: string }
-export interface RuntimeStatus { provider: Provider; available: boolean; detail: string }
+export interface RuntimeStatus {
+  provider: Provider; available: boolean; detail: string;
+  /** Why it is unavailable, as a code the renderer maps to copy. Absent when available. */
+  code?: RuntimeAvailabilityCode;
+}
 export interface MemoryResult { available: boolean; text: string }
 /** Read-only facts about this installation, shown in the Settings screen. */
 export interface AppInfo {
@@ -726,10 +730,148 @@ export type WorkPermissionMode = 'ask' | 'folder' | 'auto';
 
 /** What changing a conversation's model did. `session` is null when it was paused. */
 export interface MemberModelChange { member: TeamMember; session: ChatSession | null; resumed: boolean }
-export interface AgentRuntimeInfo { runtime: AccountRuntimeName; installed: boolean; version: string | null; detail: string; accounts: AgentAccount[] }
+export interface AgentRuntimeInfo {
+  runtime: AccountRuntimeName; installed: boolean; version: string | null; detail: string; accounts: AgentAccount[];
+  /** `not_installed` = offer "Lo instalamos por vos" (`startRuntimeInstall`). Absent when usable. */
+  code?: RuntimeAvailabilityCode;
+}
 export type AccountLoginStart =
   | { mode: 'terminal'; sessionId: string; instructions: string }
   | { mode: 'browser'; url: string; instructions: string };
+
+// --- Onboarding sin terminal (brief 2026-09-27) ------------------------------
+//
+// The main process installs and logs in the agent CLIs for the person. It never
+// sends copy: every state and failure is a CODE the renderer maps to its own
+// words, plus a short technical `detail` for the "Ver detalle" view. The full
+// transcript of a job is fetched on demand, never pushed as a message.
+
+/**
+ * The official install guide per runtime (plan B: "Probá con la guía oficial").
+ * Shared so the web preview can link them too; the install catalog
+ * (`electron/runtime/runtime-install-catalog.ts`) reads them from here.
+ */
+export const RUNTIME_GUIDE_URLS: Readonly<Record<Provider, string>> = {
+  claude: 'https://code.claude.com/docs/en/setup',
+  codex: 'https://github.com/openai/codex',
+  opencode: 'https://opencode.ai/docs/',
+  grok: 'https://docs.x.ai/build/overview',
+  hermes: 'https://hermes-agent.nousresearch.com/docs/getting-started/installation',
+};
+/** Why a runtime is shown as unusable. `not_installed` is the cue for "Lo instalamos por vos". */
+export type RuntimeAvailabilityCode = 'not_installed' | 'adapter_missing' | 'terminal_unavailable';
+/** Something a runtime needs before its own installer can run. */
+export type SetupPrereq = 'git_for_windows' | 'winget' | 'node';
+export type InstallFailureCode =
+  | 'blocked_by_policy'
+  | 'blocked_by_antivirus'
+  | 'network'
+  | 'prereq_missing'
+  /** Latte has no verified official command for this runtime/OS: the UI offers the official guide instead. */
+  | 'unverified_installer'
+  | 'unsupported_platform'
+  /** The installer said it finished but no working executable could be found afterwards. */
+  | 'not_found_after_install'
+  | 'timeout'
+  | 'unknown';
+/**
+ * One step of "Lo instalamos por vos". Terminal states: `found`, `not_found`,
+ * `needs_prereq`, `installed`, `failed`, `cancelled`.
+ */
+export type RuntimeInstallState =
+  | { state: 'detecting' }
+  | { state: 'found'; version: string | null; executable: string }
+  /** Only from `detectRuntime`: nothing installed. `canInstall` = Latte has a verified command for this OS. */
+  | { state: 'not_found'; canInstall: boolean; guideUrl: string }
+  /** Stops before installing. `canInstall`: Latte can install it (ask "¿Lo instalamos también?"); otherwise link + plan B. */
+  | { state: 'needs_prereq'; prereq: SetupPrereq; canInstall: boolean; guideUrl: string }
+  | { state: 'installing'; phase: 'prereq' | 'downloading' | 'checking' }
+  | { state: 'installed'; version: string | null; executable: string }
+  | { state: 'failed'; code: InstallFailureCode; detail: string; guideUrl: string }
+  | { state: 'cancelled' };
+export type LoginFailureCode =
+  | 'not_installed'
+  | 'terminal_unavailable'
+  /** The login process ended and the runtime's own status check says it is not logged in. */
+  | 'not_confirmed'
+  | 'timeout'
+  | 'unknown';
+/** Why the browser login falls back to the embedded terminal. Never a dead end: `sessionId` is live. */
+export type LoginTerminalReason =
+  /** No login URL Latte recognizes appeared in time (a new CLI version, a different flow). */
+  | 'url_not_recognized'
+  /** The runtime asks the person to choose something first (Hermes: provider and model). */
+  | 'needs_choice';
+export type RuntimeLoginState =
+  | { state: 'starting' }
+  /**
+   * `openedBy`: 'latte' opened it with the system browser; 'runtime' = the CLI said it opened it itself.
+   * `url` is null only when the CLI opened the browser without printing a URL Latte recognizes: hide "Abrir de nuevo" then.
+   */
+  | { state: 'browser_opened'; url: string | null; openedBy: 'latte' | 'runtime' }
+  /** Still not confirmed by the runtime's own status check after the browser opened. */
+  | { state: 'waiting'; url: string | null }
+  /** `displayName` only when the runtime reports one; may be an email the person chose. Never exported to the diagnostic. */
+  | { state: 'connected'; displayName: string | null }
+  | { state: 'needs_terminal'; reason: LoginTerminalReason; sessionId: string }
+  | { state: 'failed'; code: LoginFailureCode; detail: string }
+  | { state: 'cancelled' };
+export interface RuntimeInstallJob {
+  kind: 'install';
+  jobId: string;
+  runtime: Provider;
+  state: RuntimeInstallState;
+  /** False while something is still running (detecting, installing, verifying). */
+  done: boolean;
+}
+export interface RuntimeLoginJob {
+  kind: 'login';
+  jobId: string;
+  runtime: AccountRuntimeName;
+  accountId: string;
+  state: RuntimeLoginState;
+  done: boolean;
+  /** The hidden terminal running the login, for "Ver detalle" (attach with `onAgentEvent`/`writeAgent`). Null when the runtime logs in without one (Codex). */
+  sessionId: string | null;
+}
+export type RuntimeSetupJob = RuntimeInstallJob | RuntimeLoginJob;
+/** Pushed on every state change of an install or login job. */
+export type RuntimeSetupEvent = RuntimeSetupJob;
+/** What Latte knows how to do for one runtime on THIS machine's OS. */
+export interface RuntimeSetupInfo {
+  runtime: Provider;
+  /** Latte can run a verified official installer here. False = only the official guide. */
+  canInstall: boolean;
+  /** Latte can drive the login through the system browser (otherwise the embedded terminal). */
+  browserLogin: boolean;
+  /**
+   * Prerequisites on this OS. `required: false` = recommended (Git for Windows
+   * for Claude Code: optional per the official docs), never blocks; offer it
+   * before installing when `present` is false and `canInstall` is true, then
+   * pass `installPrereqs: true`.
+   */
+  prereqs: Array<{ prereq: SetupPrereq; required: boolean; present: boolean; canInstall: boolean; guideUrl: string }>;
+  guideUrl: string;
+  /** When the catalog entry for this OS was last checked against the official docs (YYYY-MM-DD). */
+  verifiedAt: string;
+}
+export interface RuntimeDiagnosticEntry {
+  runtime: Provider;
+  installed: boolean;
+  version: string | null;
+  /** Absolute path of the executable Latte uses; the home directory is shown as `~`. */
+  path: string | null;
+  /** Any account (managed or the system profile) logged in. `null` = does not apply (OpenCode keeps provider keys instead). */
+  loggedIn: boolean | null;
+  /** The last install/login failure code in this app session, if any. */
+  lastError: InstallFailureCode | LoginFailureCode | null;
+}
+export interface RuntimeDiagnostic {
+  generatedAt: string;
+  runtimes: RuntimeDiagnosticEntry[];
+  /** Plain text to copy for support. No tokens, no emails, no account names; the home directory is `~`. */
+  report: string;
+}
 export interface ChatPermission {
   id: string;
   permission: string;
@@ -1669,6 +1811,31 @@ export interface LatteAPI {
    * the Settings screen needs it, never on start.
    */
   listAccountModels(runtime: AccountRuntimeName, accountId: string): Promise<AgentModelList>;
+  // Onboarding sin terminal (brief 2026-09-27): install and log in for the person.
+  /** Per runtime, what Latte can do on this OS (verified installer, browser login, prerequisites, official guide). */
+  runtimeSetupCatalog(): Promise<RuntimeSetupInfo[]>;
+  /** "Ya lo hice, buscar de nuevo": a fresh detection, no install. Resolves to `found` or `not_found`. */
+  detectRuntime(runtime: Provider): Promise<RuntimeInstallState>;
+  /**
+   * Detect → prerequisites → official installer (hidden) → verify. Returns the
+   * job at once; progress arrives through `onRuntimeSetupEvent`. Stops at
+   * `needs_prereq` unless `installPrereqs` is true ("¿Lo instalamos también?").
+   * Already installed ends at `found` without installing anything.
+   */
+  startRuntimeInstall(runtime: Provider, options?: { installPrereqs?: boolean } | null): Promise<RuntimeInstallJob>;
+  cancelRuntimeInstall(jobId: string): Promise<RuntimeInstallJob>;
+  /** Browser login for a Latte-managed (or system) account, driven by Latte. Progress via `onRuntimeSetupEvent`. */
+  startBrowserLogin(runtime: AccountRuntimeName, accountId: string): Promise<RuntimeLoginJob>;
+  /** "Abrir de nuevo": opens the captured login URL again in the system browser. */
+  reopenLoginUrl(jobId: string): Promise<RuntimeLoginJob>;
+  cancelBrowserLogin(jobId: string): Promise<RuntimeLoginJob>;
+  /** The latest snapshot of an install or login job (after a remount, or to poll). */
+  getRuntimeSetupJob(jobId: string): Promise<RuntimeSetupJob>;
+  /** Everything the hidden process printed, ANSI stripped and size-bounded: the "Ver detalle" text. */
+  getRuntimeSetupTranscript(jobId: string): Promise<string>;
+  /** "¿Qué falta?": per runtime installed/version/path/logged in/last error, plus a copyable plain-text report. */
+  diagnoseRuntimes(): Promise<RuntimeDiagnostic>;
+  onRuntimeSetupEvent(callback: (event: RuntimeSetupEvent) => void): () => void;
   /** El modelo por nivel de esfuerzo de Grok y Hermes, como está en Ajustes, y los defaults de Latte para cada uno. */
   getAcpTierModels(): Promise<{ configured: AcpTierModels; defaults: AcpTierModels }>;
   /** Cambia el modelo de un nivel; `null` vuelve al default. Vale para las conversaciones que arranquen después. */

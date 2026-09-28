@@ -40,9 +40,9 @@ describe('RuntimeDetector', () => {
     expect(status).toEqual([
       { provider: 'claude', available: true, detail: expect.stringContaining('Claude Code 2.1.0 (Claude Code)') },
       { provider: 'codex', available: true, detail: expect.stringContaining('C:\\npm\\codex.cmd') },
-      { provider: 'opencode', available: false, detail: 'OpenCode not found on PATH' },
-      { provider: 'grok', available: false, detail: 'Grok not found on PATH' },
-      { provider: 'hermes', available: false, detail: 'Hermes not found on PATH' },
+      { provider: 'opencode', available: false, code: 'not_installed', detail: 'OpenCode not installed' },
+      { provider: 'grok', available: false, code: 'not_installed', detail: 'Grok not installed' },
+      { provider: 'hermes', available: false, code: 'not_installed', detail: 'Hermes not installed' },
     ]);
     expect((await detector.resolve('codex'))?.executable).toBe('C:\\npm\\codex.cmd');
     expect(runner.calls.every((c) => c.args.every((a) => !a.includes(';')))).toBe(true);

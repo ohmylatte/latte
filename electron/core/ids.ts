@@ -14,7 +14,9 @@ export type IdPrefix =
   // Conexiones MCP (esquema 13): una fila por cuenta con un servidor externo.
   | 'con'
   // El plantel de la marca (esquema 14): una persona que los trabajos convocan.
-  | 'bm';
+  | 'bm'
+  // Onboarding sin terminal: an install or login job (in memory only, never on disk).
+  | 'job';
 
 export function newId(prefix: IdPrefix): string {
   return `${prefix}_${randomBytes(10).toString('hex')}`;

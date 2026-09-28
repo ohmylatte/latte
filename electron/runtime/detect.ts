@@ -23,6 +23,11 @@ export interface RuntimeDetectorDeps {
   ttlMs?: number;
   lookupTimeoutMs?: number;
   versionTimeoutMs?: number;
+  /** The absolute executable Latte installed and verified (onboarding sin terminal). Tried first; a file that is gone is skipped. */
+  pinned?: (provider: Provider) => string | null;
+  /** The official installers' own locations that exist, for a PATH this process has not seen yet. Tried after PATH. */
+  knownPaths?: (provider: Provider) => string[];
+  exists?: (target: string) => boolean;
 }
 
 const WINDOWS_PREFERENCE = ['.exe', '.cmd', '.bat', ''];
@@ -64,13 +69,14 @@ export class RuntimeDetector {
       const found = resolved[i];
       const label = PROVIDER_LABEL[provider];
       if (!found) {
-        return { provider, available: false, detail: `${label} not found on PATH` };
+        return { provider, available: false, code: 'not_installed', detail: `${label} not installed` };
       }
       const version = found.version ? ` ${found.version}` : '';
       if (!terminal.available) {
         return {
           provider,
           available: false,
+          code: 'terminal_unavailable',
           detail: `${label}${version} found, but the terminal backend is unavailable: ${terminal.reason ?? 'unknown reason'}`,
         };
       }
@@ -98,10 +104,21 @@ export class RuntimeDetector {
   }
 
   private async detect(provider: Provider): Promise<ResolvedRuntime | null> {
-    const executable = await this.locate(provider);
+    const executable = this.pinnedExisting(provider) ?? await this.locate(provider) ?? this.knownExisting(provider);
     if (!executable) return null;
     const version = await this.readVersion(executable);
     return { provider, executable, version };
+  }
+
+  private pinnedExisting(provider: Provider): string | null {
+    const pinned = this.deps.pinned?.(provider) ?? null;
+    if (!pinned) return null;
+    const isAbsolute = this.platform === 'win32' ? path.win32.isAbsolute : path.posix.isAbsolute;
+    return isAbsolute(pinned) && (this.deps.exists?.(pinned) ?? false) ? pinned : null;
+  }
+
+  private knownExisting(provider: Provider): string | null {
+    return this.deps.knownPaths?.(provider)[0] ?? null;
   }
 
   private async locate(command: string): Promise<string | null> {

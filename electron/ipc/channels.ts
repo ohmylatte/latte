@@ -122,6 +122,16 @@ export const API_METHODS = [
   'startAccountLogin',
   'logoutAccount',
   'listAccountModels',
+  'runtimeSetupCatalog',
+  'detectRuntime',
+  'startRuntimeInstall',
+  'cancelRuntimeInstall',
+  'startBrowserLogin',
+  'reopenLoginUrl',
+  'cancelBrowserLogin',
+  'getRuntimeSetupJob',
+  'getRuntimeSetupTranscript',
+  'diagnoseRuntimes',
   'getAcpTierModels',
   'setAcpTierModel',
   'setTeamMemberModel',
@@ -270,6 +280,16 @@ export const API_ARITY: Record<ApiMethod, number> = {
   startAccountLogin: 2,
   logoutAccount: 2,
   listAccountModels: 2,
+  runtimeSetupCatalog: 0,
+  detectRuntime: 1,
+  startRuntimeInstall: 2,
+  cancelRuntimeInstall: 1,
+  startBrowserLogin: 2,
+  reopenLoginUrl: 1,
+  cancelBrowserLogin: 1,
+  getRuntimeSetupJob: 1,
+  getRuntimeSetupTranscript: 1,
+  diagnoseRuntimes: 0,
   getAcpTierModels: 0,
   setAcpTierModel: 3,
   setTeamMemberModel: 2,
@@ -298,6 +318,8 @@ export const AGENT_EVENT_CHANNEL = 'latte:agent-event';
 export const CHAT_EVENT_CHANNEL = 'latte:chat-event';
 /** sdd/autonomous-coordination, task 6.37: a run/task/dispatch/gate change, so the renderer can route an event from a Brand the person is not looking at. */
 export const COORDINATION_EVENT_CHANNEL = 'latte:coordination-event';
+/** Onboarding sin terminal: every state change of a runtime install or login job. */
+export const RUNTIME_SETUP_EVENT_CHANNEL = 'latte:runtime-setup-event';
 
 /**
  * Updates live outside API_METHODS on purpose: they are not backend
