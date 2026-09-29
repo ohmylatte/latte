@@ -2021,3 +2021,86 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .home-ideas .home-suggest{height:100%}
 .home-ideas .home-suggest-text strong{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .home-ideas .home-suggest-text small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 2.0 · ventana mínima */
+/* El piso es 1024 x 700 — una laptop con Windows al 125 %. El shell de tres
+   columnas le deja al contenido central 479 px de ancho y a la barra lateral
+   670 px de alto; a 1440 x 900 son 853 y 870. Por eso acá NADA se decide por
+   el viewport: ni el ancho de Inicio (la columna central no crece con la
+   ventana) ni el alto de la barra lateral. Ancho por CONTENIDO, alto por
+   ALTURA de ventana. Sólo tokens. */
+
+/* --- 1 · Inicio: la caja primero, las ideas de a una cuando no entran dos - */
+/* El contenedor es la columna central: es la que mide 479 a 1024 y 853 a 1440. */
+.workspace{container-type:inline-size}
+@container (max-width:840px){
+  .home-view{padding-left:var(--space-5);padding-right:var(--space-5)}
+  .home-start{grid-template-columns:minmax(0,1fr)}
+}
+/* Dos tarjetas de 220 + el gap de 12 = 452 de contenido, y el padding son 40. */
+@container (max-width:492px){
+  .home-suggests{grid-template-columns:minmax(0,1fr)}
+}
+
+/* --- 2 · Pestañas del trabajo: scrolleables y todas alcanzables ----------- */
+/* A 1024 las siete miden 720 px y el espacio son 479. Sin `flex-shrink:0` los
+   botones se encogen y el rótulo se parte en vez de scrollear; con el
+   scrollbar delgado se VE que hay más, y las flechas (con Tab, que sigue
+   llegando a cada una) recorren la tira entera. La tira vive de 42 px, así
+   que con scrollbar el botón cede su piso. */
+.tabs{overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-color:var(--rust-soft) transparent;scrollbar-width:thin}
+.tabs::-webkit-scrollbar{height:6px}
+.tabs::-webkit-scrollbar-track{background:transparent}
+.tabs::-webkit-scrollbar-thumb{background:var(--rust-soft);border-radius:var(--radius-pill)}
+.tabs>button:not(.icon-button){flex-shrink:0;min-height:0}
+/* La sombra de cada borde, pegada al borde del scroll y prendida sólo cuando
+   hay más pestañas de ese lado: es lo que hace visible que la tira sigue. */
+.tabs::before,.tabs::after{content:'';position:sticky;z-index:1;align-self:stretch;width:22px;flex:0 0 22px;pointer-events:none;opacity:0;transition:opacity var(--dur-fast)}
+.tabs::before{top:0;left:0;order:-1;margin-right:-22px;background:linear-gradient(to right,var(--paper),transparent)}
+.tabs::after{top:0;right:0;margin-left:-22px;background:linear-gradient(to left,var(--paper),transparent)}
+.tabs[data-edge-start]::before,.tabs[data-edge-end]::after{opacity:1}
+
+/* --- 3 · Barra lateral: lo de abajo siempre a la vista ------------------- */
+/* A 700 px de alto el bloque fijo + la lista pisaban los 670 de la barra y
+   "Ajustas" y el perfil quedaban fuera. Sólo puede encoger la lista de
+   trabajos — sigue con su piso, para que no desaparezca —, y para que entre
+   todo el ritmo vertical se aprieta sólo cuando la ventana es corta. */
+@media (max-height:760px){
+  .wordmark{margin-bottom:var(--space-2)}
+  .sidebar-add{margin:var(--space-1) 0 var(--space-2)}
+  .sidebar .nav-label{margin:var(--space-3) 10px var(--space-1)}
+  .sidebar>.sidebar-rule{margin:var(--space-1) 0}
+  /* La regla entre MARCA y TRABAJOS ya trae su margen: sin esto el label
+     siguiente vuelve a sumar el suyo encima (QA1 lo había sacado). */
+  .sidebar>.sidebar-rule+.nav-label{margin-top:0}
+  /* Las marcas archivadas abiertas tampoco pueden empujar el pie de vista. */
+  .sidebar>.archived-brands{flex-shrink:1;min-height:0;overflow-y:auto}
+  .sidebar-bottom{padding-top:var(--space-2);padding-bottom:var(--space-2)}
+  .sidebar-bottom .sidebar-rule{margin:var(--space-2) 0}
+  .sidebar .work-nav{min-height:48px}
+}
+
+/* --- 4 · Ficha del ADN y la vista del documento -------------------------- */
+/* La ficha en dos columnas con 439 px de contenido dejaba la tarjeta en 179 px
+   y el `.dna-grid` (mínimo 210) se salía del borde. El contenedor es la vista. */
+.dna-view{container-type:inline-size}
+@container (max-width:707px){
+  .dna-build{grid-template-columns:minmax(0,1fr)}
+}
+/* La lista de documentos reparte su alto en vez de desbordar y cortar el pie,
+   y su encabezado se parte antes de desbordar. Si el contenido fijo (filtros,
+   sugerencia, pie) no entra en el alto disponible, la columna scrollea en vez
+   de cortar lo de abajo. */
+.documents{grid-template-rows:minmax(0,1fr)}
+.doc-list>header{flex-wrap:wrap}
+.doc-list{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--rust-soft) transparent}
+
+/* --- 5 · "Traé tu marca": los dos caminos, como enlaces ------------------ */
+/* No son acciones de la pantalla: son los caminos que ya existían. Al lado del
+   pie, chicos y sin borde — el mismo tratamiento que "Recorrer el demo" del
+   paso de marca. */
+.dna-source-links{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-4);margin-top:var(--space-3)}
+.dna-source-links .subtle{margin-top:0;border-color:transparent;background:transparent;color:var(--muted);font-size:var(--text-sm);padding:var(--space-1) var(--space-2);min-height:var(--control-h-sm);gap:var(--space-2)}
+.dna-source-links .subtle:hover{border-color:transparent;background:var(--rust-wash);color:var(--rust)}
+.dna-source-links .subtle:disabled{background:transparent;border-color:transparent;color:var(--muted-soft)}
+

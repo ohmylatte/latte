@@ -6,6 +6,7 @@ import { EFFORT_TIERS, type AccountRuntimeName, type AcpRuntimeName, type AcpTie
 import { agentBus, api, isDesktop } from './browser-api';
 import { TerminalPane } from './TerminalPane';
 import { accountModelKey, selectedAccountModel, selectedProviderModel, validModelInput } from './provider-models';
+import { useConfirm } from './useConfirm';
 
 const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const RUNTIME_NAME: Record<AccountRuntimeName, string> = { claude: 'Claude Code', codex: 'Codex', grok: 'Grok', hermes: 'Hermes' };
@@ -82,6 +83,43 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
   const [code, setCode] = useState('');
   const [modelChoice, setModelChoice] = useState<Record<string, string>>({});
   const [catalogs, setCatalogs] = useState<Record<string, AgentModelList>>({});
+
+  /**
+   * 2.0: cerrar sesión, quitar una cuenta y desconectar un proveedor eran
+   * `window.confirm`. Ahora son diálogo de la app — mismo texto, y el botón
+   * con el nombre de la acción — y sólo escriben cuando la persona confirma.
+   */
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
+  const signOutAccount = async (rt: AgentRuntimeInfo, a: AgentAccount) => {
+    const ok = await askConfirm({
+      title: t('confirm.account.title'),
+      body: t('ui.auto.385', { p0: RUNTIME_NAME[rt.runtime], p1: a.label }),
+      confirmLabel: t('ui.auto.234'),
+      destructive: true,
+    });
+    if (!ok) return;
+    await run(() => api.logoutAccount(a.runtime, a.id), t('providers.loggedOut'));
+  };
+  const removeAccount = async (a: AgentAccount) => {
+    const ok = await askConfirm({
+      title: t('confirm.account.title'),
+      body: t('ui.auto.386', { p0: a.label }),
+      confirmLabel: t('confirm.account.remove'),
+      destructive: true,
+    });
+    if (!ok) return;
+    await run(() => api.removeAgentAccount(a.runtime, a.id), t('providers.profileRemoved'));
+  };
+  const disconnectProvider = async (p: ProviderInfo) => {
+    const ok = await askConfirm({
+      title: t('confirm.provider.title'),
+      body: t('ui.auto.389', { p0: p.name }),
+      confirmLabel: t('ui.auto.251'),
+      destructive: true,
+    });
+    if (!ok) return;
+    await run(() => api.disconnectProvider(p.id), t('providers.disconnected', { name: p.name }));
+  };
 
   /**
    * The real catalog, asked only here and never on start.
@@ -221,8 +259,8 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
             </div>
             <div className="provider-actions">
               {!a.loggedIn && <button className="primary" disabled={busy || Boolean(login && !login.ended)} onClick={() => startLogin(a)}><LogIn size={13} />{t('ui.auto.233')}</button>}
-              {a.loggedIn && a.runtime !== 'hermes' && <button disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.385', { p0: RUNTIME_NAME[rt.runtime], p1: a.label }))) void run(() => api.logoutAccount(a.runtime, a.id), t('providers.loggedOut')); }}><LogOut size={13} />{t('ui.auto.234')}</button>}
-              {!a.system && <button disabled={busy} aria-label={t('ui.auto.235')} title={t('ui.auto.235')} onClick={() => { if (window.confirm(t('ui.auto.386', { p0: a.label }))) void run(() => api.removeAgentAccount(a.runtime, a.id), t('providers.profileRemoved')); }}><Trash2 size={13} /></button>}
+              {a.loggedIn && a.runtime !== 'hermes' && <button disabled={busy} onClick={() => void signOutAccount(rt, a)}><LogOut size={13} />{t('ui.auto.234')}</button>}
+              {!a.system && <button disabled={busy} aria-label={t('ui.auto.235')} title={t('ui.auto.235')} onClick={() => void removeAccount(a)}><Trash2 size={13} /></button>}
             </div>
           </div>; })}
           {login && login.runtime === rt.runtime && <div className="chat-card login-card" role="group" aria-label={t('ui.auto.236')}>
@@ -259,7 +297,7 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
                 <button disabled={busy || !chosen || (isPrimary && primary?.model === `${p.id}/${chosen}`)} onClick={() => makePrimary({ runtime: 'opencode', model: `${p.id}/${chosen}`, accountId: null })}><Star size={13} />{t('ui.auto.384')}</button>
               </div>}
             </div>
-            <div className="provider-actions"><button disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.389', { p0: p.name }))) void run(() => api.disconnectProvider(p.id), t('providers.disconnected', { name: p.name })); }} title={t('providers.removeCredentials')}><Unplug size={14} />{t('ui.auto.251')}</button></div>
+            <div className="provider-actions"><button disabled={busy} onClick={() => void disconnectProvider(p)} title={t('providers.removeCredentials')}><Unplug size={14} />{t('ui.auto.251')}</button></div>
           </div>;
         })}
       </div>
@@ -296,5 +334,6 @@ export function ProvidersView({ onChanged, onNotice, onError }: { onChanged: () 
         </form>
       </div>}
     </section>
+    {confirmDialog}
   </div>;
 }

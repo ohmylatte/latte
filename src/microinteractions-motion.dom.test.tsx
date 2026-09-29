@@ -22,8 +22,13 @@ const css = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8');
 
 /** El bloque que agrupa lo nuevo de esta entrega. */
 const BLOCK = '/* Entrega 4 · microinteracciones */';
-/** El último bloque de entrega agregado a la hoja (las ideas del ADN, ronda 3). */
-const LAST_BLOCK = '/* ADN · ideas */';
+/**
+ * El último bloque de entrega agregado a la hoja (2.0 · ventana mínima). Cada
+ * entrega cierra la hoja con SU bloque, y la Entrega 4 dejó de ser la última
+ * cuando "ADN · interfaz" se agregó detrás; hoy el cierre lo hace el bloque
+ * de la ventana mínima.
+ */
+const LAST_BLOCK = '/* 2.0 · ventana mínima */';
 
 const GUARD = '@media (prefers-reduced-motion: reduce)';
 

@@ -27,6 +27,7 @@ import { taskTitle as taskTitleOf } from '../shared/taskTitle';
 import { TeamView } from './TeamView';
 import { useModalA11y } from './useModalA11y';
 import { ConfirmDialog } from './ConfirmDialog';
+import { useConfirm } from './useConfirm';
 
 /** A runtime the user can pick for a new member instead of the primary agent. */
 export interface RuntimeChoice { key: string; label: string; runtime: ChatRuntime; accountId: string | null }
@@ -320,6 +321,28 @@ export function TeamPanel(props: TeamPanelProps) {
   // TeamView's RunHeader) are wired to open this instead of calling
   // `onCancelCoordination` straight away.
   const [confirmCancelRunId, setConfirmCancelRunId] = useState<string | null>(null);
+  /**
+   * 2.0: "Conversación nueva" y "Quitar del equipo" eran `window.confirm` en
+   * el renglón del botón. Ahora el diálogo de la app pide confirmación con el
+   * MISMO texto y el botón nombrado con la acción; recién ahí se escribe.
+   */
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
+  const restartConfirmed = (member: TeamMember) => {
+    const name = roleLabel({ id: member.roleId, name: member.roleName });
+    void askConfirm({
+      title: t('confirm.member.title'),
+      body: t('ui.auto.401', { p0: name, p1: name }),
+      confirmLabel: t('ui.auto.272'),
+    }).then(ok => { if (ok) void props.onRestart(member.id); });
+  };
+  const removeConfirmed = (member: TeamMember, body: 'ui.auto.402' | 'ui.auto.405') => {
+    void askConfirm({
+      title: t('confirm.member.title'),
+      body: t(body, { p0: roleLabel({ id: member.roleId, name: member.roleName }) }),
+      confirmLabel: t('ui.auto.274'),
+      destructive: true,
+    }).then(ok => { if (ok) void props.onRemove(member.id); });
+  };
   const requestCancelCoordination = props.onCancelCoordination ? (runId: string) => setConfirmCancelRunId(runId) : undefined;
   /**
    * B3.1: EL MODO DE ESTA COLUMNA.
@@ -666,8 +689,8 @@ export function TeamPanel(props: TeamPanelProps) {
           <button className="icon-button" aria-label={t('continue.action')} title={t('continue.actionHelp')} disabled={busy || !isDesktop} onClick={() => setContinuing(selected.id)}><Forward size={13} /></button>
           {selectedLive && <button className="icon-button" aria-label={t('ui.auto.087')} title={t('ui.auto.270')} disabled={busy} onClick={() => void props.onPause(selected.id)}><Pause size={13} /></button>}
           {selectedStatus !== 'ended' && <button className="icon-button" aria-label={t('team.finish.label')} title={t('ui.auto.271')} disabled={busy} onClick={() => void props.onFinish(selected.id)}><CircleCheck size={13} /></button>}
-          <button className="icon-button" aria-label={t('ui.auto.272')} title={t('ui.auto.273')} disabled={busy} onClick={() => { const name = roleLabel({ id: selected.roleId, name: selected.roleName }); if (window.confirm(t('ui.auto.401', { p0: name, p1: name }))) void props.onRestart(selected.id); }}><MessageSquarePlus size={13} /></button>
-          <button className="icon-button" aria-label={t('ui.auto.274')} title={t('ui.auto.274')} disabled={busy} onClick={() => { if (window.confirm(t('ui.auto.402', { p0: roleLabel({ id: selected.roleId, name: selected.roleName }) }))) void props.onRemove(selected.id); }}><Trash2 size={13} /></button>
+          <button className="icon-button" aria-label={t('ui.auto.272')} title={t('ui.auto.273')} disabled={busy} onClick={() => restartConfirmed(selected)}><MessageSquarePlus size={13} /></button>
+          <button className="icon-button" aria-label={t('ui.auto.274')} title={t('ui.auto.274')} disabled={busy} onClick={() => removeConfirmed(selected, 'ui.auto.402')}><Trash2 size={13} /></button>
         </div>}
       </div>
       {selected && <MemberUsage member={selected} mode={mode} />}
@@ -684,6 +707,7 @@ export function TeamPanel(props: TeamPanelProps) {
         puede deshacer -- antes disparaba directo desde el botón. La confirmación
         dice la consecuencia en el mismo texto que ya usaba el tooltip. */}
     {confirmCancelRunId && <ConfirmDialog titleId="cancel-run-confirm-title" title={t('coordination.run.cancelConfirmTitle')} body={t('coordination.run.cancelHelp')} confirmLabel={t('coordination.run.cancel')} destructive busy={busy} onCancel={() => setConfirmCancelRunId(null)} onConfirm={() => { const runId = confirmCancelRunId; setConfirmCancelRunId(null); props.onCancelCoordination?.(runId); }} />}
+    {confirmDialog}
     {!work && <div className="agent-idle"><div className="agent-symbol"><MessageSquare size={27} /></div><h3>{t('ui.auto.276')}<br />{t('ui.auto.277')}</h3><p className="footnote">{t('ui.auto.278')}</p></div>}
     {!showPicker && selected && (liveChat ? <ChatPane key={liveChat.id} session={liveChat} mode={mode} onStop={() => void props.onPause(selected.id)} onError={props.onError} onSaveAsDocument={props.onSaveAsDocument} untracked={props.untracked} onAdoptFile={props.onAdoptFile} onAttachFiles={props.onAttachFiles} coordination={props.chatCoordination && { ...props.chatCoordination, formatTime: props.formatTime, onShowTeam: showTeam }} activation={{ pinnedBrief: work?.brief, onEditBrief: props.onEditBrief ? () => props.onEditBrief!(selected.id) : undefined, steps: props.activationSteps, workingDetail: props.activationWorkingDetail }} beforeComposer={<WorkPermissions mode={props.permissions} busy={props.permissionBusy} hasClaude={props.primaryRuntime === 'claude' || team.some(m => m.runtime === 'claude')} isDesktop={isDesktop} onChange={props.onPermissions} />} /> : <ResumeCard member={selected} origin={team.find(m => m.id === selected.continuedFrom) ?? null} busy={busy} isDesktop={isDesktop} onOpen={() => props.onOpen(selected.id)} onRestart={() => props.onRestart(selected.id)} onRemove={() => props.onRemove(selected.id)} onContinue={() => setContinuing(selected.id)} />)}
     {!showPicker && !selected && team.length > 0 && <p className="chat-empty">{t('ui.auto.279')}</p>}
@@ -863,18 +887,29 @@ const permissionLabel = (mode: WorkPermissionMode) => t(`permission.mode.${mode}
  * asking takes effect on the very next request.
  */
 export function WorkPermissions({ mode, busy, hasClaude, isDesktop, onChange }: { mode: WorkPermissionMode; busy: boolean; hasClaude: boolean; isDesktop: boolean; onChange: (mode: WorkPermissionMode) => void }) {
+  /**
+   * 2.0: pasar a automático avisaba con `window.confirm` y una tanda de
+   * frases separadas por saltos de línea. El diálogo de la app pone el título
+   * arriba y las mismas frases en el cuerpo, con el botón nombrado con la
+   * acción.
+   */
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
   const pick = (next: WorkPermissionMode) => {
     if (!canChangePermission(mode, next, busy, isDesktop)) return;
-    const warning = [
-      t('permission.auto.confirmTitle'),
+    if (next !== 'auto') return onChange(next);
+    const body = [
       t('permission.auto.confirmBody'),
       hasClaude ? t('permission.auto.claudeWarning') : '',
       t('permission.auto.confirmAction'),
     ].filter(Boolean).join('\n\n');
-    if (next === 'auto' && !window.confirm(warning)) return;
-    onChange(next);
+    void askConfirm({
+      title: t('permission.auto.confirmTitle'),
+      body,
+      confirmLabel: t('confirm.autoMode.action'),
+      destructive: true,
+    }).then(ok => { if (ok) onChange(next); });
   };
-  return <details className={'folder-trust mode-' + mode}>
+  return <>{confirmDialog}<details className={'folder-trust mode-' + mode}>
     <summary>
       {mode === 'ask' ? <FolderLock size={13} /> : mode === 'folder' ? <FolderCheck size={13} /> : <Zap size={13} />}
       <span><strong>{permissionLabel(mode)}</strong>{mode === 'auto' && <small>{t('permission.auto.once')}</small>}</span>
@@ -897,7 +932,7 @@ export function WorkPermissions({ mode, busy, hasClaude, isDesktop, onChange }: 
     </div>
     {!isDesktop && <p className="permission-preview" role="note">{t('permission.preview')}</p>}
     {mode === 'auto' && hasClaude && <p className="permission-warning">{t('permission.auto.activeWarning')}</p>}
-  </details>;
+  </details></>;
 }
 
 /**
@@ -1082,8 +1117,25 @@ function statusLabel(status: TeamMemberStatus, attention: boolean) {
 
 function ResumeCard({ member, origin, busy, isDesktop, onOpen, onRestart, onRemove, onContinue }: { member: TeamMember; origin: TeamMember | null; busy: boolean; isDesktop: boolean; onOpen: () => Promise<void>; onRestart: () => Promise<void>; onRemove: () => Promise<void>; onContinue: () => void }) {
   const [opening, setOpening] = useState(false);
+  /**
+   * 2.0: reiniciar y quitar pasaban por `window.confirm` en el renglón del
+   * botón; ahora piden confirmación con el diálogo de la app, con el mismo
+   * texto y el botón nombrado con la acción.
+   */
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
   const open = async () => { setOpening(true); try { await onOpen(); } finally { setOpening(false); } };
   const name = roleLabel({ id: member.roleId, name: member.roleName });
+  const restart = () => void askConfirm({
+    title: t('confirm.member.title'),
+    body: t('ui.auto.401', { p0: name, p1: name }),
+    confirmLabel: t('ui.auto.272'),
+  }).then(ok => { if (ok) void onRestart(); });
+  const remove = () => void askConfirm({
+    title: t('confirm.member.title'),
+    body: t('ui.auto.405', { p0: name }),
+    confirmLabel: t('ui.auto.274'),
+    destructive: true,
+  }).then(ok => { if (ok) void onRemove(); });
   return <div className="agent-idle team-resume">
     <Avatar className="team-resume-av" size="lg" name={name} roleId={member.roleId} params={avatarOfMember(member)} />
     <h3>{name}<br /><small>{member.label}</small>{origin && <small>{t('continue.from', { role: roleLabel({ id: origin.roleId, name: origin.roleName }) })}</small>}</h3>
@@ -1091,8 +1143,9 @@ function ResumeCard({ member, origin, busy, isDesktop, onOpen, onRestart, onRemo
     <button className="primary" disabled={busy || opening} onClick={() => void open()}>{opening ? <Loading size={16} /> : <Play size={15} />}{opening ? t('team.opening') : member.status === 'ended' ? t('ui.auto.288') : t('ui.auto.289')}</button>
     {/* A paused or finished member is where an exhausted account usually leaves you: continuing elsewhere belongs right here. */}
     <button className="subtle" title={t('continue.actionHelp')} disabled={busy || opening || !isDesktop} onClick={onContinue}><Forward size={13} />{t('continue.action')}</button>
-    <button className="subtle" disabled={busy || opening} onClick={() => { if (window.confirm(t('ui.auto.401', { p0: name, p1: name }))) void onRestart(); }}><MessageSquarePlus size={13} />{t('ui.auto.272')}</button>
-    <button className="subtle" disabled={busy || opening} onClick={() => { if (window.confirm(t('ui.auto.405', { p0: name }))) void onRemove(); }}><Trash2 size={13} />{t('ui.auto.274')}</button>
+    <button className="subtle" disabled={busy || opening} onClick={restart}><MessageSquarePlus size={13} />{t('ui.auto.272')}</button>
+    <button className="subtle" disabled={busy || opening} onClick={remove}><Trash2 size={13} />{t('ui.auto.274')}</button>
+    {confirmDialog}
   </div>;
 }
 
@@ -1267,7 +1320,23 @@ function ContinueDialog({ source, roles, choices, primaryLabel, primaryReady, pr
     : picked.runtime !== source.runtime && source.model ? t('continue.modelOtherRuntime', { model: source.model, runtime: RUNTIME_NAME[source.runtime] })
     : '';
 
-  const close = () => { if (opening) return; if (edited && !window.confirm(t('continue.leaveConfirm'))) return; onClose(); };
+  /**
+   * 2.0: salir con el traspaso editado, irse a los agentes y volver al borrador
+   * de Latte avisaban con `window.confirm`. Los tres pasan por el diálogo de la
+   * app con el MISMO texto y el botón nombrado con la acción. `confirmOpen`
+   * evita que Escape —que cierra ESTE diálogo— abra otro en su lugar.
+   */
+  const { confirm: askConfirm, dialog: confirmDialog, open: confirmOpen } = useConfirm();
+  const leaveFirst = (action: () => void) => {
+    if (!edited) return action();
+    void askConfirm({
+      title: t('confirm.handoff.title'),
+      body: t('continue.leaveConfirm'),
+      confirmLabel: t('confirm.handoff.action'),
+      destructive: true,
+    }).then(ok => { if (ok) action(); });
+  };
+  const close = () => { if (opening || confirmOpen) return; leaveFirst(onClose); };
   const submit = async () => {
     if (!ready || !picked) return;
     setOpening(true); setFailure('');
@@ -1278,7 +1347,7 @@ function ContinueDialog({ source, roles, choices, primaryLabel, primaryReady, pr
   // unsaved-edits confirm, so the hook's own `busy` gate stays off here.
   const dialogRef = useModalA11y<HTMLElement>(true, close, false);
 
-  return <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) close(); }}>
+  return <><div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) close(); }}>
     <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="continue-title" className="modal continuation">
       <div className="modal-head"><div><div className="document-kicker">{t('continue.kicker')}</div><h2 id="continue-title">{t('continue.title', { role: roleLabel({ id: source.roleId, name: source.roleName }) })}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={close}><X size={20} /></button></div>
       <div className="modal-body">
@@ -1306,7 +1375,7 @@ function ContinueDialog({ source, roles, choices, primaryLabel, primaryReady, pr
         {blocked && <div className="continuation-block" role="alert">
           <span><CircleAlert size={14} />{t('continue.blocked')}</span>
           <div className="chat-card-actions">
-            <button onClick={() => { if (!edited || window.confirm(t('continue.leaveConfirm'))) onProviders(); }}><Plug size={13} />{t('continue.providers')}</button>
+            <button onClick={() => leaveFirst(onProviders)}><Plug size={13} />{t('continue.providers')}</button>
             <button onClick={onRecheck}>{t('continue.recheck')}</button>
           </div>
         </div>}
@@ -1320,12 +1389,14 @@ function ContinueDialog({ source, roles, choices, primaryLabel, primaryReady, pr
         <div className="chat-card-actions">
           <button className="primary" disabled={!ready} onClick={() => void submit()}>{opening ? <Loading size={16} /> : <Forward size={15} />}{opening ? t('continue.opening') : t('continue.submit')}</button>
           <button disabled={opening} onClick={close}>{t('continue.cancel')}</button>
-          {edited && <button className="subtle" disabled={opening} onClick={() => { if (window.confirm(t('continue.resetConfirm'))) setText(draft ?? ''); }}>{t('continue.reset')}</button>}
+          {edited && <button className="subtle" disabled={opening} onClick={() => { void askConfirm({ title: t('confirm.handoff.resetTitle'), body: t('continue.resetConfirm'), confirmLabel: t('continue.reset'), destructive: true }).then(ok => { if (ok) setText(draft ?? ''); }); }}>{t('continue.reset')}</button>}
         </div>
         {!isDesktop && <small className="preview-note">{t('continue.preview')}</small>}
       </div>
     </section>
-  </div>;
+  </div>
+  {confirmDialog}
+  </>;
 }
 
 
