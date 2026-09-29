@@ -189,13 +189,13 @@ export interface BrandIdentityView {
  *
  * La identidad ESTRUCTURADA de una marca: lo que viaja a cada trabajo, lo que
  * el chequeo de marca compara y lo que aprende de las correcciones. Es un
- * motor: arranca de cero con fuentes (web, Instagram, archivos) o se
+ * motor: arranca de cero con fuentes (web, canales, archivos) o se
  * reconstruye con lo que la marca ya tiene (contexto, documentos aprobados,
  * decisiones, memoria, identidad), y crece con propuestas que la persona
  * aprueba. Cada dato dice de dónde salió; lo inferido sin fuente firme es un
  * supuesto y se marca como tal. Nunca se inventa un dato.
  */
-export type BrandDnaSourceKind = 'web' | 'instagram' | 'file' | 'context' | 'document' | 'decision' | 'memory' | 'identity' | 'correction' | 'human' | 'calendar';
+export type BrandDnaSourceKind = 'web' | 'instagram' | 'channel' | 'file' | 'context' | 'document' | 'decision' | 'memory' | 'identity' | 'correction' | 'human' | 'calendar';
 export interface BrandDnaSource {
   kind: BrandDnaSourceKind;
   /** Lo que ve la persona: "web · home", "brief-2026.pdf p.2", "decisión del 12 sep". Nunca una ruta. */
@@ -277,11 +277,18 @@ export interface BrandDnaProposal {
 export type BrandDnaBuildMode = 'sources' | 'existing' | 'ideas';
 export interface BrandDnaSourcesInput {
   url: string | null;
-  instagram: string | null;
+  /**
+   * OTROS CANALES: uno o varios links donde la marca ya publica (Instagram,
+   * LinkedIn, Google Business Profile, TikTok, YouTube, Facebook, X,
+   * Pinterest…). Cada entrada es un `https://…` o un `@usuario`, que se
+   * interpreta como Instagram. Ocho como máximo (`MAX_DNA_CHANNELS`, en
+   * `shared/channels.ts`); la forma se valida ahí, igual en las dos orillas.
+   */
+  channels: string[];
   /** Archivos ya importados al borrador de identidad (`addBrandIdentityFiles`) que el agente tiene que leer. */
   useIdentityFiles: boolean;
 }
-export type BrandDnaBuildStepKey = 'web' | 'instagram' | 'files' | 'context' | 'documents' | 'decisions' | 'memory' | 'compose';
+export type BrandDnaBuildStepKey = 'web' | 'channels' | 'files' | 'context' | 'documents' | 'decisions' | 'memory' | 'compose';
 export interface BrandDnaBuildStep { key: BrandDnaBuildStepKey; state: 'pending' | 'running' | 'done' | 'skipped' | 'failed'; detail: string | null }
 export interface BrandDnaBuildJob {
   jobId: string;

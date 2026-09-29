@@ -72,6 +72,12 @@ describe('E4: Marca → Identidad, por IPC', () => {
     brandId = brand.id;
     const work = await b.service.createWork(brand.id, 'Propuesta mayorista');
     workId = work.id;
+    // El equipo extrae la identidad en el ESPACIO INTERNO de la marca. En la
+    // app lo crea el primer pedido; acá se siembra sobre `workId` para poder
+    // prepararle el equipo. Crearlo y filtrarlo de las listas tienen SU archivo
+    // (`brand-workspace-work.test.ts`).
+    b.repo.setMeta(`brand_workspace_work:${brandId}`, workId);
+    b.repo.setMeta(`work_internal:${workId}`, '1');
     b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON);
     members = [];
     ({ send } = fakeCoordinationHub(b, members));

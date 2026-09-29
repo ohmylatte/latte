@@ -2104,3 +2104,19 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .dna-source-links .subtle:hover{border-color:transparent;background:var(--rust-wash);color:var(--rust)}
 .dna-source-links .subtle:disabled{background:transparent;border-color:transparent;color:var(--muted-soft)}
 
+/* ADN · canales */
+/* Otros canales: el campo es de varios renglones y la tarjeta toma el ancho de
+   la grilla —un link por renglón no vive en una celda de 230 px—. Cada canal
+   que ya se reconoce es una fila con su nombre propio y su link; lo que no
+   entra se ve distinto, para que nadie crea que lo pegó bien. */
+.dna-source-card.is-channels{grid-column:1/-1}
+.dna-channels{width:100%;min-height:96px;font-family:var(--mono);font-size:var(--text-sm);line-height:1.7;resize:vertical}
+.dna-channel-list{display:flex;flex-direction:column;gap:var(--space-2);margin:0;padding:0;list-style:none}
+.dna-channel-row{display:flex;align-items:center;gap:var(--space-2);min-width:0;padding:var(--space-1) var(--space-2);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--paper-deep)}
+.dna-channel-row svg{flex-shrink:0;color:var(--muted)}
+.dna-channel-name{font-family:var(--mono);flex-shrink:0;font-size:var(--text-sm);letter-spacing:.4px;color:var(--ink)}
+.dna-channel-value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:var(--text-sm);color:var(--muted)}
+.dna-channel-invalid{display:flex;align-items:center;gap:var(--space-2);min-width:0;font-size:var(--text-sm)}
+.dna-channel-invalid .dna-channel-name{color:var(--danger)}
+.dna-channels-note{margin:0;font-size:var(--text-sm);color:var(--muted)}
+

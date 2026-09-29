@@ -125,6 +125,7 @@ import { writeFileAtomic } from '../core/atomicFile';
 import { LatteError, NotFoundError, NotInstalledError, UnavailableError, ValidationError } from '../core/errors';
 import type { RuntimeSetupService } from '../runtime/setup/runtimeSetup';
 import { stripLeadingHeading } from '../../shared/markdown';
+import { MAX_DNA_CHANNELS, normalizeChannel } from '../../shared/channels';
 import { wroteFile } from '../../shared/editTools';
 import { isValidId, newId, nowIso, slugify } from '../core/ids';
 import { WORK_FILES } from '../core/paths';
@@ -221,7 +222,7 @@ function emptyRefreshReport(): BrandContextRefreshReport {
 }
 
 /** 1B: los ocho pasos de un build, en el orden en que los cuenta el contrato. */
-const DNA_BUILD_STEP_KEYS: readonly BrandDnaBuildStepKey[] = ['web', 'instagram', 'files', 'context', 'documents', 'decisions', 'memory', 'compose'];
+const DNA_BUILD_STEP_KEYS: readonly BrandDnaBuildStepKey[] = ['web', 'channels', 'files', 'context', 'documents', 'decisions', 'memory', 'compose'];
 
 function initialDnaSteps(mode: BrandDnaBuildMode): BrandDnaBuildStep[] {
   // 3: el modo ideas es una tarea liviana: un solo paso, el que existe de verdad.
@@ -747,7 +748,9 @@ export class LatteService implements BackendApi {
     const id = requireId(brandId, 'brandId');
     const brand = this.deps.repo.getBrand(id);
     const proposals = await this.listBrandContextProposals(id);
-    const works = this.deps.repo.listWorks(id);
+    // Inicio lee este estado: el contador, lo que está vivo y el dueño del
+    // contexto. Ninguno de los tres puede contar al espacio interno.
+    const works = this.userWorks(id);
     return {
       brandId: id,
       fingerprint: brandContextFingerprint(brand.context),
@@ -952,8 +955,9 @@ export class LatteService implements BackendApi {
     const running = this.activeDnaJob(brand.id);
     if (running) return this.dnaJobSnapshot(running.job);
 
-    const work = [...this.deps.repo.listWorks(brand.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-    if (!work) throw new ValidationError('Creá un trabajo en esta marca: el ADN se compone adentro de un trabajo');
+    // El ADN es lo GENERAL de la marca: se compone en SU espacio interno, no
+    // en el trabajo de campaña que tocó estar más reciente.
+    const work = await this.brandWorkspaceWork(brand);
 
     // C1: la huella del borrador AL ARRANCAR. Sin esta copia no hay forma de
     // saber, cuando llegue el reporte, qué campo tocó la persona en vuelo.
@@ -1004,7 +1008,7 @@ export class LatteService implements BackendApi {
             brandName: brand.name,
             mode,
             url: input.url,
-            instagram: input.instagram,
+            channels: input.channels,
             prepared,
             language: locale,
             today,
@@ -1232,25 +1236,48 @@ export class LatteService implements BackendApi {
   }
 
   /** Fuentes del build, validadas sin pitos ni flautas: forma estricta, nada de claves de más. */
-  private requireDnaSources(sources: BrandDnaSourcesInput | null, mode: BrandDnaBuildMode): { url: string | null; instagram: string | null; useIdentityFiles: boolean } {
+  private requireDnaSources(sources: BrandDnaSourcesInput | null, mode: BrandDnaBuildMode): { url: string | null; channels: string[]; useIdentityFiles: boolean } {
     if (sources === null || sources === undefined) {
-      if (mode === 'sources') throw new ValidationError('Decidí qué fuentes leer: URL, Instagram o los archivos del kit');
-      return { url: null, instagram: null, useIdentityFiles: false };
+      if (mode === 'sources') throw new ValidationError('Decidí qué fuentes leer: URL, canales o los archivos del kit');
+      return { url: null, channels: [], useIdentityFiles: false };
     }
     if (typeof sources !== 'object' || Array.isArray(sources)) throw new ValidationError('Invalid brand DNA sources');
     const record = sources as unknown as Record<string, unknown>;
-    const unknown = Object.keys(record).filter((key) => key !== 'url' && key !== 'instagram' && key !== 'useIdentityFiles');
+    const unknown = Object.keys(record).filter((key) => key !== 'url' && key !== 'channels' && key !== 'useIdentityFiles');
     if (unknown.length > 0) throw new ValidationError(`Unknown brand DNA source field: ${unknown.join(', ')}`);
     const url = record.url === null || record.url === undefined ? null : requireText(record.url, 'url', 2_000).trim();
     if (url !== null && !/^https?:\/\/\S+$/.test(url)) throw new ValidationError('La URL tiene que empezar por http:// o https://');
-    const rawInstagram = record.instagram === null || record.instagram === undefined ? null : requireLabel(record.instagram, 'Instagram', 100);
-    const instagram = rawInstagram ? rawInstagram.replace(/^@+/, '') : null;
+    const channels = this.requireChannels(record.channels);
     const useIdentityFiles = record.useIdentityFiles === undefined ? false : record.useIdentityFiles;
     if (typeof useIdentityFiles !== 'boolean') throw new ValidationError('useIdentityFiles must be a boolean');
-    if (mode === 'sources' && !url && !instagram && !useIdentityFiles) {
-      throw new ValidationError('Elegí al menos una fuente: URL, Instagram o los archivos del kit');
+    if (mode === 'sources' && !url && channels.length === 0 && !useIdentityFiles) {
+      throw new ValidationError('Elegí al menos una fuente: URL, canales o los archivos del kit');
     }
-    return { url, instagram, useIdentityFiles };
+    return { url, channels, useIdentityFiles };
+  }
+
+  /**
+   * OTROS CANALES: ocho como máximo y cada uno un link http(s) o un
+   * `@usuario` (Instagram). La forma la decide `shared/channels.ts`, el mismo
+   * archivo que usa la tarjeta para mostrar cada canal: una sola regla en las
+   * dos orillas.
+   */
+  private requireChannels(value: unknown): string[] {
+    if (value === null || value === undefined) return [];
+    if (!Array.isArray(value)) throw new ValidationError('Los canales tienen que ser una lista de links');
+    if (value.length > MAX_DNA_CHANNELS) throw new ValidationError(`Hasta ${MAX_DNA_CHANNELS} canales por build`);
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const [index, raw] of value.entries()) {
+      if (typeof raw !== 'string') throw new ValidationError(`canal[${index}] tiene que ser texto`);
+      const channel = normalizeChannel(raw);
+      if (channel === null) throw new ValidationError(`El canal "${raw.trim().slice(0, 80)}" no es un link ni un @usuario`);
+      const key = channel.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(channel);
+    }
+    return out;
   }
 
   /**
@@ -1275,18 +1302,21 @@ export class LatteService implements BackendApi {
     record: DnaJobRecord,
     brand: Brand,
     work: Work,
-    sources: { url: string | null; instagram: string | null; useIdentityFiles: boolean },
+    sources: { url: string | null; channels: string[]; useIdentityFiles: boolean },
   ): void {
     const job = record.job;
     if (job.mode === 'sources') {
       const note = 'Modo fuentes: el material existente no entra en este build';
       for (const key of ['context', 'documents', 'decisions', 'memory'] as const) setDnaStep(job, key, 'skipped', note);
       setDnaStep(job, 'web', sources.url ? 'pending' : 'skipped', sources.url ? `El agente tiene que leer ${sources.url}` : 'Sin URL para leer');
-      setDnaStep(job, 'instagram', sources.instagram ? 'pending' : 'skipped', sources.instagram ? `El agente tiene que leer el perfil público @${sources.instagram}` : 'Sin cuenta de Instagram');
+      setDnaStep(job, 'channels', sources.channels.length > 0 ? 'pending' : 'skipped',
+        sources.channels.length > 0
+          ? `El agente tiene que leer ${sources.channels.length === 1 ? 'el canal' : `${sources.channels.length} canales`}: ${sources.channels.join(' · ')}`
+          : 'Sin canales para leer');
     } else {
-      const note = 'Modo material existente: no se lee la web ni Instagram en este build';
+      const note = 'Modo material existente: no se lee la web ni los canales en este build';
       setDnaStep(job, 'web', 'skipped', note);
-      setDnaStep(job, 'instagram', 'skipped', note);
+      setDnaStep(job, 'channels', 'skipped', note);
     }
 
     const workDir = this.deps.files.workDir(brand.id, work.id);
@@ -1429,7 +1459,7 @@ export class LatteService implements BackendApi {
       ? `Today: ${fullDateLabel(today, locale)}.\nCountry: ${countryLabel(country, locale)} (${country === 'AR' ? 'southern' : 'northern'} hemisphere).\nSeason: ${seasonLabel(season, locale)}.`
       : `Hoy: ${fullDateLabel(today, locale)}.\nPaís: ${countryLabel(country, locale)} (hemisferio ${country === 'AR' ? 'sur' : 'norte'}).\nEstación: ${seasonLabel(season, locale)}.`);
 
-    const works = [...this.deps.repo.listWorks(brand.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10);
+    const works = [...this.userWorks(brand.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10);
     const workLines = works.length > 0
       ? works.map((other) => `- ${other.updatedAt.slice(0, 10)} · ${other.title}`)
       : [en ? '- None yet.' : '- Ninguno todavía.'];
@@ -1692,8 +1722,8 @@ export class LatteService implements BackendApi {
     const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
     const sources = this.branding.identitySources(brand.id);
     if (sources.length === 0) throw new ValidationError('Agregá el logo o los manuales antes de pedirle la identidad al equipo');
-    const work = [...this.deps.repo.listWorks(brand.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-    if (!work) throw new ValidationError('Creá un trabajo en esta marca: el equipo extrae la identidad adentro de un trabajo');
+    // Igual que el ADN: la identidad es de la marca, no de un trabajo.
+    const work = await this.brandWorkspaceWork(brand);
     const workDir = this.deps.files.workDir(brand.id, work.id);
     const target = nodePath.join(workDir, DRAFTS_DIR, IDENTITY_DIR, 'fuentes');
     nodeFs.mkdirSync(target, { recursive: true });
@@ -1757,10 +1787,56 @@ export class LatteService implements BackendApi {
 
   // Works -------------------------------------------------------------------
 
+  /**
+   * EL ESPACIO INTERNO DE LA MARCA.
+   *
+   * El ADN —y la identidad, y las ideas— es lo GENERAL de la marca: no puede
+   * depender de que exista un trabajo, ni componerse "adentro" de un trabajo
+   * de campaña cualquiera. Cuando una tarea de marca necesita un trabajo,
+   * Latte usa ESTE: UNO por marca, buscado por su meta `brand_workspace_work`
+   * (así sobrevive a un reinicio) y marcado como interno.
+   *
+   * Para el equipo es un trabajo más —carpeta propia, equipo, coordinación, el
+   * despacho al revisor—; para la persona NO aparece en ninguna lista
+   * (`userWorks` es el único filtro y lo usan todas las listas).
+   */
+  private async brandWorkspaceWork(brand: Brand): Promise<Work> {
+    const key = `brand_workspace_work:${brand.id}`;
+    const known = this.deps.repo.getMeta(key);
+    if (known) {
+      try {
+        const work = this.deps.repo.getWork(known);
+        if (work.brandId === brand.id) return work;
+      } catch { /* puntero huérfano (trabajo borrado): se vuelve a crear */ }
+    }
+    const locale = await this.dnaContentLocale(brand.id);
+    const title = locale === 'en-US' ? `Brand workspace of ${brand.name}` : `Espacio de marca de ${brand.name}`;
+    const work = await this.createWork(brand.id, title);
+    this.deps.repo.transaction(() => {
+      this.deps.repo.setMeta(`work_internal:${work.id}`, '1');
+      this.deps.repo.setMeta(key, work.id);
+    });
+    return work;
+  }
+
+  /** El espacio interno no es un trabajo de la persona: no entra en sus listas. */
+  private isInternalWork(workId: string): boolean {
+    return this.deps.repo.getMeta(`work_internal:${workId}`) === '1';
+  }
+
+  /**
+   * Los trabajos de la marca QUE SE LE MUSTRAN. Toda lista que la persona mira
+   * —barra lateral, contador TRABAJOS, "continuar donde lo dejaste", Primeros
+   * pasos, catálogo de Inicio, Contexto— sale de acá.
+   */
+  private userWorks(brandId: string): Work[] {
+    return this.deps.repo.listWorks(brandId).filter((work) => !this.isInternalWork(work.id));
+  }
+
   async listWorks(brandId: string): Promise<Work[]> {
     const id = requireId(brandId, 'brandId');
     this.deps.repo.getBrand(id);
-    return this.deps.repo.listWorks(id).map((work) => this.syncFromDisk(work));
+    return this.userWorks(id).map((work) => this.syncFromDisk(work));
   }
 
   async createWork(brandId: string, title: string): Promise<Work> {
@@ -3108,7 +3184,9 @@ export class LatteService implements BackendApi {
       return !seen || run.updatedAt > seen;
     });
     const runs = [...this.deps.repo.listActiveCoordinationRuns(), ...finished].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return runs.map((run) => {
+    // La tira de la barra lateral y "desde tu última visita" cuentan TRABAJOS
+    // de la persona: el espacio interno de la marca no es uno de ellos.
+    return runs.filter((run) => !this.isInternalWork(run.workId)).map((run) => {
       const work = this.deps.repo.getWork(run.workId);
       const brand = this.deps.repo.getBrand(work.brandId);
       // Lectura TOLERANTE POR FILA (crítico 4): un `budget_json` ilegible en
@@ -4229,7 +4307,7 @@ export class LatteService implements BackendApi {
    * brand. Called from refreshInstructions so every new/opened agent gets it.
    */
   private loadBrandMemory(brand: Brand, work: Work): BrandMemorySnapshot {
-    const sources = this.deps.repo.listWorks(brand.id)
+    const sources = this.userWorks(brand.id)
       .filter((other) => other.id !== work.id)
       .map((other) => ({
         work: other,
