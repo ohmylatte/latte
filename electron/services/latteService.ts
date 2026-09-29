@@ -1692,7 +1692,7 @@ export class LatteService implements BackendApi {
     const file = nodePath.join(this.deps.files.workDir(work.brandId, work.id), DRAFTS_DIR, DNA_DRAFT_DIR, DNA_IDEAS_JSON);
     try {
       if (!nodeFs.existsSync(file)) return;
-      const ideas = requireBrandDnaIdeas(parseDnaBuildJson(readDnaFile(file), record.job.jobId, DNA_IDEAS_JSON));
+      const ideas = requireBrandDnaIdeas(parseDnaBuildJson(readDnaFile(file), record.job.jobId, DNA_IDEAS_JSON), this.clock().slice(0, 10));
       this.deps.repo.saveDnaIdeas(work.brandId, ideas, this.clock());
     } catch (error) {
       this.deps.log?.(`[latte] ideas ignored (job=${record.job.jobId}): ${error instanceof Error ? error.message : String(error)}`);
@@ -1709,7 +1709,7 @@ export class LatteService implements BackendApi {
     if (this.brandArchivedDuringBuild(work.brandId, record)) return;
     const file = nodePath.join(this.deps.files.workDir(work.brandId, work.id), DRAFTS_DIR, DNA_DRAFT_DIR, DNA_IDEAS_JSON);
     try {
-      const ideas = requireBrandDnaIdeas(parseDnaBuildJson(readDnaFile(file), record.job.jobId, DNA_IDEAS_JSON));
+      const ideas = requireBrandDnaIdeas(parseDnaBuildJson(readDnaFile(file), record.job.jobId, DNA_IDEAS_JSON), this.clock().slice(0, 10));
       this.deps.repo.saveDnaIdeas(work.brandId, ideas, this.clock());
       setDnaStep(record.job, 'compose', 'done', `${ideas.length} ideas guardadas`);
       this.finishDnaJob(record, 'updated', null);

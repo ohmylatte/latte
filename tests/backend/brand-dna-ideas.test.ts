@@ -97,6 +97,13 @@ describe('IDEAS.json · forma estricta', () => {
     });
   }
 
+  it('una idea sin fecha toma la de hoy cuando Latte la sabe; sin hoy, sigue siendo inválida', () => {
+    const { createdAt: _drop, ...undated } = IDEAS.ideas[0];
+    expect(requireBrandDnaIdeas(clone({ ideas: [undated] }), '2026-09-29')[0]!.createdAt).toBe('2026-09-29');
+    expect(() => requireBrandDnaIdeas(clone({ ideas: [undated] }))).toThrow(ValidationError);
+    expect(() => requireBrandDnaIdeas(clone({ ideas: [{ ...IDEAS.ideas[0], createdAt: 'ayer' }] }), '2026-09-29'), 'una fecha que viene mal sigue mal').toThrow(ValidationError);
+  });
+
   it('cero ideas es válido: si no hay base, no hay idea', () => {
     expect(requireBrandDnaIdeas({ ideas: [] })).toEqual([]);
   });
@@ -307,6 +314,21 @@ describe('ADN · el build de ideas', () => {
     expect(view.draft!.audience!.value).toBe('Mayoristas que compran por volumen.');
     expect(view.ideas.map((idea) => idea.id)).toEqual(['lanzamiento-otonio', 'tono-posts']);
     expect(view.ideasUpdatedAt).toBeTruthy();
+  });
+
+  /** Prueba de escritorio: cuatro ideas buenas sin `createdAt` se perdían enteras. */
+  it('las ideas que el agente escribió sin fecha se guardan con la de hoy', async () => {
+    await restartWithAi();
+    coordinationOn();
+    const job = await b.service.buildBrandDna(brandId, 'existing', null);
+    const task = await dispatchedTask(job.jobId);
+    writeDna(job.jobId, ADN_FIELDS);
+    writeIdeas(job.jobId, { ideas: IDEAS.ideas.map(({ createdAt: _drop, ...idea }) => idea) });
+    expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Listo.', files: [ADN_REL, IDEAS_REL] }, worker().id)).ok).toBe(true);
+
+    const view = await b.service.readBrandDna(brandId);
+    expect(view.ideas.map((idea) => idea.id)).toEqual(['lanzamiento-otonio', 'tono-posts']);
+    expect(view.ideas.every((idea) => /^\d{4}-\d{2}-\d{2}$/.test(idea.createdAt))).toBe(true);
   });
 
   it('un build normal sin IDEAS.json deja las ideas como estaban', async () => {

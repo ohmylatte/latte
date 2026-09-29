@@ -311,8 +311,13 @@ const IDEA_WORK_TYPE = /^[a-z][a-z0-9-]{0,63}$/;
  * 3: la forma EXACTA del `IDEAS.json`, con la misma vara que `ADN.json`.
  * Cuatro como máximo, `workTypeId` con forma de id del catálogo, fechas con
  * forma de fecha, y `basedOn` SIN VACÍO: una idea sin base no se guarda.
+ *
+ * `createdAt` lo puede poner Latte: con `today`, una idea sin fecha toma la de
+ * hoy en vez de tirar el archivo entero. En la prueba de escritorio el agente
+ * escribió cuatro ideas buenas sin fecha y se perdieron todas por eso. Una
+ * fecha que SÍ viene y está mal sigue rechazándose.
  */
-export function requireBrandDnaIdeas(raw: unknown): BrandDnaIdea[] {
+export function requireBrandDnaIdeas(raw: unknown, today?: string): BrandDnaIdea[] {
   const record = requireObject(raw, 'IDEAS.json');
   requireKeys(record, ['ideas'], 'IDEAS.json');
   if (!Array.isArray(record.ideas)) throw new ValidationError('IDEAS.json ideas must be an array');
@@ -320,7 +325,8 @@ export function requireBrandDnaIdeas(raw: unknown): BrandDnaIdea[] {
   const seen = new Set<string>();
   return record.ideas.map((value, index) => {
     const idea = requireObject(value, `ideas[${index}]`);
-    requireKeys(idea, ['id', 'title', 'why', 'workTypeId', 'basedOn', 'createdAt'], `ideas[${index}]`);
+    const dated = today && (idea.createdAt === undefined || idea.createdAt === null) ? { ...idea, createdAt: today } : idea;
+    requireKeys(dated, ['id', 'title', 'why', 'workTypeId', 'basedOn', 'createdAt'], `ideas[${index}]`);
     const id = cleanLine(idea.id, `ideas[${index}].id`, 64);
     if (seen.has(id)) throw new ValidationError(`IDEAS.json has a duplicate idea id: ${id}`);
     seen.add(id);
@@ -337,7 +343,7 @@ export function requireBrandDnaIdeas(raw: unknown): BrandDnaIdea[] {
       }
       return { kind: item.kind as BrandDnaSourceKind, label: cleanText(item.label, `ideas[${index}].basedOn[${position}].label`, 200) };
     });
-    const createdAt = cleanText(idea.createdAt, `ideas[${index}].createdAt`, 40);
+    const createdAt = cleanText(dated.createdAt, `ideas[${index}].createdAt`, 40);
     if (!IDEA_DATE.test(createdAt)) throw new ValidationError(`ideas[${index}].createdAt must be a date (YYYY-MM-DD)`);
     return {
       id,
