@@ -10,6 +10,7 @@ import { SkillsView } from './SkillsView';
 import { ConnectionsView } from './ConnectionsView';
 import { useI18n } from './i18n';
 import type { LatteMode } from './TeamPanel';
+import { useConfirm } from './useConfirm';
 
 export type SettingsSection = 'agents' | 'profiles' | 'skills' | 'connections' | 'workspace' | 'language' | 'advanced';
 
@@ -43,13 +44,22 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
 }) {
   const { t } = useI18n();
   const [profileDirty,setProfileDirty]=useState(false);
-  const canLeave=()=>!profileDirty||window.confirm(t('settings.unsavedProfile'));
-  const navigate=(next:SettingsSection)=>{if(next===section)return;if(canLeave()){setProfileDirty(false);onSection(next);}};
+  /**
+   * 2.0: salir de un perfil con cambios sin guardar era `window.confirm`, un
+   * diálogo nativo que el teclado no puede operar. El guardado recibe la
+   * acción y la corre recién cuando la persona confirma.
+   */
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
+  const canLeave=(action:()=>void)=>{
+    if(!profileDirty)return action();
+    void askConfirm({title:t('confirm.leave.title'),body:t('settings.unsavedProfile'),confirmLabel:t('confirm.leave.action'),destructive:true}).then(ok=>{if(ok)action();});
+  };
+  const navigate=(next:SettingsSection)=>{if(next===section)return;canLeave(()=>{setProfileDirty(false);onSection(next);});};
   useEffect(()=>{onProfileDirtyChange(profileDirty);},[profileDirty]);
   useEffect(()=>()=>onProfileDirtyChange(false),[]);
   return <div className="settings-shell">
     <header className="settings-topbar">
-      <button className="settings-back" onClick={()=>{if(canLeave())onClose();}}><ArrowLeft size={16} />{t('settings.back')}</button>
+      <button className="settings-back" onClick={()=>canLeave(()=>onClose())}><ArrowLeft size={16} />{t('settings.back')}</button>
       <h1>{t('settings.title')}</h1>
       <span className="settings-scope">{t('settings.scope')}</span>
       {controls}
@@ -76,6 +86,7 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       {section === 'language' && <LanguageSection />}
       {section === 'advanced' && <><ModeSection mode={mode} onModeChange={onModeChange} /><CoordinationSwitchSection onError={onError} /><CoordinationGlobalBudgetSection onError={onError} /></>}
     </main>
+    {confirmDialog}
   </div>;
 }
 

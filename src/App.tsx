@@ -25,6 +25,8 @@ import { KnowledgeScopeFilter } from './KnowledgeScope';
 import { ContextView } from './ContextView';
 import { BrandMenu } from './BrandMenu';
 import { ConfirmDialog } from './ConfirmDialog';
+import { useConfirm } from './useConfirm';
+import { tabsKeyDown } from './workspace-tabs';
 import { BrandTeamView } from './BrandTeamView';
 import { IdentityView } from './IdentityView';
 import { BrandDnaView as BrandDnaScreen } from './BrandDnaView';
@@ -775,7 +777,39 @@ export function App() {
     });
   };
   const transitioning = busy || starting || startingChat;
-  const guard = () => !transitioning && (!(dirty || contextDirty) || window.confirm(t('ui.auto.003')));
+  /**
+   * 2.0 · el aviso de "cambios sin guardar": era `window.confirm`, un diálogo
+   * nativo que bloquea el hilo y que nadie puede operar con teclado. El
+   * guardado ya no decide EN el renglón: recibe la acción y la corre recién
+   * cuando la persona confirma, con el mismo texto de siempre.
+   */
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
+  /**
+   * 2.0 · la tira de pestañas scrollea, y el scroll tiene que verse: la sombra
+   * del borde se prende sólo cuando hay más para ese lado (se mide en cada
+   * render, no hace falta estado de React para esto). Sin esto, en una ventana
+   * donde el scrollbar nativo no se dibuja, no hay forma de saber que Decisiones
+   * y Resultados están a la derecha.
+   */
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+  const syncTabEdges = () => {
+    const strip = tabsRef.current;
+    if (!strip) return;
+    const room = strip.scrollWidth - strip.clientWidth;
+    strip.toggleAttribute('data-edge-start', strip.scrollLeft > 1);
+    strip.toggleAttribute('data-edge-end', room > 0 && strip.scrollLeft < room - 1);
+  };
+  useEffect(syncTabEdges);
+  const guard = (action: () => void) => {
+    if (transitioning) return;
+    if (!(dirty || contextDirty)) return action();
+    void askConfirm({
+      title: t('confirm.leave.title'),
+      body: t('ui.auto.003'),
+      confirmLabel: t('confirm.leave.action'),
+      destructive: true,
+    }).then((ok) => { if (ok) action(); });
+  };
   const run = async (fn: () => Promise<void>) => { setError(''); setBusy(true); try { await fn(); } catch (e) { setError(displayError(e)); } finally { setBusy(false); } };
   // Decision actions, hoisted out of the inline decisions block into App so the
   // extracted `DecisionsView` stays props-only: every backend call and state
@@ -981,14 +1015,13 @@ export function App() {
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer); }, [notice]);
   useEffect(() => api.onAgentEvent(event => { if (event.type === 'exit') { setEndedSessions(previous => new Set(previous).add(event.sessionId)); setNotice(t('ui.auto.004')); } if (event.type === 'error') setError(event.data); }), []);
   const createModalRef = useModalA11y<HTMLElement>(modal === 'brand' || modal === 'work', () => setModal(null), busy);
-  const selectBrand = (b: Brand) => { if (!guard()) return; setBrand(b); setContext(b.context); setView('home'); setMemory(''); setMemoryAvailable(false); memoryGeneration.current++; };
+  const selectBrand = (b: Brand) => guard(() => { setBrand(b); setContext(b.context); setView('home'); setMemory(''); setMemoryAvailable(false); memoryGeneration.current++; });
   /**
    * Opens a work. The target defaults to the work's brief, so every existing
    * call site keeps opening the conversation; Inicio passes `decisions` when the
    * row it activated was a pending decision.
    */
-  const selectWork = (w: Work, target: 'brief' | 'decisions' = 'brief', as: 'conversation' | 'review' = 'conversation') => {
-    if (!guard()) return;
+  const selectWork = (w: Work, target: 'brief' | 'decisions' = 'brief', as: 'conversation' | 'review' = 'conversation') => guard(() => {
     // R5: TODO camino que pasa por acá es un acto de la persona — un clic en la
     // lista de Trabajos, una fila de Inicio, la cola de revisión. La visita se
     // anota sólo por estos, nunca por la autoselección del arranque.
@@ -1001,7 +1034,7 @@ export function App() {
     // document (Inicio's review queue) was overwritten into the chat.
     setLayout(as);
     if (brand) setSelectedDoc((prev) => selectWorkBrief(prev, brand.id, w.id, documents));
-  };
+  });
   // Inicio's rows are ids, because the surface renders rows and the shell owns
   // the resolution: a row whose work is gone does nothing instead of crashing.
   const openWork = (workId: string) => { const target = works.find((w) => w.id === workId); if (target) selectWork(target); };
@@ -1064,14 +1097,16 @@ export function App() {
   const openActiveRun = (run: CoordinationActiveRunSummary) => {
     if (brand?.id === run.brandId) { openWorkCoordination(run.workId); return; }
     const target = brands.find((b) => b.id === run.brandId);
-    if (!target || !guard()) return;
-    pendingWorkRef.current = run.workId;
-    pendingViewRef.current = 'brief';
-    wantCoordinatorRef.current = run.workId;
-    setCardsFromPending(true);
-    setBrand(target);
-    setContext(target.context);
-    setMemory(''); setMemoryAvailable(false); memoryGeneration.current++;
+    if (!target) return;
+    guard(() => {
+      pendingWorkRef.current = run.workId;
+      pendingViewRef.current = 'brief';
+      wantCoordinatorRef.current = run.workId;
+      setCardsFromPending(true);
+      setBrand(target);
+      setContext(target.context);
+      setMemory(''); setMemoryAvailable(false); memoryGeneration.current++;
+    });
   };
   const openDocument = (documentId: string) => {
     const document = documents.find((d) => d.id === documentId);
@@ -1292,13 +1327,24 @@ export function App() {
   /** Emptying is explicit and confirmed; the empty box alone is refused. */
   const clearContext = async () => {
     if (!brand) return;
-    if (!window.confirm(t('context.clear.confirm'))) return;
+    const ok = await askConfirm({
+      title: t('confirm.context.title'),
+      body: t('context.clear.confirm'),
+      confirmLabel: t('context.clear'),
+      destructive: true,
+    });
+    if (!ok) return;
     await writeContext(() => api.clearBrandContext(brand.id, contextFingerprint));
   };
   /** Restoring is a write too: confirmed, recorded, and reversible. */
   const restoreContext = async (revisionId: string) => {
     if (!brand) return;
-    if (!window.confirm(t('context.restore.confirm'))) return;
+    const ok = await askConfirm({
+      title: t('confirm.context.title'),
+      body: t('context.restore.confirm'),
+      confirmLabel: t('context.restore'),
+    });
+    if (!ok) return;
     await writeContext(() => api.restoreBrandContextRevision(brand.id, revisionId, contextFingerprint));
   };
   /**
@@ -1364,7 +1410,7 @@ export function App() {
    * "Archivar marca" asks first, in the app's own dialog. The unsaved-changes
    * guard runs before the question, so leaving an edit is decided up front.
    */
-  const askArchiveBrand = () => { if (brand && guard()) setArchiveTarget(brand); };
+  const askArchiveBrand = () => { if (brand) guard(() => setArchiveTarget(brand)); };
   /**
    * After archiving the brand in view, the next active brand opens on Inicio;
    * with none left, Inicio shows its "add a brand" empty state.
@@ -1400,7 +1446,7 @@ export function App() {
   // ENTREGA 1A: sólo crea marcas. "Nuevo trabajo" (antes el mismo `create()`
   // con `modal === 'work'`) ahora abre `WorkCatalogModal`, que crea el
   // trabajo con el catálogo — este helper ya no tiene ese camino que tomar.
-  const create = () => run(async () => { if (!name.trim() || !guard()) return; const b = await api.createBrand(name.trim()); setBrands(prev => [...prev, b]); setBrand(b); setContext(b.context); setView('brief'); setModal(null); setName(''); });
+  const create = () => { if (!name.trim()) return; guard(() => void run(async () => { const b = await api.createBrand(name.trim()); setBrands(prev => [...prev, b]); setBrand(b); setContext(b.context); setView('brief'); setModal(null); setName(''); })); };
   const createDocument = async (kind: DocumentKind, title: string, baseDocumentId: string | null) => {
     if (!work) return;
     await run(async () => {
@@ -1709,7 +1755,7 @@ export function App() {
       {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} coordinationSinceLastVisit={brand ? sinceLastVisitFromActiveRuns(coordination.activeRuns, brand.id) : []} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenCoordination={openWorkCoordination} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} dna={dna} roles={roles} funnelOpened={funnelVisited} firstStepsClosed={firstStepsClosed} onStartWork={startFromHome} onGoTo={goFromFirstStep} onCloseFirstSteps={closeFirstSteps} onRefreshIdeas={refreshIdeas} ideasJob={ideasJob} ideasReady={runtimes.length === 0 ? null : runtimes.some(r => r.available)} />}
       {/* The tabs and the knowledge-scope filter are in-work chrome: on Inicio
           they would read as "a work with no tab selected". */}
-      {view !== 'home' && <><div className="tabs"><button className={view === 'resumen' ? 'selected' : ''} onClick={() => setView('resumen')}>{t('resumen.tab')}</button><button className={view === 'trabajo' ? 'selected' : ''} onClick={() => setView('trabajo')}>{t('trabajo.tab')}</button><button className={view === 'evidencia' ? 'selected' : ''} onClick={() => setView('evidencia')}>{t('evidencia.tab')}</button><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><button className={view === 'resultados' ? 'selected' : ''} onClick={() => setView('resultados')}>{t('resultados.tab')}</button><div className="tab-spacer" /></div>
+      {view !== 'home' && <><div className="tabs" ref={tabsRef} onKeyDown={tabsKeyDown} onScroll={syncTabEdges}><button className={view === 'resumen' ? 'selected' : ''} onClick={() => setView('resumen')}>{t('resumen.tab')}</button><button className={view === 'trabajo' ? 'selected' : ''} onClick={() => setView('trabajo')}>{t('trabajo.tab')}</button><button className={view === 'evidencia' ? 'selected' : ''} onClick={() => setView('evidencia')}>{t('evidencia.tab')}</button><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><button className={view === 'resultados' ? 'selected' : ''} onClick={() => setView('resultados')}>{t('resultados.tab')}</button><div className="tab-spacer" /></div>
       {(view === 'brief' || view === 'funnel' || view === 'decisions') && brand && <KnowledgeScopeFilter works={works} currentWorkId={work?.id ?? null} value={knowledgeScope} onChange={setKnowledgeScope} />}</>}
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}
       {view === 'resumen' && <ResumenView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} coordinationLog={work ? coordination.log : undefined} coordinationHires={work ? coordination.hires : undefined} onSettleDispatch={coordination.settleDispatch} formatDate={date} onOpenBrief={() => { setLayout('review'); setView('brief'); }} />}
@@ -1768,7 +1814,7 @@ export function App() {
         onActivationContinueDemo={() => { if (work) setActivationRecovery(prev => { const next = { ...prev }; delete next[work.id]; return next; }); }}
       />
       <details className="active-context">
-        <summary><Bookmark size={12} />{t('ui.auto.035')}<span>{[brand?.context ? 'marca' : null, work ? 'trabajo' : null, decisions.length ? `${decisions.length} decisiones` : null].filter(Boolean).join(' · ') || t('ui.auto.068')}</span></summary>
+        <summary><Bookmark size={12} />{t('ui.auto.035')}<span>{[brand?.context ? t('context.summary.brand') : null, work ? t('context.summary.work') : null, decisions.length ? t('context.summary.decisions', { count: decisions.length }) : null].filter(Boolean).join(' · ') || t('ui.auto.068')}</span></summary>
         <div className="active-context-body">
           <span><FileText size={13} />{brand?.context ? t('ui.auto.069') : t('ui.auto.070')}</span>
           <span><Folder size={13} />{work?.title ?? t('ui.auto.071')}</span>
@@ -1779,6 +1825,7 @@ export function App() {
     </aside>
     <footer className="statusbar"><span><Circle size={11} />{isDesktop ? t('ui.auto.354', { p0: activeChats, p1: activeTerminals }) : t('ui.auto.074')}</span><span>{busy ? t('ui.auto.355') : dirty || contextDirty ? t('ui.auto.075') : t('app.allSaved')}<Check size={13} /></span>{appInfo && <span>Latte <span className="status-version">{appInfo.version}</span></span>}</footer>
     {archiveTarget && <ConfirmDialog titleId="archive-brand-title" title={t('brand.archiveTitle', { name: archiveTarget.name })} body={t('brand.archiveConfirm')} confirmLabel={t('brand.archiveAction')} busy={busy} onConfirm={() => void confirmArchiveBrand()} onCancel={() => setArchiveTarget(null)} />}
+    {confirmDialog}
     {modal === 'brand' && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setModal(null); }}><section ref={createModalRef} role="dialog" aria-modal="true" aria-labelledby="dialog-title" className="modal"><div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="dialog-title">{t('ui.auto.077')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setModal(null)}><X size={20} /></button></div><div className="modal-body"><form onSubmit={e => { e.preventDefault(); void create(); }}><label className="field-label" htmlFor="new-name">{t('ui.auto.079')}</label><input autoFocus id="new-name" maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder={t('brand.namePlaceholder')} /><p className="footnote">{t('ui.auto.082')}</p><button className="primary" disabled={!name.trim() || busy}>{t('ui.auto.083')} {t('ui.auto.084')}<ArrowUpRight size={16} /></button></form></div></section></div>}
     {/* ENTREGA 1A (Brief 01, tarea 3): "Nuevo trabajo" abre el mismo catálogo
         que el recorrido inicial (intención → preguntas adaptativas → brief),
