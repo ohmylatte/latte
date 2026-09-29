@@ -156,10 +156,15 @@ describe('ADN · el build de ideas', () => {
     return (JSON.parse(result.body) as { result: { structuredContent: Envelope } }).result.structuredContent;
   };
 
-  const writeIdeas = (raw: unknown) => {
+  /** Lo escribe el agente, ESTAMPADO con el job del build: el import lo valida. */
+  const writeStamped = (file: 'IDEAS.json' | 'ADN.json', jobId: string, raw: unknown): void => {
     fs.mkdirSync(path.join(workDir(), 'borradores', 'adn'), { recursive: true });
-    fs.writeFileSync(path.join(workDir(), 'borradores', 'adn', 'IDEAS.json'), JSON.stringify(raw));
+    const record = { ...(raw as Record<string, unknown>) };
+    if (typeof record.jobId !== 'string') record.jobId = jobId;
+    fs.writeFileSync(path.join(workDir(), 'borradores', 'adn', file), JSON.stringify(record));
   };
+  const writeIdeas = (jobId: string, raw: unknown) => writeStamped('IDEAS.json', jobId, raw);
+  const writeDna = (jobId: string, raw: unknown) => writeStamped('ADN.json', jobId, raw);
 
   beforeEach(async () => {
     b = await makeBackend();
@@ -224,7 +229,7 @@ describe('ADN · el build de ideas', () => {
     expect(task.spec).not.toContain('English (United States)');
     expect(send.mock.calls.some((call) => call[0] === worker().id)).toBe(true);
 
-    writeIdeas(IDEAS);
+    writeIdeas(job.jobId, IDEAS);
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Ideas listas.', files: [IDEAS_REL] }, worker().id)).ok).toBe(true);
 
     const after = await b.service.readBrandDnaBuildJob(job.jobId);
@@ -257,7 +262,7 @@ describe('ADN · el build de ideas', () => {
     coordinationOn();
     const job = await b.service.buildBrandDna(brandId, 'ideas', null);
     const task = await approveAndTask(job.jobId);
-    writeIdeas({ ideas: [{ ...IDEAS.ideas[0], basedOn: [] }] });
+    writeIdeas(job.jobId, { ideas: [{ ...IDEAS.ideas[0], basedOn: [] }] });
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Listo.', files: [IDEAS_REL] }, worker().id)).ok).toBe(true);
     const after = await b.service.readBrandDnaBuildJob(job.jobId);
     expect(after).toMatchObject({ done: true, outcome: 'failed', reason: 'INVALID_IDEAS' });
@@ -269,9 +274,8 @@ describe('ADN · el build de ideas', () => {
     coordinationOn();
     const job = await b.service.buildBrandDna(brandId, 'existing', null);
     const task = await approveAndTask(job.jobId);
-    fs.mkdirSync(path.join(workDir(), 'borradores', 'adn'), { recursive: true });
-    fs.writeFileSync(path.join(workDir(), 'borradores', 'adn', 'ADN.json'), JSON.stringify(ADN_FIELDS));
-    writeIdeas(IDEAS);
+    writeDna(job.jobId, ADN_FIELDS);
+    writeIdeas(job.jobId, IDEAS);
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Listo.', files: [ADN_REL, IDEAS_REL] }, worker().id)).ok).toBe(true);
 
     const after = await b.service.readBrandDnaBuildJob(job.jobId);
@@ -287,8 +291,7 @@ describe('ADN · el build de ideas', () => {
     coordinationOn();
     const job = await b.service.buildBrandDna(brandId, 'existing', null);
     const task = await approveAndTask(job.jobId);
-    fs.mkdirSync(path.join(workDir(), 'borradores', 'adn'), { recursive: true });
-    fs.writeFileSync(path.join(workDir(), 'borradores', 'adn', 'ADN.json'), JSON.stringify(ADN_FIELDS));
+    writeDna(job.jobId, ADN_FIELDS);
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Listo.', files: [ADN_REL] }, worker().id)).ok).toBe(true);
 
     const after = await b.service.readBrandDnaBuildJob(job.jobId);

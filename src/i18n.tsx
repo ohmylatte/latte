@@ -400,6 +400,7 @@ const es = {
   'home.ask.classify': 'Se arma como {type} con {role}',
   'home.ask.allTypes': 'Ver todos los tipos de trabajo',
   // --- ADN · ideas ---
+  'home.ideas.title': 'Ideas para empezar',
   'home.ideas.tag': 'Idea de Latte',
   'home.ideas.refresh': 'Actualizar ideas',
   'home.ideas.running': 'Actualizando las ideas…',
@@ -407,6 +408,7 @@ const es = {
   'home.ideas.needAgent': 'Escribir ideas necesita un agente de IA.',
   'home.ideas.soon': '{date}: faltan {when}',
   'home.ideas.today': '{date}: es hoy',
+  'home.ideas.tomorrow': '{date}: es mañana',
   'home.ideas.days': '{count, plural, one {# día} other {# días}}',
   'home.ideas.weeks': '{count, plural, one {# semana} other {# semanas}}',
   'home.ideas.dateWhy': 'Fecha comercial: {date}.',
@@ -1843,6 +1845,7 @@ const en: Record<MessageKey, string> = {
   'home.ask.classify': 'It builds as {type} with {role}',
   'home.ask.allTypes': 'See all work types',
   // --- ADN · ideas ---
+  'home.ideas.title': 'Ideas to start with',
   'home.ideas.tag': 'Latte idea',
   'home.ideas.refresh': 'Refresh ideas',
   'home.ideas.running': 'Refreshing the ideas…',
@@ -1850,6 +1853,7 @@ const en: Record<MessageKey, string> = {
   'home.ideas.needAgent': 'Writing ideas needs an AI agent.',
   'home.ideas.soon': '{date}: {when} to go',
   'home.ideas.today': '{date}: today',
+  'home.ideas.tomorrow': '{date}: tomorrow',
   'home.ideas.days': '{count, plural, one {# day} other {# days}}',
   'home.ideas.weeks': '{count, plural, one {# week} other {# weeks}}',
   'home.ideas.dateWhy': 'Commercial date: {date}.',

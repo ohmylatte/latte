@@ -73,11 +73,19 @@ export function homeIdeas(input: HomeIdeasInput, t: HomeIdeaText): HomeIdeaItem[
   if (date) {
     const days = daysUntil(today, date.date);
     const name = commercialDateName(date.id, input.uiLocale);
-    const when = days < 7 ? t('home.ideas.days', { count: days }) : t('home.ideas.weeks', { count: Math.floor(days / 7) });
+    // Cuenta regresiva honesta: hasta 13 días se cuentan EN DÍAS (redondear
+    // 20 días a "2 semanas" mentía); desde 14, semanas redondeando al entero
+    // más cercano. Hoy y mañana tienen su propia frase.
+    const when = days <= 13 ? t('home.ideas.days', { count: days }) : t('home.ideas.weeks', { count: Math.round(days / 7) });
+    const title = days === 0
+      ? t('home.ideas.today', { date: name })
+      : days === 1
+        ? t('home.ideas.tomorrow', { date: name })
+        : t('home.ideas.soon', { date: name, when });
     out.push({
       id: `fecha-${date.id}`,
       workTypeId: 'content-calendar',
-      title: days === 0 ? t('home.ideas.today', { date: name }) : t('home.ideas.soon', { date: name, when }),
+      title,
       why: t(date.approximate ? 'home.ideas.dateWhyApprox' : 'home.ideas.dateWhy', { date: fullDateLabel(date.date, input.uiLocale) }),
     });
   }

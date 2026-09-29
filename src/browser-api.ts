@@ -1,4 +1,5 @@
 import { composeBrandContext } from '../shared/brandContext';
+import { fullDateLabel } from '../shared/commercial-dates';
 import type { AgentRole, Brand, BrandContextProposal, BrandContextRevision, BrandContextStatus, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput, OnboardingDraft, BrandDnaFields, BrandDnaIdea, BrandDnaProposal, BrandDnaBuildJob, BrandDnaView, BrandDnaBuildMode, BrandDnaBuildStepKey } from '../shared/contracts';
 import { isOnboardingDraft, RUNTIME_GUIDE_URLS } from '../shared/contracts';
 import type { AccountRuntimeName, InstallFailureCode, Provider, RuntimeInstallJob, RuntimeInstallState, RuntimeLoginJob, RuntimeLoginState, RuntimeSetupEvent, RuntimeSetupInfo, RuntimeSetupJob } from '../shared/contracts';
@@ -221,10 +222,15 @@ const dnaJobs = new Map<string, BrandDnaBuildJob>();
 let dnaStepMs = 700;
 export function setBrandDnaPreviewStepMs(ms: number): void { dnaStepMs = ms; }
 export function resetBrandDnaPreview(): void { dnaByBrand.clear(); dnaJobs.clear(); }
+/** Hoy en calendario local: la vista previa usa la fecha REAL, no una clavada. */
+const localToday = (): string => {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+};
 const demoIdeas = (): BrandDnaIdea[] => ([
   { id: 'idea-lanzamiento', title: 'Lanzamiento de la colección de otoño', why: 'La colección nueva todavía no tiene campaña.', workTypeId: 'campaign-new', basedOn: [{ kind: 'document', label: 'brief de primavera' }], createdAt: '2026-09-20' },
   { id: 'idea-tono', title: 'Revisar el tono de tus últimos posts: 3 piezas usan «oferta»', why: 'El ADN marca «oferta» como palabra que la marca no usa.', workTypeId: 'copy-pieces', basedOn: [{ kind: 'identity', label: 'ADN v1' }, { kind: 'document', label: 'piezas de la semana' }], createdAt: '2026-09-20' },
-  { id: 'idea-temporada', title: 'Contenido de temporada: primavera', why: 'Hoy 20 de septiembre en Argentina.', workTypeId: 'content-calendar', basedOn: [{ kind: 'calendar', label: 'primavera' }], createdAt: '2026-09-20' },
+  { id: 'idea-temporada', title: 'Contenido de temporada: primavera', why: `Hoy ${fullDateLabel(localToday(), 'es-AR')} en Argentina.`, workTypeId: 'content-calendar', basedOn: [{ kind: 'calendar', label: 'primavera' }], createdAt: '2026-09-20' },
 ]);
 const demoDna = (): BrandDnaFields => ({
   tone: { value: { adjectives: ['Cálido', 'Preciso', 'Cercano'], example: 'Diseño que acompaña tu manera de vivir.' }, sources: [{ kind: 'context', label: 'contexto de marca' }], assumption: false },

@@ -220,8 +220,8 @@ describe('ADN de marca · build del motor', () => {
     expect(send.mock.calls.some((c) => c[0] === worker().id)).toBe(true);
 
     fs.mkdirSync(path.join(workDir(), 'borradores', 'adn'), { recursive: true });
-    fs.writeFileSync(path.join(workDir(), 'borradores', 'adn', 'ADN.json'), JSON.stringify(ADN_FIELDS, null, 2));
-    fs.writeFileSync(path.join(workDir(), 'borradores', 'adn', 'pasos.json'), JSON.stringify(PASOS, null, 2));
+    fs.writeFileSync(path.join(workDir(), 'borradores', 'adn', 'ADN.json'), JSON.stringify({ ...ADN_FIELDS, jobId: job.jobId }, null, 2));
+    fs.writeFileSync(path.join(workDir(), 'borradores', 'adn', 'pasos.json'), JSON.stringify({ ...PASOS, jobId: job.jobId }, null, 2));
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'ADN listo.', files: [ADN_REL, PASOS_REL] }, worker().id)).ok).toBe(true);
 
     const after = await b.service.readBrandDnaBuildJob(job.jobId);
@@ -248,7 +248,7 @@ describe('ADN de marca · build del motor', () => {
     const task = await approveAndTask(job.jobId);
 
     fs.mkdirSync(path.join(workDir(), 'borradores', 'adn'), { recursive: true });
-    fs.writeFileSync(path.join(workDir(), 'borradores', 'adn', 'ADN.json'), JSON.stringify({ tone: { adjectives: 'nope' }, extra: true }));
+    fs.writeFileSync(path.join(workDir(), 'borradores', 'adn', 'ADN.json'), JSON.stringify({ tone: { adjectives: 'nope' }, extra: true, jobId: job.jobId }));
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'ADN listo.', files: [ADN_REL] }, worker().id)).ok).toBe(true);
 
     const after = await b.service.readBrandDnaBuildJob(job.jobId);
