@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   BrandDnaBuildJob,
   BrandDnaBuildMode,
@@ -19,6 +19,15 @@ const displayError = (e: unknown) => (e instanceof Error ? e.message : String(e)
 export type BrandDnaOutcome<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /**
+ * K1: los tres minutos que un build puede estar quieto antes de decirlo.
+ *
+ * No es un timeout del motor — el equipo puede tardar de verdad— es el plazo
+ * después del cual la pantalla deja de fingir que todo sigue bien y ofrece
+ * "Reintentar" y "Cancelar".
+ */
+const DNA_STALE_MS = 180_000;
+
+/**
  * El motor del ADN desde la interfaz: leer, arrancar un build, observarlo y
  * escribir.
  *
@@ -37,6 +46,8 @@ export interface BrandDnaState {
   error: string | null;
   /** Hay una escritura en vuelo (leer, editar, aprobar, construir). */
   busy: boolean;
+  /** K1: el build dejó de cambiar hace 3 minutos. La pantalla lo dice. */
+  stale: boolean;
   clearError: () => void;
   /** Recarga la ficha de la marca. */
   load: () => Promise<BrandDnaView | null>;
@@ -47,6 +58,13 @@ export interface BrandDnaState {
    * anterior (vacío) y el build no arrancaría nunca.
    */
   build: (mode: BrandDnaBuildMode, sources: BrandDnaSourcesInput | null, target?: string) => Promise<BrandDnaOutcome<BrandDnaBuildJob>>;
+  /**
+   * K1: repite el último build con lo mismo que se pidió. Es el "Reintentar"
+   * del aviso de demora y del fallo: no hay nada que volver a llenar.
+   */
+  retry: () => Promise<BrandDnaOutcome<BrandDnaBuildJob>>;
+  /** K1: deja de OBSERVAR el build quieto: lo cierra como cancelado. */
+  cancel: () => Promise<void>;
   /** Edita un campo del borrador; la ficha que vuelve ya trae el cambio. */
   edit: (field: BrandDnaField, value: BrandDnaValue | null) => Promise<void>;
   /** Aprueba la versión vigente. */
@@ -60,6 +78,9 @@ export function useBrandDna(brandId: string | null): BrandDnaState {
   const [dna, setDna] = useState<BrandDnaView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [stale, setStale] = useState(false);
+  /** K1: lo último que la persona pidió armar, para poder repetirlo sin preguntar. */
+  const lastBuild = useRef<{ mode: BrandDnaBuildMode; sources: BrandDnaSourcesInput | null; target: string } | null>(null);
 
   const load = useCallback(async (): Promise<BrandDnaView | null> => {
     if (!brandId) { setDna(null); return null; }
@@ -102,14 +123,28 @@ export function useBrandDna(brandId: string | null): BrandDnaState {
     return () => { stopped = true; clearInterval(timer); };
   }, [jobId, jobDone, load]);
 
+  // K1: NUNCA QUIETO SIN EXPLICACIÓN. El reloj se rearma con cada CAMBIO —del
+  // job o de sus estados—, no con cada lectura: el sondeo corre cada segundo y
+  // eso no es movimiento. A los tres minutos la pantalla dice que se está
+  // tardando y ofrece Reintentar y Cancelar. Terminó el build: se apaga solo.
+  const stepStates = job && !job.done ? `${job.jobId}:${job.steps.map((step) => step.state).join('|')}` : null;
+  useEffect(() => {
+    if (stepStates === null) { setStale(false); return; }
+    setStale(false);
+    const timer = setTimeout(() => setStale(true), DNA_STALE_MS);
+    return () => clearTimeout(timer);
+  }, [stepStates]);
+
   const build = useCallback(async (mode: BrandDnaBuildMode, sources: BrandDnaSourcesInput | null, target?: string): Promise<BrandDnaOutcome<BrandDnaBuildJob>> => {
     const id = target ?? brandId;
     if (!id) { const error = translate('dna.build.failed'); setError(error); return { ok: false, error }; }
+    lastBuild.current = { mode, sources, target: id };
     setBusy(true);
     setError(null);
     try {
       const started = await api.buildBrandDna(id, mode, sources);
       setJob(started);
+      setStale(false);
       // La marca recién creada todavía no es la del hook: se lee directo con el
       // id con el que se arrancó, y el efecto de la marca se hace cargo en cuanto
       // el estado la tenga.
@@ -124,6 +159,27 @@ export function useBrandDna(brandId: string | null): BrandDnaState {
       setBusy(false);
     }
   }, [brandId, load]);
+
+  const retry = useCallback(async (): Promise<BrandDnaOutcome<BrandDnaBuildJob>> => {
+    const last = lastBuild.current;
+    if (!last) { const error = translate('dna.build.failed'); setError(error); return { ok: false, error }; }
+    return build(last.mode, last.sources, last.target);
+  }, [build]);
+
+  const cancel = useCallback(async (): Promise<void> => {
+    const current = job;
+    if (!current || current.done) return;
+    setBusy(true);
+    try {
+      setJob(await api.cancelBrandDnaBuild(current.jobId));
+      setStale(false);
+      await load().catch(() => undefined);
+    } catch (e) {
+      setError(displayError(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [job, load]);
 
   const edit = useCallback(async (field: BrandDnaField, value: BrandDnaValue | null): Promise<void> => {
     if (!brandId) return;
@@ -169,8 +225,8 @@ export function useBrandDna(brandId: string | null): BrandDnaState {
   }, [brandId]);
 
   return {
-    job, dna, error, busy,
+    job, dna, error, busy, stale,
     clearError: useCallback(() => setError(null), []),
-    load, build, edit, approve, resolve,
+    load, build, retry, cancel, edit, approve, resolve,
   };
 }

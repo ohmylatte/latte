@@ -988,7 +988,7 @@ export class CoordinationEngine {
    * presupuesto del run, autoridad, tareas + aprobación + estado) siguen
    * cayendo juntos dentro de un `repo.transaction()` real.
    */
-  private async resolveProposalGate(runId: string, decision: 'approve' | 'reject', editedProposalJson?: string): Promise<CoordinationRunRecord> {
+  private async resolveProposalGate(runId: string, decision: 'approve' | 'reject', editedProposalJson?: string, options: { handoffDispatch?: boolean } = {}): Promise<CoordinationRunRecord> {
     const run = this.deps.repo.getCoordinationRun(runId);
     if (decision === 'reject') {
       const cancelled = this.cancelRun(runId);
@@ -1061,12 +1061,18 @@ export class CoordinationEngine {
       //
       // Quien escribió el traspaso ya dijo a quién y qué; lo único que faltaba
       // era el sí de la persona. Esperar a que el coordinador lea el aviso y
-      // llame a `latte_dispatch` volvía a poner un paso en el medio — y si el
-      // coordinador no tiene MCP, ese paso no llega nunca. Pasa por
+      // llame a `latte_dispatch` volvía a poner un paso en el medio — y si
+      // el coordinador no tiene MCP, ese paso no llega nunca. Pasa por
       // `startDispatch`, así que la autoridad (manual → gate), el presupuesto y
       // la concurrencia valen igual. Nunca tira: la aprobación ya está
       // commiteada y no se deshace porque un despacho se haya denegado.
-      if (this.deps.repo.getMeta(HANDOFF_RUN_META + run.id) === '1') {
+      //
+      // K1: Y EL LLAMADOR PUEDE QUEDARSE CON EL DESPACHO. `requestPersonTask`
+      // con consentimiento aprueba la propuesta que él mismo acaba de armar y
+      // despacha él la tarea, para devolver el resultado DEL DESPACHO (no un
+      // "habrá despachado"): con `handoffDispatch: false` este bucle no corre y
+      // la aprobación queda igual de commiteada.
+      if (options.handoffDispatch !== false && this.deps.repo.getMeta(HANDOFF_RUN_META + run.id) === '1') {
         for (const task of this.deps.repo.listCoordinationTasks(run.id).filter((t) => t.status === 'ready')) {
           try {
             await this.startDispatch({ grant: { workId: run.workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id });
@@ -1610,24 +1616,44 @@ export class CoordinationEngine {
    * vuelve fila: lo que ese camino rechaza, acá también, con el mismo código.
    */
   /**
-   * E4: UNA TAREA QUE PIDIÓ LA PERSONA DESDE UNA PANTALLA (hoy: "Extraer
-   * identidad con el equipo").
+   * E4: UNA TAREA QUE PIDIÓ LA PERSONA DESDE UNA PANTALLA (hoy: "Armar mi
+   * marca", "Actualizar ideas" y "Extraer identidad con el equipo").
    *
-   * El mismo camino que un traspaso: sin run, nace una propuesta de una tarea
-   * que la persona aprueba en el chat del coordinador y se despacha sola al
-   * aprobarla; con el run corriendo, la tarea entra al plan y se despacha. El
-   * clic de la persona ES la aprobación del rol para ese run: no hace falta
-   * una segunda. Con el run en otro estado, no se escribe nada y se dice por
-   * qué.
+   * El mismo camino que un traspaso: con el run corriendo, la tarea entra al
+   * plan y se despacha. SIN run el camino se bifurca según QUIÉN pidió:
+   *
+   * - SIN consentimiento (el traspaso entre agentes): nadie dijo todavía que
+   *   sí, así que nace una propuesta que la persona resuelve en el chat del
+   *   coordinador (`proposeFromHandoff`).
+   * - CON consentimiento (`consented: true`, el clic de la persona en una
+   *   pantalla de Latte): el clic ES la aprobación. La propuesta se arma y se
+   *   aprueba dentro de ESTE llamado — el run nace `running` con esa única
+   *   tarea, con el rol contratado si nadie lo hacía — y la tarea se despacha
+   *   en el acto. Nada queda esperando una aprobación que viviría en un chat
+   *   que la persona nunca abre: eso dejaba el build de la marca quieto para
+   *   siempre.
+   *
+   * Y con `consented` el despacho NO se gatea, por la misma razón: el gate es
+   * la aprobación de la persona de la que el clic ya es portador. El
+   * presupuesto, la concurrencia y los topes siguen mandando igual que siempre.
    */
-  async requestPersonTask(workId: string, input: { roleId: string; spec: string; title: string }, coordinatorMemberId: string | null): Promise<{
+  async requestPersonTask(
+    workId: string,
+    input: { roleId: string; spec: string; title: string },
+    coordinatorMemberId: string | null,
+    options: { consented?: boolean } = {},
+  ): Promise<{
     outcome: 'proposed' | 'dispatched' | 'pending_approval' | 'not_dispatched' | 'blocked'; taskId: string | null; reason: string | null;
   }> {
     this.requireCoordinationEnabled();
+    const consented = options.consented === true;
     const run = this.deps.repo.findActiveCoordinationRun(workId);
     if (!run) {
-      const proposed = await this.proposeFromHandoff(workId, input.roleId, input.spec, coordinatorMemberId, input.title);
-      return proposed.bridged ? { outcome: 'proposed', taskId: null, reason: null } : { outcome: 'blocked', taskId: null, reason: proposed.reason };
+      if (!consented) {
+        const proposed = await this.proposeFromHandoff(workId, input.roleId, input.spec, coordinatorMemberId, input.title);
+        return proposed.bridged ? { outcome: 'proposed', taskId: null, reason: null } : { outcome: 'blocked', taskId: null, reason: proposed.reason };
+      }
+      return this.startConsentedRun(workId, input, coordinatorMemberId);
     }
     if (run.status !== 'running') return { outcome: 'blocked', taskId: null, reason: run.status === 'planning' ? 'RUN_ALREADY_ACTIVE' : 'RUN_NOT_ACTIVE' };
     const approved = this.approvedRoleIds(run);
@@ -1638,11 +1664,54 @@ export class CoordinationEngine {
     const task = this.createTaskRow(run.id, input.roleId, input.spec, [], input.title, 'internal');
     this.deps.repo.markCoordinationTaskInPlan(task.id);
     try {
-      const outcome = await this.startDispatch({ grant: { workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id });
+      const outcome = await this.startDispatch({ grant: { workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id, consented });
       this.touch(workId, run.id);
       return { outcome: outcome.status, taskId: task.id, reason: null };
     } catch (error) {
       this.touch(workId, run.id);
+      return { outcome: 'not_dispatched', taskId: task.id, reason: error instanceof LatteError ? error.code : 'INTERNAL' };
+    }
+  }
+
+  /**
+   * K1: EL RUN QUE NACE YA APROBADO.
+   *
+   * Es `proposeFromHandoff` + `resolveProposalGate('approve')` + `startDispatch`
+   * en una sola tira, sin esperar a nadie en el medio: los mismos candados, el
+   * mismo validador de propuestas, las mismas contrataciones y el mismo
+   * presupuesto que cuando la persona aprueba a mano desde el chat. Lo que no
+   * existe acá es la ESPERA: no hay gate en la lista de gates ni una tarjeta
+   * en un chat interno.
+   *
+   * El bucle de despacho de la aprobación queda apagado (`handoffDispatch:
+   * false`) para que éste método sea el dueño del resultado: si el despacho se
+   * deniega, el llamador recibe el CÓDIGO del motor, no un "probablemente se
+   * despachó". El aviso al coordinador sigue diciendo que Latte ya se ocupó del
+   * despacho (el meta del traspaso está puesto), que es la verdad.
+   */
+  private async startConsentedRun(
+    workId: string,
+    input: { roleId: string; spec: string; title: string },
+    coordinatorMemberId: string | null,
+  ): Promise<{ outcome: 'dispatched' | 'pending_approval' | 'not_dispatched' | 'blocked'; taskId: string | null; reason: string | null }> {
+    const proposed = await this.proposeFromHandoff(workId, input.roleId, input.spec, coordinatorMemberId, input.title);
+    if (!proposed.bridged) return { outcome: 'blocked', taskId: null, reason: proposed.reason };
+    const runId = proposed.proposed.id;
+    try {
+      await this.resolveProposalGate(runId, 'approve', undefined, { handoffDispatch: false });
+    } catch (error) {
+      this.deps.log?.(`[latte] consented proposal approval failed (${runId}): ${error instanceof Error ? error.message : String(error)}`);
+      return { outcome: 'blocked', taskId: null, reason: error instanceof LatteError ? error.code : 'INTERNAL' };
+    }
+    const task = this.deps.repo.listCoordinationTasks(runId)
+      .find((candidate) => candidate.roleId === input.roleId && candidate.spec === input.spec);
+    if (!task) return { outcome: 'blocked', taskId: null, reason: 'INTERNAL' };
+    try {
+      const outcome = await this.startDispatch({ grant: { workId, runId, memberId: '', role: 'coordinator' }, taskId: task.id, consented: true });
+      this.touch(workId, runId);
+      return { outcome: outcome.status, taskId: task.id, reason: null };
+    } catch (error) {
+      this.touch(workId, runId);
       return { outcome: 'not_dispatched', taskId: task.id, reason: error instanceof LatteError ? error.code : 'INTERNAL' };
     }
   }
@@ -1957,10 +2026,11 @@ export class CoordinationEngine {
    * THE single dispatch choke point. Every path that can ever start a member
    * working re-enters here. Order (non-negotiable, mirrors the design):
    * grant → active run → task ready → target member idle → authority gate
-   * (short-circuits to `pending_approval`) → `maxConcurrent` → budget reserve
-   * → `hub.send()` → dispatched row.
+   * (short-circuits to `pending_approval`, unless the person consented to this
+   * very task with her own click) → `maxConcurrent` → budget reserve →
+   * `hub.send()` → dispatched row.
    */
-  async startDispatch(ctx: { grant: CoordinationGrant; taskId: string; approvedGateId?: string; editedPrompt?: string }): Promise<{ status: 'dispatched' | 'pending_approval'; taskId: string; dispatchId: string }> {
+  async startDispatch(ctx: { grant: CoordinationGrant; taskId: string; approvedGateId?: string; editedPrompt?: string; consented?: boolean }): Promise<{ status: 'dispatched' | 'pending_approval'; taskId: string; dispatchId: string }> {
     // El interruptor tiene que APAGAR, no sólo impedir encender: gateando
     // únicamente `startRun`/`requestCoordination`, bajar la bandera a mitad de
     // run no frenaba nada y los agentes seguían gastando plata. Acá, en el
@@ -2046,7 +2116,13 @@ export class CoordinationEngine {
     // cual, y una fila pendiente ya lleva la sección adentro desde que nació.
     const prompt = ctx.editedPrompt ?? existingPending?.prompt ?? this.withAnsweredAsks(task);
     const authority = this.readAuthority(run.workId);
-    const gated = !ctx.approvedGateId && this.isGated(authority, run, task);
+    // K1: EL CONSENTIMIENTO ES LA APROBACIÓN. `consented` llega sólo desde
+    // `requestPersonTask` cuando la PERSONA apretó el botón que pide esta
+    // tarea: el gate de despacho existe para que nadie gaste sin el sí de la
+    // persona, y ese sí ya vino con el clic. Sin esto, bajo autoridad `manual`
+    // el build de la marca nacía `pending_approval` — una aprobación que sólo
+    // se ve en la lista de gates de un trabajo interno que la persona no abre.
+    const gated = !ctx.consented && !ctx.approvedGateId && this.isGated(authority, run, task);
 
     // EL GATE VA PRIMERO, antes de resolver el miembro. `resolveTargetMember`
     // llama a `hub.addMember`: inserta la fila, mintea el token, ocupa un cupo

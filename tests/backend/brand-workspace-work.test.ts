@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { FEATURE_KEYS, FEATURE_OFF } from '../../electron/core/features';
 import {
   fakeExecutablePath,
   fakePtyLoader,
@@ -106,6 +107,9 @@ describe('espacio interno de la marca', () => {
     b.cleanup();
     b = await makeBackend({ chooseFiles: async () => [png] });
     brandId = (await b.service.createBrand('Ayulem')).id;
+    // El equipo está apagado: el pedido se cae AL DESPACHAR, que es justo lo
+    // que este test mira — lo que no puede pasar es que pida un trabajo.
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_OFF);
     await b.service.addBrandIdentityFiles(brandId);
 
     const error = await b.service.requestBrandIdentityExtraction(brandId).catch((e: unknown) => e);
@@ -162,6 +166,9 @@ describe('espacio interno de la marca', () => {
 
   it('los "trabajos recientes" que Latte junta para las ideas dejan afuera el interno', async () => {
     await restartWithAi();
+    // El equipo apagado: el despacho se cae DESPUÉS de juntar los insumos,
+    // que es lo que este test mira (y ningún hub real entra en el test).
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_OFF);
     const campaign = await b.service.createWork(brandId, 'Campaña de invierno');
     // `existing` junta los insumos de las ideas ANTES de despachar: si el
     // despacho se cae, los archivos ya están escritos.

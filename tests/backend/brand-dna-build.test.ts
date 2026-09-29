@@ -100,13 +100,17 @@ describe('ADN de marca · build del motor', () => {
     b.repo.setMeta('coordination_coordinator:' + workId, coordinator);
   };
 
-  /** Aprueba la propuesta de tarea y devuelve la tarea interna del build. */
-  const approveAndTask = async (jobId: string) => {
-    const runId = b.repo.findActiveCoordinationRun(workId)!.id;
-    await b.service.resolveCoordinationGate(`proposal:${runId}`, 'approve');
+  /**
+   * K1: NO hay propuesta que aprobar — el clic de la persona ya es la
+   * aprobación, así que la tarea nace y sale DESPACHADA en el mismo gesto.
+   * Ésta sólo la busca donde quedó.
+   */
+  const dispatchedTask = async (jobId: string) => {
     await settle();
+    const runId = b.repo.findActiveCoordinationRun(workId)!.id;
     const task = b.repo.listCoordinationTasks(runId).find((t) => t.spec.includes(jobId));
     expect(task, 'la tarea del build quedó creada').toBeDefined();
+    expect(task!.status, 'la tarea salió despachada').toBe('dispatched');
     return task!;
   };
 
@@ -134,10 +138,11 @@ describe('ADN de marca · build del motor', () => {
   it('sin IA el build falla con el código del motor y ningún paso se ejecutó', async () => {
     const job = await b.service.buildBrandDna(brandId, 'existing', null);
     expect(job).toMatchObject({ brandId, mode: 'existing', done: true, outcome: 'failed', reason: 'NOT_INSTALLED' });
-    expect(job.steps.map((s) => s.key)).toEqual(['web', 'channels', 'files', 'context', 'documents', 'decisions', 'memory', 'compose']);
+    // K1: `existing` sólo dibuja lo que trae: el material existente y la ficha.
+    expect(job.steps.map((s) => s.key)).toEqual(['context', 'documents', 'decisions', 'memory', 'compose']);
     expect(step(job, 'compose').state).toBe('failed');
     expect(step(job, 'compose').detail).toBeTruthy();
-    for (const key of ['web', 'channels', 'files', 'context', 'documents', 'decisions', 'memory']) {
+    for (const key of ['context', 'documents', 'decisions', 'memory']) {
       expect(step(job, key).state, key).toBe('skipped');
     }
     expect(fs.existsSync(path.join(workDir(), 'borradores', 'adn', 'fuentes'))).toBe(false);
@@ -161,9 +166,9 @@ describe('ADN de marca · build del motor', () => {
     expect(step(job, 'decisions')).toMatchObject({ state: 'done' });
     expect(step(job, 'documents')).toMatchObject({ state: 'done' });
     expect(step(job, 'memory').state).toBe('skipped');
-    expect(step(job, 'files').state).toBe('skipped');
-    expect(step(job, 'web').state).toBe('skipped');
-    expect(step(job, 'channels').state).toBe('skipped');
+    // K1: ni `files`, ni `web`, ni `channels` están en la lista: este modo no
+    // los pidió, así que no hay ninguna fila "Omitido" que mostrar.
+    expect(job.steps.map((s) => s.key)).toEqual(['context', 'documents', 'decisions', 'memory', 'compose']);
 
     expect(fs.readFileSync(path.join(fuentes(), 'contexto.md'), 'utf8')).toContain('mayoristas sin intermediarios');
     expect(fs.readFileSync(path.join(fuentes(), 'decisiones.md'), 'utf8')).toContain('Nunca decimos oferta');
@@ -201,7 +206,7 @@ describe('ADN de marca · build del motor', () => {
 
     // P9: la copia completa NO es lectura obligatoria: el spec lista las
     // fuentes de lectura por defecto y ahí no aparece.
-    const task = await approveAndTask(job.jobId);
+    const task = await dispatchedTask(job.jobId);
     expect(task.spec).toContain('fuentes/documentos/');
     expect(task.spec).not.toContain('fuentes/completos/');
   });
@@ -252,10 +257,10 @@ describe('ADN de marca · build del motor', () => {
     expect(job.outcome).toBeNull();
     expect(step(job, 'web').state).toBe('pending');
     expect(step(job, 'channels').state).toBe('pending');
-    for (const key of ['files', 'context', 'documents', 'decisions', 'memory']) {
-      expect(step(job, key).state, key).toBe('skipped');
-    }
-    expect(step(job, 'compose').state).toBe('pending');
+    // K1: sólo lo que se pidió — ni "Omitido" para el material existente.
+    expect(job.steps.map((s) => s.key)).toEqual(['web', 'channels', 'compose']);
+    expect(job.steps.some((s) => s.state === 'skipped'), 'nada omitido: nada se pidió de más').toBe(false);
+    expect(step(job, 'compose').state, 'con la tarea despachada, la ficha está en curso').toBe('running');
     expect(step(job, 'compose').detail).toBeTruthy();
     expect(fs.existsSync(path.join(fuentes(), 'contexto.md'))).toBe(false);
 
@@ -265,16 +270,16 @@ describe('ADN de marca · build del motor', () => {
     expect(again.mode).toBe('sources');
     expect((await b.service.readBrandDnaBuildJob(job.jobId)).done).toBe(false);
 
-    // La propuesta de tarea quedó esperando el sí de la persona.
+    // K1: NADA esperando un sí en un chat: el clic ya lo dijo. El run está
+    // corriendo con la tarea adentro, despachada.
     const runId = b.repo.findActiveCoordinationRun(workId)!.id;
-    expect(b.repo.getCoordinationRun(runId).status).toBe('planning');
+    expect(b.repo.getCoordinationRun(runId).status).toBe('running');
+    expect(await b.service.listCoordinationGates(runId), 'ninguna aprobación oculta').toEqual([]);
     expect(send).toBeDefined();
 
-    // Aprobada la propuesta, la tarea del build aparece con SU trabajo marcado.
-    await b.service.resolveCoordinationGate(`proposal:${runId}`, 'approve');
-    await settle();
     const task = b.repo.listCoordinationTasks(runId).find((t) => t.spec.includes(job.jobId));
-    expect(task).toBeDefined();
+    expect(task, 'la tarea del build quedó creada').toBeDefined();
+    expect(task!.status, 'la tarea salió despachada, no propuesta').toBe('dispatched');
     expect(task!.spec).toContain(ADN_REL);
     expect(task!.spec).toContain('pasos.json');
     expect(task!.audience).toBe('internal');
@@ -307,7 +312,7 @@ describe('ADN de marca · build del motor', () => {
 
     const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: ['@ayulem'], useIdentityFiles: false });
     expect(job.done).toBe(false);
-    const task = await approveAndTask(job.jobId);
+    const task = await dispatchedTask(job.jobId);
     expect(send.mock.calls.some((c) => c[0] === worker().id)).toBe(true);
 
     fs.mkdirSync(path.join(workDir(), 'borradores', 'adn'), { recursive: true });
@@ -336,7 +341,7 @@ describe('ADN de marca · build del motor', () => {
     coordinationOn();
 
     const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
-    const task = await approveAndTask(job.jobId);
+    const task = await dispatchedTask(job.jobId);
 
     fs.mkdirSync(path.join(workDir(), 'borradores', 'adn'), { recursive: true });
     fs.writeFileSync(path.join(workDir(), 'borradores', 'adn', 'ADN.json'), JSON.stringify({ tone: { adjectives: 'nope' }, extra: true, jobId: job.jobId }));
@@ -352,7 +357,7 @@ describe('ADN de marca · build del motor', () => {
     coordinationOn();
 
     const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
-    const task = await approveAndTask(job.jobId);
+    const task = await dispatchedTask(job.jobId);
 
     fs.mkdirSync(path.join(workDir(), 'borradores', 'adn'), { recursive: true });
     fs.writeFileSync(path.join(workDir(), 'borradores', 'adn', 'notas.md'), 'Notas sueltas.');
@@ -368,7 +373,7 @@ describe('ADN de marca · build del motor', () => {
     coordinationOn();
 
     const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
-    const task = await approveAndTask(job.jobId);
+    const task = await dispatchedTask(job.jobId);
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Algo salió mal y no tengo archivos.' }, worker().id)).ok).toBe(true);
     // Sin archivos no hay gancho: el que consulta es quien mira la tarea.
     expect((await b.service.readBrandDnaBuildJob(job.jobId))).toMatchObject({ done: true, outcome: 'failed', reason: 'NO_ADN_FILE' });
@@ -382,9 +387,10 @@ describe('ADN de marca · build del motor', () => {
     await b.service.addBrandIdentityFiles(brandId);
 
     const job = await b.service.buildBrandDna(brandId, 'sources', { url: null, channels: ['@ayulem'], useIdentityFiles: true });
+    // K1: sin URL no hay fila de web.
+    expect(job.steps.map((s) => s.key)).toEqual(['channels', 'files', 'compose']);
     expect(step(job, 'files')).toMatchObject({ state: 'done' });
     expect(fs.readdirSync(fuentes())).toContain('logo.png');
-    expect(step(job, 'web').state).toBe('skipped');
     expect(step(job, 'channels').state).toBe('pending');
   });
 });

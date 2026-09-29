@@ -132,8 +132,11 @@ export function BrandDnaView(props: BrandDnaViewProps) {
         dna={state.dna}
         busy={state.busy}
         error={state.error}
+        stale={state.stale}
         onApprove={() => { void state.approve(); }}
         onEdit={(field, value) => { void state.edit(field, value); }}
+        onRetry={() => { void state.retry(); }}
+        onCancel={() => { void state.cancel(); }}
       />
 
       <section className="dna-proposals" aria-label={t('dna.proposals')}>

@@ -2137,3 +2137,14 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .onboarding-dna-prefill[open] summary::after{content:"\2013"}
 .onboarding-dna-prefill .onboarding-question{margin:var(--space-4) 0 var(--space-2)}
 .onboarding-dna-source{display:inline-block;margin-left:var(--space-2);font-size:10.5px;letter-spacing:.3px;color:var(--rust)}
+
+/* --- K1 · los pasos del build: detalle plegado y aviso de demora ---------- */
+/* La fila habla de negocio en sans, y lo que el motor escribe para si mismo
+   ("el agente tiene que leer...") va detras de un "Ver detalle" que nadie
+   tiene que abrir para entender en que va el paso. */
+.dna-step-detail-toggle{align-self:flex-start;min-height:var(--control-h-sm);padding:0;border:0;background:transparent;color:var(--muted);font-family:var(--sans);font-size:var(--text-sm);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.dna-step-detail-toggle:hover{color:var(--ink)}
+/* Un build que no cambia en tres minutos lo DICE, y ofrece las dos salidas:
+   reintentar con lo mismo que se pidio, u observar menos (cancelar). */
+.dna-build-actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);margin-top:var(--space-1)}
+.dna-build-stale{flex:1 1 100%;margin:0;font-size:var(--text-sm);color:var(--rust)}

@@ -1,16 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   dnaBuildSpec,
   parseDnaStepReport,
   requireBrandDnaFields,
 } from '../../electron/branding/dna';
 import {
+  fakeCoordinationHub,
   fakeExecutablePath,
   fakePtyLoader,
   fakeRunner,
   makeBackend,
+  type FakeTeamMember,
   type TestBackend,
 } from './helpers';
 
@@ -27,11 +29,16 @@ describe('ADN de marca — otros canales', () => {
   let b: TestBackend;
   let brandId: string;
   let workId: string;
+  let members: FakeTeamMember[];
 
   const step = (job: { steps: readonly { key: string; state: string; detail: string | null }[] }, key: string) =>
     job.steps.find((s) => s.key === key)!;
 
-  /** IA disponible (terminal que carga y CLI en el PATH) y marca fresca. */
+  /**
+   * IA disponible (terminal que carga y CLI en el PATH), marca fresca y un
+   * equipo FALSO: el despacho de K1 tiene que salir bien para que el build
+   * siga en vuelo y el detalle de cada canal se conserve.
+   */
   const restartWithAi = async () => {
     b.cleanup();
     b = await makeBackend({
@@ -42,14 +49,17 @@ describe('ADN de marca — otros canales', () => {
     });
     brandId = (await b.service.createBrand('Ayulem')).id;
     workId = (await b.service.createWork(brandId, 'Propuesta mayorista')).id;
+    members = [];
+    fakeCoordinationHub(b, members);
   };
 
   beforeEach(async () => {
     b = await makeBackend();
     brandId = (await b.service.createBrand('Ayulem')).id;
     workId = (await b.service.createWork(brandId, 'Propuesta mayorista')).id;
+    members = [];
   });
-  afterEach(() => { b.cleanup(); });
+  afterEach(() => { vi.restoreAllMocks(); b.cleanup(); });
 
   it('el paso se llama "Canales", nunca más "Instagram"', async () => {
     const job = await b.service.buildBrandDna(brandId, 'sources', {
@@ -81,7 +91,9 @@ describe('ADN de marca — otros canales', () => {
     await restartWithAi();
 
     const job = await b.service.buildBrandDna(brandId, 'existing', null);
-    expect(step(job, 'channels').state).toBe('skipped');
+    // K1: este modo no pidió canales, así que la fila ni existe — no es un
+    // "Omitido" que la persona tenga que leer.
+    expect(job.steps.map((s) => s.key)).toEqual(['context', 'documents', 'decisions', 'memory', 'compose']);
   });
 
   it('la marca decide cuántos canales y cuáles', async () => {

@@ -609,9 +609,12 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
                 dna={dna.dna}
                 busy={dna.busy || busy}
                 error={dna.error}
+                stale={dna.stale}
                 onApprove={() => void approveDna()}
                 onCorrect={() => { setError(''); setDnaPhase(null); }}
                 onEdit={(field, value) => void dna.edit(field, value)}
+                onRetry={() => void dna.retry()}
+                onCancel={() => void dna.cancel()}
               />
               <div className="onboarding-footer">
                 <button type="button" disabled={busy} onClick={() => { setError(''); setDnaPhase(null); }}><ArrowLeft size={15} />{t('onboarding.back')}</button>
