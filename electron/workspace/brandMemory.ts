@@ -119,6 +119,28 @@ function collapse(text: string): string {
   return text.trim().replace(/\s+/g, ' ');
 }
 
+/**
+ * P3: EL TOPE DE UNA DECISIÓN INLINE.
+ *
+ * CLAUDE.md / AGENTS.md se re-envían en CADA turno de cada miembro, así que
+ * una decisión de 4.000 caracteres cuesta 4.000 caracteres por turno para
+ * siempre. Lo que va inline es una línea recortada; el texto completo vive en
+ * `.latte/context/decisions.md` (lo local) y en `.latte/context/brand-memory.md`
+ * (lo heredado), y la sección apunta a esos archivos.
+ */
+export const DECISION_LINE_MAX = 280;
+
+/**
+ * Recorta a `max` sin partir una palabra: se corta en el último espacio y se
+ * cierra con "…". Devuelve la línea entera si ya entra.
+ */
+export function clipLine(line: string, max: number): string {
+  if (line.length <= max) return line;
+  const cut = line.slice(0, Math.max(1, max - 1));
+  const boundary = cut.lastIndexOf(' ');
+  return `${(boundary > 0 ? cut.slice(0, boundary) : cut).trimEnd()}…`;
+}
+
 function excerptOf(content: string, max: number): { text: string; truncated: boolean } {
   const collapsed = collapse(content);
   if (collapsed.length <= max) return { text: collapsed, truncated: false };
@@ -303,8 +325,14 @@ export function hasInheritedContent(snapshot: BrandMemorySnapshot | null | undef
   return snapshot.decisions.length > 0 || snapshot.artifacts.length > 0;
 }
 
+/** La línea COMPLETA: es la que guarda el índice, que es el log de verdad. */
 function decisionLine(d: InheritedDecision): string {
   return `- ${d.createdAt.slice(0, 10)} — from work "${d.workTitle}" (\`${d.workId}\`): ${d.text}`;
+}
+
+/** Lo que cabe en CLAUDE.md / AGENTS.md: la misma línea, recortada a DECISION_LINE_MAX. */
+function inlinedDecisionLine(d: InheritedDecision): string {
+  return clipLine(decisionLine(d), DECISION_LINE_MAX);
 }
 
 function copyNote(a: InheritedArtifact): string {
@@ -413,7 +441,7 @@ export function renderBrandMemory(
   const decisionLines = snapshot.decisions.length === 0
     ? ['_No approved decisions in previous work._']
     : [
-      ...inlinedDecisions.map(decisionLine),
+      ...inlinedDecisions.map(inlinedDecisionLine),
       ...(decisionOverflow > 0 ? [`- ${decisionOverflow} earlier inherited decisions are recorded in ./${BRAND_MEMORY_FILE}.`] : []),
     ];
   const artifactLines = snapshot.artifacts.length === 0

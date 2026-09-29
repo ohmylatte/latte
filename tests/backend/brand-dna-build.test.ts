@@ -155,6 +155,78 @@ describe('ADN de marca · build del motor', () => {
     expect(fs.existsSync(path.join(fuentes(), 'memoria.md'))).toBe(false);
   });
 
+  // P9: LAS FUENTES NO SON LECTURA OBLIGATORIA ENTERAS. El agente compone
+  // OCHO campos: necesita evidencia representativa, no el archivo completo de
+  // cada trabajo de la marca en el contexto. Extracto + puntero, y la copia
+  // completa queda en el disco del mismo trabajo, adentro de `fuentes/`.
+  it('P9: cada documento fuente entra como extracto con puntero a la copia completa', async () => {
+    await restartWithAi();
+    coordinationOn();
+    const doc = await b.service.createDocument(workId, 'strategy', 'Estrategia larga');
+    await b.service.updateDocument(doc.document.id, { status: 'approved' });
+    const marker = 'COLA_DEL_DOCUMENTO_ESTA_DESPUES_DEL_EXTRACTO';
+    fs.writeFileSync(path.join(workDir(), doc.document.fileName), `${'parrafo de fondo '.repeat(300)}${marker}`);
+
+    const job = await b.service.buildBrandDna(brandId, 'existing', null);
+    expect(step(job, 'documents')).toMatchObject({ state: 'done' });
+
+    const names = fs.readdirSync(path.join(fuentes(), 'documentos'));
+    expect(names).toHaveLength(1);
+    const source = fs.readFileSync(path.join(fuentes(), 'documentos', names[0]!), 'utf8');
+    expect(source.length).toBeLessThan(2_600);
+    expect(source).toContain('parrafo de fondo');
+    expect(source).not.toContain(marker);
+    expect(source).toMatch(/The full document is at \.\/borradores\/adn\/fuentes\/completos\//);
+
+    // La copia completa está en el disco, adentro del MISMO trabajo: el agente
+    // no tiene que salir del directorio para leerla (esa es la Working rule).
+    const full = fs.readFileSync(path.join(fuentes(), 'completos', names[0]!), 'utf8');
+    expect(full).toContain(marker);
+
+    // P9: la copia completa NO es lectura obligatoria: el spec lista las
+    // fuentes de lectura por defecto y ahí no aparece.
+    const task = await approveAndTask(job.jobId);
+    expect(task.spec).toContain('fuentes/documentos/');
+    expect(task.spec).not.toContain('fuentes/completos/');
+  });
+
+  // P9: la memoria del build también se acota (100 decisiones / 100 artefactos)
+  // y, cuando se acota, el ÍNDICE con el log completo queda escrito: es a lo
+  // que apunta el cuerpo de `memoria.md`, y un puntero que no resuelve es un
+  // perdición disfrazada.
+  it('P9: la memoria del build entra con tope 100/100 y el índice completo queda escrito', async () => {
+    await restartWithAi();
+    // El build corre en el trabajo MÁS RECIENTE de la marca, así que el
+    // anterior va primero y el del build se crea al final.
+    const priorId = workId;
+    for (let i = 0; i < 105; i++) {
+      b.repo.insertDecision({
+        id: `dec_${String(i).padStart(3, '0')}`,
+        workId: priorId,
+        text: `Decision heredada ${i}`,
+        createdAt: `2026-01-01T00:00:00.${String(i).padStart(3, '0')}Z`,
+      });
+    }
+    workId = (await b.service.createWork(brandId, 'Trabajo del build')).id;
+    b.repo.touchWork(workId, new Date(Date.now() + 60_000).toISOString());
+    b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_OFF);
+
+    const job = await b.service.buildBrandDna(brandId, 'existing', null);
+    expect(step(job, 'memory')).toMatchObject({ state: 'done' });
+
+    const memoria = fs.readFileSync(path.join(fuentes(), 'memoria.md'), 'utf8');
+    const lines = memoria.split('\n').filter((l) => l.startsWith('- 2026-'));
+    expect(lines, '100 decisiones inline, ni una más').toHaveLength(100);
+    expect(memoria).toContain('Decision heredada 104');
+    expect(memoria).not.toContain('Decision heredada 0');
+    // El puntero al índice está en el cuerpo...
+    expect(memoria).toContain('./.latte/context/brand-memory.md');
+    // ...y el índice existe, con el log COMPLETO adentro.
+    const index = fs.readFileSync(path.join(workDir(), '.latte', 'context', 'brand-memory.md'), 'utf8');
+    expect(index).toContain('Decision heredada 0');
+    expect(index).toContain('Decision heredada 104');
+  });
+
   it('modo sources deja sólo lo pedido, con la URL y la cuenta en espera del agente', async () => {
     await restartWithAi();
     coordinationOn();
@@ -191,6 +263,10 @@ describe('ADN de marca · build del motor', () => {
     expect(task!.spec).toContain(ADN_REL);
     expect(task!.spec).toContain('pasos.json');
     expect(task!.audience).toBe('internal');
+    // P9: recortar las FUENTES no toca la obligación de citar: el spec sigue
+    // exigiendo `sources` por campo y `assumption` sólo con base firme.
+    expect(task!.spec).toContain('`sources` says where the value came from');
+    expect(task!.spec).toContain('`assumption` is true ONLY when you inferred the value without a firm source');
   });
 
   it('un build cancelado queda cancelado y sucede otro distinto', async () => {

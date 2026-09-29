@@ -230,7 +230,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
     // B4.2: y CUÁNDO llamarla. La verdad sobre lo que devuelve ya estaba; lo
     // que faltaba era el momento, y sin eso un agente sondea (o, peor, la
     // llama antes de que exista un run y lee el rechazo como una pared).
-    description: "Reads this member's mailbox and the state of the coordination run: the messages other members sent you with latte_message (each one delivered exactly once — reading consumes them), plus how many tasks are ready, dispatched, done, failed, blocked or pending. Never blocks and never waits, so call it after Latte tells you something happened — your proposal was approved, or a member reported — instead of polling.",
+    description: "Reads this member's mailbox and the state of the coordination run: the messages other members sent you with latte_message (each one delivered exactly once — reading consumes them; a burst returns the most recent ones up to a cap, plus a count of the ones left, so call it again for those), plus how many tasks are ready, dispatched, done, failed, blocked or pending. Never blocks and never waits, so call it after Latte tells you something happened — your proposal was approved, or a member reported — instead of polling.",
     inputSchema: { type: 'object', properties: {} },
   },
   {

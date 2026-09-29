@@ -94,33 +94,66 @@ describe('al aprobar un plan, el coordinador se entera y arranca solo', () => {
 
   // --- A1: el aviso ----------------------------------------------------------
 
-  it('A1: aprobar le manda al coordinador la autoridad, el presupuesto, las tareas creadas y la orden de NO recrearlas', async () => {
+  it('A1: aprobar le manda al coordinador la autoridad, el presupuesto, el resumen de tareas y la orden de NO recrearlas', async () => {
     runId = await proposeAndApprove();
     await settle();
 
     const notice = noticeTo();
     expect(notice).not.toBeNull();
-    expect(notice).toContain('Your plan was approved');
+    const text = notice!;
+    expect(text).toContain('Your plan was approved');
+    // El TÍTULO del plan, que es lo que la persona acaba de aprobar.
+    expect(text).toContain('Plan: ');
+    expect(text).toContain('lanzamiento del mes');
     // La autoridad resultante y el presupuesto, para que no tenga que adivinarlos.
     // `commitProposal` funde la estimación de la propuesta sobre el
     // presupuesto configurado: `maxDispatches` queda en 6 y `maxConcurrent`,
     // que la propuesta no toca, se preserva en 2.
-    expect(notice).toContain('Authority: plan');
-    expect(notice).toContain('6 dispatches');
-    expect(notice).toContain('2 at a time');
-    // Las tareas que `commitProposal` YA creó, con su id y su dependencia.
+    expect(text).toContain('Authority: plan');
+    expect(text).toContain('6 dispatches');
+    expect(text).toContain('2 at a time');
+    // P5: las tareas NO se re-listan una por una (ese bloque era ~100 chars
+    // por tarea y hasta ~30.000 con 200): van CONTADAS, con la lista on demand.
     const tasks = b.repo.listCoordinationTasks(runId);
     expect(tasks).toHaveLength(2);
-    for (const task of tasks) expect(notice).toContain(task.id);
-    expect(notice).toContain('copywriter');
-    expect(notice).toContain('designer');
+    const counts = text.match(/Tasks: 2 created — \d+ ready, \d+ pending, \d+ dispatched, \d+ done, \d+ failed, \d+ blocked\./);
+    expect(counts, 'el aviso cuenta las tareas en vez de listarlas').not.toBeNull();
+    const [ready, pending, dispatched, done, failed, blocked] = [...counts![0].matchAll(/(\d+) (?:ready|pending|dispatched|done|failed|blocked)/g)].map((m) => Number(m[1]));
+    expect([ready, pending, dispatched, done, failed, blocked].reduce((a, b2) => a + b2, 0)).toBe(2);
+    for (const task of tasks) expect(text).not.toContain(task.id);
+    expect(text).toContain('The full list is in `latte_task_list`');
+    // Los roles siguen nombrados: los que falta contratar.
+    expect(text).toContain('copywriter');
+    expect(text).toContain('designer');
     // Los miembros contratados.
-    for (const hired of members.filter((m) => m.id !== COORDINATOR)) expect(notice).toContain(hired.id);
+    for (const hired of members.filter((m) => m.id !== COORDINATOR)) expect(text).toContain(hired.id);
     // Y la instrucción explícita, que es lo que cierra el agujero.
-    expect(notice).toContain('latte_task_list');
-    expect(notice).toContain('latte_dispatch');
-    expect(notice).toContain('latte_task_create');
-    expect(notice).toMatch(/do NOT recreate/i);
+    expect(text).toContain('latte_task_list');
+    expect(text).toContain('latte_dispatch');
+    expect(text).toContain('latte_task_create');
+    expect(text).toMatch(/do NOT recreate/i);
+  });
+
+  // P5: el costo del aviso crecía con el plan (~100-150 chars por tarea, hasta
+  // ~30.000 con 200). Con contadores + puntero, el aviso crece con lo que el
+  // coordinador NECESITA ver, no con el tamaño del plan.
+  it('A1: con un plan de 40 tareas el aviso sigue siendo chico y no re-lista ninguna', async () => {
+    const plan = Array.from({ length: 40 }, (_, i) => ({
+      roleId: i % 2 === 0 ? 'copywriter' : 'designer',
+      spec: `Tarea ${i}: ${'detalle de la tarea '.repeat(20)}`,
+    }));
+    expect(envelope(await call('latte_request_coordination', { ...proposal(), plan })).ok).toBe(true);
+    const id = b.repo.findActiveCoordinationRun(workId)!.id;
+    await b.service.resolveCoordinationGate(`proposal:${id}`, 'approve');
+    await settle();
+
+    const notice = noticeTo();
+    expect(notice).not.toBeNull();
+    expect(notice).toContain('Tasks: 40 created');
+    expect(notice).toContain('The full list is in `latte_task_list`');
+    expect(notice).not.toContain('Tarea 39');
+    for (const task of b.repo.listCoordinationTasks(id)) expect(notice).not.toContain(task.id);
+    expect(notice!.length).toBeLessThan(1_500);
   });
 
   it('A1: con el coordinador ocupado el aviso se ENCOLA, y se entrega cuando su turno termina', async () => {

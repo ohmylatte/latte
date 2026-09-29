@@ -4,16 +4,20 @@ import { WORK_FILES } from '../core/paths';
 import {
   BRAND_MEMORY_DIR,
   BRAND_MEMORY_FILE,
+  DECISION_LINE_MAX,
   INHERITED_ARTIFACTS_INLINE_FLOOR,
   INHERITED_ARTIFACTS_INLINE_MAX,
   INHERITED_DECISIONS_INLINE_FLOOR,
   INHERITED_DECISIONS_INLINE_MAX,
+  clipLine,
   hasBrandMemory,
   renderBrandMemory,
   type BrandMemorySnapshot,
 } from './brandMemory';
 import { DELIVERABLES_DIR } from './deliverables';
 import type { BrandContextNudge, BrandContextNudgeReason } from './brandContextNudge';
+
+export { DECISION_LINE_MAX };
 
 /** E2: donde van los borradores de lo que después se publica. */
 export const DRAFTS_DIR = 'borradores';
@@ -292,7 +296,13 @@ const SIDE_FILES = {
   skill: (id: string) => `${WORK_FILES.metaDir}/${WORK_FILES.skillsDir}/${id}.md`,
 };
 
+/** P3: la línea que va INLINE en CLAUDE.md / AGENTS.md, recortada. */
 function decisionLine(d: Decision): string {
+  return clipLine(fullDecisionLine(d), DECISION_LINE_MAX);
+}
+
+/** La MISMA línea con el texto entero: lo que guarda `.latte/context/decisions.md`. */
+function fullDecisionLine(d: Decision): string {
   return `- ${d.createdAt.slice(0, 10)} — ${d.text.trim().replace(/\s+/g, ' ')}`;
 }
 
@@ -396,14 +406,25 @@ function renderCore(
   const decisionOverflow = Math.max(0, approvedDecisions.length - decisionsInlineMax);
   const decisionsTruncated = decisionOverflow > 0;
   const inlinedDecisions = decisionsTruncated ? approvedDecisions.slice(decisionOverflow) : approvedDecisions;
+  // P3: lo inline es la LÍNEA RECORTADA; el texto entero vive en el side file,
+  // que ahora se escribe también cuando sólo hubo que recortar (sin overflow
+  // de cantidad) — o la decisión larga quedaría perdida.
+  const clippedDecisions = inlinedDecisions.filter((d) => decisionLine(d).length < fullDecisionLine(d).length);
+  const pointer = decisionOverflow > 0
+    ? (clippedDecisions.length > 0
+      ? `- ${decisionOverflow} earlier decisions are recorded in ./${SIDE_FILES.decisions}, where the long ones above also keep their full text.`
+      : `- ${decisionOverflow} earlier decisions are recorded in ./${SIDE_FILES.decisions}.`)
+    : clippedDecisions.length > 0
+      ? `- ${clippedDecisions.length === 1 ? 'A decision above is' : `${clippedDecisions.length} decisions above are`} clipped to keep this file small: the full text is in ./${SIDE_FILES.decisions}.`
+      : '';
   const decisionLines = [
     ...inlinedDecisions.map(decisionLine),
-    ...(decisionsTruncated ? [`- ${decisionOverflow} earlier decisions are recorded in ./${SIDE_FILES.decisions}.`] : []),
+    ...(pointer ? [pointer] : []),
   ].join('\n');
-  if (decisionsTruncated) {
+  if (decisionsTruncated || clippedDecisions.length > 0) {
     files.push({
       path: SIDE_FILES.decisions,
-      content: `# Decisions already taken in this work — ${brand.name} · ${work.title}\n\n${approvedDecisions.map(decisionLine).join('\n')}\n`,
+      content: `# Decisions already taken in this work — ${brand.name} · ${work.title}\n\n${approvedDecisions.map(fullDecisionLine).join('\n')}\n`,
     });
   }
 

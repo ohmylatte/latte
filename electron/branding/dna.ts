@@ -50,6 +50,46 @@ export const DNA_AGENT_STEP_KEYS = ['web', 'instagram'] as const;
 export type DnaAgentStepKey = (typeof DNA_AGENT_STEP_KEYS)[number];
 
 /**
+ * P9: CUÁNTO DE CADA FUENTE ENTRA INLINE EN EL BUILD.
+ *
+ * El build lee lo que Latte junta en `borradores/adn/fuentes/`, y el agente lo
+ * lee ENTERO: con veinte documentos de 10.000 chars eran 200.000 chars de
+ * lectura para componer OCHO campos. El extracto + el puntero a la copia
+ * completa aplican el patrón del resto del sistema (brand context, brief,
+ * skills): lo obligatorio es chico y acotado, lo completo está a un `read` de
+ * distancia y sólo si hace falta.
+ */
+export const DNA_SOURCE_EXCERPT_CHARS = 2_000;
+
+/**
+ * Subcarpeta de `fuentes/` con las copias COMPLETAS a las que apuntan los
+ * extractos. Va adentro de `fuentes/` (y no en otro lado) por dos razones:
+ * `resetDnaDraftDir` vacía esa carpeta al arrancar cada build, así que una
+ * copia vieja nunca sobrevive, y el agente la lee SIN salir de su directorio,
+ * que es lo que la Working rule le pide.
+ *
+ * No aparece en la lista de fuentes del spec: esa lista es la lectura por
+ * defecto ("read every one you can") y leer las dos versiones de un documento
+ * sería el ahorro al revés.
+ */
+export const DNA_FULL_COPIES_DIR = 'completos';
+
+/**
+ * P9: CUÁNTO DE LA MEMORIA HEREDADA ENTRA EN `memoria.md`.
+ *
+ * `500/500` era "sin tope en la práctica": una marca madura volcaba su historia
+ * entera en un archivo que el agente decompone lee COMPLETO. 100/100 es el
+ * mismo orden que el de las secciones inline de CLAUDE.md (`DECISIONS_INLINE_MAX`
+ * 15, heredadas 10) con holgura para un insumo que sí se lee de una vez, y
+ * sigue siendo representativo: son las 100 decisiones y los 100 artefactos más
+ * recientes. El resto no se pierde — el cuerpo apunta al índice
+ * `.latte/context/brand-memory.md`, que Latte escribe con el log completo
+ * cuando el cuerpo queda recortado.
+ */
+export const DNA_MEMORY_DECISIONS = 100;
+export const DNA_MEMORY_ARTIFACTS = 100;
+
+/**
  * A1: el sello del build. El spec le pide al agente que lo estampe en cada
  * archivo que escribe para ESTA tarea; el import lo valida. Un `ADN.json` de un
  * build anterior que el agente re-reporta no pasa: es de otro job.

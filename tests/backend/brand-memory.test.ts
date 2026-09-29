@@ -6,6 +6,7 @@ import {
   ARTIFACT_EXCERPT_CHARS,
   BRAND_MEMORY_DIR,
   BRAND_MEMORY_FILE,
+  DECISION_LINE_MAX,
   INHERITED_ARTIFACTS_INLINE_MAX,
   INHERITED_DECISIONS_INLINE_MAX,
   collectBrandMemory,
@@ -270,6 +271,37 @@ describe('renderBrandMemory', () => {
     expect(rendered?.body).toContain(`Inherited decision ${INHERITED_DECISIONS_INLINE_MAX + 3}`);
     const index = rendered?.files.find((f) => f.path === BRAND_MEMORY_FILE);
     for (const d of many) expect(index?.content).toContain(d.text);
+  });
+
+  // P3: lo heredado corre la misma vara que lo local: la línea INLINE se
+  // recorta, el índice (.latte/context/brand-memory.md) guarda el texto
+  // completo, y el cuerpo SIEMPRE apunta al índice.
+  it('clips a long inherited decision in the body and keeps its full text in the index', () => {
+    const long = Array.from({ length: 600 }, (_, i) => `word${i}`).join(' ');
+    const longDecision = decision({
+      id: 'dec_long',
+      workId: onboarding.id,
+      text: long,
+      status: 'approved',
+      createdAt: '2026-02-05T00:00:00.000Z',
+    });
+    const snapshot = collectBrandMemory({
+      brand,
+      currentWorkId: paid.id,
+      sources: [source(onboarding, [audienceDecision, longDecision], [])],
+    });
+    const rendered = renderBrandMemory(snapshot, { decisions: INHERITED_DECISIONS_INLINE_MAX, artifacts: INHERITED_ARTIFACTS_INLINE_MAX });
+
+    const lines = rendered!.body.split('\n').filter((l) => l.startsWith('- 2026-'));
+    expect(lines).toHaveLength(2);
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(DECISION_LINE_MAX);
+    expect(lines.some((l) => l.endsWith('…'))).toBe(true);
+    // El puntero al índice está en el cuerpo, con la decisión larga cortada
+    // o sin ella.
+    expect(rendered!.body).toContain(`Inspect the index in ./${BRAND_MEMORY_FILE}.`);
+    const index = rendered!.files.find((f) => f.path === BRAND_MEMORY_FILE);
+    expect(index?.content).toContain(long);
+    expect(index?.content).toContain(audienceDecision.text);
   });
 
   it('returns null when the brand has no other work', () => {

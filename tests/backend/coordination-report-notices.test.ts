@@ -184,6 +184,62 @@ describe('cada reporte le llega al coordinador, y el cierre también', () => {
     expect(noticesTo()).toContain('Nothing left to dispatch');
   });
 
+  // P6: EL ÚLTIMO REPORTE Y EL CIERRE SON UN HECHO, y un hecho es UN aviso.
+  // Antes eran dos mensajes en el mismo tick: el coordinador pagaba dos turnos
+  // de usuario (y dos re-pagos de su hilo) por la misma noticia.
+  it('P6: el reporte que cierra el run llega en un ÚNICO aviso, con el cierre adentro', async () => {
+    runId = await proposeAndApprove(proposal(
+      [{ roleId: 'copywriter', spec: 'Escribir los textos' }],
+      [{ roleId: 'copywriter', why: 'Nadie escribe' }],
+    ));
+    const task = b.repo.listCoordinationTasks(runId)[0];
+    await call('latte_dispatch', { taskId: task.id });
+    await settle();
+    const workerId = b.repo.getCoordinationTask(task.id).assignedMemberId!;
+    send.mockClear();
+
+    await call('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Listo' }, b.coordinationTokens.mint(workId, workerId));
+    await settle();
+
+    expect(b.repo.getCoordinationRun(runId).status).toBe('done');
+    const sends = send.mock.calls.filter((c) => c[0] === COORDINATOR);
+    expect(sends, 'un hecho, un aviso: ni el reporte ni el cierre viajan solos').toHaveLength(1);
+    const notice = sends[0]![1] as string;
+    // El reporte, con lo suyo...
+    expect(notice).toContain('«copywriter»');
+    expect(notice).toContain(workerId);
+    expect(notice).toContain('reported task');
+    expect(notice).toContain('succeeded');
+    expect(notice).toContain('Listo');
+    expect(notice).toContain('1/1 done');
+    // ...y el cierre, en el mismo texto.
+    expect(notice).toContain('Run finished: 1 done, 0 failed');
+    expect(notice).toContain('Nothing left to dispatch');
+  });
+
+  // P6: lo que NO cierra el run sigue avisándose por separado: el reporte de
+  // una tarea del medio no se pierde esperando un cierre que no llegó.
+  it('P6: un reporte que no cierra el run avisa igual, una sola vez', async () => {
+    runId = await proposeAndApprove(proposal(
+      [{ roleId: 'copywriter', spec: 'Escribir los textos' }, { roleId: 'designer', spec: 'Diseñar las piezas' }],
+      [{ roleId: 'copywriter', why: 'Nadie escribe' }, { roleId: 'designer', why: 'Nadie diseña' }],
+    ));
+    const task = b.repo.listCoordinationTasks(runId).find((t) => t.roleId === 'copywriter')!;
+    await call('latte_dispatch', { taskId: task.id });
+    await settle();
+    const workerId = b.repo.getCoordinationTask(task.id).assignedMemberId!;
+    send.mockClear();
+
+    await call('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Tres textos listos' }, b.coordinationTokens.mint(workId, workerId));
+    await settle();
+
+    expect(b.repo.getCoordinationRun(runId).status).toBe('running');
+    const sends = send.mock.calls.filter((c) => c[0] === COORDINATOR);
+    expect(sends).toHaveLength(1);
+    expect(sends[0]![1] as string).toContain('reported task');
+    expect(sends[0]![1] as string).not.toContain('Run finished');
+  });
+
   it('M1: cancelar el run también se avisa, en vez de dejar al coordinador esperando', async () => {
     runId = await proposeAndApprove(proposal(
       [{ roleId: 'copywriter', spec: 'Escribir los textos' }],
