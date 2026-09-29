@@ -45,6 +45,7 @@ const dna = (patch: Partial<BrandDnaView> = {}): BrandDnaView => ({
   proposals: [],
   ideas: [],
   ideasUpdatedAt: null,
+  lastSources: null,
   ...patch,
 });
 

@@ -971,6 +971,14 @@ export class LatteService implements BackendApi {
     if (mode !== 'sources' && mode !== 'existing' && mode !== 'ideas') throw new ValidationError('Invalid brand DNA build mode');
     const input = this.requireDnaSources(sources, mode);
 
+    // MEMORIA DEL ÚLTIMO PEDIDO: la web y los canales, ya validados, quedan
+    // guardados APENAS se valida el pedido y ANTES del despacho. Si el armado
+    // falla después (sin IA, sin conexión, lo que sea), la persona no tiene que
+    // volver a escribirlos: son lo único que su pantalla guardó de verdad.
+    if (mode === 'sources') {
+      this.deps.repo.setMeta(`brand_dna_sources:${brand.id}`, JSON.stringify({ url: input.url, channels: input.channels }));
+    }
+
     const running = this.activeDnaJob(brand.id);
     if (running) return this.dnaJobSnapshot(running.job);
 
@@ -1174,7 +1182,31 @@ export class LatteService implements BackendApi {
       proposals,
       ideas: ideas?.ideas ?? [],
       ideasUpdatedAt: ideas?.updatedAt ?? null,
+      lastSources: this.readBrandDnaSources(brandId),
     };
+  }
+
+  /**
+   * Las fuentes del último armado (`brand_dna_sources:{brandId}`), para que la
+   * pantalla las vuelva a ofrecer. Un meta ilegible —JSON roto o de otra
+   * forma— se lee como `null`: es un detalle de memoria, no un dato que pueda
+   * tumbar la ficha entera.
+   */
+  private readBrandDnaSources(brandId: string): { url: string | null; channels: string[] } | null {
+    const raw = this.deps.repo.getMeta(`brand_dna_sources:${brandId}`);
+    if (!raw) return null;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      const record = parsed as Record<string, unknown>;
+      const url = record.url === null || record.url === undefined ? null : record.url;
+      if (url !== null && typeof url !== 'string') return null;
+      const channels = record.channels;
+      if (!Array.isArray(channels) || channels.some((channel) => typeof channel !== 'string')) return null;
+      return { url, channels: channels as string[] };
+    } catch {
+      return null;
+    }
   }
 
   private approvedBrandDna(brandId: string): BrandDnaProjection | null {

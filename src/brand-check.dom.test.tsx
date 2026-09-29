@@ -61,6 +61,7 @@ const view = (patch: Partial<BrandDnaFields> | null, version = 2): BrandDnaView 
   proposals: [],
   ideas: [],
   ideasUpdatedAt: null,
+  lastSources: null,
 });
 
 const work: Work = {

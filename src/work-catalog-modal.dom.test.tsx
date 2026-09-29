@@ -35,7 +35,7 @@ const roles: AgentRole[] = [
 const work = (title: string, brief = ''): Work => ({ id: 'w-' + title, brandId: brand.id, title, brief, folder: null, updatedAt: '' });
 
 /** La ficha de una marca SIN ADN: lo que un brand nuevo trae. */
-const noDna = (): BrandDnaView => ({ brandId: brand.id, draft: null, approved: null, changedSinceApproval: false, proposals: [], ideas: [], ideasUpdatedAt: null });
+const noDna = (): BrandDnaView => ({ brandId: brand.id, draft: null, approved: null, changedSinceApproval: false, proposals: [], ideas: [], ideasUpdatedAt: null, lastSources: null });
 /** La ficha con ADN aprobado: audiencia y oferta, que es lo que este tipo pregunta. */
 const withDna = (): BrandDnaView => {
   const entry = <T,>(value: T) => ({ value, sources: [{ kind: 'context' as const, label: 'contexto de marca' }], assumption: false });

@@ -96,7 +96,7 @@ describe('ADN de marca · borrador, versión y propuestas', () => {
 
   it('una marca nueva no tiene ADN, y una marca inexistente no existe', async () => {
     const view = await b.service.readBrandDna(brandId);
-    expect(view).toEqual({ brandId, draft: null, approved: null, changedSinceApproval: false, proposals: [], ideas: [], ideasUpdatedAt: null });
+    expect(view).toEqual({ brandId, draft: null, approved: null, changedSinceApproval: false, proposals: [], ideas: [], ideasUpdatedAt: null, lastSources: null });
     await expect(b.service.readBrandDna('brd_missing_brand_xx')).rejects.toMatchObject({ code: 'NOT_FOUND' });
     // Sin ADN aprobado las instrucciones lo dicen y no apuntan al archivo.
     expect(claudeMd()).toContain('No approved Brand DNA');
