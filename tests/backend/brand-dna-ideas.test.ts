@@ -150,12 +150,17 @@ describe('ADN · el build de ideas', () => {
     b.repo.setMeta('coordination_coordinator:' + workId, coordinator);
   };
 
-  const approveAndTask = async (jobId: string) => {
-    const runId = b.repo.findActiveCoordinationRun(workId)!.id;
-    await b.service.resolveCoordinationGate(`proposal:${runId}`, 'approve');
+  /**
+   * K1: NO hay propuesta que aprobar — el clic de la persona ya es la
+   * aprobación, así que la tarea nace y sale DESPACHADA en el mismo gesto.
+   * Ésta sólo la busca donde quedó.
+   */
+  const dispatchedTask = async (jobId: string) => {
     await settle();
+    const runId = b.repo.findActiveCoordinationRun(workId)!.id;
     const task = b.repo.listCoordinationTasks(runId).find((t) => t.spec.includes(jobId));
     expect(task, 'la tarea del build quedó creada').toBeDefined();
+    expect(task!.status, 'la tarea salió despachada').toBe('dispatched');
     return task!;
   };
 
@@ -238,7 +243,7 @@ describe('ADN · el build de ideas', () => {
     expect(trabajos).toContain(campaign.title);
     expect(trabajos, 'el espacio interno no es un trabajo de la marca').not.toContain('Propuesta mayorista');
 
-    const task = await approveAndTask(job.jobId);
+    const task = await dispatchedTask(job.jobId);
     expect(task.audience).toBe('internal');
     expect(task.spec).toContain('IDEAS.json');
     expect(task.spec).toContain('workTypeId');
@@ -267,7 +272,7 @@ describe('ADN · el build de ideas', () => {
     await restartWithAi();
     coordinationOn();
     const job = await b.service.buildBrandDna(brandId, 'ideas', null);
-    const task = await approveAndTask(job.jobId);
+    const task = await dispatchedTask(job.jobId);
     fs.mkdirSync(path.join(workDir(), 'borradores', 'adn'), { recursive: true });
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'No pude.', files: ['borradores/adn/notas.md'] }, worker().id)).ok).toBe(true);
     const after = await b.service.readBrandDnaBuildJob(job.jobId);
@@ -279,7 +284,7 @@ describe('ADN · el build de ideas', () => {
     await restartWithAi();
     coordinationOn();
     const job = await b.service.buildBrandDna(brandId, 'ideas', null);
-    const task = await approveAndTask(job.jobId);
+    const task = await dispatchedTask(job.jobId);
     writeIdeas(job.jobId, { ideas: [{ ...IDEAS.ideas[0], basedOn: [] }] });
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Listo.', files: [IDEAS_REL] }, worker().id)).ok).toBe(true);
     const after = await b.service.readBrandDnaBuildJob(job.jobId);
@@ -291,7 +296,7 @@ describe('ADN · el build de ideas', () => {
     await restartWithAi();
     coordinationOn();
     const job = await b.service.buildBrandDna(brandId, 'existing', null);
-    const task = await approveAndTask(job.jobId);
+    const task = await dispatchedTask(job.jobId);
     writeDna(job.jobId, ADN_FIELDS);
     writeIdeas(job.jobId, IDEAS);
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Listo.', files: [ADN_REL, IDEAS_REL] }, worker().id)).ok).toBe(true);
@@ -308,7 +313,7 @@ describe('ADN · el build de ideas', () => {
     await restartWithAi();
     coordinationOn();
     const job = await b.service.buildBrandDna(brandId, 'existing', null);
-    const task = await approveAndTask(job.jobId);
+    const task = await dispatchedTask(job.jobId);
     writeDna(job.jobId, ADN_FIELDS);
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Listo.', files: [ADN_REL] }, worker().id)).ok).toBe(true);
 

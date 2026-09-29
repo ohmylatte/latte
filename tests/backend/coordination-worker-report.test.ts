@@ -154,11 +154,13 @@ describe('E6: la extracción de identidad es un despacho real que el revisor pue
       const { send } = fakeCoordinationHub(b, members);
       members.push({ id: COORDINATOR, workId: work.id, roleId: 'strategist', status: 'idle' });
       await b.service.addBrandIdentityFiles(brand.id);
-      expect((await b.service.requestBrandIdentityExtraction(brand.id)).outcome).toBe('proposed');
+      // K1: el clic de la persona ES la aprobación — la tarea sale despachada
+      // en el mismo gesto, sin propuesta esperando en un chat.
+      expect((await b.service.requestBrandIdentityExtraction(brand.id)).outcome).toBe('dispatched');
       const runId = b.repo.findActiveCoordinationRun(work.id)!.id;
-      await b.service.resolveCoordinationGate(`proposal:${runId}`, 'approve');
       await settle();
       const [task] = b.repo.listCoordinationTasks(runId);
+      expect(task!.status, 'la tarea salió despachada').toBe('dispatched');
       const reviewer = members.find((m) => m.roleId === 'reviewer')!;
       const prompt = String(send.mock.calls.filter((c) => c[0] === reviewer.id).at(-1)![1]);
       expect(prompt).toContain(`Task \`${task!.id}\``);

@@ -221,13 +221,32 @@ function emptyRefreshReport(): BrandContextRefreshReport {
   return { updated: [], unchanged: [], live: [], userOwned: [] };
 }
 
-/** 1B: los ocho pasos de un build, en el orden en que los cuenta el contrato. */
-const DNA_BUILD_STEP_KEYS: readonly BrandDnaBuildStepKey[] = ['web', 'channels', 'files', 'context', 'documents', 'decisions', 'memory', 'compose'];
+/** K1: los pasos del modo `existing`: el material que la marca ya tiene, y la ficha. */
+const DNA_EXISTING_STEP_KEYS: readonly BrandDnaBuildStepKey[] = ['context', 'documents', 'decisions', 'memory', 'compose'];
 
-function initialDnaSteps(mode: BrandDnaBuildMode): BrandDnaBuildStep[] {
+/**
+ * K1: LA PANTALLA SÓLO MUESTRA LO QUE SE PIDIÓ.
+ *
+ * Un paso que no aplica al modo ni a las fuentes pedidas no es "Omitido": no
+ * EXISTE. `sources` con sólo la web son DOS filas —tu web y la ficha—, no ocho
+ * con seis tachadas; esa grilla era la que el dueño se encontraba quieta en la
+ * pantalla. La lista es la misma que dibuja la vista previa (`DNA_STEPS` de
+ * `browser-api.ts`): una sola regla en las dos orillas.
+ */
+function initialDnaSteps(
+  mode: BrandDnaBuildMode,
+  sources: { url: string | null; channels: string[]; useIdentityFiles: boolean },
+): BrandDnaBuildStep[] {
+  const pending = (key: BrandDnaBuildStepKey): BrandDnaBuildStep => ({ key, state: 'pending', detail: null });
   // 3: el modo ideas es una tarea liviana: un solo paso, el que existe de verdad.
-  if (mode === 'ideas') return [{ key: 'compose', state: 'pending', detail: null }];
-  return DNA_BUILD_STEP_KEYS.map((key) => ({ key, state: 'pending' as const, detail: null }));
+  if (mode === 'ideas') return [pending('compose')];
+  if (mode === 'existing') return DNA_EXISTING_STEP_KEYS.map(pending);
+  const keys: BrandDnaBuildStepKey[] = [];
+  if (sources.url) keys.push('web');
+  if (sources.channels.length > 0) keys.push('channels');
+  if (sources.useIdentityFiles) keys.push('files');
+  keys.push('compose');
+  return keys.map(pending);
 }
 
 /**
@@ -963,7 +982,7 @@ export class LatteService implements BackendApi {
     // saber, cuando llegue el reporte, qué campo tocó la persona en vuelo.
     const draftAtStart = this.deps.repo.getDnaDraft(brand.id) ?? emptyBrandDnaFields();
     const record: DnaJobRecord = {
-      job: { jobId: newId('bdj'), brandId: brand.id, mode, steps: initialDnaSteps(mode), done: false, outcome: null, reason: null },
+      job: { jobId: newId('bdj'), brandId: brand.id, mode, steps: initialDnaSteps(mode, input), done: false, outcome: null, reason: null },
       workId: work.id,
       taskId: null,
       runId: null,
@@ -1013,18 +1032,23 @@ export class LatteService implements BackendApi {
             language: locale,
             today,
           });
-      const result = await this.coordination.requestPersonTask(work.id, { roleId: REVIEWER_ROLE_ID, title, spec }, coordinator);
+      // K1: EL CLIC DE LA PERSONA ES LA APROBACIÓN. El build lo pidió ella desde
+      // una pantalla de Latte, así que el despacho arranca YA — sin propuesta
+      // pendiente en un chat que no abre.
+      const result = await this.coordination.requestPersonTask(work.id, { roleId: REVIEWER_ROLE_ID, title, spec }, coordinator, { consented: true });
       record.taskId = result.taskId;
       try { record.runId = this.deps.repo.findActiveCoordinationRun(work.id)?.id ?? null; } catch { record.runId = null; }
       switch (result.outcome) {
         case 'dispatched':
           setDnaStep(record.job, 'compose', 'running', mode === 'ideas' ? 'El equipo está componiendo las ideas' : 'El equipo está componiendo el ADN');
           break;
+        // Con consentimiento estos dos no deberían aparecer: el clic ya es el
+        // sí. Si aparecen, el paso se queda esperando y dice POR QUÉ.
         case 'pending_approval':
-          setDnaStep(record.job, 'compose', 'pending', 'Esperando que la persona despache la tarea del equipo');
+          setDnaStep(record.job, 'compose', 'pending', 'El despacho del equipo espera una aprobación');
           break;
         case 'proposed':
-          setDnaStep(record.job, 'compose', 'pending', 'La propuesta de tarea espera la aprobación de la persona');
+          setDnaStep(record.job, 'compose', 'pending', 'El equipo espera que se apruebe el trabajo');
           break;
         default:
           return this.dnaJobSnapshot(this.finishDnaJob(record, 'failed', result.reason ?? 'UNAVAILABLE'));
@@ -1305,18 +1329,16 @@ export class LatteService implements BackendApi {
     sources: { url: string | null; channels: string[]; useIdentityFiles: boolean },
   ): void {
     const job = record.job;
+    // K1: SÓLO los pasos que ESTE modo trajo a la pantalla. Los que no están en
+    // la lista —`setDnaStep` no los encuentra— no se escriben: un "Omitido" para
+    // lo que la persona ni pidió es ruido, y el motivo de un material que no
+    // entra en este build no le dice nada a nadie.
     if (job.mode === 'sources') {
-      const note = 'Modo fuentes: el material existente no entra en este build';
-      for (const key of ['context', 'documents', 'decisions', 'memory'] as const) setDnaStep(job, key, 'skipped', note);
       setDnaStep(job, 'web', sources.url ? 'pending' : 'skipped', sources.url ? `El agente tiene que leer ${sources.url}` : 'Sin URL para leer');
       setDnaStep(job, 'channels', sources.channels.length > 0 ? 'pending' : 'skipped',
         sources.channels.length > 0
           ? `El agente tiene que leer ${sources.channels.length === 1 ? 'el canal' : `${sources.channels.length} canales`}: ${sources.channels.join(' · ')}`
           : 'Sin canales para leer');
-    } else {
-      const note = 'Modo material existente: no se lee la web ni los canales en este build';
-      setDnaStep(job, 'web', 'skipped', note);
-      setDnaStep(job, 'channels', 'skipped', note);
     }
 
     const workDir = this.deps.files.workDir(brand.id, work.id);
@@ -1713,10 +1735,14 @@ export class LatteService implements BackendApi {
 
   /**
    * "Extraer identidad con el equipo": una tarea INTERNA al revisor, en el
-   * trabajo más reciente de la marca, que lee las fuentes del kit (copiadas
+   * espacio interno de la marca, que lee las fuentes del kit (copiadas
    * adentro del trabajo, donde el agente puede leerlas) y escribe
    * `borradores/identidad/IDENTIDAD.md`. Su reporte lo suma al kit; la
    * persona lo aprueba.
+   *
+   * K1: el pedido es UN clic en una pantalla de Latte, así que se despacha con
+   * consentimiento —igual que el build de la marca— y no deja una propuesta
+   * esperando en un chat que la persona no abre.
    */
   async requestBrandIdentityExtraction(brandId: string): Promise<BrandIdentityExtractionResult> {
     const brand = this.requireActiveBrand(requireId(brandId, 'brandId'));
@@ -1737,7 +1763,7 @@ export class LatteService implements BackendApi {
       roleId: REVIEWER_ROLE_ID,
       title,
       spec: identityExtractionSpec(brand.name, sources.map((s) => s.name)),
-    }, coordinator);
+    }, coordinator, { consented: true });
     return { outcome: result.outcome, workId: work.id, workTitle: work.title, reason: result.reason };
   }
 
