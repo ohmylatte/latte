@@ -27,8 +27,9 @@ describe('otros canales — la hoja respeta el encargo', () => {
     expect(css.trimEnd().endsWith('}'), 'el bloque cierra la hoja').toBe(true);
   });
 
-  it('1 — el campo es de varios renglones y la tarjeta toma el ancho de la grilla', () => {
-    has('.dna-source-card.is-channels{grid-column:1/-1}');
+  it('1 — el campo es de varios renglones y la tarjeta toma el ancho de la grilla, debajo de web y archivos', () => {
+    has('.dna-source-card.is-channels{grid-column:1/-1;order:3}');
+    has('.dna-source-grid{grid-template-columns:repeat(2,minmax(0,1fr))}');
     has('.dna-channels{width:100%;min-height:96px');
     has('resize:vertical');
   });
