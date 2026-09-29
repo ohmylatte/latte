@@ -216,6 +216,74 @@ describe('ADN · el pedido de la persona se despacha solo', () => {
     expect(job).toMatchObject({ done: true, outcome: 'failed', reason: 'NOT_INSTALLED' });
     expect(b.repo.getMeta(`brand_workspace_work:${brandId}`), 'el espacio interno se creó igual').toBeTruthy();
     expect(await b.service.listActiveCoordinationRuns()).toEqual([]);
+    // Y la propuesta que armó el intento fallido no queda en `planning`: la
+    // lista de arriba esconde los runs internos, así que se mira la fila.
+    expect(b.repo.findActiveCoordinationRun(brandWorkId()), 'ningún run colgado en el espacio interno').toBeNull();
+  });
+
+  it('si la contratación del revisor falla, la propuesta no queda colgada y el reintento anda', async () => {
+    await freshBrandWithAi();
+    const hire = b.hub.addMember as unknown as { mockRejectedValueOnce: (error: Error) => void };
+    hire.mockRejectedValueOnce(new Error('spawn claude ENOENT'));
+
+    const failed = await b.service.buildBrandDna(brandId, 'ideas', null);
+    expect(failed).toMatchObject({ done: true, outcome: 'failed' });
+    expect(b.repo.findActiveCoordinationRun(brandWorkId()), 'la propuesta del intento fallido se cancela').toBeNull();
+
+    const retry = await b.service.buildBrandDna(brandId, 'ideas', null);
+    expect(retry).toMatchObject({ done: false, outcome: null });
+    expect(taskOf(retry.jobId).task.status).toBe('dispatched');
+  });
+
+  /**
+   * Después de un build que terminó, el run se cierra y el revisor queda en
+   * pausa. Si ese revisor pasaba a ser el coordinador del espacio interno, el
+   * run siguiente ("Actualizar ideas") nacía suspendido: `coordinator_paused`.
+   */
+  it('el segundo build no queda suspendido por el revisor en pausa del primero', async () => {
+    await freshBrandWithAi();
+    const first = await b.service.buildBrandDna(brandId, 'ideas', null);
+    const { run, task } = taskOf(first.jobId);
+    writeStamped(IDEAS_REL, first.jobId, IDEAS);
+    expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Ideas listas.', files: [IDEAS_REL] }, reviewer().id)).ok).toBe(true);
+    await settle();
+    expect(b.repo.getCoordinationRun(run.id).status, 'el primer run se cerró').not.toBe('running');
+
+    const second = await b.service.buildBrandDna(brandId, 'ideas', null);
+
+    expect(second).toMatchObject({ done: false, outcome: null });
+    const next = taskOf(second.jobId);
+    expect(next.run.status).toBe('running');
+    expect(next.task.status).toBe('dispatched');
+  });
+
+  /**
+   * Lo que vio la persona en la prueba de escritorio: un primer intento dejó un
+   * run en `planning` en el espacio interno y cada "Reintentar" fallaba con
+   * RUN_ALREADY_ACTIVE ("El equipo ya está con otra cosa"). Ese run no sale en
+   * ninguna lista, así que nadie lo podía resolver.
+   */
+  it('un run interno colgado en planning no traba el reintento', async () => {
+    await freshBrandWithAi();
+    const old = await b.service.buildBrandDna(brandId, 'ideas', null);
+    await b.service.cancelBrandDnaBuild(old.jobId);
+    const first = b.repo.findActiveCoordinationRun(brandWorkId())!;
+    b.service.coordinationEngine.cancelRun(first.id);
+    // El resto de un intento viejo: una propuesta sin aprobar en el espacio interno.
+    const stuck = await b.service.coordinationEngine.requestPersonTask(
+      brandWorkId(),
+      { roleId: 'reviewer', title: 'Componer el ADN de Ayulem', spec: 'Intento viejo.' },
+      null,
+    );
+    expect(stuck.outcome).toBe('proposed');
+    expect(b.repo.findActiveCoordinationRun(brandWorkId())!.status).toBe('planning');
+
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
+
+    expect(job, 'el reintento arranca, no choca con el run viejo').toMatchObject({ done: false, outcome: null });
+    const { run, task } = taskOf(job.jobId);
+    expect(run.status).toBe('running');
+    expect(task.status).toBe('dispatched');
   });
 
   /**

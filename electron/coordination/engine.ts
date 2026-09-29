@@ -1701,6 +1701,10 @@ export class CoordinationEngine {
       await this.resolveProposalGate(runId, 'approve', undefined, { handoffDispatch: false });
     } catch (error) {
       this.deps.log?.(`[latte] consented proposal approval failed (${runId}): ${error instanceof Error ? error.message : String(error)}`);
+      // La propuesta la armó ESTE llamado y nadie más la va a aprobar: si
+      // queda en `planning`, el próximo clic choca con RUN_ALREADY_ACTIVE
+      // para siempre. Se cancela y el reintento arranca limpio.
+      try { this.cancelRun(runId); } catch { /* el cierre nunca tapa el motivo */ }
       return { outcome: 'blocked', taskId: null, reason: error instanceof LatteError ? error.code : 'INTERNAL' };
     }
     const task = this.deps.repo.listCoordinationTasks(runId)

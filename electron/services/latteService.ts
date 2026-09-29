@@ -1016,9 +1016,11 @@ export class LatteService implements BackendApi {
       const title = mode === 'ideas'
         ? (locale === 'en-US' ? `Refresh ideas for ${brand.name}` : `Actualizar ideas de ${brand.name}`)
         : (locale === 'en-US' ? `Compose the brand DNA of ${brand.name}` : `Componer el ADN de ${brand.name}`);
-      let team: TeamMember[] = [];
-      try { team = this.deps.hub.listTeam(work.id).filter((m) => m.status !== 'ended'); } catch { team = []; }
-      const coordinator = this.effectiveCoordinator(work.id) ?? team.find((m) => m.roleId === ASSISTANT_ROLE_ID)?.id ?? team[0]?.id ?? null;
+      // El espacio interno no tiene coordinador: nadie conversa ahí. Tomar al
+      // revisor de un build anterior como coordinador suspendía el run nuevo
+      // (`coordinator_paused`) en cuanto ese proceso estaba apagado, que es lo
+      // normal después de reiniciar Latte.
+      const coordinator = null;
       const prepared = this.dnaPreparedSources(workDir);
       const spec = mode === 'ideas'
         ? dnaIdeasSpec({ jobId: record.job.jobId, brandName: brand.name, prepared, language: locale, today })
@@ -1035,6 +1037,7 @@ export class LatteService implements BackendApi {
       // K1: EL CLIC DE LA PERSONA ES LA APROBACIÓN. El build lo pidió ella desde
       // una pantalla de Latte, así que el despacho arranca YA — sin propuesta
       // pendiente en un chat que no abre.
+      this.clearStuckInternalRun(work.id);
       const result = await this.coordination.requestPersonTask(work.id, { roleId: REVIEWER_ROLE_ID, title, spec }, coordinator, { consented: true });
       record.taskId = result.taskId;
       try { record.runId = this.deps.repo.findActiveCoordinationRun(work.id)?.id ?? null; } catch { record.runId = null; }
@@ -1756,9 +1759,9 @@ export class LatteService implements BackendApi {
     for (const source of sources) nodeFs.copyFileSync(source.file, nodePath.join(target, source.name));
     const locale = this.deps.repo.getMeta(`work_content_locale:${work.id}`) === 'en-US' ? 'en-US' : 'es-AR';
     const title = locale === 'en-US' ? `Extract the identity of ${brand.name}` : `Extraer la identidad de ${brand.name}`;
-    let team: TeamMember[] = [];
-    try { team = this.deps.hub.listTeam(work.id).filter((m) => m.status !== 'ended'); } catch { team = []; }
-    const coordinator = this.effectiveCoordinator(work.id) ?? team.find((m) => m.roleId === ASSISTANT_ROLE_ID)?.id ?? team[0]?.id ?? null;
+    // Sin coordinador, igual que el build del ADN.
+    const coordinator = null;
+    this.clearStuckInternalRun(work.id);
     const result = await this.coordination.requestPersonTask(work.id, {
       roleId: REVIEWER_ROLE_ID,
       title,
@@ -1843,6 +1846,23 @@ export class LatteService implements BackendApi {
       this.deps.repo.setMeta(key, work.id);
     });
     return work;
+  }
+
+  /**
+   * Un run del espacio interno que no está corriendo (una propuesta en
+   * `planning`, un equipo `suspended`) no lo puede resolver nadie: sus runs no
+   * salen en ninguna lista de la persona. Si queda así, cada clic en "Armar"
+   * choca con RUN_ALREADY_ACTIVE para siempre. El clic nuevo lo reemplaza.
+   */
+  private clearStuckInternalRun(workId: string): void {
+    if (!this.isInternalWork(workId)) return;
+    const run = this.deps.repo.findActiveCoordinationRun(workId);
+    if (!run || run.status === 'running') return;
+    try {
+      this.coordination.cancelRun(run.id);
+    } catch (error) {
+      this.deps.log?.(`[latte] stuck internal run not cancelled (${run.id}): ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** El espacio interno no es un trabajo de la persona: no entra en sus listas. */
