@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEATURE_KEYS, FEATURE_ON } from '../../electron/core/features';
+import { CHECK_MESSAGES_MAX } from '../../electron/coordination/limits';
 import { LIMITS } from '../../electron/services/validation';
 import { fakeCoordinationHub, makeBackend, settle, type FakeTeamMember, type TestBackend } from './helpers';
 
@@ -184,6 +185,45 @@ describe('los miembros se escriben entre sí: `latte_message` y `latte_check`', 
     expect(data.run.status).toBe('running');
     expect(data.run.tasks).toEqual({ ready: 2, dispatched: 0, done: 0, failed: 0, blocked: 0, pending: 0 });
     expect(data.messages).toEqual([]);
+  });
+
+  // P7: UNA RÁFAGA NO ENTRA ENTERA EN UN TURNO. 20 mensajes × 4.000 chars eran
+  // 80.000 chars de un solo saque, con el historial del miembro pagando atrás.
+  // Con tope + contador, el saque queda acotado y NADA se pierde: lo que no se
+  // entrega sigue sin leer y lo trae la próxima llamada.
+  it('P7: `latte_check` entrega como máximo CHECK_MESSAGES_MAX mensajes y dice cuántos quedan', async () => {
+    for (let i = 1; i <= 12; i++) {
+      await call('latte_message', { to: 'coordinator', text: `Mensaje ${String(i).padStart(2, '0')}` }, b.coordinationTokens.mint(workId, copywriterId));
+    }
+
+    const first = envelope(await call('latte_check', {}));
+    expect(first.ok).toBe(true);
+    const inbox = (first.data as { messages: Array<{ id: string; text: string }> }).messages;
+    expect(inbox).toHaveLength(CHECK_MESSAGES_MAX + 1);
+    // Los ÚLTIMOS (los más recientes son los que hacen falta para actuar).
+    const shown = inbox.slice(0, -1).map((m) => m.text);
+    expect(shown).toEqual(['Mensaje 05', 'Mensaje 06', 'Mensaje 07', 'Mensaje 08', 'Mensaje 09', 'Mensaje 10', 'Mensaje 11', 'Mensaje 12']);
+    // Y el renglón que dice cómo leer los que faltan.
+    expect(inbox.at(-1)!.text).toContain('4 more');
+    expect(inbox.at(-1)!.text).toContain('latte_check again');
+
+    // Nada se pierde: la próxima llamada trae los anteriores, una sola vez.
+    const second = envelope(await call('latte_check', {}));
+    const rest = (second.data as { messages: Array<{ text: string }> }).messages;
+    expect(rest.map((m) => m.text)).toEqual(['Mensaje 01', 'Mensaje 02', 'Mensaje 03', 'Mensaje 04']);
+
+    const third = envelope(await call('latte_check', {}));
+    expect((third.data as { messages: unknown[] }).messages).toEqual([]);
+  });
+
+  // P7: bajo el tope el buzón se comporta EXACTAMENTE como antes: ni contador
+  // ni renglón de más.
+  it('P7: con pocos mensajes no aparece ningún contador', async () => {
+    await call('latte_message', { to: 'coordinator', text: 'Falta el tono' }, b.coordinationTokens.mint(workId, copywriterId));
+
+    const result = envelope(await call('latte_check', {}));
+    const inbox = (result.data as { messages: Array<{ text: string }> }).messages;
+    expect(inbox.map((m) => m.text)).toEqual(['Falta el tono']);
   });
 
   it('M4: la persona puede LEER los mensajes del run por IPC, con los roles resueltos', async () => {

@@ -151,7 +151,7 @@ import type { SkillCandidateRecord } from '../learning/types';
 import type { CandidateGenerator } from '../learning/worker';
 import type { LearningRepository } from '../storage/learningRepository';
 import { briefDocumentId, type BrandDnaProposalRecord, type CoordinationRunRecord, type DocumentRecord, type LatteRepository } from '../storage/repository';
-import { collectBrandMemory, hasBrandMemory, hasInheritedContent, renderBrandMemory, type BrandMemorySnapshot } from '../workspace/brandMemory';
+import { BRAND_MEMORY_FILE, collectBrandMemory, hasBrandMemory, hasInheritedContent, renderBrandMemory, type BrandMemorySnapshot } from '../workspace/brandMemory';
 import { brandContextNudge, electBrandContextOwner } from '../workspace/brandContextNudge';
 import { DRAFTS_DIR, FUNNEL_STAGES, INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
 import { checkFolder, contains, importFileName, kindFromFileName, readFunnelProposal, readHandoff, scanFolder, titleFromFileName } from '../workspace/linkFolder';
@@ -163,10 +163,14 @@ import { IDENTITY_DIR, IDENTITY_DOC, identityExtractionSpec, projectIdentity } f
 import {
   DNA_AGENT_STEP_KEYS,
   DNA_DRAFT_DIR,
+  DNA_FULL_COPIES_DIR,
   DNA_IDEAS_JSON,
   DNA_IDEAS_RELATIVE,
   DNA_JSON,
   DNA_JSON_RELATIVE,
+  DNA_MEMORY_ARTIFACTS,
+  DNA_MEMORY_DECISIONS,
+  DNA_SOURCE_EXCERPT_CHARS,
   DNA_STEPS_JSON,
   DNA_STEPS_RELATIVE,
   brandDnaFingerprint,
@@ -1330,7 +1334,23 @@ export class LatteService implements BackendApi {
         try {
           const content = this.deps.files.readDocument(brand.id, other.id, doc.fileName).content;
           approvedDocs += 1;
-          write(`documentos/${approvedDocs}-${slugify(doc.title)}.md`, `# ${doc.title}\n\n_De ${other.title}._\n\n${content}`);
+          const name = `${approvedDocs}-${slugify(doc.title)}.md`;
+          const header = `# ${doc.title}\n\n_De ${other.title}._\n\n`;
+          // P9: EXTRACTO + PUNTERO. El agente compone ocho campos: lo que tiene
+          // que leer por defecto es chico; la copia completa queda al lado y la
+          // nombra el propio extracto, para leerla sólo cuando el extracto no
+          // alcanza. Un documento corto se copia entero (extracto == completo).
+          if (content.length <= DNA_SOURCE_EXCERPT_CHARS) {
+            write(`documentos/${name}`, `${header}${content}`);
+          } else {
+            write(`${DNA_FULL_COPIES_DIR}/${name}`, `${header}${content}`);
+            write(
+              `documentos/${name}`,
+              `${header}${content.slice(0, DNA_SOURCE_EXCERPT_CHARS)}…\n\n`
+              + `_This is an excerpt (${content.length} characters in total). The full document is at `
+              + `./${DRAFTS_DIR}/${DNA_DRAFT_DIR}/fuentes/${DNA_FULL_COPIES_DIR}/${name} — read it when the excerpt is not enough._\n`,
+            );
+          }
         } catch (error) {
           docFailure = `No se pudo leer ${doc.title}`;
           this.deps.log?.(`[latte] dna document read failed (${doc.fileName}): ${error instanceof Error ? error.message : String(error)}`);
@@ -1354,9 +1374,25 @@ export class LatteService implements BackendApi {
     } else setDnaStep(job, 'decisions', 'skipped', 'Sin decisiones aprobadas');
 
     const snapshot = this.loadBrandMemory(brand, work);
-    const rendered = hasBrandMemory(snapshot) ? renderBrandMemory(snapshot, { decisions: 500, artifacts: 500 }) : null;
+    const rendered = hasBrandMemory(snapshot) ? renderBrandMemory(snapshot, { decisions: DNA_MEMORY_DECISIONS, artifacts: DNA_MEMORY_ARTIFACTS }) : null;
     if (rendered) {
       write('memoria.md', `# Memoria de ${brand.name}\n\n${rendered.body}\n`);
+      // P9: si el cuerpo quedó recortado, el ÍNDICE con el log completo tiene
+      // que estar escrito: es lo que el cuerpo nombra, y un puntero que no
+      // resuelve es una pérdida disfrazada de ahorro. Es el mismo archivo y el
+      // mismo snapshot que escriben las instrucciones del trabajo.
+      if (rendered.truncated) {
+        const index = rendered.files.find((f) => f.path === BRAND_MEMORY_FILE);
+        if (index) {
+          const target = nodePath.join(workDir, ...index.path.split('/'));
+          try {
+            nodeFs.mkdirSync(nodePath.dirname(target), { recursive: true });
+            nodeFs.writeFileSync(target, index.content, 'utf8');
+          } catch (error) {
+            this.deps.log?.(`[latte] dna memory index write failed: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+      }
       setDnaStep(job, 'memory', 'done', 'Memoria de trabajos anteriores');
     } else setDnaStep(job, 'memory', 'skipped', 'Sin memoria de trabajos anteriores');
   }
@@ -1413,7 +1449,15 @@ export class LatteService implements BackendApi {
     write('fechas-comerciales.md', `${en ? '# Commercial dates in the next 6 weeks' : '# Fechas comerciales de las próximas 6 semanas'}\n\n${dateLines.join('\n')}\n`);
   }
 
-  /** Las fuentes ya preparadas, como rutas relativas para el pedido al agente. */
+  /**
+   * Las fuentes ya preparadas, como rutas relativas para el pedido al agente.
+   *
+   * P9: `completos/` queda FUERA de esta lista. La lista es la lectura por
+   * defecto ("read every one you can") y ahí ya está el extracto de cada
+   * documento, con su propia línea diciendo dónde está la copia completa:
+   * listar las dos versiones haría que el agente lea cada documento dos veces,
+   * que es exactamente el ahorro al revés.
+   */
   private dnaPreparedSources(workDir: string): string[] {
     const base = nodePath.join(workDir, DRAFTS_DIR, DNA_DRAFT_DIR, 'fuentes');
     const out: string[] = [];
@@ -1422,6 +1466,7 @@ export class LatteService implements BackendApi {
       try { entries = nodeFs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
       for (const entry of entries) {
         const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (relative.split('/')[0] === DNA_FULL_COPIES_DIR) continue;
         if (entry.isDirectory()) walk(nodePath.join(dir, entry.name), relative);
         else out.push(`${DRAFTS_DIR}/${DNA_DRAFT_DIR}/fuentes/${relative}`);
       }

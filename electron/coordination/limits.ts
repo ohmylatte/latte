@@ -244,6 +244,21 @@ export const MAX_PENDING_NOTICES = 20;
 export const TASK_LIST_SPEC_PREVIEW = 200;
 
 /**
+ * P7: CUÁNTOS MENSAJES DEL BUZÓN ENTRA EN UNA LLAMADA A `latte_check`.
+ *
+ * El buzón no tenía tope de cantidad: una ráfaga de 20 mensajes de 4.000
+ * chars eran 80.000 chars de un solo saque, pagados encima del historial del
+ * miembro. Con tope + contador el saque queda acotado y NADA se pierde: lo
+ * que no se entrega sigue `delivered_at IS NULL` y la próxima llamada lo
+ * trae (se entregan los más recientes primero, que son los que hacen falta
+ * para actuar; los anteriores esperan).
+ *
+ * 8: el orden de magnitud de una conversación humana, y con el contador el
+ * agente sabe que tiene que volver a llamar en vez de quedarse con la mitad.
+ */
+export const CHECK_MESSAGES_MAX = 8;
+
+/**
  * Cuanto de un prompt de despacho o de un resumen de reporte viaja en la
  * bitacora, para la linea del buzon del panel de equipo.
  *
