@@ -258,6 +258,22 @@ describe('ADN · el pedido de la persona se despacha solo', () => {
   });
 
   /**
+   * Segunda prueba de escritorio: el revisor arrancó, pidió permiso para leer
+   * la web, y el pedido quedó en un chat del espacio interno que nadie abre.
+   * El paso "Armando la ficha" corría para siempre.
+   */
+  it('en el espacio interno Latte contesta solo los permisos: no hay nadie para aprobarlos', async () => {
+    await freshBrandWithAi();
+    await b.service.buildBrandDna(brandId, 'ideas', null);
+
+    // `autoApprovesChat` lee este mismo modo por el trabajo del miembro.
+    expect(await b.service.getWorkPermissions(brandWorkId()), 'el espacio interno aprueba solo').toBe('auto');
+
+    const campaign = await b.service.createWork(brandId, 'Campaña de otoño');
+    expect(await b.service.getWorkPermissions(campaign.id), 'un trabajo de la persona sigue preguntando').toBe('ask');
+  });
+
+  /**
    * Lo que vio la persona en la prueba de escritorio: un primer intento dejó un
    * run en `planning` en el espacio interno y cada "Reintentar" fallaba con
    * RUN_ALREADY_ACTIVE ("El equipo ya está con otra cosa"). Ese run no sale en

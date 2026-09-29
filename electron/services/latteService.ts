@@ -3716,6 +3716,11 @@ export class LatteService implements BackendApi {
    * used to be a boolean, and `1` meant what `folder` means now.
    */
   private workPermissions(workId: string): WorkPermissionMode {
+    // El espacio interno de la marca no tiene pantalla: un pedido de permiso
+    // ahí es una tarjeta en un chat que nadie abre, y el build del ADN quedaba
+    // "En curso" para siempre esperando que alguien dejara leer la web. Lo que
+    // corre ahí lo pidió la persona con un clic (K1) y lo escribe Latte.
+    if (this.isInternalWork(workId)) return 'auto';
     const raw = this.deps.repo.getMeta(FOLDER_TRUST_KEY + workId);
     if (raw === 'auto') return 'auto';
     if (raw === 'folder' || raw === '1') return 'folder';
