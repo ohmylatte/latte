@@ -127,10 +127,15 @@ export function HomeStart(props: HomeStartProps) {
 
         {props.onRefreshIdeas && (
           <div className="home-ideas-head">
+            {/* Encabezado de sección discreto: el botón queda chico a su
+                derecha, y el motivo sin IA como línea de abajo (y como
+                tooltip del botón que no se puede apretar). */}
+            <span className="home-ideas-title">{t('home.ideas.title')}</span>
             <button
               type="button"
               className="subtle home-ideas-refresh"
               disabled={!canRefresh}
+              title={props.ideasReady === false ? t('home.ideas.needAgent') : undefined}
               onClick={() => props.onRefreshIdeas?.()}
             >
               {refreshing ? <Loading size={14} /> : <RefreshCw size={13} aria-hidden="true" />}

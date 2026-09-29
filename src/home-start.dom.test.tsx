@@ -175,9 +175,24 @@ describe('Inicio · la caja', () => {
 
   it('sin IA el botón de ideas se deshabilita con su motivo en una línea', () => {
     const { container } = mount(props({ onRefreshIdeas: vi.fn(), ideasReady: false }));
+    const head = container.querySelector('.home-ideas-head')!;
     const button = screen.getByRole('button', { name: /Actualizar ideas/ }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     expect(container.textContent).toContain('Escribir ideas necesita un agente de IA.');
+    // El encabezado de sección: título a la izquierda, el botón chico a su derecha
+    // y el motivo como línea de la misma caja, nunca suelto arriba de la grilla.
+    expect(head.querySelector('.home-ideas-title')!.textContent).toBe('Ideas para empezar');
+    expect([...head.children].map((child) => child.className)).toEqual(['home-ideas-title', 'subtle home-ideas-refresh', 'home-ideas-note']);
+    expect(head.querySelector('.home-ideas-note')!.textContent).toBe('Escribir ideas necesita un agente de IA.');
+    // Y también como tooltip del botón que no se puede apretar.
+    expect(button.title).toBe('Escribir ideas necesita un agente de IA.');
+  });
+
+  it('con el botón disponible el encabezado queda sólo con su título', () => {
+    const { container } = mount(props({ onRefreshIdeas: vi.fn(), ideasReady: true }));
+    const head = container.querySelector('.home-ideas-head')!;
+    expect([...head.children].map((child) => child.className)).toEqual(['home-ideas-title', 'subtle home-ideas-refresh']);
+    expect(head.querySelector('.home-ideas-note')).toBeNull();
   });
 
   it('con ideas en vuelo el botón muestra el estado honesto y no se aprieta de nuevo', () => {

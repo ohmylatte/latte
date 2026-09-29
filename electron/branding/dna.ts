@@ -49,6 +49,44 @@ export const MAX_DNA_IDEAS = 4;
 export const DNA_AGENT_STEP_KEYS = ['web', 'instagram'] as const;
 export type DnaAgentStepKey = (typeof DNA_AGENT_STEP_KEYS)[number];
 
+/**
+ * A1: el sello del build. El spec le pide al agente que lo estampe en cada
+ * archivo que escribe para ESTA tarea; el import lo valida. Un `ADN.json` de un
+ * build anterior que el agente re-reporta no pasa: es de otro job.
+ */
+export const DNA_JOB_STAMP = 'jobId';
+
+/**
+ * A1/B2: el tope de lectura. El archivo lo escribe un agente dentro del
+ * trabajo: nada justifica un JSON de más de 1 MB, y el tamaño se acota ANTES
+ * de leerlo, no después de haberlo parseado entero.
+ */
+export const DNA_FILE_MAX_BYTES = 1024 * 1024;
+
+/** Lee un archivo del build con tope de tamaño. Más grande = `ValidationError`. */
+export function readDnaFile(file: string): string {
+  const size = fs.statSync(file).size;
+  if (size > DNA_FILE_MAX_BYTES) throw new ValidationError(`${path.basename(file)} is too large (max ${DNA_FILE_MAX_BYTES} bytes)`);
+  return fs.readFileSync(file, 'utf8');
+}
+
+/**
+ * El JSON de un archivo del build, CON el sello validado y SIN él en la forma:
+ * el sello no es dato de la marca, sólo prueba de origen. Falta el sello o es
+ * de otro job = el archivo no entra (tira `ValidationError`, que el import
+ * traduce a su código de build fallido).
+ */
+export function parseDnaBuildJson(raw: string, jobId: string, name: string): Record<string, unknown> {
+  const value: unknown = JSON.parse(raw);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError(`${name} must be an object`);
+  const record = { ...(value as Record<string, unknown>) };
+  const stamped = record[DNA_JOB_STAMP];
+  delete record[DNA_JOB_STAMP];
+  if (typeof stamped !== 'string' || stamped.length === 0) throw new ValidationError(`${name} is missing the build stamp (jobId)`);
+  if (stamped !== jobId) throw new ValidationError(`${name} is stamped with another build job`);
+  return record;
+}
+
 /** Las fuentes que el contrato acepta. Un `kind` fuera de esta lista es inválido. */
 export const BRAND_DNA_SOURCE_KINDS: readonly BrandDnaSourceKind[] = [
   'web', 'instagram', 'file', 'context', 'document', 'decision', 'memory', 'identity', 'correction', 'human', 'calendar',
@@ -198,6 +236,25 @@ export function brandDnaIsEmpty(fields: BrandDnaFields | null | undefined): bool
   return BRAND_DNA_FIELDS.every((field) => fields[field] === null);
 }
 
+/**
+ * C1: el merge del import, CAMPO POR CAMPO.
+ *
+ * El build corre durante minutos y la ficha sigue editable: mientras el agente
+ * compone, la persona puede escribir a mano o aceptar una propuesta. Estos dos
+ * caminos son los que ganan en el campo que tocaron; en los demás manda el
+ * agente, que es lo que el build vino a componer. `start` es la copia del
+ * borrador al arrancar el build: sin ella no hay forma de saber qué cambió.
+ */
+export function mergeDnaDraftDuringBuild(start: BrandDnaFields, current: BrandDnaFields, fromAgent: BrandDnaFields): BrandDnaFields {
+  const out = emptyBrandDnaFields();
+  for (const field of BRAND_DNA_FIELDS) {
+    const touched = canonicalJson(start[field]) !== canonicalJson(current[field]);
+    // Escritura por clave genérica: el tipo del contrato es una unión por campo.
+    (out as unknown as Record<string, unknown>)[field] = touched ? current[field] : fromAgent[field];
+  }
+  return out;
+}
+
 /** Texto de una sola línea: título y motivo de una idea no pueden saltar de renglón. */
 function cleanLine(value: unknown, name: string, max: number): string {
   const text = cleanText(value, name, max);
@@ -280,9 +337,20 @@ export interface BrandDnaProjection {
   fields: BrandDnaFields;
 }
 
+/**
+ * B3: UNA LÍNEA POR VALOR. El `ADN.md` lo leen otros agentes como verdad de
+ * marca: un valor con saltos de línea podría abrir una sección nueva y meter
+ * instrucciones con la firma del ADN aprobado. Los saltos se colapsan al
+ * proyectar, nunca en el borrador — ahí el texto es de la persona y tal cual
+ * lo escribió.
+ */
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 function sourcesLine(entry: BrandDnaEntry<unknown> | null): string {
   if (!entry) return '';
-  const labels = entry.sources.map((source) => source.label).join(' · ');
+  const labels = entry.sources.map((source) => oneLine(source.label)).join(' · ');
   return `- Sources: ${labels} (assumption: ${entry.assumption ? 'yes' : 'no'})`;
 }
 
@@ -307,16 +375,16 @@ export function renderBrandDnaMarkdown(input: { brandName: string; version: numb
     'Every value says where it came from: the line under each section lists its sources, and `assumption: yes` means the value was inferred without a firm source — treat it as unconfirmed.',
     '',
     section('Tone', input.fields.tone, (value) => [
-      `- Adjectives: ${value.adjectives.join(', ')}`,
-      ...(value.example ? [`- Example: ${value.example}`] : []),
+      `- Adjectives: ${value.adjectives.map(oneLine).join(', ')}`,
+      ...(value.example ? [`- Example: ${oneLine(value.example)}`] : []),
     ].join('\n')),
-    section('Audience', input.fields.audience, (value) => `- ${value}`),
-    section('Value proposition', input.fields.valueProp, (value) => `- ${value}`),
-    section('Words the brand uses', input.fields.wordsYes, (value) => value.map((word) => `- ${word}`).join('\n')),
-    section('Words the brand never uses', input.fields.wordsNo, (value) => value.map((word) => `- ${word}`).join('\n')),
-    section('Claims the brand can make', input.fields.claims, (value) => value.map((claim) => `- ${claim}`).join('\n')),
-    section('Colours', input.fields.colors, (value) => value.map((color) => `- \`${color.hex}\`${color.name ? ` — ${color.name}` : ''}`).join('\n')),
-    section('Fonts', input.fields.fonts, (value) => value.map((font) => `- ${font}`).join('\n')),
+    section('Audience', input.fields.audience, (value) => `- ${oneLine(value)}`),
+    section('Value proposition', input.fields.valueProp, (value) => `- ${oneLine(value)}`),
+    section('Words the brand uses', input.fields.wordsYes, (value) => value.map((word) => `- ${oneLine(word)}`).join('\n')),
+    section('Words the brand never uses', input.fields.wordsNo, (value) => value.map((word) => `- ${oneLine(word)}`).join('\n')),
+    section('Claims the brand can make', input.fields.claims, (value) => value.map((claim) => `- ${oneLine(claim)}`).join('\n')),
+    section('Colours', input.fields.colors, (value) => value.map((color) => `- \`${color.hex}\`${color.name ? ` — ${oneLine(color.name)}` : ''}`).join('\n')),
+    section('Fonts', input.fields.fonts, (value) => value.map((font) => `- ${oneLine(font)}`).join('\n')),
   ];
   return `${parts.join('\n').replace(/\n{3,}/g, '\n\n')}\n`;
 }
@@ -364,6 +432,11 @@ function ideasInstructions(language: 'es-AR' | 'en-US', today?: string): string[
   ];
 }
 
+/** La línea que le pide al agente el sello del build, al principio de cada archivo del pedido. */
+function stampInstruction(jobId: string, files: readonly string[]): string {
+  return `- Top level of every file you write for this task carries the build stamp: "jobId": "${jobId}" (${files.join(', ')}). Latte validates it on import: a file without the stamp, or stamped with another build, is rejected as stale.`;
+}
+
 /**
  * El pedido al equipo, en inglés como todo lo que Latte le dice a un agente.
  * El resultado es `ADN.json` con la forma exacta del contrato, validada por
@@ -389,6 +462,7 @@ export function dnaBuildSpec(input: DnaBuildSpecInput): string {
   lines.push(
     '',
     `Write ./${DNA_JSON_RELATIVE} with EXACTLY these eight keys: ${BRAND_DNA_FIELDS.join(', ')}. Every key is either null or an object {"value": ..., "sources": [{"kind": "...", "label": "..."}], "assumption": true|false}.`,
+    stampInstruction(input.jobId, [DNA_JSON, DNA_STEPS_JSON, DNA_IDEAS_JSON]),
     '- `sources` says where the value came from. `kind` is one of: web, instagram, file, context, document, decision, memory, identity, correction, human. `label` is what a person sees: "web · home", "manual.pdf p.2", "decisión del 12 sep".',
     '- `assumption` is true ONLY when you inferred the value without a firm source. Never invent a datum: leave the key null when the sources do not support it.',
     '- Shapes: tone is {"adjectives": [...], "example": ...}; colours are {"hex": "#rrggbb", "name": ...}; audience, valueProp are strings; wordsYes, wordsNo, claims, fonts are arrays of strings.',
@@ -427,6 +501,7 @@ export function dnaIdeasSpec(input: DnaIdeasSpecInput): string {
       ? `Latte prepared your inputs in this work: ${input.prepared.map((file) => `./${file}`).join(', ')}. Read every one: adn.md is the brand DNA (approved or draft), fecha.md is today with the country and season, trabajos.md lists recent works, embudo.md says which funnel stages still have no pieces, and fechas-comerciales.md has the exact dates of the next 6 weeks.`
       : 'Latte prepared no input files: ground the ideas only in what you can verify from the brand context of this work.',
     ...ideasInstructions(input.language, input.today),
+    stampInstruction(input.jobId, [DNA_IDEAS_JSON]),
     '',
     `Report with latte_report and files ["${DNA_IDEAS_RELATIVE}"]. Latte validates IDEAS.json strictly: an idea with no base or a file that does not match this shape is rejected.`,
     '',

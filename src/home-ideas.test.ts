@@ -129,7 +129,8 @@ describe('respaldo: fecha, estación y ADN en los dos idiomas', () => {
     const items = homeIdeas({ ideas: [], dna: null, now: new Date(2026, 10, 20, 12, 0, 0), locale: 'en-US', uiLocale: 'en-US' }, t);
     expect(items.map((item) => item.id)).toEqual(['fecha-black-friday', 'temporada']);
     expect(items[0]).toMatchObject({
-      title: 'Black Friday: 1 week to go',
+      // 7 días: hasta 13 se cuentan en días, no en semanas.
+      title: 'Black Friday: 7 days to go',
       why: 'Commercial date: Friday, November 27, 2026.',
     });
     expect(items[1]).toMatchObject({
@@ -178,6 +179,42 @@ describe('respaldo: fecha, estación y ADN en los dos idiomas', () => {
 
     const sinDna = homeIdeas({ ideas: [], dna: fields(), now: NOW, locale: 'es-AR', uiLocale: 'es-AR' }, t);
     expect(sinDna.some((item) => item.id.startsWith('adn-'))).toBe(false);
+  });
+});
+
+describe('la cuenta regresiva de la fecha comercial', () => {
+  /** El Día de la Madre de la Argentina cae el 18 de octubre de 2026. */
+  const mother = new Date(2026, 9, 18, 12, 0, 0);
+  const blackFriday = new Date(2026, 10, 27, 12, 0, 0);
+  const titleAt = async (now: Date, locale: ContentLocale = 'es-AR'): Promise<string> => {
+    const t = await loadT(locale);
+    return homeIdeas({ ideas: [], dna: null, now, locale, uiLocale: locale }, t)[0]!.title;
+  };
+  const daysBefore = (day: Date, count: number): Date => new Date(day.getTime() - count * 86_400_000);
+
+  it('hoy es hoy, mañana es mañana, y hasta 13 días se cuentan en días', async () => {
+    expect(await titleAt(mother)).toBe('Día de la Madre: es hoy');
+    expect(await titleAt(daysBefore(mother, 1))).toBe('Día de la Madre: es mañana');
+    expect(await titleAt(daysBefore(mother, 2))).toBe('Día de la Madre: faltan 2 días');
+    expect(await titleAt(daysBefore(mother, 13))).toBe('Día de la Madre: faltan 13 días');
+  });
+
+  it('desde 14 días, semanas redondeando al entero más cercano', async () => {
+    // El corte: 14 días son 2 semanas, 13 siguen siendo días.
+    expect(await titleAt(daysBefore(mother, 14))).toBe('Día de la Madre: faltan 2 semanas');
+    // 17 días → 2,43 → 2; 18 → 2,57 → 3 (antes redondeaba para abajo: 18 → 2).
+    expect(await titleAt(daysBefore(mother, 17))).toBe('Día de la Madre: faltan 2 semanas');
+    expect(await titleAt(daysBefore(mother, 18))).toBe('Día de la Madre: faltan 3 semanas');
+    expect(await titleAt(daysBefore(mother, 21))).toBe('Día de la Madre: faltan 3 semanas');
+  });
+
+  it('la misma regla en inglés', async () => {
+    expect(await titleAt(blackFriday, 'en-US')).toBe('Black Friday: today');
+    expect(await titleAt(daysBefore(blackFriday, 1), 'en-US')).toBe('Black Friday: tomorrow');
+    expect(await titleAt(daysBefore(blackFriday, 7), 'en-US')).toBe('Black Friday: 7 days to go');
+    expect(await titleAt(daysBefore(blackFriday, 13), 'en-US')).toBe('Black Friday: 13 days to go');
+    expect(await titleAt(daysBefore(blackFriday, 14), 'en-US')).toBe('Black Friday: 2 weeks to go');
+    expect(await titleAt(daysBefore(blackFriday, 18), 'en-US')).toBe('Black Friday: 3 weeks to go');
   });
 });
 
