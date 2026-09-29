@@ -1,6 +1,6 @@
 import { composeBrandContext } from '../shared/brandContext';
 import { fullDateLabel } from '../shared/commercial-dates';
-import type { AgentRole, Brand, BrandContextProposal, BrandContextRevision, BrandContextStatus, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput, OnboardingDraft, BrandDnaFields, BrandDnaIdea, BrandDnaProposal, BrandDnaBuildJob, BrandDnaView, BrandDnaBuildMode, BrandDnaBuildStepKey } from '../shared/contracts';
+import type { AgentRole, Brand, BrandContextProposal, BrandContextRevision, BrandContextStatus, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput, OnboardingDraft, BrandDnaFields, BrandDnaIdea, BrandDnaProposal, BrandDnaBuildJob, BrandDnaView, BrandDnaBuildMode, BrandDnaBuildStepKey, BrandDnaSourcesInput } from '../shared/contracts';
 import { isOnboardingDraft, RUNTIME_GUIDE_URLS } from '../shared/contracts';
 import type { AccountRuntimeName, InstallFailureCode, Provider, RuntimeInstallJob, RuntimeInstallState, RuntimeLoginJob, RuntimeLoginState, RuntimeSetupEvent, RuntimeSetupInfo, RuntimeSetupJob } from '../shared/contracts';
 import { avatarFromSeed, parseAvatar, serializeAvatar } from '../shared/avatar';
@@ -215,13 +215,18 @@ export function enableRuntimeSetupPreviewDemo(scenario: RuntimeSetupPreviewScena
 // una secuencia simulada que la interfaz puede dibujar entera. En el
 // escritorio lo arma un agente leyendo fuentes reales.
 // ---------------------------------------------------------------------------
-type DnaStore = { draft: BrandDnaFields | null; approved: { version: number; approvedAt: string; fields: BrandDnaFields } | null; proposals: BrandDnaProposal[]; ideas: BrandDnaIdea[]; ideasUpdatedAt: string | null };
+type DnaStore = { draft: BrandDnaFields | null; approved: { version: number; approvedAt: string; fields: BrandDnaFields } | null; proposals: BrandDnaProposal[]; ideas: BrandDnaIdea[]; ideasUpdatedAt: string | null; lastSources: { url: string | null; channels: string[] } | null };
 const dnaByBrand = new Map<string, DnaStore>();
 const dnaJobs = new Map<string, BrandDnaBuildJob>();
 /** Milisegundos entre pasos de la construcción simulada. Los tests lo bajan a 0. */
 let dnaStepMs = 700;
 export function setBrandDnaPreviewStepMs(ms: number): void { dnaStepMs = ms; }
 export function resetBrandDnaPreview(): void { dnaByBrand.clear(); dnaJobs.clear(); }
+/** Las fuentes del último armado, igual que el escritorio: se guardan al pedirlas. */
+const rememberDnaSources = (brandId: string, sources: BrandDnaSourcesInput | null): void => {
+  if (!sources) return;
+  dnaOf(brandId).lastSources = { url: sources.url?.trim() || null, channels: [...sources.channels] };
+};
 /** Hoy en calendario local: la vista previa usa la fecha REAL, no una clavada. */
 const localToday = (): string => {
   const today = new Date();
@@ -244,12 +249,12 @@ const demoDna = (): BrandDnaFields => ({
 });
 const dnaOf = (brandId: string): DnaStore => {
   let d = dnaByBrand.get(brandId);
-  if (!d) { d = { draft: null, approved: null, proposals: [], ideas: [], ideasUpdatedAt: null }; dnaByBrand.set(brandId, d); }
+  if (!d) { d = { draft: null, approved: null, proposals: [], ideas: [], ideasUpdatedAt: null, lastSources: null }; dnaByBrand.set(brandId, d); }
   return d;
 };
 const dnaView = (brandId: string): BrandDnaView => {
   const d = dnaOf(brandId);
-  return { brandId, draft: d.draft, approved: d.approved, changedSinceApproval: Boolean(d.draft && (!d.approved || JSON.stringify(d.draft) !== JSON.stringify(d.approved.fields))), proposals: d.proposals, ideas: d.ideas, ideasUpdatedAt: d.ideasUpdatedAt };
+  return { brandId, draft: d.draft, approved: d.approved, changedSinceApproval: Boolean(d.draft && (!d.approved || JSON.stringify(d.draft) !== JSON.stringify(d.approved.fields))), proposals: d.proposals, ideas: d.ideas, ideasUpdatedAt: d.ideasUpdatedAt, lastSources: d.lastSources };
 };
 const savePreviewIdeas = (brandId: string): void => { const d = dnaOf(brandId); d.ideas = demoIdeas(); d.ideasUpdatedAt = now(); };
 const DNA_STEPS: Record<BrandDnaBuildMode, BrandDnaBuildStepKey[]> = {
@@ -371,6 +376,10 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   updateBrandDnaField:async(brandId,field,value)=>{const d=dnaOf(brandId);const base=d.draft??{tone:null,audience:null,valueProp:null,wordsYes:null,wordsNo:null,claims:null,colors:null,fonts:null};d.draft={...base,[field]:value===null?null:{value,sources:[{kind:'human',label:'vos'}],assumption:false}} as BrandDnaFields;return dnaView(brandId);},
   approveBrandDna:async(brandId)=>{const d=dnaOf(brandId);if(!d.draft)throw new Error('No hay ADN para aprobar');d.approved={version:(d.approved?.version??0)+1,approvedAt:now(),fields:d.draft};return dnaView(brandId);},
   buildBrandDna:async(brandId,mode,sources)=>{
+    // Como en el escritorio: las fuentes quedan guardadas APENAS se pide el
+    // armado, antes de cualquier paso simulado — si el armado falla después,
+    // la pantalla todavía las tiene.
+    if(mode==='sources')rememberDnaSources(brandId,sources);
     for(const j of dnaJobs.values())if(j.brandId===brandId&&!j.done)return j;
     const keys=DNA_STEPS[mode].filter(k=>mode!=='sources'||k==='compose'||(k==='web'&&sources?.url)||(k==='channels'&&(sources?.channels?.length??0)>0)||(k==='files'&&sources?.useIdentityFiles));
     const job:BrandDnaBuildJob={jobId:'dna-'+id(),brandId,mode,steps:keys.map(key=>({key,state:'pending' as const,detail:null})),done:false,outcome:null,reason:null};

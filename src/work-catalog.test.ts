@@ -198,6 +198,7 @@ describe('dnaPrefillFor: lo que el ADN de la marca ya contesta', () => {
     proposals: [],
     ideas: [],
     ideasUpdatedAt: null,
+    lastSources: null,
   });
   /** Audiencia (requerida) + oferta + un campo que el ADN no conoce. */
   const type: WorkType = {

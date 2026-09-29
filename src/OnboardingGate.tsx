@@ -175,6 +175,24 @@ export function OnboardingGate({ onComplete, onSkip, controls, initialDraft, onA
     return () => { live = false; };
   }, [phase, state.brandId]);
 
+  /**
+   * AL RETOMAR UNA MARCA: la web y los canales del último armado vuelven a la
+   * pantalla, porque el formulario sólo vive en memoria y se pierde al cerrar.
+   * Cada campo se llena SÓLO si sigue vacío: lo que la persona ya escribió no
+   * se pisa, y una marca sin `lastSources` no precarga nada.
+   */
+  const seededBrand = useRef<string | null>(null);
+  useEffect(() => {
+    const brandId = state.brandId;
+    const view = dna.dna;
+    if (!brandId || !view || view.brandId !== brandId || seededBrand.current === brandId) return;
+    const last = view.lastSources;
+    if (!last) return;
+    seededBrand.current = brandId;
+    setDnaUrl((previous) => (previous.trim() ? previous : last.url ?? ''));
+    setDnaInstagram((previous) => (previous.trim() ? previous : last.channels.join('\n')));
+  }, [state.brandId, dna.dna, dnaUrl, dnaInstagram]);
+
   /** Paso 1 → paso 2: el enlace propio del paso, sin conectar nada. */
   const advance = () => { setError(''); setRetryAction(null); setDnaPhase(null); setState((prev) => ({ ...prev, step: 'brand' })); };
 

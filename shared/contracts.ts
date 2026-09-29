@@ -242,6 +242,13 @@ export interface BrandDnaView {
   ideas: BrandDnaIdea[];
   /** Cuándo se actualizaron las ideas por última vez. `null`: nunca. */
   ideasUpdatedAt: string | null;
+  /**
+   * Las fuentes con las que se pidió el ÚLTIMO armado, ya validadas: la web y
+   * los canales. Sirven para que la pantalla de fuentes arranque con lo que la
+   * persona ya había escrito en vez de volver a pedírselo. `null`: nunca se
+   * pidió un armado con fuentes.
+   */
+  lastSources: { url: string | null; channels: string[] } | null;
 }
 /**
  * 3 (ronda 3): UNA IDEA para empezar, no una plantilla. Concreta, accionable

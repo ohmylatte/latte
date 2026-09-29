@@ -375,6 +375,32 @@ describe('first-run onboarding gate', () => {
     expect(await screen.findByText('Para Casa Oliva · Ejemplo')).toBeDefined();
   });
 
+  /**
+   * LA PRUEBA DE ESCRITORIO: la persona escribió la web y los canales, cerró
+   * Latte y volvió. El formulario sólo vive en memoria, así que retomaba VACÍO
+   * — sólo los logos volvían. Las fuentes son lo único que el backend guardó
+   * cuando pidió "Armar mi marca", y vuelven solas.
+   */
+  it('al retomar una marca con lastSources, la web y los canales aparecen precargados', async () => {
+    const brand = await api.createBrand('Casa Nueva');
+    await api.buildBrandDna(brand.id, 'sources', {
+      url: 'https://casanueva.com.ar',
+      channels: ['@casanueva', 'https://linkedin.com/company/casanueva'],
+      useIdentityFiles: false,
+    });
+    state.draft = draftOn('prepare', { brandId: brand.id, usedDemo: false });
+
+    mount();
+    expect(await bringHeading()).toBeDefined();
+
+    // La web vuelve en su campo...
+    await waitFor(() => expect((screen.getByPlaceholderText('https://tuweb.com') as HTMLInputElement).value).toBe('https://casanueva.com.ar'));
+    // ...y los canales en el formato del textarea "Otros canales": uno por renglón.
+    expect((screen.getByLabelText('Otros canales') as HTMLTextAreaElement).value).toBe('@casanueva\nhttps://linkedin.com/company/casanueva');
+    // Con las fuentes a la vista, el CTA ya se enciende sin volver a escribir nada.
+    expect((screen.getByRole('button', { name: /Armar mi marca/ }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('un borrador que todavía no conectaba vuelve a "Conectá tu IA"', async () => {
     state.draft = draftOn('brand');
     const { container } = mount();

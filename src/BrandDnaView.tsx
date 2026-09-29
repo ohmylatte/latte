@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Plus, RefreshCw, X } from 'lucide-react';
 import type { Brand, BrandIdentityView } from '../shared/contracts';
 import type { BrandDnaView as BrandDnaViewData } from '../shared/contracts';
@@ -75,6 +75,22 @@ export function BrandDnaView(props: BrandDnaViewProps) {
     void api.readBrandIdentity(brand.id).then((view) => { if (live) setIdentity(view); }).catch(() => undefined);
     return () => { live = false; };
   }, [showSources, brand.id]);
+
+  /**
+   * AL ABRIR LAS FUENTES: la web y los canales del último armado, para no
+   * volver a pedir lo que la persona ya dio. Un intento por apertura y sólo los
+   * campos vacíos: lo escrito no se pisa.
+   */
+  const seededSources = useRef(false);
+  useEffect(() => {
+    if (!showSources) { seededSources.current = false; return; }
+    if (seededSources.current) return;
+    const last = state.dna?.lastSources;
+    if (!last) return;
+    seededSources.current = true;
+    setUrl((previous) => (previous.trim() ? previous : last.url ?? ''));
+    setChannels((previous) => (previous.trim() ? previous : last.channels.join('\n')));
+  }, [showSources, state.dna]);
 
   const approved = state.dna?.approved ?? null;
   const building = Boolean(state.job && !state.job.done);
