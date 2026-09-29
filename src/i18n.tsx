@@ -453,16 +453,26 @@ const es = {
   'firstSteps.done': 'Listo',
   'firstSteps.pending': 'Pendiente',
 
+  // --- Onboarding 2.0 --------------------------------------------------------
+  // El recorrido son TRES pasos: Conectá tu IA → Traé tu marca → Inicio. El
+  // catálogo y sus preguntas salieron de acá: se usan cuando se crea un
+  // trabajo, desde la caja de Inicio o desde "Nuevo trabajo".
+  'onboarding.step.connectAi': 'Conectá tu IA',
+  'onboarding.step.bring': 'Traé tu marca',
+  'onboarding.step.home': 'Inicio',
+  // Sin IA conectada el motor no puede componer: la pantalla lo dice y ofrece
+  // lo que sí se puede hacer. Nunca tranquiliza por la negativa.
+  'onboarding.compose.needAi': 'Para componer el ADN hace falta una IA conectada.',
+  'onboarding.compose.connect': 'Conectar IA',
+  'onboarding.brand.switch': 'Cambiar de marca',
+  // Lo que el ADN de la marca ya sabe no se vuelve a preguntar.
+  'work.dnaPrefill.summary': 'Usar lo del ADN · Editar',
+  'work.dnaPrefill.source': 'del ADN de la marca',
+
   'onboarding.title': '¿En qué querés trabajar?',
   'onboarding.skip': 'Saltar por ahora',
   'onboarding.continue': 'Continuar',
   'onboarding.back': 'Volver',
-  'onboarding.step.intent': 'Empezar',
-  'onboarding.step.context': 'Contexto',
-  'onboarding.step.brand': 'Marca y fuentes',
-  'onboarding.step.connect': 'Conectar la IA',
-  'onboarding.step.dna': 'Tu marca',
-  'onboarding.step.prepare': 'Resumen',
   'onboarding.stepOf': 'Paso {current} de {total}',
   'onboarding.advanced': 'Configuración avanzada',
   'onboarding.summaryTitle': 'Esto es lo que entendí',
@@ -477,9 +487,7 @@ const es = {
   'onboarding.summary.requiredMissing': 'No podés empezar todavía. Falta responder: {fields}',
   'onboarding.requiredMissing.action': 'Completar ahora',
   'onboarding.briefConflict': 'El trabajo quedó creado, pero el brief conserva la versión en disco: tu texto no se guardó.',
-  'onboarding.folderNotLinked': 'No se vinculó ninguna carpeta: el trabajo quedó creado igual.',
-  'onboarding.folderLinkFailed': 'No se pudo vincular la carpeta: el trabajo quedó creado igual. Motivo: {reason}',
-  'onboarding.completionFailed': 'No pudimos terminar de abrir tu espacio de trabajo. El trabajo ya quedó creado; reintentá para entrar.',
+  'onboarding.completionFailed': 'No pudimos terminar de abrir tu espacio de trabajo. Reintentá para entrar.',
   'onboarding.skipFailed': 'No pudimos abrir tu espacio de trabajo. Reintentá para entrar.',
   'onboarding.intent.plan': 'Planificar',
   'onboarding.intent.produce': 'Producir',
@@ -1920,16 +1928,26 @@ const en: Record<MessageKey, string> = {
   'firstSteps.done': 'Done',
   'firstSteps.pending': 'Pending',
 
+  // --- Onboarding 2.0 --------------------------------------------------------
+  // The walk is THREE steps: Connect your AI → Bring your brand → Home. The
+  // catalog and its questions left this flow: they are used when a work is
+  // created, from the Home box or from "New work".
+  'onboarding.step.connectAi': 'Connect your AI',
+  'onboarding.step.bring': 'Bring your brand',
+  'onboarding.step.home': 'Home',
+  // Without a connected AI the engine cannot compose: the screen says so and
+  // offers what you CAN do.
+  'onboarding.compose.needAi': 'Composing the DNA needs a connected AI.',
+  'onboarding.compose.connect': 'Connect AI',
+  'onboarding.brand.switch': 'Switch brand',
+  // What the brand DNA already knows is not asked again.
+  'work.dnaPrefill.summary': 'Use the DNA · Edit',
+  'work.dnaPrefill.source': 'from the brand DNA',
+
   'onboarding.title': 'What would you like to work on?',
   'onboarding.skip': 'Skip for now',
   'onboarding.continue': 'Continue',
   'onboarding.back': 'Back',
-  'onboarding.step.intent': 'Start',
-  'onboarding.step.context': 'Context',
-  'onboarding.step.brand': 'Brand and sources',
-  'onboarding.step.connect': 'Connect AI',
-  'onboarding.step.dna': 'Your brand',
-  'onboarding.step.prepare': 'Summary',
   'onboarding.stepOf': 'Step {current} of {total}',
   'onboarding.advanced': 'Advanced settings',
   'onboarding.summaryTitle': 'This is what I understood',
@@ -1944,9 +1962,7 @@ const en: Record<MessageKey, string> = {
   'onboarding.summary.requiredMissing': 'You cannot start yet. Still needs an answer: {fields}',
   'onboarding.requiredMissing.action': 'Complete now',
   'onboarding.briefConflict': 'The work was created, but the brief kept the version on disk: your text was not saved.',
-  'onboarding.folderNotLinked': 'No folder was linked: the work was still created.',
-  'onboarding.folderLinkFailed': 'The folder could not be linked: the work was still created. Reason: {reason}',
-  'onboarding.completionFailed': 'We could not finish opening your workspace. The work was created; try again to get in.',
+  'onboarding.completionFailed': 'We could not finish opening your workspace. Try again to get in.',
   'onboarding.skipFailed': 'We could not open your workspace. Try again to get in.',
   'onboarding.intent.plan': 'Plan',
   'onboarding.intent.produce': 'Produce',

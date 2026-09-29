@@ -1,4 +1,5 @@
 import type { ContentLocale } from '../shared/contracts';
+import type { BrandDnaField, BrandDnaFields, BrandDnaView } from '../shared/contracts';
 import type { MessageKey } from './i18n';
 
 /**
@@ -306,4 +307,57 @@ export function findWorkType(id: string): WorkType | null {
  */
 export function recommendRole(workType: WorkType): string {
   return isShippedRoleId(workType.recommendedRoleId) ? workType.recommendedRoleId : 'assistant';
+}
+
+/**
+ * Onboarding 2.0 · LAS PREGUNTAS NO PIDEN LO QUE EL ADN YA SABE.
+ *
+ * Audiencia, oferta y tono son los tres datos el ADN de la marca ya tiene
+ * (aprobado, o en su defecto el borrador), así que cuando una marca los trae
+ * estas preguntas no se hacen: quedan respondidas con esa fuente y la persona
+ * las edita si quiere. Sin ADN, o con el campo vacío, la pregunta sigue siendo
+ * la de siempre. Puro: el modal sólo mira el resultado.
+ */
+export const DNA_ANSWER_FIELDS: Readonly<Record<string, BrandDnaField>> = {
+  audiencia: 'audience',
+  oferta: 'valueProp',
+  tono: 'tone',
+};
+
+export interface DnaPrefill {
+  /** Question id → the value the brand's DNA already holds. */
+  answers: Record<string, Answer>;
+  /** Only the ids this work type actually asks AND the DNA answered. */
+  questionIds: string[];
+}
+
+/** The raw, trimmed value the person would have typed, or `null` when empty. */
+function dnaValue(fields: BrandDnaFields, field: BrandDnaField): string | null {
+  if (field === 'tone') {
+    const text = (fields.tone?.value.adjectives ?? []).map((a) => a.trim()).filter(Boolean).join(', ');
+    return text || null;
+  }
+  const value = fields[field]?.value;
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+/**
+ * What the brand's DNA already answers for THIS work type. The approved
+ * version wins — it is the one that travels to the works — and the draft is
+ * the fallback for a brand whose DNA is written but not approved yet.
+ */
+export function dnaPrefillFor(dna: BrandDnaView | null, workType: WorkType): DnaPrefill {
+  const answers: Record<string, Answer> = {};
+  const questionIds: string[] = [];
+  const fields = dna?.approved?.fields ?? dna?.draft ?? null;
+  if (!fields) return { answers, questionIds };
+  for (const question of workType.questions) {
+    const field = DNA_ANSWER_FIELDS[question.id];
+    if (!field) continue;
+    const value = dnaValue(fields, field);
+    if (value === null) continue;
+    answers[question.id] = value;
+    questionIds.push(question.id);
+  }
+  return { answers, questionIds };
 }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
-import type { AgentRole, Brand, SaveOutcome, Work } from '../shared/contracts';
+import type { AgentRole, Brand, BrandDnaView, SaveOutcome, Work } from '../shared/contracts';
 
 /**
  * ENTREGA 1A (Brief 01, tarea 3): "NUEVO TRABAJO" USA EL CATÁLOGO.
@@ -15,11 +15,12 @@ import type { AgentRole, Brand, SaveOutcome, Work } from '../shared/contracts';
 const mocks = vi.hoisted(() => ({
   createWork: vi.fn<(brandId: string, title: string) => Promise<Work>>(),
   saveBrief: vi.fn<(workId: string, brief: string) => Promise<SaveOutcome>>(),
+  readBrandDna: vi.fn<(brandId: string) => Promise<BrandDnaView>>(),
 }));
 
 vi.mock('./browser-api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./browser-api')>();
-  return { ...actual, api: { ...actual.api, createWork: mocks.createWork, saveBrief: mocks.saveBrief } };
+  return { ...actual, api: { ...actual.api, createWork: mocks.createWork, saveBrief: mocks.saveBrief, readBrandDna: mocks.readBrandDna } };
 });
 
 const { I18nProvider } = await import('./i18n');
@@ -33,9 +34,30 @@ const roles: AgentRole[] = [
 
 const work = (title: string, brief = ''): Work => ({ id: 'w-' + title, brandId: brand.id, title, brief, folder: null, updatedAt: '' });
 
+/** La ficha de una marca SIN ADN: lo que un brand nuevo trae. */
+const noDna = (): BrandDnaView => ({ brandId: brand.id, draft: null, approved: null, changedSinceApproval: false, proposals: [], ideas: [], ideasUpdatedAt: null });
+/** La ficha con ADN aprobado: audiencia y oferta, que es lo que este tipo pregunta. */
+const withDna = (): BrandDnaView => {
+  const entry = <T,>(value: T) => ({ value, sources: [{ kind: 'context' as const, label: 'contexto de marca' }], assumption: false });
+  return {
+    ...noDna(),
+    approved: {
+      version: 1, approvedAt: '2026-09-01T00:00:00.000Z',
+      fields: {
+        tone: entry({ adjectives: ['Cálido', 'Preciso'], example: null }),
+        audience: entry('Personas que eligen menos, con más intención.'),
+        valueProp: entry('Objetos de diseño para la vida cotidiana.'),
+        wordsYes: null, wordsNo: null, claims: null, colors: null, fonts: null,
+      },
+    },
+  };
+};
+
 beforeEach(() => {
   mocks.createWork.mockReset();
   mocks.saveBrief.mockReset();
+  mocks.readBrandDna.mockReset();
+  mocks.readBrandDna.mockResolvedValue(noDna());
 });
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -166,5 +188,75 @@ describe('WorkCatalogModal: "Nuevo trabajo" usa el catálogo', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onCreated).not.toHaveBeenCalled();
     expect(mocks.createWork).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Onboarding 2.0 · LAS PREGUNTAS NO PIDEN LO QUE EL ADN YA SABE.
+   *
+   * Con ADN aprobado, audiencia y oferta salen de la ficha y quedan colapsadas
+   * en "Usar lo del ADN · Editar"; sin ADN se preguntan exactamente como
+   * siempre. La fuente se nombra mientras el valor siga siendo el del ADN.
+   */
+  describe('las preguntas que el ADN ya sabe', () => {
+    const openCampaign = async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Campaña nueva/ }));
+      await screen.findByRole('heading', { name: 'Campaña nueva' });
+    };
+    const dnaBlock = async (): Promise<HTMLDetailsElement> =>
+      ((await screen.findByText('Usar lo del ADN · Editar')).closest('details') as HTMLDetailsElement) ?? (() => { throw new Error('sin bloque de ADN'); })();
+
+    it('con ADN, completa audiencia y oferta y las deja colapsadas con su fuente', async () => {
+      mocks.readBrandDna.mockResolvedValue(withDna());
+      mount();
+      await openCampaign();
+      const block = await dnaBlock();
+      expect(block.open).toBe(false);
+
+      const inputs = [...block.querySelectorAll('input')];
+      expect(inputs.map((i) => i.placeholder)).toEqual(['¿A quién le hablamos?', '¿Qué ofrecemos?']);
+      expect(inputs[0].value).toBe('Personas que eligen menos, con más intención.');
+      expect(inputs[1].value).toBe('Objetos de diseño para la vida cotidiana.');
+      for (const label of block.querySelectorAll('label')) expect(label.textContent).toContain('del ADN de la marca');
+
+      // La requerida sigue siendo de la persona, fuera del bloque.
+      expect(block.contains(screen.getByPlaceholderText('¿Qué querés lograr?'))).toBe(false);
+      const cont = screen.getByRole('button', { name: 'Continuar' }) as HTMLButtonElement;
+      expect(cont.disabled).toBe(true);
+
+      // Y con la requerida llena, el brief ya trae lo del ADN en vez de un supuesto.
+      fireEvent.change(screen.getByPlaceholderText('¿Qué querés lograr?'), { target: { value: 'Lanzar la cosecha 2026' } });
+      fireEvent.click(cont);
+      expect(await screen.findByRole('heading', { name: 'Audiencia' })).toBeDefined();
+      expect(screen.getByText('Personas que eligen menos, con más intención.')).toBeDefined();
+      expect(screen.getByText('Objetos de diseño para la vida cotidiana.')).toBeDefined();
+      expect(screen.queryByText('Audiencia: la propongo a partir de la marca.')).toBeNull();
+    });
+
+    it('sin ADN, se pregunta como siempre y no hay bloque que colapsar', async () => {
+      mount();
+      await openCampaign();
+      await vi.waitFor(() => expect(mocks.readBrandDna).toHaveBeenCalledWith('b1'));
+      expect(screen.queryByText('Usar lo del ADN · Editar')).toBeNull();
+      expect((screen.getByPlaceholderText('¿A quién le hablamos?') as HTMLInputElement).value).toBe('');
+      expect((screen.getByPlaceholderText('¿Qué ofrecemos?') as HTMLInputElement).value).toBe('');
+      expect((screen.getByRole('button', { name: 'Continuar' }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('editar un valor del ADN lo vuelve de la persona: la fuente deja de nombrarlo', async () => {
+      mocks.readBrandDna.mockResolvedValue(withDna());
+      mount();
+      await openCampaign();
+      const block = await dnaBlock();
+      const [audienceLabel, offerLabel] = [...block.querySelectorAll('label')];
+      expect(audienceLabel.textContent).toContain('del ADN de la marca');
+
+      const audience = block.querySelector('input[placeholder="¿A quién le hablamos?"]') as HTMLInputElement;
+      fireEvent.change(audience, { target: { value: 'Pastas caseras de barrio' } });
+
+      expect(audience.value).toBe('Pastas caseras de barrio');
+      expect(audienceLabel.textContent).not.toContain('del ADN de la marca');
+      // La que no se tocó sigue siendo del ADN.
+      expect(offerLabel.textContent).toContain('del ADN de la marca');
+    });
   });
 });

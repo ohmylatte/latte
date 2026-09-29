@@ -1,16 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Plus, X } from 'lucide-react';
 import { Loading } from './brand-marks';
-import type { AgentRole, Brand, Work } from '../shared/contracts';
+import type { AgentRole, Brand, BrandDnaView, Work } from '../shared/contracts';
 import { useI18n } from './i18n';
 import { api } from './browser-api';
 import {
   FREE_FORM_WORK_TYPE,
+  dnaPrefillFor,
   findWorkType,
+  isAnswered,
   recommendRole,
   type Answer,
+  type OnboardingQuestion,
   type WorkType,
 } from './work-catalog';
 import { WorkCatalogBlocks } from './WorkCatalogBlocks';
@@ -67,9 +70,51 @@ export function WorkCatalogModal({ brand, roles, busy, onClose, onCreated, onErr
   const [freeformTitle, setFreeformTitle] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  /**
+   * Onboarding 2.0 · la ficha de la marca, leída una vez al abrir. La versión
+   * aprobada manda (es la que viaja a los trabajos) y el borrador es el
+   * respaldo de una marca cuyo ADN todavía no se aprobó: ver `dnaPrefillFor`.
+   */
+  const [dna, setDna] = useState<BrandDnaView | null>(null);
+  /** Las respuestas del ADN que la persona tocó: dejan de ser "del ADN". */
+  const [dnaEdited, setDnaEdited] = useState<string[]>([]);
+
+  useEffect(() => {
+    let live = true;
+    void api.readBrandDna(brand.id)
+      .then((view) => { if (live) setDna(view); })
+      .catch(() => { if (live) setDna(null); });
+    return () => { live = false; };
+  }, [brand.id]);
 
   const workType = workTypeId ? findWorkType(workTypeId) : null;
-  const missingRequired = workType ? missingRequiredQuestions(workType, answers) : [];
+  /** Lo que el ADN ya contesta para ESTE tipo, y en qué pregunta. */
+  const prefill = workType ? dnaPrefillFor(dna, workType) : { answers: {}, questionIds: [] };
+  /** Lo que sigue siendo de la persona: se pregunta como siempre. */
+  const askedQuestions: OnboardingQuestion[] = workType
+    ? workType.questions.filter((q) => !prefill.questionIds.includes(q.id))
+    : [];
+  const dnaQuestions: OnboardingQuestion[] = workType
+    ? workType.questions.filter((q) => prefill.questionIds.includes(q.id))
+    : [];
+  /**
+   * Lo que se muestra y con lo que se calcula todo: lo que escribió la persona
+   * y, para lo que no tocó, lo del ADN. Se mezcla al pintar —no en un efecto—
+   * para que el valor del ADN esté en el PRIMER render: sin eso la pantalla
+   * se ve un instante con las preguntas del ADN vacías.
+   *
+   * Un valor tocado por la persona (`dnaEdited`) o ya escrito nunca se pisa.
+   */
+  const effectiveAnswers: Record<string, Answer> = (() => {
+    if (prefill.questionIds.length === 0) return answers;
+    const merged = { ...answers };
+    for (const id of prefill.questionIds) {
+      if (dnaEdited.includes(id) || isAnswered(merged[id])) continue;
+      merged[id] = prefill.answers[id];
+    }
+    return merged;
+  })();
+  const missingRequired = workType ? missingRequiredQuestions(workType, effectiveAnswers) : [];
   const missingRequiredLabels = missingRequired.map((q) => t(q.labelKey)).join(', ');
 
   const dialogRef = useModalA11y<HTMLElement>(true, () => { if (!busy && !creating) onClose(); }, busy || creating);
@@ -79,27 +124,39 @@ export function WorkCatalogModal({ brand, roles, busy, onClose, onCreated, onErr
     setWorkTypeId(w.id);
     setRecommendedRoleId(recommendRole(w));
     setAssumptions([]);
+    setDnaEdited([]);
     setStep(w.questions.length === 0 ? 'prepare' : 'context');
     if (w.questions.length === 0) setBrief(w.brief({}, { locale: contentLocale }));
   };
 
-  const setAnswer = (questionId: string, value: Answer) => setAnswers((prev) => ({ ...prev, [questionId]: value }));
-  const toggleMulti = (questionId: string, value: string) => setAnswers((prev) => {
-    const current = prev[questionId];
-    const list = Array.isArray(current) ? current : [];
-    return { ...prev, [questionId]: list.includes(value) ? list.filter((v) => v !== value) : [...list, value] };
-  });
+  const setAnswer = (questionId: string, value: Answer) => {
+    setAnswers((prev) => ({ ...prev, [questionId]: value }));
+    // Tocar el valor lo vuelve de la persona: la fuente deja de nombrarlo.
+    if (prefill.questionIds.includes(questionId)) {
+      setDnaEdited((prev) => (prev.includes(questionId) ? prev : [...prev, questionId]));
+    }
+  };
+  const toggleMulti = (questionId: string, value: string) => {
+    setAnswers((prev) => {
+      const current = prev[questionId];
+      const list = Array.isArray(current) ? current : [];
+      return { ...prev, [questionId]: list.includes(value) ? list.filter((v) => v !== value) : [...list, value] };
+    });
+    if (prefill.questionIds.includes(questionId)) {
+      setDnaEdited((prev) => (prev.includes(questionId) ? prev : [...prev, questionId]));
+    }
+  };
 
   const continueFromContext = () => {
-    if (!workType || missingRequiredQuestions(workType, answers).length > 0) return;
-    setAssumptions(declareAssumptions(workType, answers, (k) => t(k)).map((text) => ({ text })));
-    setBrief(workType.brief(answers, { locale: contentLocale }));
+    if (!workType || missingRequiredQuestions(workType, effectiveAnswers).length > 0) return;
+    setAssumptions(declareAssumptions(workType, effectiveAnswers, (k) => t(k)).map((text) => ({ text })));
+    setBrief(workType.brief(effectiveAnswers, { locale: contentLocale }));
     setStep('prepare');
   };
 
   const create = async () => {
     if (!workType || busy || creating) return;
-    if (missingRequiredQuestions(workType, answers).length > 0) return;
+    if (missingRequiredQuestions(workType, effectiveAnswers).length > 0) return;
     setCreating(true);
     setError('');
     try {
@@ -134,6 +191,25 @@ export function WorkCatalogModal({ brand, roles, busy, onClose, onCreated, onErr
     if (step === 'prepare' && workType && workType.questions.length > 0) { setStep('context'); return; }
     setStep('intent');
   };
+
+  /** El control de una pregunta: texto, opción única o varias. El mismo para
+   * las que se preguntan y para las que el ADN ya contestó. */
+  const renderQuestion = (q: OnboardingQuestion, fromDna = false) => (
+    <div className="onboarding-question" key={q.id}>
+      <label className="field-label">
+        {t(q.labelKey)}{q.required && <span className="onboarding-required">*</span>}
+        {/* La fuente sólo mientras el valor siga siendo el del ADN. */}
+        {fromDna && !dnaEdited.includes(q.id) && <small className="onboarding-dna-source">{t('work.dnaPrefill.source')}</small>}
+      </label>
+      {q.kind === 'text' && <input value={typeof effectiveAnswers[q.id] === 'string' ? effectiveAnswers[q.id] as string : ''} onChange={(e) => setAnswer(q.id, e.target.value)} placeholder={t(q.labelKey)} />}
+      {q.kind === 'single' && <div className="onboarding-options">
+        {(q.options ?? []).map((o) => <button key={o.value} className={effectiveAnswers[q.id] === o.value ? 'selected-option' : ''} onClick={() => setAnswer(q.id, o.value)}>{t(o.labelKey)}</button>)}
+      </div>}
+      {q.kind === 'multi' && <div className="onboarding-options">
+        {(q.options ?? []).map((o) => { const list = Array.isArray(effectiveAnswers[q.id]) ? effectiveAnswers[q.id] as string[] : []; return <button key={o.value} className={list.includes(o.value) ? 'selected-option' : ''} onClick={() => toggleMulti(q.id, o.value)}>{t(o.labelKey)}</button>; })}
+      </div>}
+    </div>
+  );
 
   return <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget && !busy && !creating) onClose(); }}>
     <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="work-catalog-title" className="modal roomy work-catalog-modal">
@@ -170,16 +246,15 @@ export function WorkCatalogModal({ brand, roles, busy, onClose, onCreated, onErr
 
         {step === 'context' && workType && <>
           <h1>{t(workType.titleKey)}</h1>
-          {workType.questions.map((q) => <div className="onboarding-question" key={q.id}>
-            <label className="field-label">{t(q.labelKey)}{q.required && <span className="onboarding-required">*</span>}</label>
-            {q.kind === 'text' && <input value={typeof answers[q.id] === 'string' ? answers[q.id] as string : ''} onChange={(e) => setAnswer(q.id, e.target.value)} placeholder={t(q.labelKey)} />}
-            {q.kind === 'single' && <div className="onboarding-options">
-              {(q.options ?? []).map((o) => <button key={o.value} className={answers[q.id] === o.value ? 'selected-option' : ''} onClick={() => setAnswer(q.id, o.value)}>{t(o.labelKey)}</button>)}
-            </div>}
-            {q.kind === 'multi' && <div className="onboarding-options">
-              {(q.options ?? []).map((o) => { const list = Array.isArray(answers[q.id]) ? answers[q.id] as string[] : []; return <button key={o.value} className={list.includes(o.value) ? 'selected-option' : ''} onClick={() => toggleMulti(q.id, o.value)}>{t(o.labelKey)}</button>; })}
-            </div>}
-          </div>)}
+          {/* Onboarding 2.0: lo que el ADN ya sabe viene colapsado, con su
+              fuente, y sólo lo que sigue vacío se le pregunta a la persona. */}
+          {dnaQuestions.length > 0 && (
+            <details className="onboarding-dna-prefill">
+              <summary>{t('work.dnaPrefill.summary')}</summary>
+              {dnaQuestions.map((q) => renderQuestion(q, true))}
+            </details>
+          )}
+          {askedQuestions.map((q) => renderQuestion(q))}
           {missingRequired.length > 0 && <p className="onboarding-note" role="status">{t('onboarding.requiredMissing', { fields: missingRequiredLabels })}</p>}
           <div className="onboarding-footer">
             <button onClick={goBack}><ArrowLeft size={15} />{t('onboarding.back')}</button>

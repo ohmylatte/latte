@@ -1244,8 +1244,11 @@ export function App() {
     await api.setOnboardingComplete(true);
     const list = await api.listBrands();
     setBrands(list);
-    const brand = list.find(b => b.id === result.brandId) ?? list[0] ?? null;
-    pendingWorkRef.current = result.workId ?? null;
+    // Onboarding 2.0: el recorrido termina en Inicio y no crea trabajos, así
+    // que lo único que entrega es la marca con la que se queda. Sin marca
+    // declarada (o con una que ya no existe) manda la primera de la lista, que
+    // es el criterio de siempre del shell — nunca un id inventado.
+    const brand = (result.brandId ? list.find(b => b.id === result.brandId) : null) ?? list[0] ?? null;
     if (brand) selectBrand(brand);
     // The extra bump re-reads the works even when the brand was already the
     // selected one (choosing the demo), which changes no id at all.
@@ -1254,27 +1257,9 @@ export function App() {
     // la ficha es lo que Inicio lee para la caja y para "Traé tu marca".
     setDnaEpoch(n => n + 1);
     setOnboarding('complete');
-    // ADN · H: el recorrido que termina aprobando el ADN NO creó ningún
-    // trabajo, así que aterriza en Inicio — donde "Pedí tu primer trabajo" es
-    // el segundo paso de la tarjeta de al lado.
-    if (result.landing === 'home') { setView('home'); return; }
-    // The walk just opened a role conversation. A returning user starts on
-    // Inicio; a just-onboarded one lands where the walk left them, so the
-    // validated onboarding landing is preserved instead of being re-decided.
-    setLayout('conversation');
-    setView('brief');
-    // The gate unmounts with this result, so the shell is the only place the
-    // human can still be told what the brief or the folder link did.
-    if (result.briefConflict) setNotice(t('onboarding.briefConflict'));
-    else if (result.folderLinkError) setNotice(t('onboarding.folderLinkFailed', { reason: result.folderLinkError }));
-    else if (result.folderNotLinked) setNotice(t('onboarding.folderNotLinked'));
-    // Opens the recommended role's conversation, or — the web preview has no
-    // live team, same as "no AI ready" — the recovery card. `activateWork`
-    // itself decides which; it must always run so the preview writes
-    // `activationRecovery` instead of leaving an unexplained empty team.
-    if (result.workId && result.recommendedRoleId) {
-      void activateWork(result.workId, result.recommendedRoleId, result.brief ?? '');
-    }
+    // INICIO: la caja "¿Qué querés hacer hoy con {marca}?" y las ideas, con el
+    // primer trabajo todavía por pedir desde ahí.
+    setView('home');
   };
   // Reopening the walk has to close Settings with it: the Settings branch renders
   // before the gate, so leaving it open would hide the walk behind the screen the

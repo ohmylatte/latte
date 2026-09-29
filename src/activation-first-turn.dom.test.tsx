@@ -7,8 +7,10 @@ configure({ asyncUtilTimeout: 5_000 });
 /**
  * ENTREGA 1A (Brief 01, tarea 1): "EMPEZAR TRABAJO" ARRANCA EL TRABAJO.
  *
- * Dos caminos reales, no inventados:
- *  - con una IA lista, terminar el recorrido abre la conversación del rol
+ * Onboarding 2.0: el recorrido inicial ya no crea trabajos (termina en Inicio),
+ * así que este camino empezó a salir de "Nuevo trabajo" — el MISMO catálogo y
+ * el MISMO `activateWork` que usa el shell. Dos caminos reales, no inventados:
+ *  - con una IA lista, crear el trabajo abre la conversación del rol
  *    recomendado y le manda el brief como su primer turno (`api.sendChat`,
  *    el MISMO camino que ya usa `continueMember`);
  *  - sin ninguna lista, el trabajo y su brief quedan creados igual — nunca se
@@ -32,7 +34,7 @@ vi.mock('./browser-api', async (importOriginal) => {
     isDesktop: true,
     api: {
       ...actual.browserAPI,
-      getOnboardingComplete: async () => false,
+      getOnboardingComplete: async () => true,
       getOnboardingDraft: async () => null,
       chatStatus: async () => ({ available: state.primaryAvailable, detail: state.primaryAvailable ? 'OpenCode listo.' : 'Sin runtime conectado.', version: null, models: [], defaultModel: null }),
       getPrimaryAgent: async () => null,
@@ -54,16 +56,21 @@ const { App } = await import('./App');
 const { I18nProvider } = await import('./i18n');
 
 const mount = () => render(<I18nProvider><App /></I18nProvider>);
-const gateHeading = () => screen.findByRole('heading', { name: '¿En qué querés trabajar?' });
-const shell = (container: HTMLElement) => container.querySelector('.app-shell');
-const clickCard = (title: RegExp) => fireEvent.click(screen.getByRole('button', { name: title }));
 
-/** El mismo recorrido que ya prueba `OnboardingGate.dom.test.tsx`: marca demo → conectar con el demo → "Traé tu marca" → el Resumen de siempre. */
-async function chooseDemoBrandAndConnect() {
-  fireEvent.click(screen.getByRole('button', { name: /Recorrer el demo/ }));
-  clickCard(/Explorar con un proyecto demo/);
-  fireEvent.click(await screen.findByRole('button', { name: /Empezar sin marca/ }));
-}
+/** "Nuevo trabajo" del pie de la barra lateral: el catálogo, ya con el shell vivo. */
+const openCatalog = async (container: HTMLElement) => {
+  await waitFor(() => expect(container.querySelector('.sidebar-bottom button')).not.toBeNull());
+  fireEvent.click(container.querySelector('.sidebar-bottom button') as HTMLButtonElement);
+  await screen.findByRole('heading', { name: '¿En qué querés trabajar?' });
+};
+
+/** Campaña nueva → la requerida → el resumen del catálogo. */
+const fillCampaign = async () => {
+  fireEvent.click(screen.getByRole('button', { name: /Campaña nueva/ }));
+  fireEvent.change(screen.getByPlaceholderText('¿Qué querés lograr?'), { target: { value: 'Lanzar la cosecha 2026' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
+  await screen.findByRole('button', { name: /Empezar trabajo/ });
+};
 
 beforeEach(() => {
   state.primaryAvailable = false;
@@ -79,15 +86,11 @@ describe('Entrega 1A: empezar trabajo manda el brief como primer turno', () => {
   it('con una IA lista, abre el rol recomendado y le manda el brief compuesto', async () => {
     state.primaryAvailable = true;
     const { container } = mount();
-    await gateHeading();
-    clickCard(/Campaña nueva/);
-    await screen.findByRole('heading', { name: 'Campaña nueva' });
-    fireEvent.change(screen.getByPlaceholderText('¿Qué querés lograr?'), { target: { value: 'Lanzar la cosecha 2026' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
-    await chooseDemoBrandAndConnect();
+    await openCatalog(container);
+    await fillCampaign();
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
 
-    await waitFor(() => expect(shell(container)).not.toBeNull());
+    await waitFor(() => expect(screen.queryByRole('heading', { name: '¿En qué querés trabajar?' })).toBeNull());
     await waitFor(() => expect(state.addTeamMemberCalls).toHaveLength(1));
     expect(state.addTeamMemberCalls[0].roleId).toBe('strategist');
     await waitFor(() => expect(state.sendChatCalls).toHaveLength(1));
@@ -102,13 +105,11 @@ describe('Entrega 1A: empezar trabajo manda el brief como primer turno', () => {
   it('sin ninguna IA lista, no falla en silencio: ofrece conectar o seguir en el demo', async () => {
     state.primaryAvailable = false;
     const { container } = mount();
-    await gateHeading();
-    clickCard(/Empezar libremente/);
-    await screen.findByRole('heading', { name: '¿Con qué marca trabajamos?' });
-    await chooseDemoBrandAndConnect();
+    await openCatalog(container);
+    await fillCampaign();
     fireEvent.click(await screen.findByRole('button', { name: /Empezar trabajo/ }));
 
-    await waitFor(() => expect(shell(container)).not.toBeNull());
+    await waitFor(() => expect(screen.queryByRole('heading', { name: '¿En qué querés trabajar?' })).toBeNull());
     // Nunca se intentó abrir una conversación que de todos modos no iba a arrancar.
     expect(state.addTeamMemberCalls).toHaveLength(0);
     expect(state.sendChatCalls).toHaveLength(0);

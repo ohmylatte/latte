@@ -11,8 +11,49 @@ import { findWorkType, isAnswered, type Answer, type OnboardingQuestion, type Wo
 
 export type { OnboardingStep };
 
+/**
+ * The vocabulary the backend accepts (`ONBOARDING_STEPS` in
+ * `shared/contracts.ts`) — unchanged by this walk. It is NOT the walk's own
+ * order anymore: see `GATE_STEPS` below.
+ */
+export const ONBOARDING_STEPS: OnboardingStep[] = ['intent', 'context', 'brand', 'connect', 'prepare'];
+
+/**
+ * Onboarding 2.0 · LOS TRES PASOS.
+ *
+ * The walk is `Conectá tu IA` → `Traé tu marca` → `Inicio`. Only the first two
+ * are screens the gate owns and can go back from; `Inicio` is the landing, the
+ * moment the gate hands the shell over, so it never enters this machine.
+ *
+ * Both screens persist over the contract's own values, without changing it:
+ *
+ *   Conectá tu IA → `connect`   (the same meaning it always had)
+ *   Traé tu marca → `prepare`   (the step that has ALWAYS come after
+ *                                connecting: the old summary)
+ *
+ * `prepare` is the only value that can mean "Traé tu marca", so a draft read
+ * from disk is never ambiguous — and a draft written by the previous version
+ * is normalized by `gateStepFor`: whoever had not connected yet comes back at
+ * "Conectá tu IA", whoever had (the old summary) comes back at "Traé tu marca".
+ * The catalog, its questions and the summary left the walk with the 2.0, so
+ * their steps only exist here as legacy input.
+ */
+export type GateStep = 'connect' | 'brand';
+export const GATE_STEPS: GateStep[] = ['connect', 'brand'];
+
+/** A persisted step (any version) → the screen of this walk it resumes at. */
+export function gateStepFor(step: OnboardingStep): GateStep {
+  return step === 'prepare' ? 'brand' : 'connect';
+}
+
+/** The screen of this walk → the step it persists as. */
+function persistedStep(step: GateStep): OnboardingStep {
+  return step === 'brand' ? 'prepare' : 'connect';
+}
+
 export interface OnboardingState {
-  step: OnboardingStep;
+  /** The screen the gate is on (2.0), mapped onto the contract when persisted. */
+  step: GateStep;
   workTypeId: string | null;
   answers: Record<string, Answer>;
   /** Already-localized assumption phrases for the optional questions skipped. */
@@ -25,13 +66,11 @@ export interface OnboardingState {
   brief: string;
 }
 
-export const ONBOARDING_STEPS: OnboardingStep[] = ['intent', 'context', 'brand', 'connect', 'prepare'];
-
 /** A fresh walk, or a resumed one when a persisted draft exists. */
 export function initialState(draft?: OnboardingDraft | null): OnboardingState {
   if (!draft) {
     return {
-      step: 'intent',
+      step: 'connect',
       workTypeId: null,
       answers: {},
       assumptions: [],
@@ -43,7 +82,7 @@ export function initialState(draft?: OnboardingDraft | null): OnboardingState {
     };
   }
   return {
-    step: draft.step,
+    step: gateStepFor(draft.step),
     workTypeId: draft.workTypeId,
     answers: { ...draft.answers },
     assumptions: draft.assumptions.map((text) => ({ text })),
@@ -58,7 +97,7 @@ export function initialState(draft?: OnboardingDraft | null): OnboardingState {
 /** The persisted shape of the in-memory state, minus any React-only detail. */
 export function toDraft(state: OnboardingState): OnboardingDraft {
   return {
-    step: state.step,
+    step: persistedStep(state.step),
     workTypeId: state.workTypeId,
     answers: { ...state.answers },
     assumptions: state.assumptions.map((a) => a.text),
@@ -70,16 +109,16 @@ export function toDraft(state: OnboardingState): OnboardingDraft {
   };
 }
 
-export function nextStep(state: OnboardingState): OnboardingStep {
-  const index = ONBOARDING_STEPS.indexOf(state.step);
-  if (index < 0 || index >= ONBOARDING_STEPS.length - 1) return state.step;
-  return ONBOARDING_STEPS[index + 1];
+export function nextStep(state: OnboardingState): GateStep {
+  const index = GATE_STEPS.indexOf(state.step);
+  if (index < 0 || index >= GATE_STEPS.length - 1) return state.step;
+  return GATE_STEPS[index + 1];
 }
 
-export function previousStep(state: OnboardingState): OnboardingStep {
-  const index = ONBOARDING_STEPS.indexOf(state.step);
+export function previousStep(state: OnboardingState): GateStep {
+  const index = GATE_STEPS.indexOf(state.step);
   if (index <= 0) return state.step;
-  return ONBOARDING_STEPS[index - 1];
+  return GATE_STEPS[index - 1];
 }
 
 /**

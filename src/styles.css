@@ -2104,3 +2104,18 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .dna-source-links .subtle:hover{border-color:transparent;background:var(--rust-wash);color:var(--rust)}
 .dna-source-links .subtle:disabled{background:transparent;border-color:transparent;color:var(--muted-soft)}
 
+
+
+
+/* --- Onboarding 2.0 ------------------------------------------------------- */
+/* Los tres pasos (Conectá tu IA → Traé tu marca → Inicio) sólo agregan dos
+   superficies nuevas: la pared sin IA, y el bloque colapsado con lo que el
+   ADN ya sabe. Todo con los tokens que ya existen. */
+.onboarding-ai-wall .intro{margin-bottom:var(--space-5);max-width:560px}
+.onboarding-dna-prefill{margin:0 0 var(--space-5);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--foam);padding:var(--space-3) var(--space-4)}
+.onboarding-dna-prefill summary{cursor:pointer;list-style:none;font-size:var(--text-sm);font-weight:var(--weight-semibold);color:var(--ink)}
+.onboarding-dna-prefill summary::-webkit-details-marker{display:none}
+.onboarding-dna-prefill summary::after{content:"+";float:right;color:var(--muted)}
+.onboarding-dna-prefill[open] summary::after{content:"\2013"}
+.onboarding-dna-prefill .onboarding-question{margin:var(--space-4) 0 var(--space-2)}
+.onboarding-dna-source{display:inline-block;margin-left:var(--space-2);font-size:10.5px;letter-spacing:.3px;color:var(--rust)}
