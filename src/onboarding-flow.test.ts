@@ -4,9 +4,11 @@ import type { Brand, OnboardingDraft } from '../shared/contracts';
 import { findWorkType, type Answer } from './work-catalog';
 import {
   DEMO_BRAND_IDS,
+  GATE_STEPS,
   ONBOARDING_STEPS,
   brandChoices,
   completeOnboarding,
+  gateStepFor,
   isDemoBrand,
   declareAssumptions,
   initialState,
@@ -21,7 +23,7 @@ const t = (key: string) => `t(${key})`;
 
 function baseState(overrides: Partial<OnboardingState> = {}): OnboardingState {
   return {
-    step: 'intent',
+    step: 'connect',
     workTypeId: null,
     answers: {},
     assumptions: [],
@@ -34,29 +36,58 @@ function baseState(overrides: Partial<OnboardingState> = {}): OnboardingState {
   };
 }
 
+/**
+ * Onboarding 2.0: the walk is TWO persisted screens plus the landing
+ * (Conectá tu IA → Traé tu marca → Inicio). `home` never reaches this machine:
+ * it is where the gate hands the shell over, not a step it can go back from.
+ */
 describe('onboarding step machine', () => {
-  it('moves forward through the five steps and stays on prepare', () => {
-    let s = baseState({ step: 'intent' });
+  it('moves forward through the two persisted steps and stays on the last', () => {
+    let s = baseState({ step: 'connect' });
     const seen: string[] = [];
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 4; i++) {
       seen.push(s.step);
       s = { ...s, step: nextStep(s) };
     }
-    expect(seen).toEqual(['intent', 'context', 'brand', 'connect', 'prepare', 'prepare']);
+    expect(seen).toEqual(['connect', 'brand', 'brand', 'brand']);
   });
 
-  it('moves backward and stays on intent', () => {
-    let s = baseState({ step: 'prepare' });
+  it('moves backward and stays on the first step', () => {
+    let s = baseState({ step: 'brand' });
     const seen: string[] = [];
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 4; i++) {
       seen.push(s.step);
       s = { ...s, step: previousStep(s) };
     }
-    expect(seen).toEqual(['prepare', 'connect', 'brand', 'context', 'intent', 'intent']);
+    expect(seen).toEqual(['brand', 'connect', 'connect', 'connect']);
   });
 
-  it('exposes the canonical step order', () => {
+  it('exposes the contract vocabulary unchanged: the persisted steps are the five of always', () => {
     expect(ONBOARDING_STEPS).toEqual(['intent', 'context', 'brand', 'connect', 'prepare']);
+    expect(GATE_STEPS).toEqual(['connect', 'brand']);
+  });
+
+  /**
+   * The contract (`ONBOARDING_STEPS` in shared/contracts.ts) is the backend's
+   * and does not change with this walk, so the two visible screens are mapped
+   * onto values it already accepts: "Conectá tu IA" keeps `connect` (same
+   * meaning as always) and "Traé tu marca" takes `prepare`, the step that has
+   * always come AFTER connecting. Only `prepare` can mean "Traé tu marca", so a
+   * draft read from disk is never ambiguous.
+   */
+  it('maps every persisted value onto the new walk without inventing a step', () => {
+    for (const legacy of ['intent', 'context', 'brand', 'connect'] as const) {
+      expect(gateStepFor(legacy), legacy).toBe('connect');
+    }
+    expect(gateStepFor('prepare')).toBe('brand');
+  });
+
+  it('round-trips state → draft → state through the contract values', () => {
+    for (const step of GATE_STEPS) {
+      const draft = toDraft(baseState({ step }));
+      expect(ONBOARDING_STEPS).toContain(draft.step);
+      expect(initialState(draft).step).toBe(step);
+    }
   });
 });
 
@@ -149,8 +180,9 @@ describe('missingRequiredQuestions', () => {
 });
 
 describe('draft resumability', () => {
+  // `prepare` is where "Traé tu marca" persists (see the mapping above).
   const draft: OnboardingDraft = {
-    step: 'brand',
+    step: 'prepare',
     workTypeId: 'campaign-new',
     answers: { objetivo: 'Vender', canales: ['instagram', 'email'] },
     assumptions: ['Sigo sin audiencia definida; la confirmamos después.'],
@@ -182,6 +214,17 @@ describe('draft resumability', () => {
     const back = toDraft(s);
     expect(back).toEqual(draft);
     expect(initialState(back)).toEqual(s);
+  });
+
+  it('normalizes a draft written by the old walk: only the summary resumes at "Traé tu marca"', () => {
+    // A person who had not connected yet (intent/context/brand) comes back at
+    // "Conectá tu IA"; one who had (prepare = the old summary) comes back at
+    // "Traé tu marca". Nothing else can be deduced from a stale draft.
+    expect(initialState({ ...draft, step: 'intent' }).step).toBe('connect');
+    expect(initialState({ ...draft, step: 'context' }).step).toBe('connect');
+    expect(initialState({ ...draft, step: 'brand' }).step).toBe('connect');
+    expect(initialState({ ...draft, step: 'connect' }).step).toBe('connect');
+    expect(initialState({ ...draft, step: 'prepare' }).step).toBe('brand');
   });
 
   it('falls back to a safe role when the draft has none', () => {
