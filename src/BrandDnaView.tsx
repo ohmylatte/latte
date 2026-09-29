@@ -124,7 +124,7 @@ export function BrandDnaView(props: BrandDnaViewProps) {
         />
       )}
 
-      {building && !showSources && <p className="dna-rebuilding" role="status">{t('dna.rebuilding')}</p>}
+      {building && !showSources && <p className="dna-rebuilding" role="status">{t(state.job?.mode === 'existing' ? 'dna.rebuilding' : state.job?.mode === 'ideas' ? 'dna.writingIdeas' : 'dna.readingSources')}</p>}
 
       <BrandDnaPanel
         brandName={brand.name}
