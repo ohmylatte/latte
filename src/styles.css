@@ -1900,6 +1900,10 @@ button.danger:hover:not(:disabled){background:var(--rust-wash);border-color:var(
 .dna-step-mark{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:var(--control-h-sm);height:var(--control-h-sm);border-radius:var(--radius-pill);border:1px solid var(--line-strong);background:var(--paper);color:var(--muted);font-family:var(--mono);font-size:var(--text-sm);line-height:1}
 .dna-step-mark.is-done{border-color:var(--green-ok);color:var(--green-ok);background:var(--green-wash)}
 .dna-step-mark.is-running{border-color:var(--rust);background:var(--rust-wash);box-shadow:0 0 0 3px var(--rust-wash)}
+.dna-step-mark.is-running{animation:dna-step-pulse 1.8s ease-in-out infinite}
+@keyframes dna-step-pulse{0%,100%{box-shadow:0 0 0 3px var(--rust-wash)}50%{box-shadow:0 0 0 7px var(--rust-wash)}}
+@media (prefers-reduced-motion: reduce){.dna-step-mark.is-running{animation:none}}
+.dna-step-elapsed{font-variant-numeric:tabular-nums}
 .dna-step-mark.is-failed{border-color:var(--danger);color:var(--danger)}
 .dna-step-mark.is-pending{background:transparent}
 .dna-step-text{display:flex;flex-direction:column;gap:2px;min-width:0}

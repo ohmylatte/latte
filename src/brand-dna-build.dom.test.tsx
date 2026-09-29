@@ -71,7 +71,7 @@ describe('los pasos del ADN · sólo lo que se pidió', () => {
     const { container } = mountPanel(job);
 
     expect(keysOf(container)).toEqual(['web', 'compose']);
-    expect(container.querySelector('.dna-step-label')!.textContent).toBe('Tu web');
+    expect(container.querySelector('.dna-step-label')!.textContent, 'el agente lee la web mientras arma la ficha').toBe('Leyendo tu web');
     expect(container.textContent, 'el detalle no se muestra por defecto').not.toContain('El agente tiene que leer');
     expect(container.textContent, 'el paso que corre se narra en negocio').toContain('Armando la ficha');
 
@@ -82,6 +82,39 @@ describe('los pasos del ADN · sólo lo que se pidió', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Ocultar detalle' }));
     expect(container.textContent).not.toContain('El agente tiene que leer');
+  });
+
+  it('mientras la ficha corre hay señal de vida: la taza se mueve, el reloj avanza y las fuentes pendientes se ven en curso', () => {
+    vi.useFakeTimers();
+    try {
+      const job: BrandDnaBuildJob = {
+        jobId: 'bdj_vida',
+        brandId: brand.id,
+        mode: 'sources',
+        steps: [
+          { key: 'web', state: 'pending', detail: null },
+          { key: 'channels', state: 'pending', detail: null },
+          { key: 'files', state: 'done', detail: null },
+          { key: 'compose', state: 'running', detail: null },
+        ],
+        done: false,
+        outcome: null,
+        reason: null,
+      };
+      const { container } = mountPanel(job);
+
+      const states = [...container.querySelectorAll('.dna-step')].map((row) => row.getAttribute('data-state'));
+      expect(states, 'la web y los canales se leen durante la ficha').toEqual(['running', 'running', 'done', 'running']);
+      expect(container.textContent).not.toContain('Pendiente');
+      expect(container.querySelectorAll('.dna-step-mark.is-running .loading-cup').length, 'cada paso en curso lleva la taza').toBe(3);
+
+      const elapsed = () => container.querySelector('[data-key="compose"] .dna-step-elapsed')?.textContent;
+      expect(elapsed()).toBe(' · 0:00');
+      act(() => { vi.advanceTimersByTime(65_000); });
+      expect(elapsed(), 'el reloj avanza').toBe(' · 1:05');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('en modo ideas el paso único se llama como lo que hace, nunca "La ficha"', () => {

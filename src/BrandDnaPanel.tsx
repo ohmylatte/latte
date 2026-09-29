@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
 import type {
   BrandDnaBuildJob,
@@ -11,6 +11,7 @@ import type {
 import type { MessageKey } from './i18n';
 import { useI18n } from './i18n';
 import { BrandDnaCard } from './BrandDnaCard';
+import { Loading } from './brand-marks';
 
 /**
  * G · "El ADN de tu marca": los pasos reales del build a la izquierda, la ficha
@@ -103,7 +104,7 @@ const REASON_KEYS: Record<string, MessageKey> = {
 
 function StepMark({ state }: { state: BrandDnaBuildStep['state'] }) {
   if (state === 'done') return <span className="dna-step-mark is-done"><Check size={13} aria-hidden="true" /></span>;
-  if (state === 'running') return <span className="dna-step-mark is-running" aria-hidden="true" />;
+  if (state === 'running') return <span className="dna-step-mark is-running" aria-hidden="true"><Loading size={14} delay={0} /></span>;
   if (state === 'failed') return <span className="dna-step-mark is-failed" aria-hidden="true">!</span>;
   return <span className="dna-step-mark is-pending" aria-hidden="true" />;
 }
@@ -123,6 +124,31 @@ function stepLabelKey(step: BrandDnaBuildStep, mode: BrandDnaBuildMode): Message
   return running ? DOING_KEYS[step.key] : STEP_KEYS[step.key];
 }
 
+/**
+ * La web y los canales los lee el agente MIENTRAS arma la ficha: su resultado
+ * llega recién con `pasos.json`. Mostrarlos "Pendiente" con la ficha en curso
+ * decía que nada se movía. Mientras la ficha corre, una fuente pendiente se
+ * muestra en curso; el estado real la reemplaza cuando llega el reporte.
+ */
+function displayedSteps(steps: BrandDnaBuildStep[]): BrandDnaBuildStep[] {
+  const composing = steps.some((step) => step.key === 'compose' && step.state === 'running');
+  if (!composing) return steps;
+  return steps.map((step) => ((step.key === 'web' || step.key === 'channels') && step.state === 'pending' ? { ...step, state: 'running' } : step));
+}
+
+/** Minutos y segundos desde que el panel ve el build en curso: la señal de que el tiempo corre. */
+function useElapsed(active: boolean): string | null {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!active) { setSeconds(0); return; }
+    const started = Date.now();
+    const timer = window.setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  if (!active) return null;
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
 export function BrandDnaPanel(props: BrandDnaPanelProps) {
   const { t } = useI18n();
   const [showDetail, setShowDetail] = useState(false);
@@ -137,6 +163,7 @@ export function BrandDnaPanel(props: BrandDnaPanelProps) {
   const failed = Boolean(job?.done && job?.outcome === 'failed');
   const stale = Boolean(job && !job.done && props.stale);
   const withDetail = job?.steps.some((step) => Boolean(step.detail)) ?? false;
+  const elapsed = useElapsed(Boolean(job && !job.done));
   const reasonKey = failed && job?.reason ? REASON_KEYS[job.reason] : undefined;
 
   return (
@@ -144,12 +171,12 @@ export function BrandDnaPanel(props: BrandDnaPanelProps) {
       {job && (
         <div className="dna-build-steps">
           <ol className="dna-steps">
-            {job.steps.map((step) => (
+            {displayedSteps(job.steps).map((step) => (
               <li key={step.key} className="dna-step" data-state={step.state} data-key={step.key}>
                 <StepMark state={step.state} />
                 <span className="dna-step-text">
                   <span className="dna-step-label">{t(stepLabelKey(step, job.mode))}</span>
-                  <span className="dna-step-state">{t(STATE_KEYS[step.state])}</span>
+                  <span className="dna-step-state">{t(STATE_KEYS[step.state])}{step.key === 'compose' && step.state === 'running' && elapsed && <span className="dna-step-elapsed"> · {elapsed}</span>}</span>
                   {showDetail && step.detail && <span className="dna-step-detail">{step.detail}</span>}
                 </span>
               </li>
