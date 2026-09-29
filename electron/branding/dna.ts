@@ -46,7 +46,7 @@ export const DNA_IDEAS_RELATIVE = `borradores/${DNA_DRAFT_DIR}/${DNA_IDEAS_JSON}
 /** Vigentes: el máximo que guarda Latte por marca. */
 export const MAX_DNA_IDEAS = 4;
 /** Los pasos que sólo el agente puede resolver (el resto los junta Latte). */
-export const DNA_AGENT_STEP_KEYS = ['web', 'instagram'] as const;
+export const DNA_AGENT_STEP_KEYS = ['web', 'channels'] as const;
 export type DnaAgentStepKey = (typeof DNA_AGENT_STEP_KEYS)[number];
 
 /**
@@ -129,7 +129,9 @@ export function parseDnaBuildJson(raw: string, jobId: string, name: string): Rec
 
 /** Las fuentes que el contrato acepta. Un `kind` fuera de esta lista es inválido. */
 export const BRAND_DNA_SOURCE_KINDS: readonly BrandDnaSourceKind[] = [
-  'web', 'instagram', 'file', 'context', 'document', 'decision', 'memory', 'identity', 'correction', 'human', 'calendar',
+  // `instagram` sigue siendo válido: hay borradores e ideas guardados con esa
+  // procedencia, y la historia de un dato no se reescribe.
+  'web', 'instagram', 'channel', 'file', 'context', 'document', 'decision', 'memory', 'identity', 'correction', 'human', 'calendar',
 ];
 
 /** Tab control: todo lo que no sea tab, salto de línea o retorno. */
@@ -351,6 +353,33 @@ export function requireBrandDnaIdeas(raw: unknown): BrandDnaIdea[] {
 /** El archivo que el agente escribe con sus pasos. Inválido = inerte: el ADN no se pierde por el reporte. */
 export type DnaStepReport = Partial<Record<DnaAgentStepKey, { state: 'done' | 'failed' | 'skipped'; detail: string }>>;
 
+/** El detalle de todos los canales junto no puede pasar de esto: es lo que se muestra en un renglón. */
+const CHANNEL_DETAIL_MAX = 600;
+
+/**
+ * OTROS CANALES: el agente reporta POR CANAL — `{"<canal>": {"state",
+ * "detail"}}` — porque "no pude leer el de LinkedIn" y "no pude leer ninguno"
+ * son dos cosas distintas. Latte lo reduce a UN paso (el contrato tiene un
+ * `BrandDnaBuildStep` por clave) conservando el motivo de cada canal, y con un
+ * estado honesto: un solo canal que no se leyó deja el paso en `failed`.
+ */
+function channelsStepReport(item: Record<string, unknown>): { state: 'done' | 'failed' | 'skipped'; detail: string } | null {
+  const rows: Array<{ channel: string; state: 'done' | 'failed' | 'skipped'; detail: string }> = [];
+  for (const [channel, raw] of Object.entries(item)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const row = raw as Record<string, unknown>;
+    if (row.state !== 'done' && row.state !== 'failed' && row.state !== 'skipped') continue;
+    try {
+      rows.push({ channel, state: row.state, detail: cleanText(row.detail, `pasos.channels[${channel}].detail`, 200) });
+    } catch { /* un canal con detalle ilegible no borra a los demás */ }
+  }
+  if (rows.length === 0) return null;
+  const state = rows.some((row) => row.state === 'failed')
+    ? 'failed'
+    : rows.every((row) => row.state === 'skipped') ? 'skipped' : 'done';
+  return { state, detail: rows.map((row) => `${row.channel}: ${row.detail}`).join(' · ').slice(0, CHANNEL_DETAIL_MAX) };
+}
+
 export function parseDnaStepReport(raw: string | null | undefined): DnaStepReport {
   if (typeof raw !== 'string' || raw.trim().length === 0) return {};
   let value: unknown;
@@ -362,7 +391,13 @@ export function parseDnaStepReport(raw: string | null | undefined): DnaStepRepor
     const entry = record[key];
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
     const item = entry as Record<string, unknown>;
-    if (item.state !== 'done' && item.state !== 'failed' && item.state !== 'skipped') continue;
+    if (item.state !== 'done' && item.state !== 'failed' && item.state !== 'skipped') {
+      if (key === 'channels') {
+        const perChannel = channelsStepReport(item);
+        if (perChannel) out[key] = perChannel;
+      }
+      continue;
+    }
     try {
       out[key] = { state: item.state, detail: cleanText(item.detail, `pasos.${key}.detail`, 300) };
     } catch { /* un detalle ilegible no invalida el resto del reporte */ }
@@ -451,7 +486,8 @@ export interface DnaBuildSpecInput {
   brandName: string;
   mode: BrandDnaBuildMode;
   url: string | null;
-  instagram: string | null;
+  /** OTROS CANALES: uno o varios links ya normalizados (`https://…` o `@usuario`). */
+  channels: readonly string[];
   /** Rutas relativas al trabajo que Latte ya dejó en `borradores/adn/fuentes/`. */
   prepared: readonly string[];
   /** El idioma del contenido del trabajo: el ADN se escribe en ése, porque el chequeo de marca compara palabras literales. */
@@ -466,7 +502,7 @@ function ideasInstructions(language: 'es-AR' | 'en-US', today?: string): string[
   return [
     '',
     `Also write ./${DNA_IDEAS_RELATIVE}: up to FOUR concrete ideas for this brand RIGHT NOW — {"ideas": [{"id": "...", "title": "...", "why": "...", "workTypeId": "...", "basedOn": [{"kind": "...", "label": "..."}], "createdAt": "YYYY-MM-DD"}]}.`,
-    '- An idea is something to DO next with what the sources support: a campaign for the collection that just arrived, a review of pieces that break the DNA, a calendar for the closest commercial date. Short actionable title, one-line why, and NEVER an idea without a base: `basedOn` names where it came from (kind: web, instagram, file, context, document, decision, memory, identity, correction, human, calendar; label is what a person sees).',
+    '- An idea is something to DO next with what the sources support: a campaign for the collection that just arrived, a review of pieces that break the DNA, a calendar for the closest commercial date. Short actionable title, one-line why, and NEVER an idea without a base: `basedOn` names where it came from (kind: web, instagram, channel, file, context, document, decision, memory, identity, correction, human, calendar; label is what a person sees).',
     '- `workTypeId` is one of: campaign-new, strategy, content-calendar, copy-pieces, adapt-pieces, presentation, campaign-ops, campaign-optimize, budget-review, paid-media-audit, period-compare, report-build, free-form.',
     `- Write the ideas in ${lang}: the language this brand's content is written in. ${today ? `\`createdAt\` is ${today}.` : '`createdAt` is today\'s date.'}`,
   ];
@@ -496,21 +532,26 @@ export function dnaBuildSpec(input: DnaBuildSpecInput): string {
   if (input.url) {
     lines.push(`Fetch ${input.url} (home, about, product pages) and read what the brand says about itself: audience, offer, tone, words it uses and forbids, colours, type.`);
   }
-  if (input.instagram) {
-    lines.push(`Read the PUBLIC profile ${input.instagram} (bio and public posts). If you cannot — login wall, no tool, rate limit — do not guess: leave that source out and mark the instagram step failed in ./${DNA_STEPS_RELATIVE} with that detail.`);
+  if (input.channels.length > 0) {
+    lines.push(
+      `Read the PUBLIC page of each of these channels, one by one: ${input.channels.join(', ')}. Bio, posts and anything else the public can see without logging in.`,
+      'For EACH channel, if you cannot read it — login wall, no tool, rate limit — do not guess: leave that channel out and report it in '
+        + `./${DNA_STEPS_RELATIVE} as {"channels": {"<channel>": {"state": "failed", "detail": "<reason>"}}}, then keep going with the others. `
+        + 'Channels you did read are reported the same way with {"state": "done", "detail": "..."}. The reason must name its own channel.',
+    );
   }
   lines.push(
     '',
     `Write ./${DNA_JSON_RELATIVE} with EXACTLY these eight keys: ${BRAND_DNA_FIELDS.join(', ')}. Every key is either null or an object {"value": ..., "sources": [{"kind": "...", "label": "..."}], "assumption": true|false}.`,
     stampInstruction(input.jobId, [DNA_JSON, DNA_STEPS_JSON, DNA_IDEAS_JSON]),
-    '- `sources` says where the value came from. `kind` is one of: web, instagram, file, context, document, decision, memory, identity, correction, human. `label` is what a person sees: "web · home", "manual.pdf p.2", "decisión del 12 sep".',
+    '- `sources` says where the value came from. `kind` is one of: web, instagram, channel, file, context, document, decision, memory, identity, correction, human. `label` is what a person sees: "web · home", "channel · instagram.com/tumarca", "manual.pdf p.2", "decisión del 12 sep".',
     '- `assumption` is true ONLY when you inferred the value without a firm source. Never invent a datum: leave the key null when the sources do not support it.',
     '- Shapes: tone is {"adjectives": [...], "example": ...}; colours are {"hex": "#rrggbb", "name": ...}; audience, valueProp are strings; wordsYes, wordsNo, claims, fonts are arrays of strings.',
     '- In `wordsNo` only what the brand explicitly avoids; in `claims` only what the sources back.',
     `- Write every human-readable value (tone adjectives and example, audience, valueProp, wordsYes, wordsNo, claims, font names as written, source labels) in ${input.language === 'en-US' ? 'English (United States)' : 'Spanish (Argentina)'}, the language this brand's content is written in. Words in wordsYes/wordsNo are the literal words as they appear in that language: Latte matches them word by word. Keep JSON keys and \`kind\` values exactly as specified.`,
     ...ideasInstructions(input.language, input.today),
     '',
-    `Also write ./${DNA_STEPS_RELATIVE} reporting every source step you attempted: {"web": {"state": "done|failed|skipped", "detail": "..."}, "instagram": {...}}. A step you could not read is "failed" with the reason; saying so is the point — guessing is not.`,
+    `Also write ./${DNA_STEPS_RELATIVE} reporting every source step you attempted: {"web": {"state": "done|failed|skipped", "detail": "..."}, "channels": {"<channel>": {"state": "done|failed|skipped", "detail": "..."}}}. A step you could not read is "failed" with the reason; saying so is the point — guessing is not.`,
     '',
     `Report with latte_report and files ["${DNA_JSON_RELATIVE}", "${DNA_STEPS_RELATIVE}", "${DNA_IDEAS_RELATIVE}"]. Latte validates ADN.json strictly and saves it as the draft the person reviews; a file that does not match this shape is rejected. An IDEAS.json that does not match is ignored (the DNA still stands).`,
     '',

@@ -53,7 +53,9 @@ const ADN_FIELDS = {
 
 const PASOS = {
   web: { state: 'done', detail: 'Leí la home.' },
-  instagram: { state: 'failed', detail: 'El perfil pide login.' },
+  channels: {
+    'https://instagram.com/ayulem': { state: 'failed', detail: 'El perfil pide login.' },
+  },
 };
 
 const IDEAS = {
@@ -83,6 +85,18 @@ describe('ADN de marca · correcciones de la revisión', () => {
   const fuentes = () => path.join(draftDir(), 'fuentes');
   const step = (job: BrandDnaBuildJob, key: string) => job.steps.find((s) => s.key === key)!;
 
+  /**
+   * El espacio interno de la marca: EL trabajo donde Latte compone el ADN. En
+   * la app lo crea el primer build; acá se siembra sobre `workId` ANTES del
+   * build para poder prepararle el equipo y las carpetas, que es lo que estas
+   * pruebas verifican. Crearlo y filtrarlo de las listas tienen SU archivo
+   * (`brand-workspace-work.test.ts`).
+   */
+  const markAsBrandWorkspace = () => {
+    b.repo.setMeta(`brand_workspace_work:${brandId}`, workId);
+    b.repo.setMeta(`work_internal:${workId}`, '1');
+  };
+
   const restartWithAi = async (overrides: Parameters<typeof makeBackend>[0] = {}) => {
     b.cleanup();
     b = await makeBackend({
@@ -96,6 +110,7 @@ describe('ADN de marca · correcciones de la revisión', () => {
     brandId = brand.id;
     const work = await b.service.createWork(brand.id, 'Propuesta mayorista');
     workId = work.id;
+    markAsBrandWorkspace();
     members = [];
     send = undefined as never;
     seedChatMember();
@@ -157,6 +172,7 @@ describe('ADN de marca · correcciones de la revisión', () => {
     brandId = brand.id;
     const work = await b.service.createWork(brand.id, 'Propuesta mayorista');
     workId = work.id;
+    markAsBrandWorkspace();
     members = [];
     send = undefined as never;
     seedChatMember();
@@ -168,7 +184,7 @@ describe('ADN de marca · correcciones de la revisión', () => {
   it('C1 · un campo editado a mano DURANTE el build no lo pisa el import', async () => {
     await restartWithAi();
     coordinationOn();
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: null, useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
     const task = await approveAndTask(job.jobId);
 
     // Mientras el agente compone, la persona escribe en la ficha.
@@ -190,7 +206,7 @@ describe('ADN de marca · correcciones de la revisión', () => {
   it('C1 · una propuesta ACEPTADA durante el build también gana sobre el del agente', async () => {
     await restartWithAi();
     coordinationOn();
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: null, useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
     const task = await approveAndTask(job.jobId);
 
     const proposal = await b.service.proposeBrandDnaFromAgent(chatId, 'msg_1', {
@@ -219,7 +235,7 @@ describe('ADN de marca · correcciones de la revisión', () => {
     coordinationOn();
     // Lo que había ANTES del build no lo protege la regla: sólo lo tocado en vuelo.
     await b.service.updateBrandDnaField(brandId, 'audience', 'Escrito antes del build.');
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: null, useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
     const task = await approveAndTask(job.jobId);
     writeBuildFiles(job.jobId);
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'ADN listo.', files: [ADN_REL] }, worker().id)).ok).toBe(true);
@@ -253,7 +269,7 @@ describe('ADN de marca · correcciones de la revisión', () => {
     fs.writeFileSync(path.join(draftDir(), 'pasos.json'), JSON.stringify(PASOS));
     fs.writeFileSync(path.join(draftDir(), 'IDEAS.json'), JSON.stringify(IDEAS));
 
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: null, instagram: '@ayulem', useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: null, channels: ['@ayulem'], useIdentityFiles: false });
     // Lo que quedó del build anterior no está: ni el material excluido…
     expect(fs.existsSync(path.join(fuentes(), 'contexto.md'))).toBe(false);
     expect(fs.existsSync(path.join(fuentes(), 'documentos'))).toBe(false);
@@ -273,7 +289,7 @@ describe('ADN de marca · correcciones de la revisión', () => {
     fs.mkdirSync(draftDir(), { recursive: true });
     fs.writeFileSync(path.join(draftDir(), 'ADN.json'), JSON.stringify(ADN_FIELDS));
 
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: null, instagram: '@ayulem', useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: null, channels: ['@ayulem'], useIdentityFiles: false });
     expect(fs.existsSync(path.join(draftDir(), 'ADN.json'))).toBe(false);
     const task = await approveAndTask(job.jobId);
     // El agente reporta el archivo SIN escribirlo: no existe, no hay resultado.
@@ -286,7 +302,7 @@ describe('ADN de marca · correcciones de la revisión', () => {
   it('A1 · el jobId estampado se valida al importar: de OTRO build no entra', async () => {
     await restartWithAi();
     coordinationOn();
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: null, instagram: '@ayulem', useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: null, channels: ['@ayulem'], useIdentityFiles: false });
     const task = await approveAndTask(job.jobId);
     writeBuildFiles(job.jobId, { adn: { ...ADN_FIELDS, jobId: 'bdj_de_otro_build' } });
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'ADN listo.', files: [ADN_REL] }, worker().id)).ok).toBe(true);
@@ -366,7 +382,7 @@ describe('ADN de marca · correcciones de la revisión', () => {
     const gate = deferred<{ outcome: 'dispatched'; taskId: string | null; reason: string | null }>();
     const spy = vi.spyOn(b.service.coordinationEngine, 'requestPersonTask').mockReturnValue(gate.promise as never);
 
-    const inFlight = b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: null, useIdentityFiles: false });
+    const inFlight = b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
     for (let i = 0; i < 50 && spy.mock.calls.length === 0; i += 1) await settle();
     expect(spy.mock.calls.length, 'el build quedó esperando el despacho').toBe(1);
 
@@ -391,7 +407,7 @@ describe('ADN de marca · correcciones de la revisión', () => {
   it('M3 · archivar la marca durante el build cierra el job y el reporte no escribe', async () => {
     await restartWithAi();
     coordinationOn();
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: null, useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
     const task = await approveAndTask(job.jobId);
 
     await b.service.archiveBrand(brandId);
@@ -459,7 +475,7 @@ describe('ADN de marca · correcciones de la revisión', () => {
   it('B2 · un ADN.json gigante no entra: el build falla sin llegar a parsearlo', async () => {
     await restartWithAi();
     coordinationOn();
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: null, instagram: '@ayulem', useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: null, channels: ['@ayulem'], useIdentityFiles: false });
     const task = await approveAndTask(job.jobId);
     writeBuildFiles(job.jobId, {
       rawAdn: JSON.stringify({ ...ADN_FIELDS, audience: { ...ADN_FIELDS.audience, value: 'a'.repeat(DNA_FILE_MAX_BYTES + 10) } }),
@@ -473,7 +489,7 @@ describe('ADN de marca · correcciones de la revisión', () => {
   it('B2 · un pasos.json gigante se ignora sin tirar abajo el import del ADN', async () => {
     await restartWithAi();
     coordinationOn();
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: '@ayulem', useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: ['@ayulem'], useIdentityFiles: false });
     const task = await approveAndTask(job.jobId);
     fs.mkdirSync(draftDir(), { recursive: true });
     fs.writeFileSync(path.join(draftDir(), 'ADN.json'), JSON.stringify({ ...ADN_FIELDS, jobId: job.jobId }));

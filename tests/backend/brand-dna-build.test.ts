@@ -40,7 +40,9 @@ const ADN_FIELDS = {
 
 const PASOS = {
   web: { state: 'done', detail: 'Leí la home y la página de quiénes somos.' },
-  instagram: { state: 'failed', detail: 'El perfil pide login: no se pudo leer lo público.' },
+  channels: {
+    'https://instagram.com/ayulem': { state: 'failed', detail: 'El perfil pide login: no se pudo leer lo público.' },
+  },
 };
 
 interface Envelope { ok: boolean; data: unknown }
@@ -55,6 +57,18 @@ describe('ADN de marca · build del motor', () => {
 
   const workDir = () => b.files.workDir(brandId, workId);
   const fuentes = () => path.join(workDir(), 'borradores', 'adn', 'fuentes');
+
+  /**
+   * El espacio interno de la marca: EL trabajo donde Latte compone el ADN. En
+   * la app lo crea el primer build; acá se siembra sobre `workId` ANTES del
+   * build para poder prepararle el equipo y las carpetas, que es lo que estas
+   * pruebas verifican. Crearlo y filtrarlo de las listas tienen SU archivo
+   * (`brand-workspace-work.test.ts`).
+   */
+  const markAsBrandWorkspace = () => {
+    b.repo.setMeta(`brand_workspace_work:${brandId}`, workId);
+    b.repo.setMeta(`work_internal:${workId}`, '1');
+  };
   const step = (job: BrandDnaBuildJob, key: string) => job.steps.find((s) => s.key === key)!;
 
   /**
@@ -74,6 +88,7 @@ describe('ADN de marca · build del motor', () => {
     brandId = brand.id;
     const work = await b.service.createWork(brand.id, 'Propuesta mayorista');
     workId = work.id;
+    markAsBrandWorkspace();
   };
 
   /** La coordinación con un equipo fake, como hace el test de identidad. */
@@ -110,6 +125,7 @@ describe('ADN de marca · build del motor', () => {
     brandId = brand.id;
     const work = await b.service.createWork(brand.id, 'Propuesta mayorista');
     workId = work.id;
+    markAsBrandWorkspace();
     members = [];
     send = undefined as never;
   });
@@ -118,10 +134,10 @@ describe('ADN de marca · build del motor', () => {
   it('sin IA el build falla con el código del motor y ningún paso se ejecutó', async () => {
     const job = await b.service.buildBrandDna(brandId, 'existing', null);
     expect(job).toMatchObject({ brandId, mode: 'existing', done: true, outcome: 'failed', reason: 'NOT_INSTALLED' });
-    expect(job.steps.map((s) => s.key)).toEqual(['web', 'instagram', 'files', 'context', 'documents', 'decisions', 'memory', 'compose']);
+    expect(job.steps.map((s) => s.key)).toEqual(['web', 'channels', 'files', 'context', 'documents', 'decisions', 'memory', 'compose']);
     expect(step(job, 'compose').state).toBe('failed');
     expect(step(job, 'compose').detail).toBeTruthy();
-    for (const key of ['web', 'instagram', 'files', 'context', 'documents', 'decisions', 'memory']) {
+    for (const key of ['web', 'channels', 'files', 'context', 'documents', 'decisions', 'memory']) {
       expect(step(job, key).state, key).toBe('skipped');
     }
     expect(fs.existsSync(path.join(workDir(), 'borradores', 'adn', 'fuentes'))).toBe(false);
@@ -147,7 +163,7 @@ describe('ADN de marca · build del motor', () => {
     expect(step(job, 'memory').state).toBe('skipped');
     expect(step(job, 'files').state).toBe('skipped');
     expect(step(job, 'web').state).toBe('skipped');
-    expect(step(job, 'instagram').state).toBe('skipped');
+    expect(step(job, 'channels').state).toBe('skipped');
 
     expect(fs.readFileSync(path.join(fuentes(), 'contexto.md'), 'utf8')).toContain('mayoristas sin intermediarios');
     expect(fs.readFileSync(path.join(fuentes(), 'decisiones.md'), 'utf8')).toContain('Nunca decimos oferta');
@@ -196,9 +212,10 @@ describe('ADN de marca · build del motor', () => {
   // perdición disfrazada.
   it('P9: la memoria del build entra con tope 100/100 y el índice completo queda escrito', async () => {
     await restartWithAi();
-    // El build corre en el trabajo MÁS RECIENTE de la marca, así que el
-    // anterior va primero y el del build se crea al final.
-    const priorId = workId;
+    // La memoria que Latte junta es de los OTROS trabajos de la marca: el
+    // espacio interno donde corre el build no aporta nada, así que las
+    // decisiones heredadas viven en un trabajo aparte.
+    const priorId = (await b.service.createWork(brandId, 'Trabajo anterior')).id;
     for (let i = 0; i < 105; i++) {
       b.repo.insertDecision({
         id: `dec_${String(i).padStart(3, '0')}`,
@@ -207,8 +224,6 @@ describe('ADN de marca · build del motor', () => {
         createdAt: `2026-01-01T00:00:00.${String(i).padStart(3, '0')}Z`,
       });
     }
-    workId = (await b.service.createWork(brandId, 'Trabajo del build')).id;
-    b.repo.touchWork(workId, new Date(Date.now() + 60_000).toISOString());
     b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_OFF);
 
     const job = await b.service.buildBrandDna(brandId, 'existing', null);
@@ -232,11 +247,11 @@ describe('ADN de marca · build del motor', () => {
     coordinationOn();
     await b.service.updateBrand(brandId, 'Contexto que NO debería entrar en modo fuentes.');
 
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: '@ayulem', useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: ['@ayulem'], useIdentityFiles: false });
     expect(job.done).toBe(false);
     expect(job.outcome).toBeNull();
     expect(step(job, 'web').state).toBe('pending');
-    expect(step(job, 'instagram').state).toBe('pending');
+    expect(step(job, 'channels').state).toBe('pending');
     for (const key of ['files', 'context', 'documents', 'decisions', 'memory']) {
       expect(step(job, key).state, key).toBe('skipped');
     }
@@ -273,7 +288,7 @@ describe('ADN de marca · build del motor', () => {
     await restartWithAi();
     coordinationOn();
 
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: null, useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
     expect(job.done).toBe(false);
     const cancelled = await b.service.cancelBrandDnaBuild(job.jobId);
     expect(cancelled).toMatchObject({ done: true, outcome: 'cancelled', reason: null });
@@ -282,7 +297,7 @@ describe('ADN de marca · build del motor', () => {
     expect((await b.service.readBrandDnaBuildJob(job.jobId)).outcome).toBe('cancelled');
     await expect(b.service.cancelBrandDnaBuild(job.jobId)).rejects.toMatchObject({ code: 'VALIDATION' });
 
-    const next = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: null, useIdentityFiles: false });
+    const next = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
     expect(next.jobId).not.toBe(job.jobId);
   });
 
@@ -290,7 +305,7 @@ describe('ADN de marca · build del motor', () => {
     await restartWithAi();
     coordinationOn();
 
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: '@ayulem', useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: ['@ayulem'], useIdentityFiles: false });
     expect(job.done).toBe(false);
     const task = await approveAndTask(job.jobId);
     expect(send.mock.calls.some((c) => c[0] === worker().id)).toBe(true);
@@ -304,8 +319,8 @@ describe('ADN de marca · build del motor', () => {
     expect(after).toMatchObject({ done: true, outcome: 'proposed', reason: null });
     expect(step(after, 'compose').state).toBe('done');
     expect(step(after, 'web')).toMatchObject({ state: 'done' });
-    expect(step(after, 'instagram')).toMatchObject({ state: 'failed' });
-    expect(step(after, 'instagram').detail).toContain('login');
+    expect(step(after, 'channels')).toMatchObject({ state: 'failed' });
+    expect(step(after, 'channels').detail).toContain('login');
 
     const view: BrandDnaView = await b.service.readBrandDna(brandId);
     expect(view.draft).not.toBeNull();
@@ -320,7 +335,7 @@ describe('ADN de marca · build del motor', () => {
     await restartWithAi();
     coordinationOn();
 
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: null, useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
     const task = await approveAndTask(job.jobId);
 
     fs.mkdirSync(path.join(workDir(), 'borradores', 'adn'), { recursive: true });
@@ -336,7 +351,7 @@ describe('ADN de marca · build del motor', () => {
     await restartWithAi();
     coordinationOn();
 
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: null, useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
     const task = await approveAndTask(job.jobId);
 
     fs.mkdirSync(path.join(workDir(), 'borradores', 'adn'), { recursive: true });
@@ -352,7 +367,7 @@ describe('ADN de marca · build del motor', () => {
     await restartWithAi();
     coordinationOn();
 
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', instagram: null, useIdentityFiles: false });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: 'https://ayulem.com.ar', channels: [], useIdentityFiles: false });
     const task = await approveAndTask(job.jobId);
     expect((await mcp('latte_report', { taskId: task.id, outcome: 'succeeded', summary: 'Algo salió mal y no tengo archivos.' }, worker().id)).ok).toBe(true);
     // Sin archivos no hay gancho: el que consulta es quien mira la tarea.
@@ -366,10 +381,10 @@ describe('ADN de marca · build del motor', () => {
     fs.writeFileSync(path.join(b.dir, 'logo.png'), MINIMAL_PNG);
     await b.service.addBrandIdentityFiles(brandId);
 
-    const job = await b.service.buildBrandDna(brandId, 'sources', { url: null, instagram: '@ayulem', useIdentityFiles: true });
+    const job = await b.service.buildBrandDna(brandId, 'sources', { url: null, channels: ['@ayulem'], useIdentityFiles: true });
     expect(step(job, 'files')).toMatchObject({ state: 'done' });
     expect(fs.readdirSync(fuentes())).toContain('logo.png');
     expect(step(job, 'web').state).toBe('skipped');
-    expect(step(job, 'instagram').state).toBe('pending');
+    expect(step(job, 'channels').state).toBe('pending');
   });
 });

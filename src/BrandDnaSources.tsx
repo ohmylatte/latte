@@ -1,6 +1,25 @@
-import type { ReactNode } from 'react';
-import { ArrowLeft, AtSign, Check, FilePlus, Globe, Sparkles, Trash2, Upload } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import {
+  ArrowLeft,
+  Briefcase,
+  Camera,
+  Check,
+  CirclePlay,
+  FilePlus,
+  Globe,
+  Hash,
+  Link2,
+  Music,
+  Pin,
+  Sparkles,
+  Store,
+  ThumbsUp,
+  Trash2,
+  Upload,
+  type LucideIcon,
+} from 'lucide-react';
 import type { BrandDnaSourcesInput, BrandIdentityFileView } from '../shared/contracts';
+import { recognizeChannel, splitChannelList, type ChannelPlatformId } from '../shared/channels';
 import { Loading } from './brand-marks';
 import { useI18n } from './i18n';
 
@@ -16,17 +35,48 @@ import { useI18n } from './i18n';
  * `browser-api`: los archivos los trae el contenedor con
  * `addBrandIdentityFiles`, que en la vista previa no existe — y ahí la tarjeta
  * lo dice en vez de ofrecer un botón que no haría nada.
+ *
+ * OTROS CANALES: la segunda tarjeta ya no es "Instagram". La marca publica
+ * donde ya publica, así que el campo es de links —uno por renglón o separados
+ * por coma— y cada uno muestra su plataforma al lado. Quién es cada link lo
+ * decide el DOMINIO (`shared/channels.ts`), nunca una llamada a la red.
  */
+
+/**
+ * El ícono de cada plataforma. Lucide no trae logos de terceros: para lo que no
+ * tiene uno propio va el genérico de link, y el nombre propio hace el resto.
+ */
+const CHANNEL_ICONS: Record<ChannelPlatformId, LucideIcon> = {
+  instagram: Camera,
+  linkedin: Briefcase,
+  google: Store,
+  tiktok: Music,
+  youtube: CirclePlay,
+  facebook: ThumbsUp,
+  x: Hash,
+  pinterest: Pin,
+  link: Link2,
+};
+
 export interface BrandDnaSourcesProps {
   /** La marca que va a recibir el ADN; `null` todavía no existe y se pide el nombre. */
   brandName: string | null;
   url: string;
-  instagram: string;
+  /**
+   * Los canales pegados, como texto: uno por renglón o separados por coma.
+   * Si no se pasa, el componente guarda el valor solo (vista previa y tests);
+   * el recorrido inicial hoy pasa todavía el par `instagram`/`onInstagram`,
+   * que es el mismo campo de siempre con otro nombre.
+   */
+  channels?: string;
+  onChannels?: (value: string) => void;
+  /** Compatibilidad con el recorrido inicial: un solo canal, en texto. */
+  instagram?: string;
+  onInstagram?: (value: string) => void;
   /** Sólo cuando no hay marca todavía: el nombre con el que se va a crear. */
   name: string;
   onName: (value: string) => void;
   onUrl: (value: string) => void;
-  onInstagram: (value: string) => void;
   files: readonly BrandIdentityFileView[];
   busy?: boolean;
   /** Escritorio: abre el selector de archivos. En la vista previa, no se ofrece. */
@@ -46,16 +96,26 @@ export interface BrandDnaSourcesProps {
 export function BrandDnaSources(props: BrandDnaSourcesProps) {
   const { t } = useI18n();
   const files = props.files;
-  const hasSource = props.url.trim().length > 0 || props.instagram.trim().length > 0 || files.length > 0;
+  const fromProps = props.channels ?? props.instagram;
+  const [internal, setInternal] = useState('');
+  const text = fromProps ?? internal;
+  const channels = splitChannelList(text);
+  const hasSource = props.url.trim().length > 0 || channels.valid.length > 0 || files.length > 0;
   const needsName = !props.brandName && !props.name.trim();
   const canBuild = hasSource && !needsName && !props.busy;
   const Heading = (props.headingLevel ?? 1) === 2 ? 'h2' : 'h1';
+
+  const onText = (next: string) => {
+    if (props.onChannels) props.onChannels(next);
+    else props.onInstagram?.(next);
+    if (fromProps === undefined) setInternal(next);
+  };
 
   const build = () => {
     if (!canBuild) return;
     props.onBuild({
       url: props.url.trim() || null,
-      instagram: props.instagram.trim().replace(/^@+/, '') || null,
+      channels: channels.valid,
       useIdentityFiles: files.length > 0,
     });
   };
@@ -79,11 +139,43 @@ export function BrandDnaSources(props: BrandDnaSourcesProps) {
           <input id="dna-source-url" inputMode="url" value={props.url} placeholder={t('dna.sources.webPlaceholder')} onChange={(e) => props.onUrl(e.target.value)} />
         </div>
 
-        <div className="dna-source-card">
-          <span className="dna-source-icon" aria-hidden="true"><AtSign size={18} /></span>
-          <label className="field-label" htmlFor="dna-source-instagram">{t('dna.sources.instagram')}</label>
-          <input id="dna-source-instagram" value={props.instagram} placeholder={t('dna.sources.instagramPlaceholder')} onChange={(e) => props.onInstagram(e.target.value)} />
-          <small>{t('dna.sources.instagramNote')}</small>
+        <div className="dna-source-card is-channels">
+          <span className="dna-source-icon" aria-hidden="true"><Link2 size={18} /></span>
+          <label className="field-label" htmlFor="dna-source-channels">{t('dna.sources.channels')}</label>
+          <textarea
+            id="dna-source-channels"
+            className="dna-channels"
+            rows={3}
+            value={text}
+            placeholder={t('dna.sources.channelsPlaceholder')}
+            onChange={(e) => onText(e.target.value)}
+          />
+          {channels.valid.length > 0 && (
+            <ul className="dna-channel-list">
+              {channels.valid.map((channel) => {
+                const platform = recognizeChannel(channel);
+                const Icon = CHANNEL_ICONS[platform.id];
+                return (
+                  <li key={channel} className="dna-channel-row">
+                    <Icon size={15} aria-hidden="true" />
+                    <span className="dna-channel-name">{platform.label}</span>
+                    <span className="dna-channel-value" title={channel}>{channel}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {channels.invalid.length > 0 && (
+            <ul className="dna-channel-list">
+              {channels.invalid.map((raw) => (
+                <li key={raw} className="dna-channel-invalid">
+                  <span className="dna-channel-name">{t('dna.sources.channelInvalid')}</span>
+                  <span className="dna-channel-value" title={raw}>{raw}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <small className="dna-channels-note">{t('dna.sources.channelsNote')}</small>
         </div>
 
         <div className="dna-source-card">

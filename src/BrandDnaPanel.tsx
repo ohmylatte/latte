@@ -34,7 +34,7 @@ export interface BrandDnaPanelProps {
 
 const STEP_KEYS: Record<BrandDnaBuildStepKey, MessageKey> = {
   web: 'dna.step.web',
-  instagram: 'dna.step.instagram',
+  channels: 'dna.step.channels',
   files: 'dna.step.files',
   context: 'dna.step.context',
   documents: 'dna.step.documents',

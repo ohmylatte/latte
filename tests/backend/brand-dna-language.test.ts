@@ -7,7 +7,7 @@ import { dnaBuildSpec } from '../../electron/branding/dna';
  * que escribe en castellano no encontraría nunca "oferta".
  */
 describe('dnaBuildSpec · idioma del ADN', () => {
-  const base = { jobId: 'bdj_1', brandName: 'Casa Oliva', mode: 'existing' as const, url: null, instagram: null, prepared: [] };
+  const base = { jobId: 'bdj_1', brandName: 'Casa Oliva', mode: 'existing' as const, url: null, channels: [] as string[], prepared: [] };
 
   it('pide el ADN en castellano rioplatense para una marca en es-AR', () => {
     const spec = dnaBuildSpec({ ...base, language: 'es-AR' });

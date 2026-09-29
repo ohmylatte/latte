@@ -339,14 +339,11 @@ const es = {
   'dna.sources.name': 'Nombre de la marca',
   'dna.sources.web': 'Tu web',
   'dna.sources.webPlaceholder': 'https://tuweb.com',
-  'dna.sources.instagram': 'Instagram',
-  'dna.sources.instagramPlaceholder': '@usuario',
-  'dna.sources.instagramNote': 'Leemos lo público, o subí capturas.',
   'dna.sources.files': 'Archivos',
   'dna.sources.filesHint': 'Soltá acá los archivos de tu marca.',
   'dna.sources.filesEmpty': 'Los archivos que traigas aparecen acá.',
   'dna.sources.filesWeb': 'Necesita la app de escritorio.',
-  'dna.sources.needSource': 'Elegí una fuente: tu web, tu Instagram o tus archivos.',
+  'dna.sources.needSource': 'Elegí una fuente: tu web, tus canales o tus archivos.',
   'dna.sources.needName': 'Escribí el nombre de la marca para crearla.',
   'dna.sources.build': 'Armar mi marca',
   'dna.sources.skip': 'Empezar sin marca',
@@ -359,7 +356,6 @@ const es = {
   'dna.build.reason': 'Motivo: {reason}',
   'dna.build.again': 'Volver a armar',
   'dna.step.web': 'Tu web',
-  'dna.step.instagram': 'Instagram',
   'dna.step.files': 'Archivos',
   'dna.step.context': 'Contexto de marca',
   'dna.step.documents': 'Documentos',
@@ -421,6 +417,15 @@ const es = {
   'home.ask.dnaAction': 'Traé tu marca',
   'home.ask.classify': 'Se arma como {type} con {role}',
   'home.ask.allTypes': 'Ver todos los tipos de trabajo',
+  // --- ADN · canales ---
+  // Otros canales: la marca publica donde ya publica, y Latte lee lo público
+  // de cada link que la persona pega. El nombre propio de la plataforma no se
+  // traduce; lo que sí se traduce es lo que Latte dice de cada cosa.
+  'dna.sources.channels': 'Otros canales',
+  'dna.sources.channelsPlaceholder': 'instagram.com/tumarca, linkedin.com/company/tumarca, Google Business…',
+  'dna.sources.channelsNote': 'Leemos lo público de cada canal.',
+  'dna.sources.channelInvalid': 'No es un link',
+  'dna.step.channels': 'Canales',
   // --- ADN · ideas ---
   'home.ideas.title': 'Ideas para empezar',
   'home.ideas.tag': 'Idea de Latte',
@@ -1806,14 +1811,11 @@ const en: Record<MessageKey, string> = {
   'dna.sources.name': 'Brand name',
   'dna.sources.web': 'Your website',
   'dna.sources.webPlaceholder': 'https://yourwebsite.com',
-  'dna.sources.instagram': 'Instagram',
-  'dna.sources.instagramPlaceholder': '@username',
-  'dna.sources.instagramNote': 'We read what is public, or upload screenshots.',
   'dna.sources.files': 'Files',
   'dna.sources.filesHint': 'Drop your brand files here.',
   'dna.sources.filesEmpty': 'The files you bring show up here.',
   'dna.sources.filesWeb': 'Needs the desktop app.',
-  'dna.sources.needSource': 'Pick a source: your website, your Instagram or your files.',
+  'dna.sources.needSource': 'Pick a source: your website, your channels or your files.',
   'dna.sources.needName': 'Type the brand name to create it.',
   'dna.sources.build': 'Build my brand',
   'dna.sources.skip': 'Start without a brand',
@@ -1826,7 +1828,6 @@ const en: Record<MessageKey, string> = {
   'dna.build.reason': 'Reason: {reason}',
   'dna.build.again': 'Build again',
   'dna.step.web': 'Your website',
-  'dna.step.instagram': 'Instagram',
   'dna.step.files': 'Files',
   'dna.step.context': 'Brand context',
   'dna.step.documents': 'Documents',
@@ -1888,6 +1889,15 @@ const en: Record<MessageKey, string> = {
   'home.ask.dnaAction': 'Bring your brand',
   'home.ask.classify': 'It builds as {type} with {role}',
   'home.ask.allTypes': 'See all work types',
+  // --- ADN · canales ---
+  // Other channels: the brand already publishes where it publishes, and Latte
+  // reads what is public on every link the person pastes. Platform names are
+  // not translated; what Latte says about each one is.
+  'dna.sources.channels': 'Other channels',
+  'dna.sources.channelsPlaceholder': 'instagram.com/yourbrand, linkedin.com/company/yourbrand, Google Business…',
+  'dna.sources.channelsNote': 'We read what is public on each channel.',
+  'dna.sources.channelInvalid': 'Not a link',
+  'dna.step.channels': 'Channels',
   // --- ADN · ideas ---
   'home.ideas.title': 'Ideas to start with',
   'home.ideas.tag': 'Latte idea',

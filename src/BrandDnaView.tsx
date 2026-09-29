@@ -15,7 +15,7 @@ import { BrandDnaSources } from './BrandDnaSources';
  * Dos caminos distintos a la misma ficha: "Reconstruir con lo que ya tiene"
  * (`buildBrandDna(brand, 'existing')`, el motor leyendo contexto, documentos,
  * decisiones, memoria e identidad) y "Sumar fuentes" (la misma pantalla F del
- * recorrido inicial: web, Instagram, archivos). Las propuestas aprendidas se
+ * recorrido inicial: web, otros canales, archivos). Las propuestas aprendidas se
  * aceptan o se descartan acá, con `resolveBrandDnaProposal`.
  *
  * A diferencia de `IdentityView`, esta pantalla es dueña de sus llamadas: el
@@ -60,7 +60,7 @@ export function BrandDnaView(props: BrandDnaViewProps) {
   const [showSources, setShowSources] = useState(false);
   const [identity, setIdentity] = useState<BrandIdentityView | null>(null);
   const [url, setUrl] = useState('');
-  const [instagram, setInstagram] = useState('');
+  const [channels, setChannels] = useState('');
   const [name, setName] = useState('');
 
   // Inicio y la tarjeta de primeros pasos leen la ficha del contenedor: el
@@ -113,7 +113,7 @@ export function BrandDnaView(props: BrandDnaViewProps) {
           headingLevel={2}
           brandName={brand.name}
           url={url} onUrl={setUrl}
-          instagram={instagram} onInstagram={setInstagram}
+          channels={channels} onChannels={setChannels}
           name={name} onName={setName}
           files={identity?.files ?? []}
           busy={state.busy}

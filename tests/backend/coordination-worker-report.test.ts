@@ -144,6 +144,10 @@ describe('E6: la extracción de identidad es un despacho real que el revisor pue
     try {
       const brand = await b.service.createBrand('Ayulem');
       const work = await b.service.createWork(brand.id, 'Propuesta');
+      // La extracción corre en el ESPACIO INTERNO de la marca: en la app lo
+      // crea el primer pedido; acá se siembra para poder prepararle equipo.
+      b.repo.setMeta(`brand_workspace_work:${brand.id}`, work.id);
+      b.repo.setMeta(`work_internal:${work.id}`, '1');
       b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON);
       b.repo.setMeta('coordination_coordinator:' + work.id, COORDINATOR);
       const members: FakeTeamMember[] = [];

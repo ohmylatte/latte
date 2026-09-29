@@ -253,7 +253,7 @@ const dnaView = (brandId: string): BrandDnaView => {
 };
 const savePreviewIdeas = (brandId: string): void => { const d = dnaOf(brandId); d.ideas = demoIdeas(); d.ideasUpdatedAt = now(); };
 const DNA_STEPS: Record<BrandDnaBuildMode, BrandDnaBuildStepKey[]> = {
-  sources: ['web', 'instagram', 'files', 'compose'],
+  sources: ['web', 'channels', 'files', 'compose'],
   existing: ['context', 'documents', 'decisions', 'memory', 'compose'],
   ideas: ['compose'],
 };
@@ -372,7 +372,7 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   approveBrandDna:async(brandId)=>{const d=dnaOf(brandId);if(!d.draft)throw new Error('No hay ADN para aprobar');d.approved={version:(d.approved?.version??0)+1,approvedAt:now(),fields:d.draft};return dnaView(brandId);},
   buildBrandDna:async(brandId,mode,sources)=>{
     for(const j of dnaJobs.values())if(j.brandId===brandId&&!j.done)return j;
-    const keys=DNA_STEPS[mode].filter(k=>mode!=='sources'||k==='compose'||(k==='web'&&sources?.url)||(k==='instagram'&&sources?.instagram)||(k==='files'&&sources?.useIdentityFiles));
+    const keys=DNA_STEPS[mode].filter(k=>mode!=='sources'||k==='compose'||(k==='web'&&sources?.url)||(k==='channels'&&(sources?.channels?.length??0)>0)||(k==='files'&&sources?.useIdentityFiles));
     const job:BrandDnaBuildJob={jobId:'dna-'+id(),brandId,mode,steps:keys.map(key=>({key,state:'pending' as const,detail:null})),done:false,outcome:null,reason:null};
     dnaJobs.set(job.jobId,job);
     let i=0;

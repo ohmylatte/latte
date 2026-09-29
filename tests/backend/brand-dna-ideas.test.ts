@@ -115,6 +115,17 @@ describe('ADN · el build de ideas', () => {
   const workDir = () => b.files.workDir(brandId, workId);
   const fuentes = () => path.join(workDir(), 'borradores', 'adn', 'fuentes');
 
+  /**
+   * El espacio interno de la marca: EL trabajo donde Latte compone. En la app
+   * lo crea el primer build; acá se siembra sobre `workId` ANTES para poder
+   * prepararle equipo y carpetas. Crearlo y filtrarlo de las listas tienen SU
+   * archivo (`brand-workspace-work.test.ts`).
+   */
+  const markAsBrandWorkspace = () => {
+    b.repo.setMeta(`brand_workspace_work:${brandId}`, workId);
+    b.repo.setMeta(`work_internal:${workId}`, '1');
+  };
+
   const restartWithAi = async (overrides: Parameters<typeof makeBackend>[0] = {}) => {
     b.cleanup();
     b = await makeBackend({
@@ -128,6 +139,7 @@ describe('ADN · el build de ideas', () => {
     brandId = brand.id;
     const work = await b.service.createWork(brand.id, 'Propuesta mayorista');
     workId = work.id;
+    markAsBrandWorkspace();
   };
 
   const coordinationOn = () => {
@@ -172,6 +184,7 @@ describe('ADN · el build de ideas', () => {
     brandId = brand.id;
     const work = await b.service.createWork(brand.id, 'Propuesta mayorista');
     workId = work.id;
+    markAsBrandWorkspace();
     members = [];
     send = undefined as never;
   });
@@ -207,6 +220,9 @@ describe('ADN · el build de ideas', () => {
 
   it('junta los insumos (ADN, fecha, trabajos, embudo, fechas comerciales) y el agente guarda las ideas', async () => {
     await restartWithAi();
+    // Los "trabajos recientes" que junta Latte son los de la PERSONA: el
+    // espacio interno donde corre el build no es uno de ellos.
+    const campaign = await b.service.createWork(brandId, 'Campaña de invierno');
     coordinationOn();
     await b.service.updateBrandDnaField(brandId, 'audience', 'Mayoristas');
 
@@ -218,7 +234,9 @@ describe('ADN · el build de ideas', () => {
     expect(files).toEqual(['adn.md', 'embudo.md', 'fecha.md', 'fechas-comerciales.md', 'trabajos.md']);
     expect(fs.readFileSync(path.join(fuentes(), 'adn.md'), 'utf8')).toContain('Mayoristas');
     expect(fs.readFileSync(path.join(fuentes(), 'fecha.md'), 'utf8')).toContain('Estación');
-    expect(fs.readFileSync(path.join(fuentes(), 'trabajos.md'), 'utf8')).toContain('Propuesta mayorista');
+    const trabajos = fs.readFileSync(path.join(fuentes(), 'trabajos.md'), 'utf8');
+    expect(trabajos).toContain(campaign.title);
+    expect(trabajos, 'el espacio interno no es un trabajo de la marca').not.toContain('Propuesta mayorista');
 
     const task = await approveAndTask(job.jobId);
     expect(task.audience).toBe('internal');
