@@ -59,8 +59,9 @@ describe('Archivar marca', () => {
     expect(confirmSpy).not.toHaveBeenCalled();
     expect((await browserAPI.listArchivedBrands()).map((b) => b.name)).toEqual([DEMO]);
 
-    // Y vuelve desde "Marcas archivadas (1)".
-    fireEvent.click(screen.getByRole('button', { name: `${es['brand.archivedToggle']} (1)` }));
+    // Y vuelve desde "Marcas archivadas", en el mismo "⋯", con su contador.
+    fireEvent.click(screen.getByRole('button', { name: fill(es['brand.menu'], { name: 'Norte' }) }));
+    fireEvent.click(screen.getByRole('menuitem', { name: `${es['brand.archivedToggle']}1` }));
     fireEvent.click(screen.getByRole('button', { name: fill(es['brand.restoreNamed'], { name: DEMO }) }));
     await waitFor(() => expect(optionNames()).toEqual(expect.arrayContaining([DEMO, 'Norte'])));
     expect(screen.getByText(fill(es['brand.restored'], { name: DEMO }))).toBeTruthy();
