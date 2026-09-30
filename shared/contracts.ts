@@ -184,6 +184,144 @@ export interface BrandIdentityView {
   changedSinceApproval: boolean;
   revokedAt: string | null;
 }
+/**
+ * ADN DE MARCA (Latte 2.0 · Entrega 1B).
+ *
+ * La identidad ESTRUCTURADA de una marca: lo que viaja a cada trabajo, lo que
+ * el chequeo de marca compara y lo que aprende de las correcciones. Es un
+ * motor: arranca de cero con fuentes (web, canales, archivos) o se
+ * reconstruye con lo que la marca ya tiene (contexto, documentos aprobados,
+ * decisiones, memoria, identidad), y crece con propuestas que la persona
+ * aprueba. Cada dato dice de dónde salió; lo inferido sin fuente firme es un
+ * supuesto y se marca como tal. Nunca se inventa un dato.
+ */
+export type BrandDnaSourceKind = 'web' | 'instagram' | 'channel' | 'file' | 'context' | 'document' | 'decision' | 'memory' | 'identity' | 'correction' | 'human' | 'calendar';
+export interface BrandDnaSource {
+  kind: BrandDnaSourceKind;
+  /** Lo que ve la persona: "web · home", "brief-2026.pdf p.2", "decisión del 12 sep". Nunca una ruta. */
+  label: string;
+}
+export interface BrandDnaEntry<T> {
+  value: T;
+  sources: BrandDnaSource[];
+  /** Inferido sin fuente firme: la ficha lo muestra como "Supuesto". */
+  assumption: boolean;
+}
+export interface BrandDnaColor { hex: string; name: string | null }
+export interface BrandDnaFields {
+  tone: BrandDnaEntry<{ adjectives: string[]; example: string | null }> | null;
+  audience: BrandDnaEntry<string> | null;
+  valueProp: BrandDnaEntry<string> | null;
+  /** Palabras y giros que la marca usa. */
+  wordsYes: BrandDnaEntry<string[]> | null;
+  /** Palabras que la marca no usa: el chequeo de marca las busca literal en cada pieza. */
+  wordsNo: BrandDnaEntry<string[]> | null;
+  /** Afirmaciones que la marca puede hacer, con su respaldo. */
+  claims: BrandDnaEntry<string[]> | null;
+  colors: BrandDnaEntry<BrandDnaColor[]> | null;
+  fonts: BrandDnaEntry<string[]> | null;
+}
+export type BrandDnaField = keyof BrandDnaFields;
+/** El valor CRUDO de un campo (sin fuentes ni supuesto): lo que se edita y lo que propone el motor. */
+export type BrandDnaValue =
+  | string
+  | string[]
+  | { adjectives: string[]; example: string | null }
+  | BrandDnaColor[];
+export const BRAND_DNA_FIELDS: readonly BrandDnaField[] = ['tone', 'audience', 'valueProp', 'wordsYes', 'wordsNo', 'claims', 'colors', 'fonts'];
+export interface BrandDnaView {
+  brandId: string;
+  /** El borrador que se edita y se aprueba. `null`: la marca todavía no tiene ADN. */
+  draft: BrandDnaFields | null;
+  /** La versión vigente: la que viaja a los trabajos y contra la que se chequea. */
+  approved: { version: number; approvedAt: string; fields: BrandDnaFields } | null;
+  changedSinceApproval: boolean;
+  /** Cambios que el motor aprendió (de correcciones o de trabajo aprobado) y esperan el sí de la persona. */
+  proposals: BrandDnaProposal[];
+  /** Ideas concretas para esta marca, hasta 4 vigentes, que el agente escribió. Vacías: todavía no hay. */
+  ideas: BrandDnaIdea[];
+  /** Cuándo se actualizaron las ideas por última vez. `null`: nunca. */
+  ideasUpdatedAt: string | null;
+  /**
+   * Las fuentes con las que se pidió el ÚLTIMO armado, ya validadas: la web y
+   * los canales. Sirven para que la pantalla de fuentes arranque con lo que la
+   * persona ya había escrito en vez de volver a pedírselo. `null`: nunca se
+   * pidió un armado con fuentes.
+   */
+  lastSources: { url: string | null; channels: string[] } | null;
+}
+/**
+ * 3 (ronda 3): UNA IDEA para empezar, no una plantilla. Concreta, accionable
+ * y con base: sin `basedOn` no se guarda, porque una idea sin de dónde salió
+ * es una invención.
+ */
+export interface BrandDnaIdea {
+  id: string;
+  /** Corto y accionable: "Lanzamiento de la colección de otoño". */
+  title: string;
+  /** Una línea con el motivo: "La colección nueva todavía no tiene campaña". */
+  why: string;
+  /** Un id del catálogo de tipos de trabajo (`src/work-catalog.ts`), o "Empezar libremente". */
+  workTypeId: string;
+  /** En qué se apoya. Nunca vacío. */
+  basedOn: BrandDnaSource[];
+  createdAt: string;
+}
+export interface BrandDnaProposal {
+  id: string;
+  field: BrandDnaField;
+  /** El valor que quedaría si se acepta: el valor crudo del campo. */
+  next: BrandDnaValue | null;
+  /** Una frase: por qué lo propone. */
+  reason: string;
+  source: BrandDnaSource;
+  createdAt: string;
+}
+/**
+ * `ideas`: sólo las ideas (tarea liviana, sin recomponer el ADN). Las otras
+ * dos recomponen el borrador y, si el agente puede, escriben ideas también.
+ */
+export type BrandDnaBuildMode = 'sources' | 'existing' | 'ideas';
+export interface BrandDnaSourcesInput {
+  url: string | null;
+  /**
+   * OTROS CANALES: uno o varios links donde la marca ya publica (Instagram,
+   * LinkedIn, Google Business Profile, TikTok, YouTube, Facebook, X,
+   * Pinterest…). Cada entrada es un `https://…` o un `@usuario`, que se
+   * interpreta como Instagram. Ocho como máximo (`MAX_DNA_CHANNELS`, en
+   * `shared/channels.ts`); la forma se valida ahí, igual en las dos orillas.
+   */
+  channels: string[];
+  /** Archivos ya importados al borrador de identidad (`addBrandIdentityFiles`) que el agente tiene que leer. */
+  useIdentityFiles: boolean;
+}
+export type BrandDnaBuildStepKey = 'web' | 'channels' | 'files' | 'context' | 'documents' | 'decisions' | 'memory' | 'compose';
+export interface BrandDnaBuildStep { key: BrandDnaBuildStepKey; state: 'pending' | 'running' | 'done' | 'skipped' | 'failed'; detail: string | null }
+export interface BrandDnaBuildJob {
+  jobId: string;
+  brandId: string;
+  mode: BrandDnaBuildMode;
+  steps: BrandDnaBuildStep[];
+  done: boolean;
+  /**
+   * `proposed`: el borrador quedó listo para revisar.
+   * `updated`: las ideas quedaron guardadas (build del modo `ideas`).
+   */
+  outcome: 'proposed' | 'updated' | 'failed' | 'cancelled' | null;
+  /** Código del motor cuando falló (`NOT_INSTALLED`, `UNAVAILABLE`, ...). */
+  reason: string | null;
+}
+/** Resultado del chequeo de marca de una pieza contra el ADN aprobado. */
+export type BrandCheckKind = 'wordsNo' | 'wordsYes' | 'claims' | 'tone' | 'identity';
+export interface BrandCheckFinding {
+  kind: BrandCheckKind;
+  status: 'ok' | 'warn' | 'unknown';
+  /** Para `wordsNo`: cada palabra encontrada y cuántas veces. */
+  hits?: { word: string; count: number }[];
+  /** Una frase corta, ya en el idioma de la persona (la arma el renderer con i18n). */
+  note?: string | null;
+}
+export interface BrandCheckResult { dnaVersion: number | null; findings: BrandCheckFinding[]; warnings: number }
 export interface BrandIdentityExtractionResult {
   /** `proposed`: una propuesta de una tarea que la persona aprueba en el chat del coordinador. */
   outcome: 'proposed' | 'dispatched' | 'pending_approval' | 'not_dispatched' | 'blocked';
@@ -524,7 +662,11 @@ export interface BrandContextSaveResult {
 }
 export interface AgentEvent { sessionId: string; type: 'output' | 'exit' | 'error'; data: string }
 export interface AgentSession { id: string; provider: Provider; workId: string }
-export interface RuntimeStatus { provider: Provider; available: boolean; detail: string }
+export interface RuntimeStatus {
+  provider: Provider; available: boolean; detail: string;
+  /** Why it is unavailable, as a code the renderer maps to copy. Absent when available. */
+  code?: RuntimeAvailabilityCode;
+}
 export interface MemoryResult { available: boolean; text: string }
 /** Read-only facts about this installation, shown in the Settings screen. */
 export interface AppInfo {
@@ -764,10 +906,148 @@ export type WorkPermissionMode = 'ask' | 'folder' | 'auto';
 
 /** What changing a conversation's model did. `session` is null when it was paused. */
 export interface MemberModelChange { member: TeamMember; session: ChatSession | null; resumed: boolean }
-export interface AgentRuntimeInfo { runtime: AccountRuntimeName; installed: boolean; version: string | null; detail: string; accounts: AgentAccount[] }
+export interface AgentRuntimeInfo {
+  runtime: AccountRuntimeName; installed: boolean; version: string | null; detail: string; accounts: AgentAccount[];
+  /** `not_installed` = offer "Lo instalamos por vos" (`startRuntimeInstall`). Absent when usable. */
+  code?: RuntimeAvailabilityCode;
+}
 export type AccountLoginStart =
   | { mode: 'terminal'; sessionId: string; instructions: string }
   | { mode: 'browser'; url: string; instructions: string };
+
+// --- Onboarding sin terminal (brief 2026-09-27) ------------------------------
+//
+// The main process installs and logs in the agent CLIs for the person. It never
+// sends copy: every state and failure is a CODE the renderer maps to its own
+// words, plus a short technical `detail` for the "Ver detalle" view. The full
+// transcript of a job is fetched on demand, never pushed as a message.
+
+/**
+ * The official install guide per runtime (plan B: "Probá con la guía oficial").
+ * Shared so the web preview can link them too; the install catalog
+ * (`electron/runtime/runtime-install-catalog.ts`) reads them from here.
+ */
+export const RUNTIME_GUIDE_URLS: Readonly<Record<Provider, string>> = {
+  claude: 'https://code.claude.com/docs/en/setup',
+  codex: 'https://github.com/openai/codex',
+  opencode: 'https://opencode.ai/docs/',
+  grok: 'https://docs.x.ai/build/overview',
+  hermes: 'https://hermes-agent.nousresearch.com/docs/getting-started/installation',
+};
+/** Why a runtime is shown as unusable. `not_installed` is the cue for "Lo instalamos por vos". */
+export type RuntimeAvailabilityCode = 'not_installed' | 'adapter_missing' | 'terminal_unavailable';
+/** Something a runtime needs before its own installer can run. */
+export type SetupPrereq = 'git_for_windows' | 'winget' | 'node';
+export type InstallFailureCode =
+  | 'blocked_by_policy'
+  | 'blocked_by_antivirus'
+  | 'network'
+  | 'prereq_missing'
+  /** Latte has no verified official command for this runtime/OS: the UI offers the official guide instead. */
+  | 'unverified_installer'
+  | 'unsupported_platform'
+  /** The installer said it finished but no working executable could be found afterwards. */
+  | 'not_found_after_install'
+  | 'timeout'
+  | 'unknown';
+/**
+ * One step of "Lo instalamos por vos". Terminal states: `found`, `not_found`,
+ * `needs_prereq`, `installed`, `failed`, `cancelled`.
+ */
+export type RuntimeInstallState =
+  | { state: 'detecting' }
+  | { state: 'found'; version: string | null; executable: string }
+  /** Only from `detectRuntime`: nothing installed. `canInstall` = Latte has a verified command for this OS. */
+  | { state: 'not_found'; canInstall: boolean; guideUrl: string }
+  /** Stops before installing. `canInstall`: Latte can install it (ask "¿Lo instalamos también?"); otherwise link + plan B. */
+  | { state: 'needs_prereq'; prereq: SetupPrereq; canInstall: boolean; guideUrl: string }
+  | { state: 'installing'; phase: 'prereq' | 'downloading' | 'checking' }
+  | { state: 'installed'; version: string | null; executable: string }
+  | { state: 'failed'; code: InstallFailureCode; detail: string; guideUrl: string }
+  | { state: 'cancelled' };
+export type LoginFailureCode =
+  | 'not_installed'
+  | 'terminal_unavailable'
+  /** The login process ended and the runtime's own status check says it is not logged in. */
+  | 'not_confirmed'
+  | 'timeout'
+  | 'unknown';
+/** Why the browser login falls back to the embedded terminal. Never a dead end: `sessionId` is live. */
+export type LoginTerminalReason =
+  /** No login URL Latte recognizes appeared in time (a new CLI version, a different flow). */
+  | 'url_not_recognized'
+  /** The runtime asks the person to choose something first (Hermes: provider and model). */
+  | 'needs_choice';
+export type RuntimeLoginState =
+  | { state: 'starting' }
+  /**
+   * `openedBy`: 'latte' opened it with the system browser; 'runtime' = the CLI said it opened it itself.
+   * `url` is null only when the CLI opened the browser without printing a URL Latte recognizes: hide "Abrir de nuevo" then.
+   */
+  | { state: 'browser_opened'; url: string | null; openedBy: 'latte' | 'runtime' }
+  /** Still not confirmed by the runtime's own status check after the browser opened. */
+  | { state: 'waiting'; url: string | null }
+  /** `displayName` only when the runtime reports one; may be an email the person chose. Never exported to the diagnostic. */
+  | { state: 'connected'; displayName: string | null }
+  | { state: 'needs_terminal'; reason: LoginTerminalReason; sessionId: string }
+  | { state: 'failed'; code: LoginFailureCode; detail: string }
+  | { state: 'cancelled' };
+export interface RuntimeInstallJob {
+  kind: 'install';
+  jobId: string;
+  runtime: Provider;
+  state: RuntimeInstallState;
+  /** False while something is still running (detecting, installing, verifying). */
+  done: boolean;
+}
+export interface RuntimeLoginJob {
+  kind: 'login';
+  jobId: string;
+  runtime: AccountRuntimeName;
+  accountId: string;
+  state: RuntimeLoginState;
+  done: boolean;
+  /** The hidden terminal running the login, for "Ver detalle" (attach with `onAgentEvent`/`writeAgent`). Null when the runtime logs in without one (Codex). */
+  sessionId: string | null;
+}
+export type RuntimeSetupJob = RuntimeInstallJob | RuntimeLoginJob;
+/** Pushed on every state change of an install or login job. */
+export type RuntimeSetupEvent = RuntimeSetupJob;
+/** What Latte knows how to do for one runtime on THIS machine's OS. */
+export interface RuntimeSetupInfo {
+  runtime: Provider;
+  /** Latte can run a verified official installer here. False = only the official guide. */
+  canInstall: boolean;
+  /** Latte can drive the login through the system browser (otherwise the embedded terminal). */
+  browserLogin: boolean;
+  /**
+   * Prerequisites on this OS. `required: false` = recommended (Git for Windows
+   * for Claude Code: optional per the official docs), never blocks; offer it
+   * before installing when `present` is false and `canInstall` is true, then
+   * pass `installPrereqs: true`.
+   */
+  prereqs: Array<{ prereq: SetupPrereq; required: boolean; present: boolean; canInstall: boolean; guideUrl: string }>;
+  guideUrl: string;
+  /** When the catalog entry for this OS was last checked against the official docs (YYYY-MM-DD). */
+  verifiedAt: string;
+}
+export interface RuntimeDiagnosticEntry {
+  runtime: Provider;
+  installed: boolean;
+  version: string | null;
+  /** Absolute path of the executable Latte uses; the home directory is shown as `~`. */
+  path: string | null;
+  /** Any account (managed or the system profile) logged in. `null` = does not apply (OpenCode keeps provider keys instead). */
+  loggedIn: boolean | null;
+  /** The last install/login failure code in this app session, if any. */
+  lastError: InstallFailureCode | LoginFailureCode | null;
+}
+export interface RuntimeDiagnostic {
+  generatedAt: string;
+  runtimes: RuntimeDiagnosticEntry[];
+  /** Plain text to copy for support. No tokens, no emails, no account names; the home directory is `~`. */
+  report: string;
+}
 export interface ChatPermission {
   id: string;
   permission: string;
@@ -1492,6 +1772,16 @@ export interface LatteAPI {
   approveBrandIdentity(brandId: string): Promise<BrandIdentityView>;
   revokeBrandIdentity(brandId: string): Promise<BrandIdentityView>;
   requestBrandIdentityExtraction(brandId: string): Promise<BrandIdentityExtractionResult>;
+  /** ADN de marca (Entrega 1B). */
+  readBrandDna(brandId: string): Promise<BrandDnaView>;
+  /** La persona edita un campo del borrador: su fuente pasa a `human` y deja de ser supuesto. */
+  updateBrandDnaField(brandId: string, field: BrandDnaField, value: BrandDnaValue | null): Promise<BrandDnaView>;
+  approveBrandDna(brandId: string): Promise<BrandDnaView>;
+  /** Arranca el motor: de cero con fuentes, o reconstruyendo con lo que la marca ya tiene. Un solo build por marca a la vez. */
+  buildBrandDna(brandId: string, mode: BrandDnaBuildMode, sources: BrandDnaSourcesInput | null): Promise<BrandDnaBuildJob>;
+  readBrandDnaBuildJob(jobId: string): Promise<BrandDnaBuildJob>;
+  cancelBrandDnaBuild(jobId: string): Promise<BrandDnaBuildJob>;
+  resolveBrandDnaProposal(brandId: string, proposalId: string, accept: boolean): Promise<BrandDnaView>;
   /** Installation feature switches. Default off; no secrets. */
   featureFlags(): Promise<FeatureFlags>;
   listWorks(brandId: string): Promise<Work[]>;
@@ -1735,6 +2025,31 @@ export interface LatteAPI {
    * the Settings screen needs it, never on start.
    */
   listAccountModels(runtime: AccountRuntimeName, accountId: string): Promise<AgentModelList>;
+  // Onboarding sin terminal (brief 2026-09-27): install and log in for the person.
+  /** Per runtime, what Latte can do on this OS (verified installer, browser login, prerequisites, official guide). */
+  runtimeSetupCatalog(): Promise<RuntimeSetupInfo[]>;
+  /** "Ya lo hice, buscar de nuevo": a fresh detection, no install. Resolves to `found` or `not_found`. */
+  detectRuntime(runtime: Provider): Promise<RuntimeInstallState>;
+  /**
+   * Detect → prerequisites → official installer (hidden) → verify. Returns the
+   * job at once; progress arrives through `onRuntimeSetupEvent`. Stops at
+   * `needs_prereq` unless `installPrereqs` is true ("¿Lo instalamos también?").
+   * Already installed ends at `found` without installing anything.
+   */
+  startRuntimeInstall(runtime: Provider, options?: { installPrereqs?: boolean } | null): Promise<RuntimeInstallJob>;
+  cancelRuntimeInstall(jobId: string): Promise<RuntimeInstallJob>;
+  /** Browser login for a Latte-managed (or system) account, driven by Latte. Progress via `onRuntimeSetupEvent`. */
+  startBrowserLogin(runtime: AccountRuntimeName, accountId: string): Promise<RuntimeLoginJob>;
+  /** "Abrir de nuevo": opens the captured login URL again in the system browser. */
+  reopenLoginUrl(jobId: string): Promise<RuntimeLoginJob>;
+  cancelBrowserLogin(jobId: string): Promise<RuntimeLoginJob>;
+  /** The latest snapshot of an install or login job (after a remount, or to poll). */
+  getRuntimeSetupJob(jobId: string): Promise<RuntimeSetupJob>;
+  /** Everything the hidden process printed, ANSI stripped and size-bounded: the "Ver detalle" text. */
+  getRuntimeSetupTranscript(jobId: string): Promise<string>;
+  /** "¿Qué falta?": per runtime installed/version/path/logged in/last error, plus a copyable plain-text report. */
+  diagnoseRuntimes(): Promise<RuntimeDiagnostic>;
+  onRuntimeSetupEvent(callback: (event: RuntimeSetupEvent) => void): () => void;
   /** El modelo por nivel de esfuerzo de Grok y Hermes, como está en Ajustes, y los defaults de Latte para cada uno. */
   getAcpTierModels(): Promise<{ configured: AcpTierModels; defaults: AcpTierModels }>;
   /** Cambia el modelo de un nivel; `null` vuelve al default. Vale para las conversaciones que arranquen después. */

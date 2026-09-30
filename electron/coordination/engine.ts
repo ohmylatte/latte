@@ -39,7 +39,7 @@ import type {
 } from '../storage/repository';
 import { canAddTask, computeDoomedTasks, computeReadyTasks, computeTaskDepth, wouldCreateCycle, type DagEdge, type DagTask } from './dag';
 import { assertBudgetConfigured, BudgetUnsetError, readStoredCoordinationBudget, requireCoordinationBudget, reserveDispatch, type BudgetUsage, type StoredCoordinationBudgetRead } from './budget';
-import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, DEFAULT_MAX_CONCURRENT, IN_FLIGHT_DISPATCH_STALE_MINUTES, LOG_PREVIEW, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK, MAX_CALLED_UP_MEMBERS_PER_RUN, MAX_PENDING_NOTICES, TASK_LIST_SPEC_PREVIEW } from './limits';
+import { ASK_TTL_DEFAULT_MINUTES, ASK_TTL_MAX_MINUTES, CHECK_MESSAGES_MAX, DEFAULT_MAX_CONCURRENT, IN_FLIGHT_DISPATCH_STALE_MINUTES, LOG_PREVIEW, MAX_ACTIVE_COORDINATION_RUNS, MAX_ATTEMPTS_PER_TASK, MAX_CALLED_UP_MEMBERS_PER_RUN, MAX_PENDING_NOTICES, TASK_LIST_SPEC_PREVIEW } from './limits';
 
 /**
  * Los roles que la persona aprobo, por run. Una clave propia y no `plan_json`:
@@ -192,6 +192,10 @@ export interface CoordinationGrant {
  * escribieron y no leyó) y el estado del run. Los dos juntos porque las dos
  * preguntas son la misma — "¿hay algo para mí y cómo viene la mano?" — y una
  * herramienta que devuelve la mitad obliga a un segundo sondeo.
+ *
+ * P7: `messages` trae como máximo `CHECK_MESSAGES_MAX` mensajes reales (los
+ * más recientes); si quedan sin entregar, el último elemento es un renglón de
+ * Latte (`from: null`) que los cuenta y dice que volver a llamar los trae.
  *
  * `run: null` es el miembro sin run activo, no un run vacío.
  */
@@ -984,7 +988,7 @@ export class CoordinationEngine {
    * presupuesto del run, autoridad, tareas + aprobación + estado) siguen
    * cayendo juntos dentro de un `repo.transaction()` real.
    */
-  private async resolveProposalGate(runId: string, decision: 'approve' | 'reject', editedProposalJson?: string): Promise<CoordinationRunRecord> {
+  private async resolveProposalGate(runId: string, decision: 'approve' | 'reject', editedProposalJson?: string, options: { handoffDispatch?: boolean } = {}): Promise<CoordinationRunRecord> {
     const run = this.deps.repo.getCoordinationRun(runId);
     if (decision === 'reject') {
       const cancelled = this.cancelRun(runId);
@@ -1057,12 +1061,18 @@ export class CoordinationEngine {
       //
       // Quien escribió el traspaso ya dijo a quién y qué; lo único que faltaba
       // era el sí de la persona. Esperar a que el coordinador lea el aviso y
-      // llame a `latte_dispatch` volvía a poner un paso en el medio — y si el
-      // coordinador no tiene MCP, ese paso no llega nunca. Pasa por
+      // llame a `latte_dispatch` volvía a poner un paso en el medio — y si
+      // el coordinador no tiene MCP, ese paso no llega nunca. Pasa por
       // `startDispatch`, así que la autoridad (manual → gate), el presupuesto y
       // la concurrencia valen igual. Nunca tira: la aprobación ya está
       // commiteada y no se deshace porque un despacho se haya denegado.
-      if (this.deps.repo.getMeta(HANDOFF_RUN_META + run.id) === '1') {
+      //
+      // K1: Y EL LLAMADOR PUEDE QUEDARSE CON EL DESPACHO. `requestPersonTask`
+      // con consentimiento aprueba la propuesta que él mismo acaba de armar y
+      // despacha él la tarea, para devolver el resultado DEL DESPACHO (no un
+      // "habrá despachado"): con `handoffDispatch: false` este bucle no corre y
+      // la aprobación queda igual de commiteada.
+      if (options.handoffDispatch !== false && this.deps.repo.getMeta(HANDOFF_RUN_META + run.id) === '1') {
         for (const task of this.deps.repo.listCoordinationTasks(run.id).filter((t) => t.status === 'ready')) {
           try {
             await this.startDispatch({ grant: { workId: run.workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id });
@@ -1606,24 +1616,44 @@ export class CoordinationEngine {
    * vuelve fila: lo que ese camino rechaza, acá también, con el mismo código.
    */
   /**
-   * E4: UNA TAREA QUE PIDIÓ LA PERSONA DESDE UNA PANTALLA (hoy: "Extraer
-   * identidad con el equipo").
+   * E4: UNA TAREA QUE PIDIÓ LA PERSONA DESDE UNA PANTALLA (hoy: "Armar mi
+   * marca", "Actualizar ideas" y "Extraer identidad con el equipo").
    *
-   * El mismo camino que un traspaso: sin run, nace una propuesta de una tarea
-   * que la persona aprueba en el chat del coordinador y se despacha sola al
-   * aprobarla; con el run corriendo, la tarea entra al plan y se despacha. El
-   * clic de la persona ES la aprobación del rol para ese run: no hace falta
-   * una segunda. Con el run en otro estado, no se escribe nada y se dice por
-   * qué.
+   * El mismo camino que un traspaso: con el run corriendo, la tarea entra al
+   * plan y se despacha. SIN run el camino se bifurca según QUIÉN pidió:
+   *
+   * - SIN consentimiento (el traspaso entre agentes): nadie dijo todavía que
+   *   sí, así que nace una propuesta que la persona resuelve en el chat del
+   *   coordinador (`proposeFromHandoff`).
+   * - CON consentimiento (`consented: true`, el clic de la persona en una
+   *   pantalla de Latte): el clic ES la aprobación. La propuesta se arma y se
+   *   aprueba dentro de ESTE llamado — el run nace `running` con esa única
+   *   tarea, con el rol contratado si nadie lo hacía — y la tarea se despacha
+   *   en el acto. Nada queda esperando una aprobación que viviría en un chat
+   *   que la persona nunca abre: eso dejaba el build de la marca quieto para
+   *   siempre.
+   *
+   * Y con `consented` el despacho NO se gatea, por la misma razón: el gate es
+   * la aprobación de la persona de la que el clic ya es portador. El
+   * presupuesto, la concurrencia y los topes siguen mandando igual que siempre.
    */
-  async requestPersonTask(workId: string, input: { roleId: string; spec: string; title: string }, coordinatorMemberId: string | null): Promise<{
+  async requestPersonTask(
+    workId: string,
+    input: { roleId: string; spec: string; title: string },
+    coordinatorMemberId: string | null,
+    options: { consented?: boolean } = {},
+  ): Promise<{
     outcome: 'proposed' | 'dispatched' | 'pending_approval' | 'not_dispatched' | 'blocked'; taskId: string | null; reason: string | null;
   }> {
     this.requireCoordinationEnabled();
+    const consented = options.consented === true;
     const run = this.deps.repo.findActiveCoordinationRun(workId);
     if (!run) {
-      const proposed = await this.proposeFromHandoff(workId, input.roleId, input.spec, coordinatorMemberId, input.title);
-      return proposed.bridged ? { outcome: 'proposed', taskId: null, reason: null } : { outcome: 'blocked', taskId: null, reason: proposed.reason };
+      if (!consented) {
+        const proposed = await this.proposeFromHandoff(workId, input.roleId, input.spec, coordinatorMemberId, input.title);
+        return proposed.bridged ? { outcome: 'proposed', taskId: null, reason: null } : { outcome: 'blocked', taskId: null, reason: proposed.reason };
+      }
+      return this.startConsentedRun(workId, input, coordinatorMemberId);
     }
     if (run.status !== 'running') return { outcome: 'blocked', taskId: null, reason: run.status === 'planning' ? 'RUN_ALREADY_ACTIVE' : 'RUN_NOT_ACTIVE' };
     const approved = this.approvedRoleIds(run);
@@ -1634,11 +1664,58 @@ export class CoordinationEngine {
     const task = this.createTaskRow(run.id, input.roleId, input.spec, [], input.title, 'internal');
     this.deps.repo.markCoordinationTaskInPlan(task.id);
     try {
-      const outcome = await this.startDispatch({ grant: { workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id });
+      const outcome = await this.startDispatch({ grant: { workId, runId: run.id, memberId: '', role: 'coordinator' }, taskId: task.id, consented });
       this.touch(workId, run.id);
       return { outcome: outcome.status, taskId: task.id, reason: null };
     } catch (error) {
       this.touch(workId, run.id);
+      return { outcome: 'not_dispatched', taskId: task.id, reason: error instanceof LatteError ? error.code : 'INTERNAL' };
+    }
+  }
+
+  /**
+   * K1: EL RUN QUE NACE YA APROBADO.
+   *
+   * Es `proposeFromHandoff` + `resolveProposalGate('approve')` + `startDispatch`
+   * en una sola tira, sin esperar a nadie en el medio: los mismos candados, el
+   * mismo validador de propuestas, las mismas contrataciones y el mismo
+   * presupuesto que cuando la persona aprueba a mano desde el chat. Lo que no
+   * existe acá es la ESPERA: no hay gate en la lista de gates ni una tarjeta
+   * en un chat interno.
+   *
+   * El bucle de despacho de la aprobación queda apagado (`handoffDispatch:
+   * false`) para que éste método sea el dueño del resultado: si el despacho se
+   * deniega, el llamador recibe el CÓDIGO del motor, no un "probablemente se
+   * despachó". El aviso al coordinador sigue diciendo que Latte ya se ocupó del
+   * despacho (el meta del traspaso está puesto), que es la verdad.
+   */
+  private async startConsentedRun(
+    workId: string,
+    input: { roleId: string; spec: string; title: string },
+    coordinatorMemberId: string | null,
+  ): Promise<{ outcome: 'dispatched' | 'pending_approval' | 'not_dispatched' | 'blocked'; taskId: string | null; reason: string | null }> {
+    const proposed = await this.proposeFromHandoff(workId, input.roleId, input.spec, coordinatorMemberId, input.title);
+    if (!proposed.bridged) return { outcome: 'blocked', taskId: null, reason: proposed.reason };
+    const runId = proposed.proposed.id;
+    try {
+      await this.resolveProposalGate(runId, 'approve', undefined, { handoffDispatch: false });
+    } catch (error) {
+      this.deps.log?.(`[latte] consented proposal approval failed (${runId}): ${error instanceof Error ? error.message : String(error)}`);
+      // La propuesta la armó ESTE llamado y nadie más la va a aprobar: si
+      // queda en `planning`, el próximo clic choca con RUN_ALREADY_ACTIVE
+      // para siempre. Se cancela y el reintento arranca limpio.
+      try { this.cancelRun(runId); } catch { /* el cierre nunca tapa el motivo */ }
+      return { outcome: 'blocked', taskId: null, reason: error instanceof LatteError ? error.code : 'INTERNAL' };
+    }
+    const task = this.deps.repo.listCoordinationTasks(runId)
+      .find((candidate) => candidate.roleId === input.roleId && candidate.spec === input.spec);
+    if (!task) return { outcome: 'blocked', taskId: null, reason: 'INTERNAL' };
+    try {
+      const outcome = await this.startDispatch({ grant: { workId, runId, memberId: '', role: 'coordinator' }, taskId: task.id, consented: true });
+      this.touch(workId, runId);
+      return { outcome: outcome.status, taskId: task.id, reason: null };
+    } catch (error) {
+      this.touch(workId, runId);
       return { outcome: 'not_dispatched', taskId: task.id, reason: error instanceof LatteError ? error.code : 'INTERNAL' };
     }
   }
@@ -1899,9 +1976,15 @@ export class CoordinationEngine {
 
   /**
    * Lo que el coordinador necesita saber en el instante en que su plan se
-   * aprueba: qué autoridad quedó, cuánto presupuesto hay, QUÉ TAREAS YA
-   * EXISTEN —con su id, su rol, su estado y sus dependencias—, a quién
-   * contrataron, y qué hacer ahora.
+   * aprueba: qué autoridad quedó, cuánto presupuesto hay, CUÁNTAS TAREAS YA
+   * EXISTEN y CÓMO VAN, a quién contrataron, y qué hacer ahora.
+   *
+   * P5: el listado tarea por tarea NO viaja. Ya existía en `latte_task_list`
+   * (con spec recortado), y re-listarlo costaba ~100-150 caracteres por tarea
+   * —hasta ~30.000 con 200— en un aviso que el runtime entrega como turno de
+   * usuario y que el coordinador vuelve a pagar en cada turno siguiente. Van
+   * los contadores, que es lo que hace falta para decidir qué despachar, y el
+   * puntero a la lista completa.
    *
    * En inglés, como el resto de lo que Latte le dice a un agente (el prompt de
    * despacho y el bloque de respuestas de `withAnsweredAsks`).
@@ -1910,9 +1993,14 @@ export class CoordinationEngine {
     const authority = this.readAuthority(run.workId);
     const budget = this.budgetBlockForEnvelope(run.id);
     const tasks = this.taskList(run.id);
+    const count = (status: CoordinationTaskRecord['status']) => tasks.filter((t) => t.status === status).length;
     const lines: string[] = [];
     lines.push('Your plan was approved. Latte already created every task of it — you do not have to.');
     lines.push('');
+    // El TÍTULO del plan (el `rationale` que la persona acaba de aprobar),
+    // guardado en la misma transacción que este aviso. Vacío: no se inventa.
+    const planTitle = this.deps.repo.getMeta(coordinationRequestMetaKey(run.id));
+    if (planTitle) lines.push(`Plan: ${planTitle}`);
     lines.push(`Authority: ${authority}.${authority === 'plan'
       ? ' Tasks that belong to the approved plan dispatch straight away; anything else needs the person to approve each dispatch.'
       : authority === 'auto'
@@ -1920,11 +2008,8 @@ export class CoordinationEngine {
         : ' The person chose to approve every dispatch one by one.'}`);
     lines.push(`Budget: ${budget.maxDispatches ?? 'unlimited'} dispatches${budget.maxConcurrent == null ? '' : `, at most ${budget.maxConcurrent} at a time`}.`);
     lines.push('');
-    lines.push('Tasks that already exist:');
-    for (const task of tasks) {
-      const depends = task.dependsOn.length > 0 ? ` (depends on: ${task.dependsOn.join(', ')})` : '';
-      lines.push(`- ${task.id} [${task.roleId}] ${task.status}${depends}${task.audience === 'client' ? ' (for the client)' : ''}: ${task.title}`);
-    }
+    lines.push(`Tasks: ${tasks.length} created — ${count('ready')} ready, ${count('pending')} pending, ${count('dispatched') + count('running')} dispatched, ${count('done')} done, ${count('failed')} failed, ${count('blocked')} blocked.`);
+    lines.push('The full list is in `latte_task_list` (id, role, status, dependencies and a short preview of each spec).');
     if (hired.length > 0) {
       lines.push('');
       lines.push('Members hired for this plan:');
@@ -1945,10 +2030,11 @@ export class CoordinationEngine {
    * THE single dispatch choke point. Every path that can ever start a member
    * working re-enters here. Order (non-negotiable, mirrors the design):
    * grant → active run → task ready → target member idle → authority gate
-   * (short-circuits to `pending_approval`) → `maxConcurrent` → budget reserve
-   * → `hub.send()` → dispatched row.
+   * (short-circuits to `pending_approval`, unless the person consented to this
+   * very task with her own click) → `maxConcurrent` → budget reserve →
+   * `hub.send()` → dispatched row.
    */
-  async startDispatch(ctx: { grant: CoordinationGrant; taskId: string; approvedGateId?: string; editedPrompt?: string }): Promise<{ status: 'dispatched' | 'pending_approval'; taskId: string; dispatchId: string }> {
+  async startDispatch(ctx: { grant: CoordinationGrant; taskId: string; approvedGateId?: string; editedPrompt?: string; consented?: boolean }): Promise<{ status: 'dispatched' | 'pending_approval'; taskId: string; dispatchId: string }> {
     // El interruptor tiene que APAGAR, no sólo impedir encender: gateando
     // únicamente `startRun`/`requestCoordination`, bajar la bandera a mitad de
     // run no frenaba nada y los agentes seguían gastando plata. Acá, en el
@@ -2034,7 +2120,13 @@ export class CoordinationEngine {
     // cual, y una fila pendiente ya lleva la sección adentro desde que nació.
     const prompt = ctx.editedPrompt ?? existingPending?.prompt ?? this.withAnsweredAsks(task);
     const authority = this.readAuthority(run.workId);
-    const gated = !ctx.approvedGateId && this.isGated(authority, run, task);
+    // K1: EL CONSENTIMIENTO ES LA APROBACIÓN. `consented` llega sólo desde
+    // `requestPersonTask` cuando la PERSONA apretó el botón que pide esta
+    // tarea: el gate de despacho existe para que nadie gaste sin el sí de la
+    // persona, y ese sí ya vino con el clic. Sin esto, bajo autoridad `manual`
+    // el build de la marca nacía `pending_approval` — una aprobación que sólo
+    // se ve en la lista de gates de un trabajo interno que la persona no abre.
+    const gated = !ctx.consented && !ctx.approvedGateId && this.isGated(authority, run, task);
 
     // EL GATE VA PRIMERO, antes de resolver el miembro. `resolveTargetMember`
     // llama a `hub.addMember`: inserta la fila, mintea el token, ocupa un cupo
@@ -2810,8 +2902,23 @@ export class CoordinationEngine {
     // B5.5: el reporte, en `agents.log`. Sin contenido: el resumen y los
     // archivos ya viven en la fila del despacho y en el aviso al coordinador.
     this.deps.log?.(`[latte] coordination report (run=${task.runId} dispatch=${current?.id ?? 'none'} task=${taskId} member=${grant.memberId} outcome=${outcome})`);
+    // M1 + P6: EL AVISO DEL REPORTE SE ARMA ANTES DEL CIERRE, no después.
+    //
+    // Éste era el agujero del criterio entero: "cada uno en lo suyo, otro
+    // consolida". El motor tenía despacho (coordinador → miembro) y reporte
+    // (miembro → base), y ahí moría: el resultado quedaba en una fila que el
+    // coordinador no tenía cómo ver — `latte_check` devolvía `[]` por diseño —
+    // así que consolidaba a ciegas o, peor, rehacía el trabajo él mismo.
+    //
+    // P6: si éste era el ÚLTIMO reporte, el cierre de abajo lleva este texto
+    // adentro del suyo: un hecho, UN aviso. Antes eran dos mensajes en el
+    // mismo tick y el coordinador pagaba dos turnos de usuario (y dos
+    // re-pagos de su propio hilo) por la misma noticia. El conteo que viaja
+    // es el de después de este reporte — `afterReport` ya corrió —, así que
+    // es idéntico al de antes.
+    const reportNotice = this.reportNotice(task.runId, grant.memberId, task.roleId, taskId, outcome, summary, filesJson, followUp.note);
     // EL punto único: toda tarea que pasa a un estado terminal sale por acá.
-    this.finishRunIfComplete(task.runId, now);
+    const closed = this.finishRunIfComplete(task.runId, now, reportNotice?.text ?? null);
     // O6: Y LA SUSPENSIÓN SE RE-EVALÚA ACÁ, no en el próximo tick.
     //
     // `maybeSelfSuspendOnAsks` sólo se llamaba desde `ask()`: el camino del
@@ -2822,21 +2929,12 @@ export class CoordinationEngine {
     // pantalla decía "en curso" sobre un equipo que no tenía qué hacer.
     this.maybeSelfSuspendOnAsks(task.runId, now);
     this.touch(grant.workId, task.runId);
-    // M1: Y EL COORDINADOR SE ENTERA DEL REPORTE.
-    //
-    // Éste era el agujero del criterio entero: "cada uno en lo suyo, otro
-    // consolida". El motor tenía despacho (coordinador → miembro) y reporte
-    // (miembro → base), y ahí moría: el resultado quedaba en una fila que el
-    // coordinador no tenía cómo ver — `latte_check` devolvía `[]` por diseño —
-    // así que consolidaba a ciegas o, peor, rehacía el trabajo él mismo.
-    //
-    // DESPUÉS de `finishRunIfComplete`, no antes: el conteo que viaja en el
-    // aviso es el de después de este reporte, y si éste era el último, el
-    // cierre ya mandó lo suyo y los dos avisos llegan en orden.
+    // M1: Y EL COORDINADOR SE ENTERA DEL REPORTE — sólo cuando el cierre de
+    // arriba NO lo llevó ya adentro de su aviso (`closed`).
     //
     // `void`: el aviso no es parte del reporte. `deliverNotice` nunca tira, y
     // un reporte ya asentado no se deshace porque un agente no se entere.
-    void this.noticeReport(task.runId, grant.memberId, task.roleId, taskId, outcome, summary, filesJson, followUp.note);
+    if (reportNotice && !closed) void this.deliverReportNotice(reportNotice);
     // E2: y el despacho que sigue (la revisión, o el reintento con los
     // motivos), por el MISMO punto que cualquier otro: autoridad, presupuesto
     // y concurrencia valen igual. `void`: levantar al revisor puede tardar
@@ -3034,31 +3132,48 @@ export class CoordinationEngine {
    * Nunca se avisa a sí mismo: el coordinador que hace una tarea del plan y la
    * reporta ya sabe lo que hizo, y un turno de usuario contándoselo le
    * arrancaría un turno entero para nada.
+   *
+   * P6: EL TEXTO, armado SIN entregarlo. Separar armar de entregar es lo que
+   * permite fusionarlo con el cierre del run cuando éste era el último
+   * reporte: el mismo texto, un solo turno de usuario. Devuelve `null` cuando
+   * no hay a quién avisar (sin coordinador, o el coordinador reportando lo
+   * suyo) o cuando una lectura falló — en cuyo caso el reporte ya asentado
+   * sigue en pie; sólo se pierde el aviso.
    */
-  private async noticeReport(
+  private reportNotice(
     runId: string, reporterId: string, roleId: string, taskId: string,
     outcome: 'succeeded' | 'failed', summary: string, filesJson: string | null, note: string | null = null,
-  ): Promise<void> {
+  ): { to: string; text: string } | null {
     try {
       const run = this.deps.repo.getCoordinationRun(runId);
       const coordinatorId = this.coordinatorOf(run);
-      if (!coordinatorId || coordinatorId === reporterId) return;
+      if (!coordinatorId || coordinatorId === reporterId) return null;
       const files = reportedFiles(filesJson)?.join(', ') ?? (filesJson ?? '').trim();
       const tasks = this.deps.repo.listCoordinationTasks(runId);
       const count = (status: CoordinationTaskRecord['status']) => tasks.filter((t) => t.status === status).length;
       const done = count('done');
       const inFlight = count('dispatched') + count('running');
-      await this.deliverNotice(
-        coordinatorId,
-        `«${roleId}» (${reporterId}) reported task ${taskId} as ${outcome}: ${summary}. `
-        + `Files: ${files.length > 0 ? files : 'none'}. `
-        + `Run: ${done}/${tasks.length} done, ${count('ready')} ready, ${inFlight} in flight.`
-        + (note ? `\n\n${note}` : ''),
-      );
+      return {
+        to: coordinatorId,
+        text: `«${roleId}» (${reporterId}) reported task ${taskId} as ${outcome}: ${summary}. `
+          + `Files: ${files.length > 0 ? files : 'none'}. `
+          + `Run: ${done}/${tasks.length} done, ${count('ready')} ready, ${inFlight} in flight.`
+          + (note ? `\n\n${note}` : ''),
+      };
     } catch (error) {
       // Redactar el aviso lee filas, y una lectura puede fallar. El reporte ya
       // está asentado: lo único que se pierde acá es el aviso.
       this.deps.log?.(`[latte] report notice failed (${taskId}): ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  /** Entrega un aviso ya armado. `deliverNotice` nunca tira, pero el catch cubre la cola. */
+  private async deliverReportNotice(notice: { to: string; text: string }): Promise<void> {
+    try {
+      await this.deliverNotice(notice.to, notice.text);
+    } catch (error) {
+      this.deps.log?.(`[latte] report notice failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -3080,27 +3195,38 @@ export class CoordinationEngine {
    *
    * Un run SIN tareas tampoco termina: es el run recién aprobado cuyo
    * coordinador todavía no planificó nada.
+   *
+   * P6: `closingNotice` es el aviso del reporte que está cerrando el run, si
+   * lo hay. Devuelve TRUE sólo cuando EL CIERRE DE ESTA LLAMADA lo produjo —
+   * o sea, cuando ese texto salió fusionado con el de cierre en un único
+   * aviso. FALSE significa "el aviso sigue sin entregar" (el run no cerró, o
+   * lo cerró otro camino como `refreshAsks`): el llamador lo manda solo.
    */
-  private finishRunIfComplete(runId: string, now: string): void {
+  private finishRunIfComplete(runId: string, now: string, closingNotice: string | null = null): boolean {
     const run = this.deps.repo.getCoordinationRun(runId);
-    if (run.status !== 'running' && run.status !== 'suspended') return;
+    if (run.status !== 'running' && run.status !== 'suspended') return false;
     // El barrido de vencimientos corre ACÁ, en el único punto por el que pasa
     // todo cierre: al arrancar la app y en cada reporte. Una pregunta vencida
     // sólo se consultaba (`askStatus`), así que nadie destrababa nunca la tarea
     // que esperaba por ella.
     this.refreshAsks(runId, now);
+    // P6: `refreshAsks` puede cerrar él mismo el run (un ask vencido cuando ya
+    // no quedaba nada por hacer). Si ya cerró, seguir acá mandaría un SEGUNDO
+    // aviso de cierre por el mismo hecho — lo contrario exacto de este cambio.
+    const after = this.deps.repo.getCoordinationRun(runId);
+    if (after.status !== 'running' && after.status !== 'suspended') return false;
     const tasks = this.deps.repo.listCoordinationTasks(runId);
-    if (tasks.length === 0) return;
-    if (!tasks.every((t) => t.status === 'done' || t.status === 'failed')) return;
+    if (tasks.length === 0) return false;
+    if (!tasks.every((t) => t.status === 'done' || t.status === 'failed')) return false;
     // Una pregunta abierta es trabajo pendiente de la PERSONA. Cerrar el run
     // con una sobre la mesa la deja contestando algo que ya no le va a llegar a
     // nadie, y borra la única pista de por qué el equipo se detuvo.
-    if (this.openAsksHolding(runId, now).length > 0) return;
+    if (this.openAsksHolding(runId, now).length > 0) return false;
     // Un despacho o una reserva todavía abiertos son trabajo en vuelo: la foto
     // de las tareas puede estar adelantada respecto de la contabilidad.
     const open = this.deps.repo.listCoordinationDispatches(runId).some((d) => d.status === 'dispatched' || d.status === 'running');
-    if (open) return;
-    if (this.deps.repo.countOpenCoordinationCostReservations(runId) > 0) return;
+    if (open) return false;
+    if (this.deps.repo.countOpenCoordinationCostReservations(runId) > 0) return false;
     // D17: el coordinador puede estar en medio de un turno — leyendo el último
     // resultado y por crear la tarea que sigue. Cerrarle el run abajo convierte
     // su próximo `latte_task_create` en un `NO_ACTIVE_RUN` y le come el trabajo
@@ -3108,10 +3234,11 @@ export class CoordinationEngine {
     // `strategist.md`, o sea una promesa del prompt, no una garantía del motor.
     if (this.coordinatorIsMidTurn(run)) {
       this.pendingClose.add(runId);
-      return;
+      return false;
     }
     this.pendingClose.delete(runId);
-    this.closeRun(runId, 'done', now);
+    this.closeRun(runId, 'done', now, closingNotice);
+    return true;
   }
 
   /**
@@ -3125,7 +3252,7 @@ export class CoordinationEngine {
    * fija su coordinador al nacer (`startRun` con el permiso, o el proponente
    * al aprobar la propuesta).
    */
-  private closeRun(runId: string, status: 'done' | 'cancelled', now: string): CoordinationRunRecord {
+  private closeRun(runId: string, status: 'done' | 'cancelled', now: string, closingNotice: string | null = null): CoordinationRunRecord {
     const run = this.deps.repo.getCoordinationRun(runId);
     // M1: el final también se avisa. El coordinador recibía un reporte por
     // tarea y después SILENCIO: sin esto no tiene cómo saber que ya no queda
@@ -3135,6 +3262,12 @@ export class CoordinationEngine {
     // Un run `planning` que se cancela NO avisa acá: eso es un
     // plan rechazado, y `resolveProposalGate` ya le manda su propio texto — dos
     // avisos por el mismo hecho son dos turnos de usuario por el mismo hecho.
+    //
+    // P6: y ése es JUSTO el punto: `closingNotice` es el reporte que cerró el
+    // run, que viaja adentro del mismo texto. Un hecho (el último reporte, que
+    // además cierra), UN aviso: dos mensajes en el mismo tick eran dos turnos
+    // de usuario pagando dos re-pagos del hilo del coordinador por una sola
+    // noticia.
     const coordinatorId = this.coordinatorOf(run);
     const notice = run.status === 'planning'
       ? null
@@ -3146,6 +3279,11 @@ export class CoordinationEngine {
             + ' Planning and dispatching end with the run: if more work turns out to be needed, propose it again with `latte_request_coordination`.';
         })()
         : 'Run cancelled by the person. Nothing else will be dispatched; stop waiting for reports.';
+    const text = notice === null
+      ? closingNotice
+      : closingNotice === null
+        ? notice
+        : `${closingNotice}\n\n${notice}`;
     this.pendingClose.delete(runId);
     const closed = this.deps.repo.updateCoordinationRunStatus(runId, status, now, null);
     // B5.5: el último eslabón. Un run que cierra es el hecho que la persona
@@ -3162,7 +3300,7 @@ export class CoordinationEngine {
     // apaga; si el aviso lo dejó en un turno, `pauseWhenIdle` lo aparca hasta
     // que termine, igual que a cualquier otro convocado.
     const stopCoordinator = () => this.pauseWhenIdle(coordinatorId, runId);
-    if (notice) void this.deliverNotice(coordinatorId, notice).then(stopCoordinator, stopCoordinator);
+    if (text) void this.deliverNotice(coordinatorId, text).then(stopCoordinator, stopCoordinator);
     else stopCoordinator();
     return closed;
   }
@@ -3892,9 +4030,17 @@ export class CoordinationEngine {
    * escribieron y todavía no leyó, MÁS el estado del run, que es lo que hace
    * falta para decidir si seguís, si esperás o si ya no hay nada que hacer.
    *
-   * FIFO y una sola entrega: leer CONSUME. La segunda llamada devuelve `[]` y
-   * eso es lo correcto — un mensaje que vuelve a aparecer en cada sondeo hace
-   * que el agente lo conteste dos veces.
+   * Entrega: los mensajes se entregan UNA vez, de los más recientes a los más
+   * antiguos, y sólo hasta `CHECK_MESSAGES_MAX` por llamada (P7). Lo que no
+   * entra sigue SIN LEER —no se pierde, no se duplica— y lo trae la próxima
+   * llamada; mientras tanto, el último renglón del resultado dice cuántos
+   * quedan y que volver a llamar los trae. Una ráfaga de 20 × 4.000 chars
+   * entraba entera en un turno (80.000 chars) con el historial del miembro
+   * pagando atrás.
+   *
+   * La segunda llamada sin mensajes devuelve `[]` y eso es lo correcto — un
+   * mensaje que vuelve a aparecer en cada sondeo hace que el agente lo
+   * conteste dos veces.
    */
   check(memberId: string, runId: string | null = null): CoordinationCheckResult {
     // El run del GRANT primero: `resolveGrant` ya lo resolvió contra el
@@ -3903,9 +4049,14 @@ export class CoordinationEngine {
     // llamadores directos, que no tienen grant.
     const run = runId ? this.deps.repo.getCoordinationRun(runId) : this.activeRunForMember(memberId);
     if (!run) return { run: null, messages: [] };
-    const messages = this.deps.repo.listUndeliveredCoordinationMessages(run.id, memberId);
+    const undelivered = this.deps.repo.listUndeliveredCoordinationMessages(run.id, memberId);
     const now = this.deps.clock();
-    for (const m of messages) this.deps.repo.markCoordinationMessageDelivered(m.id, now);
+    // P7: SÓLO los que entran se marcan entregados. Los que quedan fuera
+    // siguen `delivered_at IS NULL`, que es exactamente su estado de "espero
+    // la próxima llamada".
+    const shown = undelivered.slice(-CHECK_MESSAGES_MAX);
+    const pending = undelivered.length - shown.length;
+    for (const m of shown) this.deps.repo.markCoordinationMessageDelivered(m.id, now);
     const tasks = this.deps.repo.listCoordinationTasks(run.id);
     const count = (status: CoordinationTaskRecord['status']) => tasks.filter((t) => t.status === status).length;
     return {
@@ -3916,12 +4067,22 @@ export class CoordinationEngine {
           done: count('done'), failed: count('failed'), blocked: count('blocked'), pending: count('pending'),
         },
       },
-      messages: messages.map((m) => ({
-        id: m.id,
-        from: m.fromMemberId ? { memberId: m.fromMemberId, roleId: this.roleIdOf(run.workId, m.fromMemberId) } : null,
-        text: m.body,
-        createdAt: m.createdAt,
-      })),
+      messages: [
+        ...shown.map((m) => ({
+          id: m.id,
+          from: m.fromMemberId ? { memberId: m.fromMemberId, roleId: this.roleIdOf(run.workId, m.fromMemberId) } : null,
+          text: m.body,
+          createdAt: m.createdAt,
+        })),
+        // El contador, como un renglón del buzón: es lo que el agente lee
+        // junto a los mensajes, y dice qué hacer para no quedarse a medias.
+        ...(pending > 0 ? [{
+          id: 'latte_more',
+          from: null,
+          text: `${pending} more messages: call latte_check again to read the earlier ones — they stay in your mailbox until you do.`,
+          createdAt: shown[shown.length - 1]!.createdAt,
+        }] : []),
+      ],
     };
   }
 

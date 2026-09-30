@@ -206,5 +206,38 @@ describe('callbacks', () => {
     fireEvent.click(screen.getByText('Deshacer'));
     expect(onArchive).toHaveBeenCalledWith('a1');
   });
+
+  it('"Editar y agregar" opens an in-app dialog prefilled with the decision text — never window.prompt', () => {
+    const onEditApprove = vi.fn();
+    const promptSpy = vi.spyOn(window, 'prompt');
+    const { container } = renderView('es-AR', {
+      onEditApprove,
+      decisions: [decision({ id: 'p1', status: 'pending', text: 'Texto original' })],
+    });
+    fireEvent.click(screen.getByText('Editar y agregar'));
+    const dialog = container.querySelector('[role="dialog"]')!;
+    expect(dialog).not.toBeNull();
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    const field = dialog.querySelector('textarea, input') as HTMLTextAreaElement;
+    expect(field.value).toBe('Texto original');
+    fireEvent.change(field, { target: { value: 'Texto editado' } });
+    fireEvent.click(dialog.querySelector('form button[type="submit"]')!);
+    expect(onEditApprove).toHaveBeenCalledWith('p1', 'Texto editado');
+    expect(promptSpy).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('cancelling the edit dialog never calls onEditApprove', () => {
+    const onEditApprove = vi.fn();
+    const { container } = renderView('es-AR', {
+      onEditApprove,
+      decisions: [decision({ id: 'p1', status: 'pending', text: 'Texto original' })],
+    });
+    fireEvent.click(screen.getByText('Editar y agregar'));
+    const dialog = container.querySelector('[role="dialog"]')!;
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(onEditApprove).not.toHaveBeenCalled();
+  });
 });
 

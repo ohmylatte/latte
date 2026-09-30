@@ -27,10 +27,30 @@ const ROLE_SUMMARY_KEYS: Record<string, MessageKey> = {
   reviewer: 'role.summary.reviewer',
   'paid-media': 'role.summary.paid-media',
   'sales-copywriter': 'role.summary.sales-copywriter',
+  'community-manager': 'role.summary.community-manager',
 };
 
 const SKILL_SUMMARY_KEYS: Record<string, MessageKey> = {
   writing: 'skill.summary.writing',
+};
+
+/**
+ * EL NOMBRE VISIBLE DE UN ROL, EN EL IDIOMA DE LA INTERFAZ.
+ *
+ * `role.name` sale del frontmatter del pack (`name: Strategist`), escrito en
+ * inglés porque ese `.md` es el prompt que viaja al runtime: traducirlo en el
+ * disco cambiaría lo que el agente lee. Con la interfaz en castellano una
+ * persona sin jerga técnica veía "Strategist" en el medio de una pantalla en
+ * español. `paid-media` no está en el mapa a propósito: "Paid Media" ya es el
+ * nombre correcto en los dos idiomas.
+ */
+const ROLE_NAME_KEYS: Record<string, MessageKey> = {
+  assistant: 'role.name.assistant',
+  strategist: 'role.name.strategist',
+  researcher: 'role.name.researcher',
+  analyst: 'role.name.analyst',
+  reviewer: 'role.name.reviewer',
+  'sales-copywriter': 'role.name.sales-copywriter',
 };
 
 function translated(keys: Record<string, MessageKey>, id: string, fallback: string, locale: UiLocale): string {
@@ -50,4 +70,14 @@ export function roleSummary(role: Pick<AgentRole, 'id' | 'summary'>, locale: UiL
 /** Lo mismo para las skills que Latte trae. Una skill aprendida devuelve la suya. */
 export function skillSummary(skill: Pick<AgentSkill, 'id' | 'summary'>, locale: UiLocale = currentLocale()): string {
   return translated(SKILL_SUMMARY_KEYS, skill.id, skill.summary, locale);
+}
+
+/**
+ * El nombre de un rol del pack, traducido; el suyo propio si es custom o si el
+ * nombre ya es igual en los dos idiomas (`paid-media`). Toma `id`+`name` en vez
+ * de un `AgentRole` completo para que un `TeamMember` (`roleId`/`roleName`) y
+ * un `AgentRole` (`id`/`name`) puedan pasar por la misma función.
+ */
+export function roleLabel(role: { id: string; name: string }, locale: UiLocale = currentLocale()): string {
+  return translated(ROLE_NAME_KEYS, role.id, role.name, locale);
 }

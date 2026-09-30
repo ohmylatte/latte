@@ -2,15 +2,19 @@ import { currentLocale, translate as t, type MessageKey } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, FileText, Folder, Home, MessageSquare, Minus, Palette, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, Users, X } from 'lucide-react';
-import { Loading } from './brand-marks';
-import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatRuntime, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, BrandMember, BrandIdentityView, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, HandoffTaskBridgeResult, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
+import { Archive, ArrowUpRight, Bookmark, Check, ChevronDown, Circle, Copy, Dna, FileText, Folder, Home, MessageSquare, Minus, Palette, PanelLeftClose, PanelLeftOpen, Plus, Save, Settings2, Square, TerminalSquare, Users, X } from 'lucide-react';
+import { Loading, SteamWisp, roleColor } from './brand-marks';
+import type { Brand, BrandContextDecisionResult, BrandContextProposal, BrandContextStatus, Work, Decision, DecisionAuthorityMode, WorkPermissionMode, RuntimeStatus, AgentSession, Provider, ChatRuntime, ChatSession, ChatRuntimeStatus, PrimaryAgent, AgentRuntimeInfo, AgentRole, BrandMember, BrandIdentityView, BrandDnaBuildJob, BrandDnaView, EffortTier, TeamMember, TeamMemberOptions, WorkDocument, DocumentKind, UntrackedFile, HandoffRequest, HandoffTaskBridgeResult, AppInfo, OnboardingDraft, CoordinationActiveRunSummary, CoordinationAuthorityMode } from '../shared/contracts';
 import { api, chatStore, isDesktop } from './browser-api';
 import { DocumentsView, NewDocumentDialog } from './DocumentsView';
 import { hasMetadataDrafts } from './DocumentMetadata';
 import { hasOutcomeDrafts } from './WorkOutcome';
 import { documentDrafts } from './document-drafts';
-import { useActiveEdits } from './chat-store';
+import { useActiveEdits, useChatState, useChatStatuses } from './chat-store';
+import { activationSteps } from './activation-progress';
+import { activityLine } from './coordination/activity';
+import { hasFirstResult, momentoDeValor } from './momento-de-valor';
+import { useWorkMomentSeen } from './useWorkMomentSeen';
 import { SettingsScreen, type SettingsSection } from './SettingsScreen';
 import { TeamPanel, type LatteMode, type RuntimeChoice } from './TeamPanel';
 import { hourOf } from './coordination/time';
@@ -19,9 +23,17 @@ import { UpdateBanner } from './UpdateBanner';
 import { ALL_BRAND_SCOPE, inKnowledgeScope, selectWorkBrief, workBrief, workTitles, type KnowledgeScope } from './brand-knowledge';
 import { KnowledgeScopeFilter } from './KnowledgeScope';
 import { ContextView } from './ContextView';
+import { BrandMenu } from './BrandMenu';
+import { ConfirmDialog } from './ConfirmDialog';
+import { useConfirm } from './useConfirm';
+import { tabsKeyDown } from './workspace-tabs';
 import { BrandTeamView } from './BrandTeamView';
 import { IdentityView } from './IdentityView';
+import { BrandDnaView as BrandDnaScreen } from './BrandDnaView';
 import { HomeView } from './HomeView';
+import { classifyWorkType } from './home-chat';
+import { findWorkType, recommendRole } from './work-catalog';
+import { isFirstStepsClosed, isFunnelOpened, markFunnelOpened, setFirstStepsClosed as persistFirstStepsClosed } from './first-steps';
 import { ResumenView } from './ResumenView';
 import { TrabajoView } from './TrabajoView';
 import { EvidenciaView } from './EvidenciaView';
@@ -29,6 +41,7 @@ import { ResultadosView } from './ResultadosView';
 import { DecisionsView } from './DecisionsView';
 import { useDocumentStates } from './document-states';
 import { OnboardingGate, type OnboardingResult } from './OnboardingGate';
+import { WorkCatalogModal } from './WorkCatalogModal';
 import { contextSaveNotice } from './context-view';
 import { applyFetchedBrand } from './brand-context-sync';
 import { confirmFolderLink } from './folder-link';
@@ -38,6 +51,8 @@ import { ActiveTeamsStrip } from './ActiveTeamsStrip';
 import { MemoryNotice } from './MemoryNotice';
 import { sinceLastVisitFromActiveRuns } from './home-summary';
 import { AvatarSprite } from './coordination/Avatar';
+import { useModalA11y } from './useModalA11y';
+import { PromptDialog } from './PromptDialog';
 
 /**
  * Every workspace view, in one place.
@@ -50,7 +65,7 @@ import { AvatarSprite } from './coordination/Avatar';
  * surface, reachable before any work is open. Opening a work still opens the
  * work (`selectWork`), so the two destinations never blur.
  */
-export const VIEWS = ['home', 'resumen', 'trabajo', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'roster', 'identity', 'decisions', 'resultados'] as const;
+export const VIEWS = ['home', 'resumen', 'trabajo', 'evidencia', 'brief', 'funnel', 'context', 'memory', 'roster', 'identity', 'dna', 'decisions', 'resultados'] as const;
 type View = (typeof VIEWS)[number];
 type Modal = 'brand' | 'work' | 'document' | null;
 const date = (value: string) => new Date(value).toLocaleString(currentLocale(), { dateStyle: 'short', timeStyle: 'short' });
@@ -206,6 +221,9 @@ export const APP_ERROR_KEYS: Record<string, MessageKey> = {
   // que una Conexión MCP no se guarda. La persona tiene que enterarse de POR
   // QUÉ: si no, parece que el botón no hizo nada.
   SECRET_STORE_UNAVAILABLE: 'error.app.secretStoreUnavailable',
+  // El agente elegido no está en este equipo: la salida es instalarlo desde
+  // Latte, no buscar qué es el PATH.
+  NOT_INSTALLED: 'error.app.notInstalled',
 };
 
 /**
@@ -266,8 +284,8 @@ export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
   useEffect(() => api.onWindowState(state => setMaximized(state.maximized)), []);
   return <div className="window-controls">
-    <button aria-label="Minimizar" title="Minimizar" onClick={() => api.windowControl('minimize')}><Minus size={15} /></button>
-    <button aria-label={maximized ? 'Restaurar' : 'Maximizar'} title={maximized ? 'Restaurar' : 'Maximizar'} onClick={() => api.windowControl('maximize')}>{maximized ? <Copy size={13} /> : <Square size={12} />}</button>
+    <button aria-label={t('window.minimize')} title={t('window.minimize')} onClick={() => api.windowControl('minimize')}><Minus size={15} /></button>
+    <button aria-label={maximized ? t('window.restoreSize') : t('window.maximize')} title={maximized ? t('window.restoreSize') : t('window.maximize')} onClick={() => api.windowControl('maximize')}>{maximized ? <Copy size={13} /> : <Square size={12} />}</button>
     <button className="close" aria-label={t('ui.auto.001')} title={t('ui.auto.001')} onClick={() => api.windowControl('close')}><X size={16} /></button>
   </div>;
 }
@@ -277,6 +295,7 @@ export function App() {
   const [brands, setBrands] = useState<Brand[]>([]), [brand, setBrand] = useState<Brand | null>(null);
   const [archivedBrands, setArchivedBrands] = useState<Brand[]>([]);
   const [showArchived, setShowArchived] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<Brand | null>(null);
   const [works, setWorks] = useState<Work[]>([]), [work, setWork] = useState<Work | null>(null);
   const [context, setContext] = useState('');
   // A returning user lands on Inicio; a just-onboarded one is landed by
@@ -289,6 +308,11 @@ export function App() {
   // shows them. Persisted the same way as the rail, and toggled only in Ajustes.
   const [mode, setMode] = useState<LatteMode>(() => { try { return localStorage.getItem('latte:mode') === 'advanced' ? 'advanced' : 'simple'; } catch { return 'simple'; } });
   useEffect(() => { try { localStorage.setItem('latte:mode', mode); } catch { /* private window */ } }, [mode]);
+  /**
+   * ENTREGA 1A: EL MOMENTO DE VALOR SE MUESTRA UNA SOLA VEZ POR TRABAJO.
+   * Mismo patrón que `useTeamSeen` — ver `useWorkMomentSeen.ts`.
+   */
+  const workMomentSeen = useWorkMomentSeen();
   // Documents of the current work: the editor lives in DocumentsView, App only tracks which one is open.
   const [documents, setDocuments] = useState<WorkDocument[]>([]), [selectedDoc, setSelectedDoc] = useState<Record<string, string>>({});
   const [documentDirty, setDocumentDirty] = useState(false);
@@ -320,6 +344,11 @@ export function App() {
   const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>(ALL_BRAND_SCOPE);
   const [decisionAuthority,setDecisionAuthority]=useState<DecisionAuthorityMode>('suggest');
   const [modal, setModal] = useState<Modal>(null), [name, setName] = useState('');
+  // Text prompts that used to be `window.prompt`, now in-app dialogs: the
+  // pending answer text waiting for a title, and the context proposal being
+  // edited (its id plus the text the dialog starts from).
+  const [savingAnswer, setSavingAnswer] = useState<{ text: string } | null>(null);
+  const [editingContextProposal, setEditingContextProposal] = useState<{ id: string; initialText: string } | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const [runtimes, setRuntimes] = useState<RuntimeStatus[]>([]), [provider, setProvider] = useState<Provider>('opencode');
   const [sessions, setSessions] = useState<Record<string, AgentSession>>({}), [starting, setStarting] = useState(false);
@@ -452,6 +481,55 @@ export function App() {
     void api.readBrandIdentity(brand.id).then(v => { if (live) setIdentity(v); }).catch(e => setError(displayError(e)));
     return () => { live = false; };
   }, [brand?.id, view]);
+  /**
+   * ADN DE MARCA (Entrega 1B): la ficha que Inicio lee para la caja "¿Qué
+   * querés hacer hoy…?" y para marcar "Traé tu marca". Se lee al cambiar de
+   * marca y —con `dnaEpoch`— después de aprobarla en el recorrido inicial, que
+   * puede terminar sobre la marca que ya estaba seleccionada.
+   */
+  const [dna, setDna] = useState<BrandDnaView | null>(null);
+  const [dnaEpoch, setDnaEpoch] = useState(0);
+  useEffect(() => {
+    if (!brand) { setDna(null); return; }
+    let live = true;
+    void api.readBrandDna(brand.id).then(v => { if (live) setDna(v); }).catch(() => { if (live) setDna(null); });
+    return () => { live = false; };
+  }, [brand?.id, dnaEpoch]);
+  /**
+   * 3 · el build de ideas: se lanza con "Actualizar ideas" y se sondea como el
+   * build del ADN. Mientras corre, Inicio muestra el estado del JOB (honesto);
+   * cuando termina, la ficha se recarga con `dnaEpoch` y las ideas nuevas
+   * aparecen. Un fallo queda a la vista hasta el próximo intento.
+   */
+  const [ideasJob, setIdeasJob] = useState<BrandDnaBuildJob | null>(null);
+  const ideasJobId = ideasJob?.jobId ?? null;
+  const ideasJobDone = ideasJob?.done ?? true;
+  useEffect(() => {
+    if (!ideasJobId || ideasJobDone) return;
+    let stopped = false;
+    const timer = setInterval(() => {
+      void api.readBrandDnaBuildJob(ideasJobId).then(next => {
+        if (stopped) return;
+        setIdeasJob(next);
+        if (next.done) setDnaEpoch(n => n + 1);
+      }).catch(() => { if (!stopped) setIdeasJob(null); });
+    }, 1000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [ideasJobId, ideasJobDone]);
+  /**
+   * PRIMEROS PASOS: la preferencia de la tarjeta se persiste como el riel y la
+   * densidad, y el Embudo se recuerda POR MARCA — el de una no es el de otra.
+   * Los otros tres pasos no se guardan: son hechos que la app ya tiene.
+   */
+  const [firstStepsClosed, setFirstStepsClosedState] = useState(() => isFirstStepsClosed());
+  const closeFirstSteps = () => { setFirstStepsClosedState(true); persistFirstStepsClosed(true); };
+  const [funnelVisited, setFunnelVisited] = useState(false);
+  useEffect(() => { setFunnelVisited(brand ? isFunnelOpened(brand.id) : false); }, [brand?.id]);
+  useEffect(() => {
+    if (view !== 'funnel' || !brand) return;
+    markFunnelOpened(brand.id);
+    setFunnelVisited(true);
+  }, [view, brand?.id]);
   const coordination = useCoordination(work?.id ?? null, (e) => setError(displayError(e)), (id) => { void loadTeam(id).catch(() => undefined); });
   // La visita a la coordinación se marca cuando la persona ABRE el panel de
   // coordinación de un Trabajo (Decisiones: gates, autoridad, presupuesto,
@@ -591,6 +669,46 @@ export function App() {
   // `home` and `resumen` never mount together — one `view` selects one `<main>`
   // branch — so exactly one sweep is ever active and the sweep can never double.
   const { states: homeStates, checking: homeChecking } = useDocumentStates(brand?.id ?? '', documents, (view === 'home' || view === 'resumen') && Boolean(brand));
+  /**
+   * ENTREGA 1A (Brief 01, tarea 2): LOS PASOS DE NEGOCIO DE LA CONVERSACIÓN
+   * SELECCIONADA.
+   *
+   * Todo sale de estado que YA está cargado: el store del chat (mensajes,
+   * status, permisos y preguntas del miembro seleccionado) y los documentos
+   * de este Trabajo. Nunca `homeStates` (esa lectura sólo corre en Inicio y
+   * Resumen — ver el comentario de arriba): "hay un resultado" se pregunta
+   * con el mismo hecho que `momentoDeValor` (`hasFirstResult`), no con uno
+   * nuevo.
+   */
+  const selectedMemberChatState = useChatState(chatStore, selectedMemberId);
+  const selectedMember = team.find(m => m.id === selectedMemberId) ?? null;
+  const briefSent = selectedMemberChatState.messages.some(m => m.role === 'user');
+  const agentWorking = selectedMemberChatState.status === 'busy' || selectedMember?.status === 'working';
+  const pendingApprovalsCount = selectedMemberChatState.permissions.length + selectedMemberChatState.questions.length;
+  const workResultReady = work ? hasFirstResult(documents, work.id) : false;
+  const workHasVerification = Boolean(work?.resultPath);
+  const selectedActivationSteps = work && selectedMemberId && briefSent
+    ? activationSteps({ briefSent, agentWorking, pendingApprovals: pendingApprovalsCount, resultReady: workResultReady, hasVerification: workHasVerification, verified: workHasVerification })
+    : undefined;
+  // El detalle técnico ("Ejecuta wc -l brief.md…") sólo en modo avanzado — modo
+  // simple lo calla del todo (Brief 01: nunca CLI/runtime en la experiencia
+  // básica). `activityLine` es la MISMA función que ya usa el modo Equipo
+  // (`coordination/activity.ts`); acá se le pasa el último turno humano de
+  // ESTA conversación como ventana, porque una charla 1:1 no tiene despachos.
+  const lastUserTurnAt = mode === 'advanced'
+    ? [...selectedMemberChatState.messages].reverse().find(m => m.role === 'user')?.createdAt ?? null
+    : null;
+  const selectedActivationDetail = lastUserTurnAt ? activityLine(selectedMemberChatState.messages, lastUserTurnAt) : null;
+  /**
+   * ENTREGA 1A (Brief 01, tarea 4): EL MOMENTO DE VALOR, UNA VEZ POR TRABAJO.
+   * Mismo patrón que el aviso de equipo (`teamSeenRuns`): se marca visto en
+   * cuanto se muestra, así que no vuelve a aparecer al re-renderizar ni tras
+   * reiniciar la app.
+   */
+  const momentoInput = work ? momentoDeValor({ work: { id: work.id }, documents, decisions, brandContextDefined: Boolean(brand?.context.trim()) }) : null;
+  const momentoUnseen = Boolean(work && momentoInput && !workMomentSeen.seen(work.id));
+  useEffect(() => { if (work && momentoUnseen) workMomentSeen.markSeen(work.id); }, [work?.id, momentoUnseen]);
+  const momento = momentoUnseen ? momentoInput : null;
   // Who is writing to which file right now, straight from each runtime's own
   // tool reports. A write that did not come through a tool is never attributed.
   const documentFileNames = documents.map(d => d.fileName);
@@ -616,14 +734,23 @@ export function App() {
     if (workId) loadFolderDelta(workId);
     return docs;
   };
-  /** Saves an answer from the conversation as a document of this work. */
+  /**
+   * Saves an answer from the conversation as a document of this work. The
+   * title used to come from a blocking `window.prompt`; now it opens
+   * `savingAnswer`, and `confirmSaveAnswerAsDocument` below does the actual
+   * write once the person submits the dialog.
+   */
   const saveAnswerAsDocument = (text: string) => {
     if (!work) return;
-    const title = window.prompt(t('ui.auto.002'), 'Estrategia');
-    if (!title || !title.trim()) return;
+    setSavingAnswer({ text });
+  };
+  const confirmSaveAnswerAsDocument = (title: string) => {
+    if (!work || !savingAnswer) return;
+    const text = savingAnswer.text;
+    setSavingAnswer(null);
     const guess = /calendario|cronograma/i.test(title) ? 'calendar' : /estrateg/i.test(title) ? 'strategy' : /investigac|research/i.test(title) ? 'research' : /copy|pieza/i.test(title) ? 'copy' : 'note';
     void run(async () => {
-      const document = await api.saveAsDocument(work.id, guess as DocumentKind, title.trim(), text);
+      const document = await api.saveAsDocument(work.id, guess as DocumentKind, title, text);
       await loadKnowledge(work.brandId, work.id);
       setSelectedDoc(prev => ({ ...prev, [work.brandId]: document.id }));
       setLayout('review'); setView('brief');
@@ -648,7 +775,39 @@ export function App() {
     });
   };
   const transitioning = busy || starting || startingChat;
-  const guard = () => !transitioning && (!(dirty || contextDirty) || window.confirm(t('ui.auto.003')));
+  /**
+   * 2.0 · el aviso de "cambios sin guardar": era `window.confirm`, un diálogo
+   * nativo que bloquea el hilo y que nadie puede operar con teclado. El
+   * guardado ya no decide EN el renglón: recibe la acción y la corre recién
+   * cuando la persona confirma, con el mismo texto de siempre.
+   */
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
+  /**
+   * 2.0 · la tira de pestañas scrollea, y el scroll tiene que verse: la sombra
+   * del borde se prende sólo cuando hay más para ese lado (se mide en cada
+   * render, no hace falta estado de React para esto). Sin esto, en una ventana
+   * donde el scrollbar nativo no se dibuja, no hay forma de saber que Decisiones
+   * y Resultados están a la derecha.
+   */
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+  const syncTabEdges = () => {
+    const strip = tabsRef.current;
+    if (!strip) return;
+    const room = strip.scrollWidth - strip.clientWidth;
+    strip.toggleAttribute('data-edge-start', strip.scrollLeft > 1);
+    strip.toggleAttribute('data-edge-end', room > 0 && strip.scrollLeft < room - 1);
+  };
+  useEffect(syncTabEdges);
+  const guard = (action: () => void) => {
+    if (transitioning) return;
+    if (!(dirty || contextDirty)) return action();
+    void askConfirm({
+      title: t('confirm.leave.title'),
+      body: t('ui.auto.003'),
+      confirmLabel: t('confirm.leave.action'),
+      destructive: true,
+    }).then((ok) => { if (ok) action(); });
+  };
   const run = async (fn: () => Promise<void>) => { setError(''); setBusy(true); try { await fn(); } catch (e) { setError(displayError(e)); } finally { setBusy(false); } };
   // Decision actions, hoisted out of the inline decisions block into App so the
   // extracted `DecisionsView` stays props-only: every backend call and state
@@ -853,23 +1012,14 @@ export function App() {
   }, [unsaved]);
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer); }, [notice]);
   useEffect(() => api.onAgentEvent(event => { if (event.type === 'exit') { setEndedSessions(previous => new Set(previous).add(event.sessionId)); setNotice(t('ui.auto.004')); } if (event.type === 'error') setError(event.data); }), []);
-  useEffect(() => {
-    if (!modal) return;
-    const previous = document.activeElement as HTMLElement | null;
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
-    const controls = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input, textarea, select, [tabindex="0"]') ?? []);
-    if (!dialog?.contains(document.activeElement)) controls()[0]?.focus();
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy) setModal(null); if (e.key !== 'Tab') return; const list = controls(); const first = list[0], last = list[list.length - 1]; if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); } };
-    document.addEventListener('keydown', key); return () => { document.removeEventListener('keydown', key); previous?.focus(); };
-  }, [modal, busy]);
-  const selectBrand = (b: Brand) => { if (!guard()) return; setBrand(b); setContext(b.context); setView('home'); setMemory(''); setMemoryAvailable(false); memoryGeneration.current++; };
+  const createModalRef = useModalA11y<HTMLElement>(modal === 'brand' || modal === 'work', () => setModal(null), busy);
+  const selectBrand = (b: Brand) => guard(() => { setBrand(b); setContext(b.context); setView('home'); setMemory(''); setMemoryAvailable(false); memoryGeneration.current++; });
   /**
    * Opens a work. The target defaults to the work's brief, so every existing
    * call site keeps opening the conversation; Inicio passes `decisions` when the
    * row it activated was a pending decision.
    */
-  const selectWork = (w: Work, target: 'brief' | 'decisions' = 'brief', as: 'conversation' | 'review' = 'conversation') => {
-    if (!guard()) return;
+  const selectWork = (w: Work, target: 'brief' | 'decisions' = 'brief', as: 'conversation' | 'review' = 'conversation') => guard(() => {
     // R5: TODO camino que pasa por acá es un acto de la persona — un clic en la
     // lista de Trabajos, una fila de Inicio, la cola de revisión. La visita se
     // anota sólo por estos, nunca por la autoselección del arranque.
@@ -882,7 +1032,7 @@ export function App() {
     // document (Inicio's review queue) was overwritten into the chat.
     setLayout(as);
     if (brand) setSelectedDoc((prev) => selectWorkBrief(prev, brand.id, w.id, documents));
-  };
+  });
   // Inicio's rows are ids, because the surface renders rows and the shell owns
   // the resolution: a row whose work is gone does nothing instead of crashing.
   const openWork = (workId: string) => { const target = works.find((w) => w.id === workId); if (target) selectWork(target); };
@@ -917,6 +1067,13 @@ export function App() {
    * no puede consumir un aviso que todavia no existe.
    */
   const teamSeenRuns = useTeamSeen();
+  /**
+   * ENTREGA 1A (Brief 01, "Ningún proveedor disponible"): por Trabajo, el
+   * brief que quedó guardado pero no se pudo mandar como primer turno porque
+   * ninguna IA estaba lista. `activateWork` lo escribe; "Conectar IA" abre
+   * Ajustes y "Seguir explorando el demo" lo limpia sin reintentar solo.
+   */
+  const [activationRecovery, setActivationRecovery] = useState<Record<string, { brief: string }>>({});
   const wantCoordinatorRef = useRef<string | null>(null);
   const openWorkCoordination = (workId: string) => {
     const target = works.find((w) => w.id === workId);
@@ -938,14 +1095,16 @@ export function App() {
   const openActiveRun = (run: CoordinationActiveRunSummary) => {
     if (brand?.id === run.brandId) { openWorkCoordination(run.workId); return; }
     const target = brands.find((b) => b.id === run.brandId);
-    if (!target || !guard()) return;
-    pendingWorkRef.current = run.workId;
-    pendingViewRef.current = 'brief';
-    wantCoordinatorRef.current = run.workId;
-    setCardsFromPending(true);
-    setBrand(target);
-    setContext(target.context);
-    setMemory(''); setMemoryAvailable(false); memoryGeneration.current++;
+    if (!target) return;
+    guard(() => {
+      pendingWorkRef.current = run.workId;
+      pendingViewRef.current = 'brief';
+      wantCoordinatorRef.current = run.workId;
+      setCardsFromPending(true);
+      setBrand(target);
+      setContext(target.context);
+      setMemory(''); setMemoryAvailable(false); memoryGeneration.current++;
+    });
   };
   const openDocument = (documentId: string) => {
     const document = documents.find((d) => d.id === documentId);
@@ -959,6 +1118,51 @@ export function App() {
   };
   const openNewWork = () => { setName(''); setModal('work'); };
   const openAddBrand = () => { setName(''); setModal('brand'); };
+  /**
+   * ADN · H: la caja de Inicio crea el trabajo con EL TEXTO COMO BRIEF y
+   * activa el rol que el catálogo recomienda para ese pedido — el mismo camino
+   * de "Nuevo trabajo" (`activateWork`), nunca una segunda copia. La
+   * clasificación es de `home-chat.ts`: palabras clave contra el catálogo.
+   * 3: cuando el texto viene de una IDEA, manda el tipo de la idea: la caja
+   * mostró "Se arma como {tipo}" y el envío tiene que cumplir lo que mostró.
+   */
+  const startFromHome = (text: string, workTypeId?: string) => {
+    if (!brand) return;
+    void run(async () => {
+      const workType = (workTypeId ? findWorkType(workTypeId) : null) ?? classifyWorkType(text);
+      const title = t(workType.titleKey);
+      const created = await api.createWork(brand.id, title);
+      const outcome = await api.saveBrief(created.id, `# ${title}\n\n${text}`);
+      // Un conflicto no se calla: el trabajo existe, el texto quedó como estaba.
+      if (outcome.status === 'conflict') setNotice(t('onboarding.briefConflict'));
+      const saved = outcome.status === 'saved' ? outcome.work : created;
+      setWorks(prev => [...prev, saved]);
+      setWork(saved);
+      setContext(brand.context);
+      setLayout('conversation');
+      setView('brief');
+      setNotice(t('home.ask.started'));
+      void activateWork(saved.id, recommendRole(workType), text);
+    });
+  };
+  /**
+   * 3 · "Actualizar ideas": una tarea liviana del equipo, SÓLO de ideas. Un
+   * sólo trabajo por marca: si ya hay un build en vuelo, el motor devuelve ESE
+   * job, y el estado que se muestra es el verdadero.
+   */
+  const refreshIdeas = () => {
+    if (!brand) return;
+    void run(async () => {
+      setIdeasJob(await api.buildBrandDna(brand.id, 'ideas', null));
+    });
+  };
+  /** "Probalo": cada paso de Primeros pasos lleva a la pantalla donde eso se hace. */
+  const goFromFirstStep = (target: 'dna' | 'funnel' | 'documents') => {
+    if (target === 'dna') { setView('dna'); return; }
+    if (target === 'funnel') { setView('funnel'); return; }
+    setLayout('review');
+    setView('brief');
+  };
   // First-run gate actions: skip sets the flag and keeps the returning-user path
   // intact; completion re-bootstraps and pre-selects the recommended role.
   //
@@ -981,6 +1185,56 @@ export function App() {
    * that one reads `brand?.context` from a stale closure and would put the old
    * brand's context on screen.
    */
+  /**
+   * ENTREGA 1A (Brief 01, tarea 1): "EMPEZAR TRABAJO" ARRANCA EL TRABAJO.
+   *
+   * Abre el rol recomendado y le manda el brief compuesto como su primer
+   * turno — el MISMO camino que ya usa `continueMember` (`api.sendChat` +, si
+   * falla, `chatStore.setDraft` para no perder el texto), nunca uno nuevo.
+   *
+   * Reutiliza el registro que hacía `finishOnboarding` (setChats/
+   * setSelectedMembers/loadTeam) en vez de `openSession`: ese helper también
+   * pone un aviso ("Se sumó el rol…"), y acá puede haber uno más importante ya
+   * en pantalla (el conflicto del brief, el aviso de la carpeta) que un aviso
+   * de éxito llegado un instante después le pisaría.
+   *
+   * Si ninguna IA está lista, no falla en silencio: el trabajo y su brief ya
+   * existen (los guardó el llamador), así que se declara la falta con una
+   * salida real — conectar, o seguir explorando el demo — en vez de un
+   * proceso que de todos modos no iba a poder arrancar.
+   */
+  const activateWork = async (workId: string, roleId: string, brief: string) => {
+    // La vista previa web (`!isDesktop`) nunca tiene un agente real que abrir
+    // -- `addTeamMember`/`sendChat` son `unavailable` ahí -- así que cuenta
+    // exactamente como "ninguna IA lista": la misma tarjeta de recuperación,
+    // nunca un picker vacío que no explica nada. Antes esta función cortaba
+    // en silencio (`if (!isDesktop) return`) sin tocar `activationRecovery`,
+    // y el equipo vacío hacía que `TeamPanel` mostrara el picker de 7 roles.
+    if (!isDesktop || (!checkingAgents && !primaryReady)) {
+      setActivationRecovery(prev => ({ ...prev, [workId]: { brief } }));
+      return;
+    }
+    try {
+      const s = await api.addTeamMember(workId, roleId);
+      setChats(prev => ({ ...prev, [s.id]: s }));
+      setSelectedMembers(prev => ({ ...prev, [workId]: s.id }));
+      void loadTeam(workId);
+      setActivationRecovery(prev => { if (!(workId in prev)) return prev; const next = { ...prev }; delete next[workId]; return next; });
+      if (brief.trim()) {
+        try {
+          await api.sendChat(s.id, brief);
+        } catch (e) {
+          chatStore.setDraft(s.id, brief);
+          setError(t('activation.sendFailed', { message: displayError(e) }));
+        }
+      }
+    } catch {
+      // El trabajo y el brief ya existen (el llamador los creó): lo único que
+      // falta es abrir la conversación, y eso es justamente lo que la tarjeta
+      // de recuperación ofrece — nunca un error suelto sin salida.
+      setActivationRecovery(prev => ({ ...prev, [workId]: { brief } }));
+    }
+  };
   const finishOnboarding = async (result: OnboardingResult) => {
     // No catch on purpose: the gate owns this call and shows the failure with a
     // retry. Swallowing it here used to leave the gate frozen with no message,
@@ -988,31 +1242,22 @@ export function App() {
     await api.setOnboardingComplete(true);
     const list = await api.listBrands();
     setBrands(list);
-    const brand = list.find(b => b.id === result.brandId) ?? list[0] ?? null;
-    pendingWorkRef.current = result.workId;
+    // Onboarding 2.0: el recorrido termina en Inicio y no crea trabajos, así
+    // que lo único que entrega es la marca con la que se queda. Sin marca
+    // declarada (o con una que ya no existe) manda la primera de la lista, que
+    // es el criterio de siempre del shell — nunca un id inventado.
+    const brand = (result.brandId ? list.find(b => b.id === result.brandId) : null) ?? list[0] ?? null;
     if (brand) selectBrand(brand);
-    // The walk just opened a role conversation. A returning user starts on
-    // Inicio; a just-onboarded one lands where the walk left them, so the
-    // validated onboarding landing is preserved instead of being re-decided.
-    setLayout('conversation');
-    setView('brief');
     // The extra bump re-reads the works even when the brand was already the
     // selected one (choosing the demo), which changes no id at all.
     setBrandEpoch(n => n + 1);
+    // Aprobar el ADN puede pasar sobre la marca que ya estaba seleccionada, y
+    // la ficha es lo que Inicio lee para la caja y para "Traé tu marca".
+    setDnaEpoch(n => n + 1);
     setOnboarding('complete');
-    // The gate unmounts with this result, so the shell is the only place the
-    // human can still be told what the brief or the folder link did.
-    if (result.briefConflict) setNotice(t('onboarding.briefConflict'));
-    else if (result.folderLinkError) setNotice(t('onboarding.folderLinkFailed', { reason: result.folderLinkError }));
-    else if (result.folderNotLinked) setNotice(t('onboarding.folderNotLinked'));
-    // Pre-select the recommended role (opens its conversation). The web preview has no live team, so this is desktop-only.
-    if (isDesktop && result.recommendedRoleId) {
-      void api.addTeamMember(result.workId, result.recommendedRoleId).then(s => {
-        setChats(prev => ({ ...prev, [s.id]: s }));
-        setSelectedMembers(prev => ({ ...prev, [result.workId]: s.id }));
-        void loadTeam(result.workId);
-      }).catch(e => setError(displayError(e)));
-    }
+    // INICIO: la caja "¿Qué querés hacer hoy con {marca}?" y las ideas, con el
+    // primer trabajo todavía por pedir desde ahí.
+    setView('home');
   };
   // Reopening the walk has to close Settings with it: the Settings branch renders
   // before the gate, so leaving it open would hide the walk behind the screen the
@@ -1065,13 +1310,24 @@ export function App() {
   /** Emptying is explicit and confirmed; the empty box alone is refused. */
   const clearContext = async () => {
     if (!brand) return;
-    if (!window.confirm(t('context.clear.confirm'))) return;
+    const ok = await askConfirm({
+      title: t('confirm.context.title'),
+      body: t('context.clear.confirm'),
+      confirmLabel: t('context.clear'),
+      destructive: true,
+    });
+    if (!ok) return;
     await writeContext(() => api.clearBrandContext(brand.id, contextFingerprint));
   };
   /** Restoring is a write too: confirmed, recorded, and reversible. */
   const restoreContext = async (revisionId: string) => {
     if (!brand) return;
-    if (!window.confirm(t('context.restore.confirm'))) return;
+    const ok = await askConfirm({
+      title: t('confirm.context.title'),
+      body: t('context.restore.confirm'),
+      confirmLabel: t('context.restore'),
+    });
+    if (!ok) return;
     await writeContext(() => api.restoreBrandContextRevision(brand.id, revisionId, contextFingerprint));
   };
   /**
@@ -1101,17 +1357,21 @@ export function App() {
   });
   const decideContextProposal = async (proposalId: string, action: 'approve' | 'edit' | 'reject', acceptStale = false) => {
     if (!brand) return;
-    if (action === 'reject') await writeContext(() => api.rejectBrandContextProposal(proposalId));
-    else {
-      let edited: string | null = null;
-      if (action === 'edit') {
-        const current = contextProposals.find((p) => p.id === proposalId);
-        const next = window.prompt(t('context.editAccept'), current?.text ?? '');
-        if (!next?.trim()) return;
-        edited = next.trim();
-      }
-      await writeContext(() => api.approveBrandContextProposal(proposalId, edited, acceptStale));
+    if (action === 'reject') { await writeContext(() => api.rejectBrandContextProposal(proposalId)); return; }
+    if (action === 'edit') {
+      // The edit is a dialog, not a blocking `window.prompt`: the actual write
+      // waits for `confirmContextProposalEdit` below, once the person submits.
+      const current = contextProposals.find((p) => p.id === proposalId);
+      setEditingContextProposal({ id: proposalId, initialText: current?.text ?? '' });
+      return;
     }
+    await writeContext(() => api.approveBrandContextProposal(proposalId, null, acceptStale));
+  };
+  const confirmContextProposalEdit = async (text: string) => {
+    if (!editingContextProposal) return;
+    const { id } = editingContextProposal;
+    setEditingContextProposal(null);
+    await writeContext(() => api.approveBrandContextProposal(id, text, false));
   };
   const askStrategist = () => run(async () => {
     if (!work) { setNotice(t('context.ask.needWork')); return; }
@@ -1129,31 +1389,47 @@ export function App() {
     setArchivedBrands(archived);
     return { list, archived };
   };
-  const archiveSelectedBrand = async () => {
-    if (!brand) return;
-    if (!window.confirm(t('brand.archiveConfirm', { name: brand.name }))) return;
-    await api.archiveBrand(brand.id);
+  /**
+   * "Archivar marca" asks first, in the app's own dialog. The unsaved-changes
+   * guard runs before the question, so leaving an edit is decided up front.
+   */
+  const askArchiveBrand = () => { if (brand) guard(() => setArchiveTarget(brand)); };
+  /**
+   * After archiving the brand in view, the next active brand opens on Inicio;
+   * with none left, Inicio shows its "add a brand" empty state.
+   */
+  const confirmArchiveBrand = () => run(async () => {
+    const target = archiveTarget;
+    if (!target) return;
+    await api.archiveBrand(target.id);
+    setArchiveTarget(null);
     const { list } = await reloadBrandLists();
-    const next = list[0] ?? null;
-    setBrand(next);
-    setContext(next?.context ?? '');
-    setWork(null);
-    setWorks([]);
-    setView('brief');
-    setNotice(t('brand.archived'));
-  };
+    if (brand?.id === target.id) {
+      const next = list[0] ?? null;
+      setBrand(next);
+      setContext(next?.context ?? '');
+      setWork(null);
+      setWorks([]);
+      setMemory(''); setMemoryAvailable(false); memoryGeneration.current++;
+      setView('home');
+    }
+    setNotice(t('brand.archived', { name: target.name }));
+  });
   const restoreArchivedBrand = async (id: string) => {
     const restored = await api.restoreBrand(id);
     const { list } = await reloadBrandLists();
-    setNotice(t('brand.restored'));
+    setNotice(t('brand.restored', { name: restored.name }));
     if (!brand) {
       const next = list.find(x => x.id === restored.id) ?? list[0] ?? null;
       if (next) { setBrand(next); setContext(next.context); }
     }
   };
   const onWorkUpdated = (updated: Work) => { setWork(updated); setWorks(prev => prev.map(x => x.id === updated.id ? updated : x)); };
-  const openMemory = () => { setView('memory'); if (!brand) return; const n = ++memoryGeneration.current; setMemory('Recuperando memoria…'); void api.readMemory(brand.id).then(r => { if (n !== memoryGeneration.current) return; setMemory(r.text); setMemoryAvailable(r.available); }).catch(e => setError(displayError(e))); };
-  const create = () => run(async () => { if (!name.trim()) return; if (!guard()) return; if (modal === 'brand') { const b = await api.createBrand(name.trim()); setBrands(prev => [...prev, b]); setBrand(b); setContext(b.context); } else if (brand) { const w = await api.createWork(brand.id, name.trim()); setWorks(prev => [...prev, w]); setWork(w); setLayout('conversation'); setContext(brand.context); } setView('brief'); setModal(null); setName(''); });
+  const openMemory = () => { setView('memory'); if (!brand) return; const n = ++memoryGeneration.current; setMemory(t('memory.loading')); void api.readMemory(brand.id).then(r => { if (n !== memoryGeneration.current) return; setMemory(r.text); setMemoryAvailable(r.available); }).catch(e => setError(displayError(e))); };
+  // ENTREGA 1A: sólo crea marcas. "Nuevo trabajo" (antes el mismo `create()`
+  // con `modal === 'work'`) ahora abre `WorkCatalogModal`, que crea el
+  // trabajo con el catálogo — este helper ya no tiene ese camino que tomar.
+  const create = () => { if (!name.trim()) return; guard(() => void run(async () => { const b = await api.createBrand(name.trim()); setBrands(prev => [...prev, b]); setBrand(b); setContext(b.context); setView('brief'); setModal(null); setName(''); })); };
   const createDocument = async (kind: DocumentKind, title: string, baseDocumentId: string | null) => {
     if (!work) return;
     await run(async () => {
@@ -1258,7 +1534,7 @@ export function App() {
         await chatStore.sync(reopened.id);
       }
       await loadTeam(currentWork.id);
-      const applied = next ? 'Listo, escriben en esta carpeta sin preguntar.' : 'Vuelven a pedir permiso por cada archivo.';
+      const applied = next ? t('permission.appliedFolder') : t('permission.appliedAsk');
       setNotice(busyNames.length > 0
         ? t('ui.auto.342', { p0: applied, p1: busyNames.join(' y ') })
         : applied);
@@ -1266,7 +1542,7 @@ export function App() {
   };
   const dropChat = (memberId: string) => { setChats(prev => { const next = { ...prev }; delete next[memberId]; return next; }); chatStore.forget(memberId); };
   const pauseMember = (memberId: string) => run(async () => { await api.pauseTeamMember(memberId); dropChat(memberId); if (work) await loadTeam(work.id); });
-  const finishMember = (memberId: string) => run(async () => { await api.finishTeamMember(memberId); dropChat(memberId); if (work) await loadTeam(work.id); setNotice('Miembro marcado como finalizado'); });
+  const finishMember = (memberId: string) => run(async () => { await api.finishTeamMember(memberId); dropChat(memberId); if (work) await loadTeam(work.id); setNotice(t('team.finish.notice')); });
   /**
    * Puentea un traspaso a la coordinación (`acceptHandoffAsTask`): con un run
    * corriendo, tarea + despacho; sin run (H1), una propuesta de una tarea.
@@ -1396,6 +1672,16 @@ export function App() {
   const removeMember = (memberId: string) => run(async () => { await api.removeTeamMember(memberId); dropChat(memberId); if (work) { setSelectedMembers(prev => { const next = { ...prev }; if (next[work.id] === memberId) delete next[work.id]; return next; }); await loadTeam(work.id); } });
   const liveChatIds = new Set(Object.keys(chats));
   const workHasLiveChat = (workId: string) => Object.values(chats).some(c => c.workId === workId);
+  /**
+   * M3: el hilo de vapor de la barra lateral.
+   *
+   * Un punto verde decía "hay un chat acá"; eso no es lo mismo que "está
+   * trabajando". El estado sale del store del chat, por id, así que el hilo
+   * sólo aparece mientras el rol hace algo —y se va en cuanto se queda quieto—.
+   * El color del rol, en su wash: sobre la tinta el tono pleno no se ve.
+   */
+  const chatStatuses = useChatStatuses(chatStore, Object.keys(chats));
+  const workSteamChat = (workId: string) => Object.values(chats).find(c => c.workId === workId && chatStatuses[c.id] !== 'idle') ?? null;
   const sessionWork = works.find(w => w.id === session?.workId);
   const activeTerminals = Object.values(sessions).filter(s => !endedSessions.has(s.id)).length, activeChats = liveChatIds.size;
   // The update notice follows the user into Ajustes: it is about the app, not about the view.
@@ -1409,9 +1695,9 @@ export function App() {
    * hatch belongs.
    */
   const terminalConsole = <section className="terminal-console">
-    <h3>Terminal · avanzado</h3>
+    <h3>{t('terminal.advancedTitle')}</h3>
     <p className="settings-lead">{work ? <>{t('ui.auto.013')} <strong>{work.title}</strong>{t('ui.auto.014')}</> : t('ui.auto.015')}</p>
-    {work && <><p className="agent-explanation">{t('ui.auto.016')}</p><label className="field-label" htmlFor="provider">RUNTIME</label><select id="provider" value={provider} disabled={Boolean(session) || starting} onChange={e => setProvider(e.target.value as Provider)}>{(['opencode', 'claude', 'codex'] as Provider[]).map(p => <option key={p} value={p}>{p === 'opencode' ? 'OpenCode' : p === 'claude' ? 'Claude Code' : 'Codex'}{runtimes.find(r => r.provider === p)?.available ? t('ui.auto.346') : ''}</option>)}</select><p className="runtime-detail">{runtimes.find(r => r.provider === provider)?.detail ?? 'Comprobando disponibilidad…'}</p>
+    {work && <><p className="agent-explanation">{t('ui.auto.016')}</p><label className="field-label" htmlFor="provider">{t('terminal.runtimeLabel')}</label><select id="provider" value={provider} disabled={Boolean(session) || starting} onChange={e => setProvider(e.target.value as Provider)}>{(['opencode', 'claude', 'codex'] as Provider[]).map(p => <option key={p} value={p}>{p === 'opencode' ? 'OpenCode' : p === 'claude' ? 'Claude Code' : 'Codex'}{runtimes.find(r => r.provider === p)?.available ? t('ui.auto.346') : ''}</option>)}</select><p className="runtime-detail">{runtimes.find(r => r.provider === provider)?.detail ?? t('terminal.checkingAvailability')}</p>
         <div className="terminal-stack">{Object.values(sessions).map(s => <div key={s.id} style={{ display: s.id === session?.id ? 'block' : 'none' }}><TerminalPane sessionId={s.id} onError={setError} /></div>)}</div>
         {session ? <><div className="session-heading"><span><i className={sessionEnded ? 'ended-dot' : 'live-dot'} />{session.provider} · {sessionWork?.title ?? t('ui.auto.017')}</span><button aria-label={t('ui.auto.018')} title={t('ui.auto.018')} onClick={() => run(async () => { await api.stopAgent(session.id); setSession(null); })}><Square size={13} /></button></div><form className="prompt-form" onSubmit={e => { e.preventDefault(); if (!prompt.trim() || sessionEnded) return; void run(async () => { await api.writeAgent(session.id, prompt + '\r'); setPrompt(''); }); }}><textarea aria-label={t('ui.auto.019')} placeholder={t('ui.auto.020')} value={prompt} onChange={e => setPrompt(e.target.value)} /><div><small>{sessionEnded ? t('ui.auto.021') : t('ui.auto.022')}</small><button className="primary icon-button" disabled={!prompt.trim() || busy || sessionEnded} aria-label={t('ui.auto.023')}><ArrowUpRight size={18} /></button></div></form></> : <div className="agent-idle"><div className="agent-symbol"><TerminalSquare size={27} /></div><h3>{t('ui.auto.024')}<br />{t('ui.auto.025')}</h3><p>{t('ui.auto.026')}</p><button className="primary" disabled={!work || starting || !runtimes.find(r => r.provider === provider)?.available} onClick={start}>{starting ? <Loading size={16} /> : <Plus size={15} />}{starting ? t('ui.auto.347') : t('ui.auto.027')}</button>{!isDesktop && <small className="preview-note">{t('ui.auto.028')}</small>}</div>}</>}
   </section>;
@@ -1425,32 +1711,39 @@ export function App() {
     <AvatarSprite />
     <aside className="sidebar">
       <div className="wordmark"><span className="logo-mark" aria-hidden="true" />Latte<button className="rail-toggle" aria-expanded={!railed} aria-label={railed ? t('ui.auto.029') : t('ui.auto.030')} title={railed ? t('ui.auto.029') : t('ui.auto.030')} onClick={() => setRailed(v => !v)}>{railed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button></div>
-      <div className="brand-picker"><select aria-label={t('ui.auto.031')} value={brand?.id ?? ''} onChange={e => { const b = brands.find(b => b.id === e.target.value); if (b) selectBrand(b); }}>{!brands.length && <option value="">{t('ui.auto.032')}</option>}{brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select><ChevronDown size={15} /></div>
+      <div className="brand-picker-row"><div className="brand-picker"><select aria-label={t('ui.auto.031')} value={brand?.id ?? ''} onChange={e => { const b = brands.find(b => b.id === e.target.value); if (b) selectBrand(b); }}>{!brands.length && <option value="">{t('ui.auto.032')}</option>}{brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select><ChevronDown size={15} /></div><BrandMenu brandName={brand?.name ?? null} disabled={busy || transitioning} archivedCount={archivedBrands.length} onNewBrand={() => { setName(''); setModal('brand'); }} onShowArchived={() => setShowArchived(true)} onArchive={askArchiveBrand} /></div>
       <ActiveTeamsStrip runs={coordination.activeRuns} onOpen={openActiveRun} onOpenHome={() => setView('home')} />
-      <button className="subtle sidebar-add" disabled={transitioning} onClick={() => { setName(''); setModal('brand'); }}><Plus size={14} />  {t('ui.auto.033')}</button>
-      <button type="button" className="subtle sidebar-add" onClick={() => setShowArchived(v => !v)} aria-expanded={showArchived}>{t('brand.archivedToggle')}{archivedBrands.length ? ` (${archivedBrands.length})` : ''}</button>
-      {showArchived && <div className="archived-brands">{archivedBrands.length === 0 ? <p className="sidebar-hint">{t('brand.noneArchived')}</p> : archivedBrands.map(b => <div key={b.id} className="archived-brand-row"><span title={b.name}>{b.name}</span><button type="button" className="subtle" disabled={busy} onClick={() => run(() => restoreArchivedBrand(b.id))}>{t('brand.restore')}</button></div>)}</div>}
+      {showArchived && <div className="archived-brands"><div className="archived-brands-head"><span>{t('brand.archivedToggle')}</span><button type="button" className="icon-button" aria-label={t('brand.archivedClose')} title={t('brand.archivedClose')} onClick={() => setShowArchived(false)}><X size={14} /></button></div>{archivedBrands.length === 0 ? <p className="sidebar-hint">{t('brand.noneArchived')}</p> : archivedBrands.map(b => <div key={b.id} className="archived-brand-row"><span title={b.name}>{b.name}</span><button type="button" className="subtle" disabled={busy} aria-label={t('brand.restoreNamed', { name: b.name })} onClick={() => run(() => restoreArchivedBrand(b.id))}>{t('brand.restore')}</button></div>)}</div>}
       <nav><button type="button" title={t('home.nav')} className={view === 'home' ? 'nav-active' : ''} onClick={() => setView('home')}><Home size={18} />{t('home.nav')}</button></nav>
       <div className="nav-label">{t('ui.auto.034')}</div>
-      <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button><button disabled={!brand} title={t('roster.nav')} className={view === 'roster' ? 'nav-active' : ''} onClick={() => setView('roster')}><Users size={18} />{t('roster.nav')}</button><button disabled={!brand} title={t('identity.nav')} className={view === 'identity' ? 'nav-active' : ''} onClick={() => setView('identity')}><Palette size={18} />{t('identity.nav')}</button></nav>
-      <div className="sidebar-rule" /><div className="nav-label">TRABAJOS <span>{works.length.toString().padStart(2, '0')}</span></div>
-      <nav className="work-nav">{works.map(w => <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'funnel' || view === 'decisions' || view === 'resumen' || view === 'trabajo' || view === 'evidencia' || view === 'resultados') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{(workHasLiveChat(w.id) || sessions[w.id]) && <i className={sessions[w.id] && endedSessions.has(sessions[w.id].id) && !workHasLiveChat(w.id) ? 'ended-dot' : 'live-dot'} />}</button>)}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
-      <div className="sidebar-bottom"><button disabled={!brand || transitioning} title={t('ui.auto.038')} onClick={() => { setName(''); setModal('work'); }}><Plus size={20} />{t('ui.auto.038')}</button><div className="sidebar-rule" /><nav><button onClick={() => setSettings('agents')} title={t('ui.auto.348')}><Settings2 size={17} />{t('ui.auto.348')}</button></nav><div className="profile"><span className="avatar">G</span><div>Tu estudio<small>{t('ui.auto.039')}</small></div></div></div>
+      <nav><button disabled={!brand} title={brand && !brand.context.trim() ? t('context.badge') : t('ui.auto.035')} className={view === 'context' ? 'nav-active' : ''} onClick={() => setView('context')}><FileText size={18} />{t('ui.auto.035')}{brand && !brand.context.trim() && <i className="nav-badge" aria-hidden="true" />}</button><button disabled={!brand} title={t('ui.auto.036')} className={view === 'memory' ? 'nav-active' : ''} onClick={openMemory}><Bookmark size={18} />{t('ui.auto.036')}</button><button disabled={!brand} title={t('roster.nav')} className={view === 'roster' ? 'nav-active' : ''} onClick={() => setView('roster')}><Users size={18} />{t('roster.nav')}</button><button disabled={!brand} title={t('identity.nav')} className={view === 'identity' ? 'nav-active' : ''} onClick={() => setView('identity')}><Palette size={18} />{t('identity.nav')}</button><button disabled={!brand} title={t('dna.nav')} className={view === 'dna' ? 'nav-active' : ''} onClick={() => setView('dna')}><Dna size={17} />{t('dna.nav')}</button></nav>
+      <div className="sidebar-rule" /><div className="nav-label">{t('app.navWorks')} <span>{works.length.toString().padStart(2, '0')}</span></div>
+      <nav className="work-nav">{works.map(w => {
+        // M3: el vapor sólo donde alguien está trabajando ahora mismo; el
+        // punto de siempre sigue para el chat abierto que no está trabajando.
+        const steam = workSteamChat(w.id);
+        const liveChat = workHasLiveChat(w.id);
+        const closedSession = Boolean(sessions[w.id]) && endedSessions.has(sessions[w.id].id) && !liveChat;
+        return <button key={w.id} title={w.title} className={work?.id === w.id && (view === 'brief' || view === 'funnel' || view === 'decisions' || view === 'resumen' || view === 'trabajo' || view === 'evidencia' || view === 'resultados') ? 'work-active' : ''} onClick={() => selectWork(w)}><Folder size={17} /><span>{w.title}</span>{steam
+          ? <SteamWisp className="work-steam" style={{ color: roleColor(steam.roleId).wash }} />
+          : (liveChat || sessions[w.id]) && <i className={closedSession ? 'ended-dot' : 'live-dot'} />}</button>;
+      })}{!works.length && <p className="sidebar-hint">{t('ui.auto.037')}</p>}</nav>
+      <div className="sidebar-bottom"><button disabled={!brand || transitioning} title={t('ui.auto.038')} onClick={() => { setName(''); setModal('work'); }}><Plus size={20} />{t('ui.auto.038')}</button><div className="sidebar-rule" /><nav><button onClick={() => setSettings('agents')} title={t('ui.auto.348')}><Settings2 size={17} />{t('ui.auto.348')}</button></nav><div className="profile"><span className="avatar">G</span><div>{t('app.yourStudio')}<small>{t('ui.auto.039')}</small></div></div></div>
     </aside>
-    <header className="topbar"><div className="breadcrumb">{brand?.name ?? 'Bienvenido a Latte'}<span>/</span><strong>{work?.title ?? 'Tu espacio de marketing'}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
+    <header className="topbar"><div className="breadcrumb">{brand?.name ?? t('app.welcomeBrand')}<span>/</span><strong>{work?.title ?? t('app.welcomeWork')}</strong></div>{work && view !== 'home' && <div className="workspace-modes" role="group" aria-label={t('ui.auto.040')}><button aria-pressed={focusChat} onClick={() => { setLayout('conversation'); setView('brief'); }}><MessageSquare size={15} />{t('ui.auto.349')}</button><button aria-pressed={!focusChat} onClick={() => { setLayout('review'); setView('brief'); }}><FileText size={15} />{t('ui.auto.041')}</button></div>}{isDesktop && <WindowControls />}</header>
     <main className="workspace" aria-hidden={focusChat} inert={focusChat}>
-      <MemoryNotice support={coordination.support} dismissed={Boolean(brand && memoryNoticeDismissed.has(brand.id))} onDismiss={() => { if (brand) setMemoryNoticeDismissed(prev => new Set(prev).add(brand.id)); }} />
-      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} coordinationSinceLastVisit={brand ? sinceLastVisitFromActiveRuns(coordination.activeRuns, brand.id) : []} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenCoordination={openWorkCoordination} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} />}
+      <MemoryNotice support={coordination.support} dismissed={Boolean(brand && memoryNoticeDismissed.has(brand.id))} onDismiss={() => { if (brand) setMemoryNoticeDismissed(prev => new Set(prev).add(brand.id)); }} mode={mode} />
+      {view === 'home' && <HomeView brand={brand} works={works} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} liveWorkIds={liveWorkIds} pendingContextProposals={pendingContextProposals} coordinationSinceLastVisit={brand ? sinceLastVisitFromActiveRuns(coordination.activeRuns, brand.id) : []} formatDate={date} onOpenWork={openWork} onOpenDecisions={openWorkDecisions} onOpenCoordination={openWorkCoordination} onOpenDocument={openDocument} onOpenContext={() => setView('context')} onNewWork={openNewWork} onAddBrand={openAddBrand} dna={dna} roles={roles} funnelOpened={funnelVisited} firstStepsClosed={firstStepsClosed} onStartWork={startFromHome} onGoTo={goFromFirstStep} onCloseFirstSteps={closeFirstSteps} onRefreshIdeas={refreshIdeas} ideasJob={ideasJob} ideasReady={runtimes.length === 0 ? null : runtimes.some(r => r.available)} />}
       {/* The tabs and the knowledge-scope filter are in-work chrome: on Inicio
           they would read as "a work with no tab selected". */}
-      {view !== 'home' && <><div className="tabs"><button className={view === 'resumen' ? 'selected' : ''} onClick={() => setView('resumen')}>{t('resumen.tab')}</button><button className={view === 'trabajo' ? 'selected' : ''} onClick={() => setView('trabajo')}>{t('trabajo.tab')}</button><button className={view === 'evidencia' ? 'selected' : ''} onClick={() => setView('evidencia')}>{t('evidencia.tab')}</button><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><button className={view === 'resultados' ? 'selected' : ''} onClick={() => setView('resultados')}>{t('resultados.tab')}</button><div className="tab-spacer" /></div>
+      {view !== 'home' && <><div className="tabs" ref={tabsRef} onKeyDown={tabsKeyDown} onScroll={syncTabEdges}><button className={view === 'resumen' ? 'selected' : ''} onClick={() => setView('resumen')}>{t('resumen.tab')}</button><button className={view === 'trabajo' ? 'selected' : ''} onClick={() => setView('trabajo')}>{t('trabajo.tab')}</button><button className={view === 'evidencia' ? 'selected' : ''} onClick={() => setView('evidencia')}>{t('evidencia.tab')}</button><button className={view === 'brief' ? 'selected' : ''} onClick={() => setView('brief')}>{t('ui.auto.350')} <span>{visibleDocuments.length}</span></button><button className={view === 'funnel' ? 'selected' : ''} onClick={() => setView('funnel')}>{t('ui.auto.043')}</button><button className={view === 'decisions' ? 'selected' : ''} onClick={() => setView('decisions')}>{t('ui.auto.351')} <span>{visibleDecisions.filter(d => d.status === 'approved' || d.status === 'pending').length}</span></button><button className={view === 'resultados' ? 'selected' : ''} onClick={() => setView('resultados')}>{t('resultados.tab')}</button><div className="tab-spacer" /></div>
       {(view === 'brief' || view === 'funnel' || view === 'decisions') && brand && <KnowledgeScopeFilter works={works} currentWorkId={work?.id ?? null} value={knowledgeScope} onChange={setKnowledgeScope} />}</>}
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}
       {view === 'resumen' && <ResumenView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} coordinationLog={work ? coordination.log : undefined} coordinationHires={work ? coordination.hires : undefined} onSettleDispatch={coordination.settleDispatch} formatDate={date} onOpenBrief={() => { setLayout('review'); setView('brief'); }} />}
       {view === 'trabajo' && <TrabajoView brand={brand} work={work} documents={documents} decisions={decisions} states={homeStates} checking={homeChecking} team={team} permissions={permissions} handoffs={handoffs} live={work ? liveWorkIds.includes(work.id) : false} brandContextDefined={Boolean(brand?.context.trim())} mode={mode} formatDate={date} onOpenChat={() => { setLayout('conversation'); setView('brief'); }} />}
       {view === 'evidencia' && <EvidenciaView work={work} workId={work?.id ?? ''} documents={documents} decisions={decisions} untracked={untracked} states={homeStates} checking={homeChecking} formatDate={date} onTrack={trackFile} onImported={() => loadKnowledge(work?.brandId ?? '', work?.id)} busy={busy} />}
-      {view === 'resultados' && <ResultadosView work={work} decisions={decisions} formatDate={date} />}
-      {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={(next) => { if (next === 'brief') setLayout('review'); setView(next); }} work={work} brandName={brand?.name ?? ''} documents={visibleDocuments} selectedId={selectedDocId} onSelect={id => brand && setSelectedDoc(prev => ({ ...prev, [brand.id]: id }))} onDocumentsChanged={async () => { if (brand) await loadKnowledge(brand.id, work?.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} currentWorkId={work?.id ?? null} workTitles={titlesByWork} showWorkDelta={showWorkDelta} />}
+      {view === 'resultados' && <ResultadosView work={work} decisions={decisions} formatDate={date} brandName={brand?.name ?? ''} onOpenBrand={() => setView('identity')} />}
+      {(view === 'brief' || view === 'funnel') && <DocumentsView funnel={view === 'funnel'} onView={(next) => { if (next === 'brief') setLayout('review'); setView(next); }} work={work} brandName={brand?.name ?? ''} documents={visibleDocuments} selectedId={selectedDocId} onSelect={id => brand && setSelectedDoc(prev => ({ ...prev, [brand.id]: id }))} onDocumentsChanged={async () => { if (brand) await loadKnowledge(brand.id, work?.id); }} onWorkUpdated={onWorkUpdated} onDirtyChange={setDocumentDirty} onNotice={setNotice} onError={setError} onCreate={() => setModal('document')} onUseFolder={useFolder} hasBrand={Boolean(brand)} onStart={() => { setName(''); setModal(brand ? 'work' : 'brand'); }} untracked={untracked} onTrack={trackFile} editors={editors} busy={busy} currentWorkId={work?.id ?? null} workTitles={titlesByWork} showWorkDelta={showWorkDelta} onOpenBrand={() => setView('identity')} />}
       {view === 'context' && brand && <ContextView
         brand={brand}
         proposals={contextProposals}
@@ -1473,27 +1766,36 @@ export function App() {
         conflict={contextConflict}
         onReload={() => void reloadContext()}
         onOverride={() => void overrideContext()}
+        onArchive={askArchiveBrand}
       />}
       {view === 'roster' && brand && <BrandTeamView brandName={brand.name} roster={roster} work={work} busy={busy || startingChat}
         onCallUp={isDesktop ? (id) => void callUpMember(id) : undefined}
         onRetire={(id) => void run(async () => { setRoster(await api.retireBrandMember(id)); })}
         onSetCoordinator={isDesktop ? (id) => void run(async () => { setRoster(await api.setBrandCoordinator(brand.id, id)); if (work) await loadTeam(work.id); }) : undefined}
         onAdd={isDesktop ? async (roleId, options) => { await run(async () => { setRoster(await api.addBrandMember(brand.id, roleId, options)); }); } : undefined}
-        picker={{ roles, choices: runtimeChoices, primaryLabel, primaryDetail, primaryReady, checking: checkingAgents, isDesktop, onProviders: () => setSettings('agents'), onRecheck: () => void refreshChatStatus(), submitLabel: t('roster.addSubmit'), lead: null }} />}
+        picker={{ roles, choices: runtimeChoices, primaryLabel, primaryDetail, primaryReady, checking: checkingAgents, isDesktop, onProviders: () => setSettings('agents'), onRecheck: () => void refreshChatStatus(), submitLabel: t('roster.addSubmit'), lead: null, mode }} />}
       {view === 'identity' && brand && <IdentityView brandName={brand.name} identity={identity} busy={busy} formatDate={date} extractionNote={identityNote}
         onAddFiles={isDesktop ? () => void run(async () => { setIdentity(await api.addBrandIdentityFiles(brand.id)); }) : undefined}
         onRemoveFile={(id) => void run(async () => { setIdentity(await api.removeBrandIdentityFile(brand.id, id)); })}
         onApprove={() => void run(async () => { setIdentity(await api.approveBrandIdentity(brand.id)); })}
         onRevoke={() => void run(async () => { setIdentity(await api.revokeBrandIdentity(brand.id)); })}
         onExtract={() => void run(async () => { const r = await api.requestBrandIdentityExtraction(brand.id); setIdentityNote(t(r.outcome === 'proposed' ? 'identity.extract.proposed' : r.outcome === 'dispatched' ? 'identity.extract.dispatched' : r.outcome === 'pending_approval' ? 'identity.extract.pending' : 'identity.extract.blocked', { work: r.workTitle })); })} />}
+      {view === 'dna' && brand && <BrandDnaScreen brand={brand} formatDate={date} onChanged={setDna} />}
       {view === 'decisions' && <DecisionsView work={work} decisions={visibleDecisions} team={team} roles={roles} permissions={permissions} handoffs={handoffs} decisionAuthority={decisionAuthority} draft={decision} busy={busy} formatDate={date} titlesByWork={titlesByWork} onDraftChange={setDecision} onAdd={addDecision} onApprove={approveDecision} onEditApprove={editApproveDecision} onReject={rejectDecision} onArchive={archiveDecision} onAuthorityChange={changeDecisionAuthority} onAcceptHandoff={acceptHandoffAsTask} />}
-      {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice('Aprendizaje guardado en Engram'); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
-      <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : 'An Agent Marketing Platform'}</span></div>
+      {view === 'memory' && <div className="document-scroll"><div className="document-kicker">{t('ui.auto.057')}</div><h1>{t('ui.auto.058')}<br />{t('ui.auto.059')}</h1><p className="intro">{t('ui.auto.060')}</p><div className="memory-result"><ReactMarkdown remarkPlugins={[remarkGfm]}>{memory || t('ui.auto.061')}</ReactMarkdown></div><label className="field-label" htmlFor="memory-note">{t('ui.auto.062')}</label><textarea id="memory-note" className="context-editor short" value={memoryNote} onChange={e => setMemoryNote(e.target.value)} placeholder={t('ui.auto.063')} /><button className="primary" disabled={!memoryAvailable || !memoryNote.trim() || busy} onClick={() => run(async () => { const r = await api.saveMemory(brand!.id, memoryNote); if (!r.available) throw new Error(r.text); setMemoryNote(''); setNotice(t('memory.saved')); openMemory(); })}><Bookmark size={15} />{t('ui.auto.064')}</button></div>}
+      <div className="document-footer"><span><FileText size={13} />{work ? (knowledgeScope === ALL_BRAND_SCOPE ? t('knowledge.docsBrand', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's' }) : t('knowledge.docsWork', { p0: visibleDocuments.length, p1: visibleDocuments.length === 1 ? '' : 's', title: titlesByWork[knowledgeScope] ?? work.title })) : t('ui.auto.065')}</span><span>{work ? date(work.updatedAt) : t('app.tagline')}</span></div>
     </main>
     <aside className="agent-panel">{focusChat && (error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('ui.auto.044')} onClick={() => { setError(''); setNotice(''); }}><X size={16} /></button></div>}<button type="button" className={'panel-resizer' + (dragging ? ' dragging' : '')} aria-label={t('ui.auto.066')} title={t('ui.auto.067')} onPointerDown={startResize} />
-      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} roster={roster} onCallUp={callUpMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onAcceptHandoffAsTask={acceptHandoffAsTask} handoffHolds={openHandoffHolds} handoffProposal={pendingHandoffProposal} onOpenHandoffProposal={() => setCardsFromPending(true)} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} coordinationLog={work ? coordination.log : undefined} coordinationMessages={work ? coordination.messages : undefined} coordinationAsks={work ? coordination.openAsks : undefined} coordinationHires={work ? coordination.hires : undefined} coordinationGates={work ? coordination.gates : undefined} coordinationTasks={work ? coordination.tasks : undefined} formatTime={hour} formatDate={date} coordinationSupport={work ? coordination.support : undefined} coordinationAuthority={work ? coordination.authority : undefined} onSetCoordinationAuthority={changeCoordinationAuthority} coordinationReview={work ? coordination.review : undefined} onSetCoordinationReview={coordination.setReview} coordinationBudget={work ? coordination.budget : undefined} onSetCoordinationBudget={coordination.setBudget} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} onSetCoordinator={work ? (memberId) => { void coordination.setCoordinator(memberId); } : undefined} chatCoordination={{ coordinationRun: work ? coordination.run : undefined, gates: work ? coordination.gates : undefined, openAsks: work ? coordination.openAsks : undefined, roles, team, formatDate: date, onResolveGate: coordination.resolveGate, onAnswerAsk: coordination.answerAsk, coordinationPending: coordination.pending, onSelectMember: selectMember, initiallyExpanded: cardsFromPending, teamSeen: coordination.run ? teamSeenRuns.seen(coordination.run.id) : false, onTeamOpened: () => { const r = coordination.run; if (r?.planApproved) teamSeenRuns.markSeen(r.id); } }} />
+      <TeamPanel work={work} team={team} chats={chats} selectedId={selectedMemberId} roles={roles} primaryLabel={primaryLabel} primaryDetail={primaryDetail} primaryReady={primaryReady} checking={checkingAgents} choices={runtimeChoices} busy={busy || startingChat} isDesktop={isDesktop} mode={mode} onSelect={selectMember} onAdd={addMember} roster={roster} onCallUp={callUpMember} onOpen={openMember} onPause={pauseMember} onFinish={finishMember} onRestart={restartMember} onContinue={continueMember} onRemove={removeMember} onModel={setMemberModel} onTier={setMemberTier} handoffs={handoffs} onAcceptHandoff={acceptHandoff} onAcceptHandoffAsTask={acceptHandoffAsTask} handoffHolds={openHandoffHolds} handoffProposal={pendingHandoffProposal} onOpenHandoffProposal={() => setCardsFromPending(true)} onDismissHandoff={dismissHandoff} onSaveAsDocument={saveAnswerAsDocument} onAttachFiles={() => work ? api.importFiles(work.id) : Promise.resolve([])} untracked={untracked.map(f => f.fileName)} onAdoptFile={fileName => void trackFile(fileName)} primaryRuntime={primaryRuntime} primaryAccountId={primary?.accountId ?? null} primaryModel={primary?.model ?? null} permissions={permissions} permissionBusy={permissionBusy} onPermissions={changePermissions} onProviders={() => setSettings('agents')} onRecheck={() => void refreshChatStatus()} onError={setError} coordinationRun={work ? coordination.run : undefined} onPauseCoordination={coordination.pauseRun} onResumeCoordination={coordination.resumeRun} onCancelCoordination={coordination.cancelRun} pending={coordination.pending} coordinationLog={work ? coordination.log : undefined} coordinationMessages={work ? coordination.messages : undefined} coordinationAsks={work ? coordination.openAsks : undefined} coordinationHires={work ? coordination.hires : undefined} coordinationGates={work ? coordination.gates : undefined} coordinationTasks={work ? coordination.tasks : undefined} formatTime={hour} formatDate={date} coordinationSupport={work ? coordination.support : undefined} coordinationAuthority={work ? coordination.authority : undefined} onSetCoordinationAuthority={changeCoordinationAuthority} coordinationReview={work ? coordination.review : undefined} onSetCoordinationReview={coordination.setReview} coordinationBudget={work ? coordination.budget : undefined} onSetCoordinationBudget={coordination.setBudget} coordinatorGrant={work ? coordination.coordinatorGrant : undefined} onSetCoordinator={work ? (memberId) => { void coordination.setCoordinator(memberId); } : undefined} chatCoordination={{ coordinationRun: work ? coordination.run : undefined, gates: work ? coordination.gates : undefined, openAsks: work ? coordination.openAsks : undefined, roles, team, formatDate: date, onResolveGate: coordination.resolveGate, onAnswerAsk: coordination.answerAsk, coordinationPending: coordination.pending, onSelectMember: selectMember, initiallyExpanded: cardsFromPending, teamSeen: coordination.run ? teamSeenRuns.seen(coordination.run.id) : false, onTeamOpened: () => { const r = coordination.run; if (r?.planApproved) teamSeenRuns.markSeen(r.id); } }}
+        activationSteps={selectedActivationSteps} activationWorkingDetail={selectedActivationDetail}
+        onEditBrief={memberId => { if (work?.brief) chatStore.setDraft(memberId, work.brief); }}
+        momento={momento} onMomentoViewResult={() => { setLayout('review'); setView('brief'); }} onMomentoReviewDecisions={() => setView('decisions')} onMomentoContinue={() => setView('resumen')}
+        activationRecovery={work ? activationRecovery[work.id] ?? null : null}
+        onActivationConnect={() => setSettings('agents')}
+        onActivationContinueDemo={() => { if (work) setActivationRecovery(prev => { const next = { ...prev }; delete next[work.id]; return next; }); }}
+      />
       <details className="active-context">
-        <summary><Bookmark size={12} />{t('ui.auto.035')}<span>{[brand?.context ? 'marca' : null, work ? 'trabajo' : null, decisions.length ? `${decisions.length} decisiones` : null].filter(Boolean).join(' · ') || t('ui.auto.068')}</span></summary>
+        <summary><Bookmark size={12} />{t('ui.auto.035')}<span>{[brand?.context ? t('context.summary.brand') : null, work ? t('context.summary.work') : null, decisions.length ? t('context.summary.decisions', { count: decisions.length }) : null].filter(Boolean).join(' · ') || t('ui.auto.068')}</span></summary>
         <div className="active-context-body">
           <span><FileText size={13} />{brand?.context ? t('ui.auto.069') : t('ui.auto.070')}</span>
           <span><Folder size={13} />{work?.title ?? t('ui.auto.071')}</span>
@@ -1502,9 +1804,34 @@ export function App() {
         </div>
       </details>
     </aside>
-    <footer className="statusbar"><span><Circle size={11} />{isDesktop ? t('ui.auto.354', { p0: activeChats, p1: activeTerminals }) : t('ui.auto.074')}</span><span>{busy ? t('ui.auto.355') : dirty || contextDirty ? t('ui.auto.075') : 'Todo guardado'}<Check size={13} /></span>{appInfo && <span>Latte <span className="status-version">{appInfo.version}</span></span>}</footer>
-    {(modal === 'brand' || modal === 'work') && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setModal(null); }}><section role="dialog" aria-modal="true" aria-labelledby="dialog-title" className="modal"><div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="dialog-title">{modal === 'brand' ? t('ui.auto.077') : t('ui.auto.078')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setModal(null)}><X size={20} /></button></div><div className="modal-body"><form onSubmit={e => { e.preventDefault(); void create(); }}><label className="field-label" htmlFor="new-name">{modal === 'brand' ? t('ui.auto.079') : t('ui.auto.080')}</label><input autoFocus id="new-name" maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder={modal === 'brand' ? 'Ej. Casa Oliva' : t('ui.auto.081')} /><p className="footnote">{t('ui.auto.082')}</p><button className="primary" disabled={!name.trim() || busy}>{modal === 'brand' ? <>{t('ui.auto.083')} {t('ui.auto.084')}</> : t('ui.auto.038')}<ArrowUpRight size={16} /></button></form></div></section></div>}
+    <footer className="statusbar"><span><Circle size={11} />{isDesktop ? t('ui.auto.354', { p0: activeChats, p1: activeTerminals }) : t('ui.auto.074')}</span><span>{busy ? t('ui.auto.355') : dirty || contextDirty ? t('ui.auto.075') : t('app.allSaved')}<Check size={13} /></span>{appInfo && <span>Latte <span className="status-version">{appInfo.version}</span></span>}</footer>
+    {archiveTarget && <ConfirmDialog titleId="archive-brand-title" title={t('brand.archiveTitle', { name: archiveTarget.name })} body={t('brand.archiveConfirm')} confirmLabel={t('brand.archiveAction')} busy={busy} onConfirm={() => void confirmArchiveBrand()} onCancel={() => setArchiveTarget(null)} />}
+    {confirmDialog}
+    {modal === 'brand' && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) setModal(null); }}><section ref={createModalRef} role="dialog" aria-modal="true" aria-labelledby="dialog-title" className="modal"><div className="modal-head"><div><div className="document-kicker">{t('ui.auto.076')}</div><h2 id="dialog-title">{t('ui.auto.077')}</h2></div><button className="modal-close" aria-label={t('ui.auto.001')} onClick={() => setModal(null)}><X size={20} /></button></div><div className="modal-body"><form onSubmit={e => { e.preventDefault(); void create(); }}><label className="field-label" htmlFor="new-name">{t('ui.auto.079')}</label><input autoFocus id="new-name" maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder={t('brand.namePlaceholder')} /><p className="footnote">{t('ui.auto.082')}</p><button className="primary" disabled={!name.trim() || busy}>{t('ui.auto.083')} {t('ui.auto.084')}<ArrowUpRight size={16} /></button></form></div></section></div>}
+    {/* ENTREGA 1A (Brief 01, tarea 3): "Nuevo trabajo" abre el mismo catálogo
+        que el recorrido inicial (intención → preguntas adaptativas → brief),
+        en vez del formulario de sólo título de antes. "Empezar libremente"
+        sigue siendo ese camino rápido — ver `WorkCatalogModal.tsx`. */}
+    {modal === 'work' && brand && <WorkCatalogModal
+      brand={brand}
+      roles={roles}
+      busy={busy}
+      onClose={() => setModal(null)}
+      onError={setError}
+      onCreated={(created, options) => {
+        setWorks(prev => [...prev, created]);
+        setWork(created);
+        setLayout('conversation');
+        setContext(brand.context);
+        setView('brief');
+        setModal(null);
+        setName('');
+        if (options.recommendedRoleId) void activateWork(created.id, options.recommendedRoleId, options.brief);
+      }}
+    />}
     {modal === 'document' && <NewDocumentDialog documents={documents.filter(d => d.workId === work?.id)} busy={busy} onCancel={() => setModal(null)} onCreate={createDocument} />}
+    {savingAnswer && <PromptDialog titleId="save-answer-title" title={t('chat.saveAsDocument.title')} label={t('ui.auto.002')} fieldId="save-answer-title-field" initialValue="Estrategia" submitLabel={t('chat.saveAsDocument.submit')} busy={busy} validate={v => v ? null : t('chat.saveAsDocument.required')} onSubmit={confirmSaveAnswerAsDocument} onCancel={() => setSavingAnswer(null)} />}
+    {editingContextProposal && <PromptDialog titleId="context-edit-title" title={t('context.editAccept')} label={t('context.editAccept.label')} fieldId="context-edit-field" initialValue={editingContextProposal.initialText} multiline submitLabel={t('context.accept')} busy={busy} validate={v => v ? null : t('context.editAccept.required')} onSubmit={text => void run(() => confirmContextProposalEdit(text))} onCancel={() => setEditingContextProposal(null)} />}
     <UpdateBanner />
   </div>;
 }

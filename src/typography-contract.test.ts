@@ -510,10 +510,14 @@ describe('typography contract (Pass 3a — the type floor)', () => {
     expect(violations).toEqual([]);
   });
 
-  it('A4 — braces are balanced (line 2 and whole file)', () => {
+  it('A4 — braces are balanced (the longest minified line and the whole file)', () => {
+    // Entrega 0 (capa 2 de tokens) reformatted `:root` into one declaration per
+    // line for readability, so line 2 is no longer the giant blob — the smoke
+    // test now targets whichever line is longest instead of a hardcoded index,
+    // which still lands on one of the remaining minified rule blocks.
     const count = (text: string, ch: string): number => text.split(ch).length - 1;
-    const line2 = stripped.split('\n')[1] ?? '';
-    expect(count(line2, '{')).toBe(count(line2, '}'));
+    const longest = stripped.split('\n').reduce((a, b) => (b.length > a.length ? b : a), '');
+    expect(count(longest, '{')).toBe(count(longest, '}'));
     expect(count(stripped, '{')).toBe(count(stripped, '}'));
   });
 

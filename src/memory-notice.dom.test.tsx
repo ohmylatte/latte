@@ -69,6 +69,34 @@ describe('the memory notice (task 7.10)', () => {
     expect(container.querySelector('.memory-notice')).not.toBeNull();
   });
 
+  /**
+   * Entrega 1C (tarea 3): en modo simple la razón de infraestructura ("falta
+   * el binario «engram»") queda detrás de un detalle avanzado; el cuerpo
+   * principal dice en términos de negocio que la memoria no está activa. El
+   * modo avanzado no cambia — es el mismo texto de siempre, sin plegar.
+   */
+  it('simple mode: business wording up front, the binary/technical reason only behind an advanced detail', () => {
+    const { container } = mount([row({ memoryInjected: false, reason: 'engram_not_installed' })], { mode: 'simple' });
+    const notice = container.querySelector('.memory-notice')!;
+    // El cuerpo principal es EXACTAMENTE la frase de negocio — ahí no puede
+    // decir "binario"; la palabra sólo aparece detrás del detalle avanzado.
+    const mainBody = notice.querySelector('p')!;
+    expect(mainBody.textContent).toBe('La memoria de marca no está activa en este equipo. Cada miembro arranca de cero y no ve lo que los demás ya decidieron.');
+    const detail = notice.querySelector('.memory-notice-detail')!;
+    expect(detail).not.toBeNull();
+    expect(detail.textContent).toContain('binario «engram»');
+  });
+
+  it('advanced mode: keeps today\'s exact behavior, no collapsed detail', () => {
+    const { container } = mount([row({ memoryInjected: false, reason: 'engram_not_installed' })], { mode: 'advanced' });
+    const notice = container.querySelector('.memory-notice')!;
+    expect(notice.textContent).toContain('Falta el binario «engram»');
+    expect(notice.querySelector('.memory-notice-detail')).toBeNull();
+  });
+
+  // Locale-mutating: kept LAST in the file (like the rest of this repo's i18n
+  // tests), since `document.documentElement.lang` is jsdom-global per file
+  // and only gets reset by leaving it for the last test to touch.
   it('renders the same notice in English, with nothing left in Spanish', async () => {
     localStorage.setItem('latte-ui-locale', 'en-US');
     const { container } = render(<I18nProvider><MemoryNotice support={[row({ memoryInjected: false, reason: 'engram_not_installed' })]} dismissed={false} onDismiss={() => {}} /></I18nProvider>);

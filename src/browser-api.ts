@@ -1,6 +1,8 @@
 import { composeBrandContext } from '../shared/brandContext';
-import type { AgentRole, Brand, BrandContextProposal, BrandContextRevision, BrandContextStatus, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput, OnboardingDraft } from '../shared/contracts';
-import { isOnboardingDraft } from '../shared/contracts';
+import { fullDateLabel } from '../shared/commercial-dates';
+import type { AgentRole, Brand, BrandContextProposal, BrandContextRevision, BrandContextStatus, Work, Revision, Decision, LatteAPI, WorkDocument, DocumentContent, SaveOutcome, AgentProfile, ProfileInput, OnboardingDraft, BrandDnaFields, BrandDnaIdea, BrandDnaProposal, BrandDnaBuildJob, BrandDnaView, BrandDnaBuildMode, BrandDnaBuildStepKey, BrandDnaSourcesInput } from '../shared/contracts';
+import { isOnboardingDraft, RUNTIME_GUIDE_URLS } from '../shared/contracts';
+import type { AccountRuntimeName, InstallFailureCode, Provider, RuntimeInstallJob, RuntimeInstallState, RuntimeLoginJob, RuntimeLoginState, RuntimeSetupEvent, RuntimeSetupInfo, RuntimeSetupJob } from '../shared/contracts';
 import { avatarFromSeed, parseAvatar, serializeAvatar } from '../shared/avatar';
 import { createAgentBus } from './agent-events';
 import { createChatStore } from './chat-store';
@@ -66,6 +68,7 @@ const shippedRoles:AgentRole[] = [
  {id:'paid-media',name:'Paid Media',initial:'P',summary:'Analizá campañas, inversión y resultados con evidencia; priorizá acciones sin modificar cuentas por tu cuenta.',builtin:false,tier:'balanced',avatar:'beanie.3.1.none'},
  {id:'sales-copywriter',name:'Sales Copywriter',initial:'C',summary:'Convertí briefs en copy de venta listo para usar, con una promesa defendible, prueba real y un CTA claro.',builtin:false,tier:'balanced',avatar:'curly.4.1.beret'},
  {id:'reviewer',name:'Reviewer',initial:'V',summary:'Revisa entregables contra el brief.',builtin:false,tier:'light',avatar:'long.2.2.earring'},
+ {id:'community-manager',name:'Community Manager',initial:'C',summary:'Produce el contenido de la marca en todos sus canales, mantiene el calendario editorial, participa de la comunidad y mide resultados. Nada se publica sin aprobación del usuario.',builtin:false,tier:'balanced',avatar:'bob.3.2.headband'},
 ];
 /** La cara elegida a mano para un rol incluido. En el escritorio esto vive en `meta`. */
 const roleAvatars=new Map<string,string>();
@@ -83,6 +86,184 @@ const UPDATE_WORK_ERRORS = {
   'en-US': { patch: 'Invalid work patch', notFound: 'Work not found', onlyOutcome: 'Only the expected output and the linked deliverable can change here', desktop: 'Linking a deliverable requires the desktop app. This view is a local preview.', name: 'Invalid deliverable name', expected: 'Invalid expected output' },
 } as const;
 const updateWorkError = (key: keyof (typeof UPDATE_WORK_ERRORS)['es-AR']) => new Error(UPDATE_WORK_ERRORS[localStorage.getItem('latte-ui-locale') === 'en-US' ? 'en-US' : 'es-AR'][key]);
+// --- Onboarding sin terminal: web preview --------------------------------------
+
+const SETUP_RUNTIMES = ['claude', 'codex', 'opencode', 'grok', 'hermes'] as const satisfies readonly Provider[];
+const setupListeners = new Set<(event: RuntimeSetupEvent) => void>();
+
+/** What the preview demo plays. `success` walks every happy state; the rest end in the named plan-B state. */
+export type RuntimeSetupPreviewScenario =
+  | 'success'
+  | 'already_installed'
+  | 'needs_prereq'
+  | 'blocked_by_policy'
+  | 'blocked_by_antivirus'
+  | 'network'
+  | 'unverified_installer'
+  | 'login_needs_terminal'
+  | 'login_not_confirmed';
+export const RUNTIME_SETUP_PREVIEW_SCENARIOS: readonly RuntimeSetupPreviewScenario[] = ['success', 'already_installed', 'needs_prereq', 'blocked_by_policy', 'blocked_by_antivirus', 'network', 'unverified_installer', 'login_needs_terminal', 'login_not_confirmed'];
+
+interface PreviewSetupDemo {
+  catalog(): RuntimeSetupInfo[];
+  detect(runtime: Provider): RuntimeInstallState;
+  install(runtime: Provider, installPrereqs: boolean): RuntimeInstallJob;
+  login(runtime: AccountRuntimeName, accountId: string): RuntimeLoginJob;
+  cancel(jobId: string): RuntimeSetupJob;
+  job(jobId: string): RuntimeSetupJob;
+  transcript(jobId: string): string;
+}
+let previewSetupDemo: PreviewSetupDemo | null = null;
+
+/**
+ * FAKE, preview-only: makes the web preview play a realistic install/login
+ * sequence so the onboarding screens can be built and reviewed in every state.
+ * Nothing is installed and no browser opens; every state and code is the real
+ * contract's. `stepMs` paces the sequence (0 in tests). Returns a function that
+ * turns the demo off again. Never active on desktop: `window.latte` wins.
+ */
+export function enableRuntimeSetupPreviewDemo(scenario: RuntimeSetupPreviewScenario = 'success', stepMs = 900): () => void {
+  const jobs = new Map<string, { job: RuntimeSetupJob; lines: string[]; timers: number[] }>();
+  const installed = new Set<Provider>(scenario === 'already_installed' ? ['claude', 'codex', 'grok', 'hermes'] : []);
+  const fakeExe = (runtime: Provider) => `~/.local/bin/${runtime}`;
+  const push = (entry: { job: RuntimeSetupJob; lines: string[] }, state: RuntimeInstallState | RuntimeLoginState, done: boolean, line: string) => {
+    entry.job = { ...entry.job, state, done } as RuntimeSetupJob;
+    entry.lines.push(line);
+    if (entry.job.kind === 'install' && (state.state === 'installed' || state.state === 'found')) installed.add(entry.job.runtime);
+    for (const listener of setupListeners) listener({ ...entry.job });
+  };
+  const play = (entry: { job: RuntimeSetupJob; lines: string[]; timers: number[] }, steps: Array<[RuntimeInstallState | RuntimeLoginState, boolean, string]>) => {
+    steps.forEach(([state, done, line], i) => {
+      entry.timers.push(window.setTimeout(() => { if (!entry.job.done) push(entry, state, done, line); }, stepMs * (i + 1)));
+    });
+  };
+  const demo: PreviewSetupDemo = {
+    catalog: () => SETUP_RUNTIMES.map((runtime) => ({
+      runtime,
+      canInstall: scenario !== 'unverified_installer',
+      browserLogin: runtime !== 'hermes' && runtime !== 'opencode',
+      prereqs: runtime === 'claude' ? [{ prereq: 'git_for_windows' as const, required: false, present: false, canInstall: true, guideUrl: 'https://git-scm.com/install/windows' }] : [],
+      guideUrl: RUNTIME_GUIDE_URLS[runtime],
+      verifiedAt: '2026-09-28',
+    })),
+    detect: (runtime) => (installed.has(runtime) ? { state: 'found', version: '2.1.211 (preview)', executable: fakeExe(runtime) } : { state: 'not_found', canInstall: scenario !== 'unverified_installer', guideUrl: RUNTIME_GUIDE_URLS[runtime] }),
+    install: (runtime, installPrereqs) => {
+      const entry = { job: { kind: 'install', jobId: `preview-${id()}`, runtime, state: { state: 'detecting' }, done: false } as RuntimeInstallJob as RuntimeSetupJob, lines: ['[preview] detecting'], timers: [] as number[] };
+      jobs.set(entry.job.jobId, entry);
+      const guideUrl = RUNTIME_GUIDE_URLS[runtime];
+      const fail = (code: InstallFailureCode, detail: string): Array<[RuntimeInstallState, boolean, string]> => [[{ state: 'installing', phase: 'downloading' }, false, '[preview] downloading'], [{ state: 'failed', code, detail, guideUrl }, true, `[preview] ${detail}`]];
+      let steps: Array<[RuntimeInstallState, boolean, string]>;
+      if (installed.has(runtime)) steps = [[{ state: 'found', version: '2.1.211 (preview)', executable: fakeExe(runtime) }, true, '[preview] already installed']];
+      else if (scenario === 'unverified_installer') steps = [[{ state: 'failed', code: 'unverified_installer', detail: guideUrl, guideUrl }, true, '[preview] installer not verified']];
+      else if (scenario === 'needs_prereq' && !installPrereqs) steps = [[{ state: 'needs_prereq', prereq: 'git_for_windows', canInstall: true, guideUrl: 'https://git-scm.com/install/windows' }, true, '[preview] Git for Windows missing']];
+      else if (scenario === 'blocked_by_policy') steps = fail('blocked_by_policy', 'running scripts is disabled on this system');
+      else if (scenario === 'blocked_by_antivirus') steps = fail('blocked_by_antivirus', 'Operation did not complete successfully because the file contains a virus');
+      else if (scenario === 'network') steps = fail('network', "The remote name could not be resolved: 'claude.ai'");
+      else {
+        steps = [
+          ...(installPrereqs ? [[{ state: 'installing', phase: 'prereq' }, false, '[preview] winget install Git.Git'] as [RuntimeInstallState, boolean, string]] : []),
+          [{ state: 'installing', phase: 'downloading' }, false, '[preview] downloading'],
+          [{ state: 'installing', phase: 'checking' }, false, '[preview] checking'],
+          [{ state: 'installed', version: '2.1.211 (preview)', executable: fakeExe(runtime) }, true, '[preview] installed'],
+        ];
+      }
+      for (const listener of setupListeners) listener({ ...entry.job });
+      play(entry, steps);
+      return { ...entry.job } as RuntimeInstallJob;
+    },
+    login: (runtime, accountId) => {
+      const sessionId = runtime === 'codex' ? null : `preview-ses-${id()}`;
+      const entry = { job: { kind: 'login', jobId: `preview-${id()}`, runtime, accountId, state: { state: 'starting' }, done: false, sessionId } as RuntimeLoginJob as RuntimeSetupJob, lines: ['[preview] starting login'], timers: [] as number[] };
+      jobs.set(entry.job.jobId, entry);
+      const url = 'https://example.com/latte-preview-login';
+      let steps: Array<[RuntimeLoginState, boolean, string]>;
+      if (runtime === 'hermes' || scenario === 'login_needs_terminal') steps = [[{ state: 'needs_terminal', reason: runtime === 'hermes' ? 'needs_choice' : 'url_not_recognized', sessionId: sessionId ?? 'preview-ses' }, false, '[preview] embedded terminal']];
+      else if (scenario === 'login_not_confirmed') steps = [[{ state: 'browser_opened', url, openedBy: 'latte' }, false, `[preview] ${url}`], [{ state: 'waiting', url }, false, '[preview] waiting'], [{ state: 'failed', code: 'not_confirmed', detail: 'login process exited 1' }, true, '[preview] not confirmed']];
+      else steps = [[{ state: 'browser_opened', url, openedBy: 'latte' }, false, `[preview] ${url}`], [{ state: 'waiting', url }, false, '[preview] waiting'], [{ state: 'waiting', url }, false, '[preview] still waiting'], [{ state: 'connected', displayName: 'ana@ejemplo.com' }, true, '[preview] connected']];
+      for (const listener of setupListeners) listener({ ...entry.job });
+      play(entry, steps);
+      return { ...entry.job } as RuntimeLoginJob;
+    },
+    cancel: (jobId) => {
+      const entry = jobs.get(jobId);
+      if (!entry) throw new Error(`Setup job not found: ${jobId}`);
+      for (const t of entry.timers) window.clearTimeout(t);
+      if (!entry.job.done) push(entry, { state: 'cancelled' }, true, '[preview] cancelled');
+      return { ...entry.job };
+    },
+    job: (jobId) => {
+      const entry = jobs.get(jobId);
+      if (!entry) throw new Error(`Setup job not found: ${jobId}`);
+      return { ...entry.job };
+    },
+    transcript: (jobId) => {
+      const entry = jobs.get(jobId);
+      if (!entry) throw new Error(`Setup job not found: ${jobId}`);
+      return entry.lines.join('\n');
+    },
+  };
+  previewSetupDemo = demo;
+  return () => {
+    for (const entry of jobs.values()) for (const t of entry.timers) window.clearTimeout(t);
+    if (previewSetupDemo === demo) previewSetupDemo = null;
+  };
+}
+
+
+// ---------------------------------------------------------------------------
+// ADN de marca (Entrega 1B) — doble de la vista previa web.
+// Honesto: el borrador vive en memoria de esta pestaña y la "construcción" es
+// una secuencia simulada que la interfaz puede dibujar entera. En el
+// escritorio lo arma un agente leyendo fuentes reales.
+// ---------------------------------------------------------------------------
+type DnaStore = { draft: BrandDnaFields | null; approved: { version: number; approvedAt: string; fields: BrandDnaFields } | null; proposals: BrandDnaProposal[]; ideas: BrandDnaIdea[]; ideasUpdatedAt: string | null; lastSources: { url: string | null; channels: string[] } | null };
+const dnaByBrand = new Map<string, DnaStore>();
+const dnaJobs = new Map<string, BrandDnaBuildJob>();
+/** Milisegundos entre pasos de la construcción simulada. Los tests lo bajan a 0. */
+let dnaStepMs = 700;
+export function setBrandDnaPreviewStepMs(ms: number): void { dnaStepMs = ms; }
+export function resetBrandDnaPreview(): void { dnaByBrand.clear(); dnaJobs.clear(); }
+/** Las fuentes del último armado, igual que el escritorio: se guardan al pedirlas. */
+const rememberDnaSources = (brandId: string, sources: BrandDnaSourcesInput | null): void => {
+  if (!sources) return;
+  dnaOf(brandId).lastSources = { url: sources.url?.trim() || null, channels: [...sources.channels] };
+};
+/** Hoy en calendario local: la vista previa usa la fecha REAL, no una clavada. */
+const localToday = (): string => {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+};
+const demoIdeas = (): BrandDnaIdea[] => ([
+  { id: 'idea-lanzamiento', title: 'Lanzamiento de la colección de otoño', why: 'La colección nueva todavía no tiene campaña.', workTypeId: 'campaign-new', basedOn: [{ kind: 'document', label: 'brief de primavera' }], createdAt: '2026-09-20' },
+  { id: 'idea-tono', title: 'Revisar el tono de tus últimos posts: 3 piezas usan «oferta»', why: 'El ADN marca «oferta» como palabra que la marca no usa.', workTypeId: 'copy-pieces', basedOn: [{ kind: 'identity', label: 'ADN v1' }, { kind: 'document', label: 'piezas de la semana' }], createdAt: '2026-09-20' },
+  { id: 'idea-temporada', title: 'Contenido de temporada: primavera', why: `Hoy ${fullDateLabel(localToday(), 'es-AR')} en Argentina.`, workTypeId: 'content-calendar', basedOn: [{ kind: 'calendar', label: 'primavera' }], createdAt: '2026-09-20' },
+]);
+const demoDna = (): BrandDnaFields => ({
+  tone: { value: { adjectives: ['Cálido', 'Preciso', 'Cercano'], example: 'Diseño que acompaña tu manera de vivir.' }, sources: [{ kind: 'context', label: 'contexto de marca' }], assumption: false },
+  audience: { value: 'Personas que eligen menos objetos, con más intención.', sources: [{ kind: 'document', label: 'brief de primavera' }], assumption: false },
+  valueProp: { value: 'Objetos de diseño para la vida cotidiana.', sources: [{ kind: 'context', label: 'contexto de marca' }], assumption: false },
+  wordsYes: { value: ['hogar', 'oficio', 'calma'], sources: [{ kind: 'document', label: 'brief de primavera' }], assumption: true },
+  wordsNo: { value: ['oferta', 'barato'], sources: [{ kind: 'decision', label: 'decisión: sin descuentos' }], assumption: false },
+  claims: null,
+  colors: null,
+  fonts: null,
+});
+const dnaOf = (brandId: string): DnaStore => {
+  let d = dnaByBrand.get(brandId);
+  if (!d) { d = { draft: null, approved: null, proposals: [], ideas: [], ideasUpdatedAt: null, lastSources: null }; dnaByBrand.set(brandId, d); }
+  return d;
+};
+const dnaView = (brandId: string): BrandDnaView => {
+  const d = dnaOf(brandId);
+  return { brandId, draft: d.draft, approved: d.approved, changedSinceApproval: Boolean(d.draft && (!d.approved || JSON.stringify(d.draft) !== JSON.stringify(d.approved.fields))), proposals: d.proposals, ideas: d.ideas, ideasUpdatedAt: d.ideasUpdatedAt, lastSources: d.lastSources };
+};
+const savePreviewIdeas = (brandId: string): void => { const d = dnaOf(brandId); d.ideas = demoIdeas(); d.ideasUpdatedAt = now(); };
+const DNA_STEPS: Record<BrandDnaBuildMode, BrandDnaBuildStepKey[]> = {
+  sources: ['web', 'channels', 'files', 'compose'],
+  existing: ['context', 'documents', 'decisions', 'memory', 'compose'],
+  ideas: ['compose'],
+};
+
 export const browserAPI: LatteAPI = {
   getUiLocale: async () => localStorage.getItem('latte-ui-locale') === 'en-US' ? 'en-US' : 'es-AR',
   setUiLocale: async locale => { localStorage.setItem('latte-ui-locale', locale); return locale; },
@@ -192,7 +373,34 @@ export const browserAPI: LatteAPI = {
 listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSkillEnabled:unavailable,listSkillCandidates:async()=>[],approveSkillCandidate:unavailable,rejectSkillCandidate:unavailable,promoteSkillCandidate:unavailable,applyFunnelProposal:unavailable,dismissFunnelProposal:unavailable,trackFile:unavailable,
   saveAsDocument:async(workId,kind,title,content)=>{const c=await browserAPI.createDocument(workId,kind,title);await browserAPI.saveDocument(c.document.id,content,c.fingerprint);return c.document;},
   getWorkPermissions:async()=>'ask' as const,setWorkPermissions:unavailable,
-  readAgencyProfile:unavailable,saveAgencyProfile:unavailable,importBrandKit:unavailable,publishBrandKit:unavailable,revokeBrandKit:unavailable,importAgencyKit:unavailable,publishAgencyKit:unavailable,setWorkBrandChoice:unavailable,readWorkBrandContext:unavailable,readBrandIdentity:async(brandId:string)=>({brandId,state:'empty' as const,files:[],hasIdentityDoc:false,approved:null,changedSinceApproval:false,revokedAt:null}),addBrandIdentityFiles:unavailable,removeBrandIdentityFile:unavailable,approveBrandIdentity:unavailable,revokeBrandIdentity:unavailable,requestBrandIdentityExtraction:unavailable,prepareGeneration:unavailable,
+  readAgencyProfile:unavailable,saveAgencyProfile:unavailable,importBrandKit:unavailable,publishBrandKit:unavailable,revokeBrandKit:unavailable,importAgencyKit:unavailable,publishAgencyKit:unavailable,setWorkBrandChoice:unavailable,readWorkBrandContext:unavailable,readBrandIdentity:async(brandId:string)=>({brandId,state:'empty' as const,files:[],hasIdentityDoc:false,approved:null,changedSinceApproval:false,revokedAt:null}),addBrandIdentityFiles:unavailable,removeBrandIdentityFile:unavailable,approveBrandIdentity:unavailable,revokeBrandIdentity:unavailable,requestBrandIdentityExtraction:unavailable,readBrandDna:async(brandId:string)=>dnaView(brandId),
+  updateBrandDnaField:async(brandId,field,value)=>{const d=dnaOf(brandId);const base=d.draft??{tone:null,audience:null,valueProp:null,wordsYes:null,wordsNo:null,claims:null,colors:null,fonts:null};d.draft={...base,[field]:value===null?null:{value,sources:[{kind:'human',label:'vos'}],assumption:false}} as BrandDnaFields;return dnaView(brandId);},
+  approveBrandDna:async(brandId)=>{const d=dnaOf(brandId);if(!d.draft)throw new Error('No hay ADN para aprobar');d.approved={version:(d.approved?.version??0)+1,approvedAt:now(),fields:d.draft};return dnaView(brandId);},
+  buildBrandDna:async(brandId,mode,sources)=>{
+    // Como en el escritorio: las fuentes quedan guardadas APENAS se pide el
+    // armado, antes de cualquier paso simulado — si el armado falla después,
+    // la pantalla todavía las tiene.
+    if(mode==='sources')rememberDnaSources(brandId,sources);
+    for(const j of dnaJobs.values())if(j.brandId===brandId&&!j.done)return j;
+    const keys=DNA_STEPS[mode].filter(k=>mode!=='sources'||k==='compose'||(k==='web'&&sources?.url)||(k==='channels'&&(sources?.channels?.length??0)>0)||(k==='files'&&sources?.useIdentityFiles));
+    const job:BrandDnaBuildJob={jobId:'dna-'+id(),brandId,mode,steps:keys.map(key=>({key,state:'pending' as const,detail:null})),done:false,outcome:null,reason:null};
+    dnaJobs.set(job.jobId,job);
+    let i=0;
+    const tickDna=()=>{const j=dnaJobs.get(job.jobId);if(!j||j.done)return;
+      if(i>0)j.steps[i-1]={...j.steps[i-1]!,state:'done'};
+      if(i<j.steps.length){j.steps[i]={...j.steps[i]!,state:'running'};i++;setTimeout(tickDna,dnaStepMs);return;}
+      j.done=true;
+      // Como en el escritorio: el agente deja las ideas con cada build; el modo
+      // sólo ideas guarda las ideas y no toca el borrador.
+      savePreviewIdeas(brandId);
+      if(mode==='ideas'){j.outcome='updated';return;}
+      j.outcome='proposed';dnaOf(brandId).draft=demoDna();};
+    setTimeout(tickDna,dnaStepMs);
+    return job;},
+  readBrandDnaBuildJob:async(jobId)=>{const j=dnaJobs.get(jobId);if(!j)throw new Error('Construcción no encontrada');return {...j,steps:j.steps.map(s=>({...s}))};},
+  cancelBrandDnaBuild:async(jobId)=>{const j=dnaJobs.get(jobId);if(!j)throw new Error('Construcción no encontrada');if(!j.done){j.done=true;j.outcome='cancelled';}return {...j};},
+  resolveBrandDnaProposal:async(brandId,proposalId,accept)=>{const d=dnaOf(brandId);const pr=d.proposals.find(x=>x.id===proposalId);if(!pr)throw new Error('Propuesta no encontrada');d.proposals=d.proposals.filter(x=>x.id!==proposalId);if(accept){const base=d.draft??d.approved?.fields??{tone:null,audience:null,valueProp:null,wordsYes:null,wordsNo:null,claims:null,colors:null,fonts:null};d.draft={...base,[pr.field]:pr.next===null?null:{value:pr.next,sources:[pr.source],assumption:false}} as BrandDnaFields;}return dnaView(brandId);},
+  prepareGeneration:unavailable,
   acknowledgeBase:async documentId=>mutate(s=>{const d=contentFrom(s,documentId).document;if(d.baseDocumentId)d.baseFingerprint=contentFrom(s,d.baseDocumentId).fingerprint;return d;}),
   useFolder: unavailable,
   snapshot: async workId => change(s => { const r: Revision = { id: id(), workId, documentId: previewDocId(workId), source: 'human', content: s.works.find(w => w.id === workId)!.brief, createdAt: now() }; s.revisions.push(r); return r; }),
@@ -337,6 +545,26 @@ listHandoffs:async()=>[],dismissHandoff:unavailable,listSkills:async()=>[],setSk
   listConnections: async () => [], listAllConnections: async () => [], connectConnection: unavailable, reconnectConnection: unavailable,
   disconnectConnection: unavailable, deleteConnection: unavailable, listImportableConnections: async () => [],
   getPrimaryAgent: async () => null, setPrimaryAgent: unavailable, listAgentRuntimes: async () => [], addAgentAccount: unavailable, removeAgentAccount: unavailable, startAccountLogin: unavailable, logoutAccount: unavailable,
+  // Onboarding sin terminal: a browser tab cannot install or log in anything.
+  // Honest by default (nothing installable, guide links only); the fake
+  // sequence lives behind `enableRuntimeSetupPreviewDemo` below.
+  runtimeSetupCatalog: async () => (previewSetupDemo ? previewSetupDemo.catalog() : SETUP_RUNTIMES.map((runtime) => ({ runtime, canInstall: false, browserLogin: false, prereqs: [], guideUrl: RUNTIME_GUIDE_URLS[runtime], verifiedAt: '' }))),
+  detectRuntime: async (runtime) => (previewSetupDemo ? previewSetupDemo.detect(runtime) : { state: 'not_found' as const, canInstall: false, guideUrl: RUNTIME_GUIDE_URLS[runtime] }),
+  startRuntimeInstall: async (runtime, options) => (previewSetupDemo ? previewSetupDemo.install(runtime, options?.installPrereqs === true) : unavailable()),
+  cancelRuntimeInstall: async (jobId) => (previewSetupDemo ? previewSetupDemo.cancel(jobId) as RuntimeInstallJob : unavailable()),
+  startBrowserLogin: async (runtime, accountId) => (previewSetupDemo ? previewSetupDemo.login(runtime, accountId) : unavailable()),
+  reopenLoginUrl: async (jobId) => (previewSetupDemo ? previewSetupDemo.job(jobId) as RuntimeLoginJob : unavailable()),
+  cancelBrowserLogin: async (jobId) => (previewSetupDemo ? previewSetupDemo.cancel(jobId) as RuntimeLoginJob : unavailable()),
+  getRuntimeSetupJob: async (jobId) => (previewSetupDemo ? previewSetupDemo.job(jobId) : unavailable()),
+  getRuntimeSetupTranscript: async (jobId) => (previewSetupDemo ? previewSetupDemo.transcript(jobId) : unavailable()),
+  diagnoseRuntimes: async () => {
+    const runtimes = SETUP_RUNTIMES.map((runtime) => ({ runtime, installed: false, version: null, path: null, loggedIn: runtime === 'opencode' ? null : false, lastError: null }));
+    return { generatedAt: now(), runtimes, report: ['Latte web preview runtime report', 'os: browser (no local agents)', ...runtimes.map((r) => `${r.runtime}: installed=no`)].join('\n') };
+  },
+  onRuntimeSetupEvent: (callback) => {
+    setupListeners.add(callback);
+    return () => { setupListeners.delete(callback); };
+  },
   // No CLI to ask in a browser tab: no catalog, and no pretending there is one.
   listAccountModels: async () => ({ source: 'suggested' as const, models: [], detail: 'Esta vista previa no puede consultar los modelos de tu cuenta.' }),
   getAcpTierModels: async () => {

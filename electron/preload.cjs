@@ -34,6 +34,7 @@ const METHODS = [
   'setWorkBrandChoice',
   'readWorkBrandContext',
   'readBrandIdentity','addBrandIdentityFiles','removeBrandIdentityFile','approveBrandIdentity','revokeBrandIdentity','requestBrandIdentityExtraction',
+  'readBrandDna','updateBrandDnaField','approveBrandDna','buildBrandDna','readBrandDnaBuildJob','cancelBrandDnaBuild','resolveBrandDnaProposal',
   'listWorks',
   'createWork',
   'updateWork',
@@ -123,6 +124,16 @@ const METHODS = [
   'startAccountLogin',
   'logoutAccount',
   'listAccountModels',
+  'runtimeSetupCatalog',
+  'detectRuntime',
+  'startRuntimeInstall',
+  'cancelRuntimeInstall',
+  'startBrowserLogin',
+  'reopenLoginUrl',
+  'cancelBrowserLogin',
+  'getRuntimeSetupJob',
+  'getRuntimeSetupTranscript',
+  'diagnoseRuntimes',
   'getAcpTierModels',
   'setAcpTierModel',
   'setTeamMemberModel',
@@ -149,6 +160,8 @@ const METHODS = [
 const AGENT_EVENT_CHANNEL = 'latte:agent-event';
 const CHAT_EVENT_CHANNEL = 'latte:chat-event';
 const COORDINATION_EVENT_CHANNEL = 'latte:coordination-event';
+// Keep in sync with RUNTIME_SETUP_EVENT_CHANNEL in electron/ipc/channels.ts.
+const RUNTIME_SETUP_EVENT_CHANNEL = 'latte:runtime-setup-event';
 const UNSAVED_CHANNEL = 'latte:unsaved';
 const WINDOW_CHANNEL = 'latte:window';
 const WINDOW_STATE_CHANNEL = 'latte:window-state';
@@ -216,6 +229,19 @@ api.onCoordinationEvent = (callback) => {
   };
   ipcRenderer.on(COORDINATION_EVENT_CHANNEL, listener);
   return () => ipcRenderer.removeListener(COORDINATION_EVENT_CHANNEL, listener);
+};
+
+// Onboarding sin terminal: install/login job snapshots. Codes only; the renderer owns the words.
+api.onRuntimeSetupEvent = (callback) => {
+  if (typeof callback !== 'function') throw new TypeError('onRuntimeSetupEvent expects a function');
+  const listener = (_event, payload) => {
+    if (!payload || (payload.kind !== 'install' && payload.kind !== 'login')) return;
+    if (typeof payload.jobId !== 'string' || typeof payload.runtime !== 'string') return;
+    if (!payload.state || typeof payload.state.state !== 'string') return;
+    callback(payload);
+  };
+  ipcRenderer.on(RUNTIME_SETUP_EVENT_CHANNEL, listener);
+  return () => ipcRenderer.removeListener(RUNTIME_SETUP_EVENT_CHANNEL, listener);
 };
 
 api.checkForUpdate = () => ipcRenderer.invoke(UPDATE_CHECK_CHANNEL).then(unwrap);

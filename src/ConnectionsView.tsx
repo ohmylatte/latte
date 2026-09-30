@@ -6,6 +6,8 @@ import { hourOf, minutesSince } from './coordination/time';
 import { Loading } from './brand-marks';
 import { api } from './browser-api';
 import { displayError } from './App';
+import { useModalA11y } from './useModalA11y';
+import { useConfirm } from './useConfirm';
 import type { Brand, ChatRuntime, Connection, ConnectionInput, ConnectionScope, ConnectionState, ImportableConnection } from '../shared/contracts';
 
 /**
@@ -100,6 +102,34 @@ export function ConnectionsView({ onNotice, onError }: {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<AddDraft | null>(null);
   const [needsClientId, setNeedsClientId] = useState(false);
+  /**
+   * 2.0: borrar una conexión y sacarla del registro eran `window.confirm`.
+   * Ahora son diálogo de la app, con el MISMO texto y el botón nombrado con la
+   * acción — y sólo escriben cuando la persona confirma.
+   */
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
+  const removeConnection = async (connection: Connection) => {
+    const ok = await askConfirm({
+      title: t('confirm.connection.title'),
+      body: t('connections.confirmDelete', { name: connection.label }),
+      confirmLabel: t('connections.delete', { name: connection.label }),
+      destructive: true,
+    });
+    if (!ok) return;
+    setSelectedId(null);
+    await run(() => api.deleteConnection(connection.id), t('connections.deleted', { name: connection.label }));
+  };
+  const forgetServer = async (entry: ImportableConnection) => {
+    if (entry.runtime !== 'claude' && entry.runtime !== 'codex') return;
+    const ok = await askConfirm({
+      title: t('confirm.registry.title'),
+      body: t('connections.forget', { name: entry.name }),
+      confirmLabel: t('confirm.registry.action'),
+      destructive: true,
+    });
+    if (!ok) return;
+    await run(() => api.removeMcpServer(entry.runtime as 'claude' | 'codex', entry.name), t('connections.forgotten', { name: entry.name, runtime: RUNTIME_NAME[entry.runtime] ?? entry.runtime }));
+  };
 
   const load = async () => {
     try {
@@ -144,17 +174,9 @@ export function ConnectionsView({ onNotice, onError }: {
       onAdd={() => { setNeedsClientId(false); setDraft({ url: '', name: '' }); }}
       onReconnect={connection => void run(() => api.reconnectConnection(connection.id), t('connections.connected', { name: connection.label }))}
       onDisconnect={connection => void run(() => api.disconnectConnection(connection.id), t('connections.disconnected', { name: connection.label }))}
-      onDelete={connection => {
-        if (!window.confirm(t('connections.confirmDelete', { name: connection.label }))) return;
-        setSelectedId(null);
-        void run(() => api.deleteConnection(connection.id), t('connections.deleted', { name: connection.label }));
-      }}
+      onDelete={connection => void removeConnection(connection)}
       onImport={entry => { setNeedsClientId(false); setDraft({ url: entry.url, name: entry.name }); }}
-      onForget={entry => {
-        if (entry.runtime !== 'claude' && entry.runtime !== 'codex') return;
-        if (!window.confirm(t('connections.forget', { name: entry.name }))) return;
-        void run(() => api.removeMcpServer(entry.runtime as 'claude' | 'codex', entry.name), t('connections.forgotten', { name: entry.name, runtime: RUNTIME_NAME[entry.runtime] ?? entry.runtime }));
-      }}
+      onForget={entry => void forgetServer(entry)}
       onRefresh={() => void load()} />
     {draft && <AddConnectionDialog
       brands={brands}
@@ -163,6 +185,7 @@ export function ConnectionsView({ onNotice, onError }: {
       needsClientId={needsClientId}
       onCancel={() => { setDraft(null); setNeedsClientId(false); }}
       onConnect={input => void run(() => api.connectConnection(input), t('connections.connected', { name: input.name }))} />}
+    {confirmDialog}
   </>;
 }
 
@@ -204,7 +227,7 @@ export function ConnectionsContent(props: ConnectionsContentProps) {
       <button className="subtle" disabled={busy} onClick={props.onRefresh}><RefreshCw size={13} />{t('connections.refresh')}</button>
     </div>
 
-    {connections === null && <p className="footnote"><Loading size={16} /> {t('connections.loading')}</p>}
+    {connections === null && <p className="footnote"><Loading size={32} label={t('connections.loading')} /> {t('connections.loading')}</p>}
     {connections !== null && rows.length === 0 && <p className="footnote">{t('connections.empty')}</p>}
 
     {rows.length > 0 && <div className="connections-list">
@@ -322,9 +345,10 @@ export function AddConnectionDialog({ brands, initial, busy, needsClientId, onCa
   const ready = /^https?:\/\//.test(url.trim())
     && /^[a-z0-9][a-z0-9-]{0,47}$/.test(finalName)
     && (scope === 'global' || Boolean(brandId));
+  const dialogRef = useModalA11y<HTMLElement>(true, onCancel, busy);
 
   return <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
-    <section role="dialog" aria-modal="true" aria-labelledby="add-connection-title" className="modal">
+    <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="add-connection-title" className="modal">
       <div className="modal-head">
         <div><div className="document-kicker"><Plug size={13} />{t('connections.title')}</div><h2 id="add-connection-title">{t('connections.add')}</h2></div>
         <button className="modal-close" aria-label={t('connections.close')} onClick={onCancel}><X size={20} /></button>

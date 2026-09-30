@@ -3,12 +3,14 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ArrowLeft, HardDrive, Info, Plug, SlidersHorizontal, Sparkles } from 'lucide-react';
 import type { AppInfo, CoordinationGlobalBudgetView } from '../shared/contracts';
 import { api, isDesktop } from './browser-api';
+import { ConnectAI } from './ConnectAI';
 import { ProvidersView } from './ProvidersView';
 import { ProfilesView } from './ProfilesView';
 import { SkillsView } from './SkillsView';
 import { ConnectionsView } from './ConnectionsView';
 import { useI18n } from './i18n';
 import type { LatteMode } from './TeamPanel';
+import { useConfirm } from './useConfirm';
 
 export type SettingsSection = 'agents' | 'profiles' | 'skills' | 'connections' | 'workspace' | 'language' | 'advanced';
 
@@ -42,13 +44,22 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
 }) {
   const { t } = useI18n();
   const [profileDirty,setProfileDirty]=useState(false);
-  const canLeave=()=>!profileDirty||window.confirm(t('settings.unsavedProfile'));
-  const navigate=(next:SettingsSection)=>{if(next===section)return;if(canLeave()){setProfileDirty(false);onSection(next);}};
+  /**
+   * 2.0: salir de un perfil con cambios sin guardar era `window.confirm`, un
+   * diálogo nativo que el teclado no puede operar. El guardado recibe la
+   * acción y la corre recién cuando la persona confirma.
+   */
+  const { confirm: askConfirm, dialog: confirmDialog } = useConfirm();
+  const canLeave=(action:()=>void)=>{
+    if(!profileDirty)return action();
+    void askConfirm({title:t('confirm.leave.title'),body:t('settings.unsavedProfile'),confirmLabel:t('confirm.leave.action'),destructive:true}).then(ok=>{if(ok)action();});
+  };
+  const navigate=(next:SettingsSection)=>{if(next===section)return;canLeave(()=>{setProfileDirty(false);onSection(next);});};
   useEffect(()=>{onProfileDirtyChange(profileDirty);},[profileDirty]);
   useEffect(()=>()=>onProfileDirtyChange(false),[]);
   return <div className="settings-shell">
     <header className="settings-topbar">
-      <button className="settings-back" onClick={()=>{if(canLeave())onClose();}}><ArrowLeft size={16} />{t('settings.back')}</button>
+      <button className="settings-back" onClick={()=>canLeave(()=>onClose())}><ArrowLeft size={16} />{t('settings.back')}</button>
       <h1>{t('settings.title')}</h1>
       <span className="settings-scope">{t('settings.scope')}</span>
       {controls}
@@ -65,10 +76,7 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
     <main className="settings-main">
       {(error || notice) && <div role={error ? 'alert' : 'status'} className={'message ' + (error ? 'error' : '')}><span>{error || notice}</span><button aria-label={t('settings.dismiss')} onClick={onDismiss}>×</button></div>}
       {section === 'agents' && <section className="settings-section">
-        <h2>{t('settings.agents')}</h2>
-        <p className="settings-lead">{t('settings.agentsLead')}</p>
-        <ProvidersView onChanged={onChanged} onNotice={onNotice} onError={onError} />
-        {terminal}
+        <ConnectAI onError={onError} advanced={<><ProvidersView onChanged={onChanged} onNotice={onNotice} onError={onError} />{terminal}</>} />
       </section>}
       {section === 'profiles' && <ProfilesView onChanged={onChanged} onError={onError} onNotice={onNotice} onDirtyChange={setProfileDirty} />}
       {section === t('ui.auto.390') && <SkillsView onNotice={onNotice} onError={onError} />}
@@ -78,6 +86,7 @@ export function SettingsScreen({ onProfileDirtyChange, controls, section, onSect
       {section === 'language' && <LanguageSection />}
       {section === 'advanced' && <><ModeSection mode={mode} onModeChange={onModeChange} /><CoordinationSwitchSection onError={onError} /><CoordinationGlobalBudgetSection onError={onError} /></>}
     </main>
+    {confirmDialog}
   </div>;
 }
 
@@ -217,7 +226,8 @@ function CoordinationGlobalBudgetSection({ onError }: { onError: (text: string) 
       <label>{t('coordination.globalBudget.setLabel')}
         <input className="coordination-global-budget-input" type="number" min={1} value={draft} onChange={e => setDraft(e.target.value)} />
       </label>
-      <button className="coordination-global-budget-save" disabled={saving || !draft.trim()} onClick={save}>{t('coordination.globalBudget.save')}</button>
+    </div>
+    <div className="settings-actions">
       {/* `budget == null` era un guard MUERTO: quedó de cuando el getter
           devolvía `CoordinationBudget | null`. Desde que devuelve la vista de
           tres estados, ese objeto nunca es `null`, así que la condición era
@@ -225,6 +235,7 @@ function CoordinationGlobalBudgetSection({ onError }: { onError: (text: string) 
           `invalid` SÍ lo habilita: ése es justo el estado del que hay que
           poder salir. */}
       <button className="coordination-global-budget-clear" disabled={saving || budget.state === 'unset'} onClick={clear}>{t('coordination.globalBudget.clear')}</button>
+      <button className="coordination-global-budget-save primary" disabled={saving || !draft.trim()} onClick={save}>{t('coordination.globalBudget.save')}</button>
     </div>
   </section>;
 }

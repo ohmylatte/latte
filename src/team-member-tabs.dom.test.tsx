@@ -100,13 +100,19 @@ describe('C2: la pestaña de miembro tiene la MISMA anatomía que la lista', () 
     expect(container.querySelector('.team-tab-last')!.textContent).toBe('Sin novedades');
   });
 
-  /** El punto es el estado: trabajando en el acento, reportó y ocioso en verde. */
-  it('el punto dice el estado sin una sola palabra', () => {
+  /**
+   * El estado es UNA señal: M3 le dio el hilo de vapor a quien está
+   * trabajando (despacho en vuelo) y el punto a todo lo demás. Las dos cosas
+   * a la vez es exactamente lo que el criterio 5 evita.
+   */
+  it('una sola marca: el vapor para el que trabaja, el punto para el que no', () => {
     const working = mount({ coordinationRun: run(), coordinationLog: [dispatchRow({ status: 'running', outcome: null, summaryPreview: null, settledAt: null })] });
-    expect(working.container.querySelector('.team-tab .coord-dot-live')).not.toBeNull();
+    expect(working.container.querySelector('.team-tab .team-steam')).not.toBeNull();
+    expect(working.container.querySelector('.team-tab .coord-dot')).toBeNull();
     cleanup();
     const reported = mount({ coordinationRun: run(), coordinationLog: [dispatchRow()] });
     expect(reported.container.querySelector('.team-tab .coord-dot-ok')).not.toBeNull();
+    expect(reported.container.querySelector('.team-tab .team-steam')).toBeNull();
   });
 
   /**
@@ -139,11 +145,12 @@ describe('C2: el chip de coordinación no vive más en la pestaña', () => {
   const wired = (patch: Partial<TeamPanelProps>) => mount({ coordinationSupport: [support()], ...patch });
   const chip = (c: HTMLElement) => c.querySelector('.team-tab .team-member-state');
 
-  it('con el run vivo y el miembro con proceso, tampoco: el punto ya lo dice', () => {
+  it('con el run vivo y el miembro con proceso, tampoco: el vapor ya lo dice', () => {
     const { container } = wired({ coordinationRun: run(), coordinationLog: [dispatchRow({ status: 'running', outcome: null, summaryPreview: null, settledAt: null })] });
     expect(chip(container)).toBeNull();
     expect(container.textContent).not.toContain('arrancando');
-    expect(container.querySelector('.team-tab .coord-dot-live')).not.toBeNull();
+    expect(container.querySelector('.team-tab .team-steam')).not.toBeNull();
+    expect(container.querySelector('.team-tab .coord-dot')).toBeNull();
   });
 
   it('con el run cancelado no se muestra nada: nadie está arrancando nada', () => {

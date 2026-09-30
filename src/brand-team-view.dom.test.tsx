@@ -113,6 +113,23 @@ describe('Marca → Equipo', () => {
     expect(container.querySelector('[data-member-id="bm_two"] .coord-row-line')!.textContent).toBe('Claude Code · on 2 works');
     expect(container.querySelector('[data-member-id="bm_old"] .roster-call')!.textContent).toBe('Call up');
   });
+
+  it('el diálogo de "Sumar al equipo" trae la a11y compartida: role/aria-modal, foco inicial, Tab atrapado y Escape cierra', () => {
+    ui.locale = 'es-AR';
+    const { container } = render(createElement(BrandTeamView, {
+      brandName: 'Casa', roster: [], work, busy: false, picker,
+      onAdd: async () => {},
+    }));
+    fireEvent.click(container.querySelector('.coord-add')!);
+    const dialog = container.querySelector('[role="dialog"]')!;
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(dialog.getAttribute('aria-labelledby')).toBe('roster-add-title');
+    // Focus lands inside the dialog as soon as it opens.
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    // Escape closes it (the close button disappears with the dialog).
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
 });
 
 describe('Marca → Equipo: el coordinador habitual', () => {

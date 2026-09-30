@@ -91,6 +91,8 @@ const REGION: Record<(typeof VIEWS)[number], string> = {
   // Marca → Equipo (esquema 14): el plantel de la marca.
   roster: '.brand-team-view',
   identity: '.identity-view',
+  // Marca → ADN (Entrega 1B): la ficha de la marca y sus propuestas.
+  dna: '.dna-view',
   decisions: '.document-scroll',
   resultados: '.resultados-view',
 };
@@ -106,6 +108,7 @@ const CONTROL: Record<(typeof VIEWS)[number], RegExp> = {
   memory: /^Memoria/,
   roster: /^Equipo/,
   identity: /^Identidad/,
+  dna: /^ADN/,
   decisions: /^Decisiones/,
   resultados: /^Resultados/,
 };
@@ -228,44 +231,47 @@ describe('Contexto view', () => {
     await api.saveBrandContext(brand.id, 'Contexto viejo', null);
     await api.saveBrandContext(brand.id, 'Contexto nuevo', null);
 
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    try {
-      const { container } = mount();
-      const [button] = await screen.findAllByRole('button', { name: 'Contexto' });
-      fireEvent.click(button);
+    const { container } = mount();
+    const [button] = await screen.findAllByRole('button', { name: 'Contexto' });
+    fireEvent.click(button);
 
-      const history = await waitFor(() => {
-        const found = container.querySelector('.context-history');
-        expect(found).not.toBeNull();
-        return found as HTMLElement;
-      });
-      // Newest first: the value that is live now comes before the one it replaced.
-      expect(history.textContent).toContain('Contexto nuevo');
-      expect(history.textContent).toContain('Contexto viejo');
+    const history = await waitFor(() => {
+      const found = container.querySelector('.context-history');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    // Newest first: the value that is live now comes before the one it replaced.
+    expect(history.textContent).toContain('Contexto nuevo');
+    expect(history.textContent).toContain('Contexto viejo');
 
-      const rows = [...history.querySelectorAll('li')];
-      // The newest revision IS the live context. Restoring it would record
-      // nothing and change nothing, so it is annotated instead of offering a
-      // button that silently does nothing.
-      expect(rows[0].textContent).toContain('Contexto nuevo');
-      expect(rows[0].textContent).toContain('Ya es el contexto actual');
-      expect(rows[0].querySelector('button')).toBeNull();
+    const rows = [...history.querySelectorAll('li')];
+    // The newest revision IS the live context. Restoring it would record
+    // nothing and change nothing, so it is annotated instead of offering a
+    // button that silently does nothing.
+    expect(rows[0].textContent).toContain('Contexto nuevo');
+    expect(rows[0].textContent).toContain('Ya es el contexto actual');
+    expect(rows[0].querySelector('button')).toBeNull();
 
-      // The entry that brings back the older value is a real action.
-      const older = rows.find((row) => row.textContent?.includes('Contexto viejo'));
-      const restoreButton = older?.querySelector('button');
-      expect(restoreButton).not.toBeNull();
-      fireEvent.click(restoreButton as HTMLButtonElement);
+    // The entry that brings back the older value is a real action.
+    const older = rows.find((row) => row.textContent?.includes('Contexto viejo'));
+    const restoreButton = older?.querySelector('button');
+    expect(restoreButton).not.toBeNull();
+    fireEvent.click(restoreButton as HTMLButtonElement);
 
-      await waitFor(async () => {
-        expect((await api.listBrands()).find(b => b.id === brand.id)?.context).toBe('Contexto viejo');
-      });
-      // The restore is itself recorded, so it can be undone the same way.
-      expect((await api.listBrandContextRevisions(brand.id))[0]).toMatchObject({ source: 'restore', content: 'Contexto viejo' });
-      expect(confirm).toHaveBeenCalled();
-    } finally {
-      confirm.mockRestore();
-    }
+    // 2.0: restaurar avisa con el diálogo de la app, con el MISMO texto que
+    // tenía, y sólo escribe cuando la persona confirma.
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toContain('¿Restaurar esta versión? El contexto actual queda en el historial.');
+    const confirmRestore = [...dialog.querySelectorAll('button')].find(b => b.textContent?.trim() === 'Restaurar');
+    expect(confirmRestore, 'el botón de confirmar no nombra la acción').toBeTruthy();
+    fireEvent.click(confirmRestore!);
+
+    await waitFor(async () => {
+      expect((await api.listBrands()).find(b => b.id === brand.id)?.context).toBe('Contexto viejo');
+    });
+    // The restore is itself recorded, so it can be undone the same way.
+    expect((await api.listBrandContextRevisions(brand.id))[0]).toMatchObject({ source: 'restore', content: 'Contexto viejo' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
   it('never wipes on save, and clears only when the confirmation is accepted', async () => {
@@ -273,29 +279,34 @@ describe('Contexto view', () => {
     const brand = (await api.listBrands())[0];
     await api.saveBrandContext(brand.id, 'No se toca', null);
 
-    mount();
+    const { container } = mount();
     const [navButton] = await screen.findAllByRole('button', { name: 'Contexto' });
     fireEvent.click(navButton);
     const editor = await screen.findByLabelText(/CONTEXTO DE/) as HTMLTextAreaElement;
     fireEvent.change(editor, { target: { value: '   ' } });
 
     // A declined confirmation leaves the context exactly where it was.
-    const declined = vi.spyOn(window, 'confirm').mockReturnValue(false);
     fireEvent.click(screen.getByRole('button', { name: 'Vaciar contexto' }));
-    await waitFor(async () => {
-      expect((await api.listBrands()).find(b => b.id === brand.id)?.context).toBe('No se toca');
-    });
-    declined.mockRestore();
+    const declined = await screen.findByRole('dialog');
+    expect(declined.textContent).toContain('¿Vaciar el contexto de marca? Queda en el historial y podés restaurarlo.');
+    fireEvent.click([...declined.querySelectorAll('button')].find(b => b.textContent?.trim() === 'Cancelar')!);
+    await waitFor(() => expect(container.querySelector('[role="dialog"]')).toBeNull());
+    expect((await api.listBrands()).find(b => b.id === brand.id)?.context).toBe('No se toca');
 
-    const accepted = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    // 2.0: el botón de confirmar lleva el nombre de la acción, y recién ahí se
+    // escribe — antes lo decidía un `window.confirm` que ni el teclado lee.
+    fireEvent.click(screen.getByRole('button', { name: 'Vaciar contexto' }));
+    const accepted = await screen.findByRole('dialog');
+    const confirmClear = [...accepted.querySelectorAll('button')].find(b => b.textContent?.trim() === 'Vaciar contexto');
+    expect(confirmClear, 'el botón de confirmar no nombra la acción').toBeTruthy();
+    fireEvent.click(confirmClear!);
     try {
-      fireEvent.click(screen.getByRole('button', { name: 'Vaciar contexto' }));
       await waitFor(async () => {
         expect((await api.listBrands()).find(b => b.id === brand.id)?.context).toBe('');
       });
       expect((await api.listBrandContextRevisions(brand.id))[0]).toMatchObject({ source: 'clear', content: '' });
     } finally {
-      accepted.mockRestore();
+      // Nothing to restore: the dialog is the app's own now, not a native stub.
     }
   });
 

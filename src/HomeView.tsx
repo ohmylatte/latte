@@ -1,7 +1,9 @@
 import { Plus } from 'lucide-react';
-import type { Brand, Decision, DocumentState, WorkDocument } from '../shared/contracts';
+import type { AgentRole, Brand, BrandDnaBuildJob, BrandDnaView, Decision, DocumentState, WorkDocument } from '../shared/contracts';
 import { translate as t } from './i18n';
 import { homeSummary, type HomeSinceLastVisitInput } from './home-summary';
+import { firstSteps, firstStepsProgress, type FirstStepId } from './first-steps';
+import { HomeStart } from './HomeStart';
 
 /**
  * Inicio: the decision-first landing, before any work is open.
@@ -57,6 +59,30 @@ export interface HomeViewProps {
   onOpenContext: () => void;
   onNewWork: () => void;
   onAddBrand: () => void;
+  /**
+   * ADN · H (aditivo como `coordinationSinceLastVisit`): `undefined` en el
+   * contenedor significa que Inicio no cableó el ADN, y la caja "¿Qué querés
+   * hacer hoy…?" y la tarjeta Primeros pasos no se dibujan — el resto de la
+   * superficie queda exactamente como estaba.
+   */
+  dna?: BrandDnaView | null;
+  /** Los roles para nombrar el que la clasificación recomienda. */
+  roles?: readonly AgentRole[];
+  /** La persona abrió el Embudo de esta marca: el cuarto paso, con el dato. */
+  funnelOpened?: boolean;
+  /** La tarjeta fue cerrada (preferencia de vista, persistida). */
+  firstStepsClosed?: boolean;
+  /** Enviar la caja: crea el trabajo con ese texto como brief. `workTypeId` es el tipo de la idea tocada, cuando la hay. */
+  onStartWork?: (text: string, workTypeId?: string) => void;
+  /** A dónde lleva "Probalo": el ADN, el Embudo, Documentos. */
+  onGoTo?: (target: 'dna' | 'funnel' | 'documents') => void;
+  onCloseFirstSteps?: () => void;
+  /** 3 · ideas: sin la prop no hay botón, y Inicio queda como siempre. */
+  onRefreshIdeas?: () => void;
+  /** El build de ideas en vuelo (estado de carga honesto, con su paso real). */
+  ideasJob?: BrandDnaBuildJob | null;
+  /** `null` = chequeando; `false` = sin IA, el botón lo dice. */
+  ideasReady?: boolean | null;
 }
 
 export function HomeView(props: HomeViewProps) {
@@ -85,7 +111,49 @@ export function HomeView(props: HomeViewProps) {
   const showSinceLastVisit = Boolean(props.brand) && summary.sinceLastVisitRows.length > 0;
   const sinceTitleKey = summary.sinceLastVisitRows.every((row) => row.sinceVisit) ? 'home.since.title' : 'home.since.titleNoVisit';
 
+  /**
+   * ADN · H: la caja "¿Qué querés hacer hoy…?" sólo existe si el contenedor la
+   * cableó; y la tarjeta de Primeros pasos se va sola cuando los cuatro pasos
+   * están hechos, o cuando la persona la cerró.
+   */
+  const showStart = Boolean(props.brand && props.onStartWork && props.onGoTo);
+  const startSteps = showStart
+    ? firstSteps({
+        dnaApproved: Boolean(props.dna?.approved),
+        hasWork: props.works.length > 0,
+        hasApprovedDocument: props.documents.some((document) => document.status === 'approved'),
+        funnelOpened: Boolean(props.funnelOpened),
+      })
+    : null;
+  const visibleSteps = startSteps && !props.firstStepsClosed && !firstStepsProgress(startSteps).complete ? startSteps : null;
+  const tryStep = (id: FirstStepId) => {
+    if (id === 'work') return props.onNewWork();
+    if (id === 'dna') return props.onGoTo?.('dna');
+    if (id === 'funnel') return props.onGoTo?.('funnel');
+    // Aprobar una pieza: lo primero que pide revisión, y si no hay nada en
+    // revisión, la cola donde eso se resuelve.
+    const review = summary.reviewRows[0];
+    if (review) return props.onOpenDocument(review.id);
+    return props.onGoTo?.('documents');
+  };
+
   return <section className="home-view" role="region" aria-label={t('home.region')}>
+    {showStart && props.brand && (
+      <HomeStart
+        brand={props.brand}
+        dna={props.dna ?? null}
+        decisions={props.decisions.length}
+        roles={props.roles ?? []}
+        steps={visibleSteps}
+        onSend={props.onStartWork!}
+        onOpenCatalog={props.onNewWork}
+        onTryStep={tryStep}
+        onCloseSteps={() => props.onCloseFirstSteps?.()}
+        onRefreshIdeas={props.onRefreshIdeas}
+        ideasJob={props.ideasJob ?? null}
+        ideasReady={props.ideasReady}
+      />
+    )}
     <div className="home-next" data-step={summary.step}>
       <strong>{t('orientation.next')}</strong>
       <span>{t(summary.stepKey, summary.stepParams)}</span>

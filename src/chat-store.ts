@@ -220,3 +220,33 @@ export function useChatMessagesOf(store: ChatStore, chatIds: readonly string[]):
   }, [store, key]);
   return useSyncExternalStore(subscribe, snapshot, () => NO_CHATS);
 }
+
+const NO_STATUSES: Readonly<Record<string, ChatStatus>> = {};
+
+/**
+ * M3: el ESTADO de varios chats a la vez, por id.
+ *
+ * La barra lateral necesita saber, por trabajo, si alguien está trabajando
+ * ahora mismo para dibujar su hilo de vapor —el punto verde decía "conectado",
+ * que no es lo mismo—. Mismo truco que `useChatMessagesOf`: la referencia es
+ * estable mientras ningún estado cambie, así React no redibuja de más.
+ */
+export function useChatStatuses(store: ChatStore, chatIds: readonly string[]): Readonly<Record<string, ChatStatus>> {
+  const key = chatIds.join(' ');
+  const cache = useRef<{ key: string; value: Record<string, ChatStatus> } | null>(null);
+  const subscribe = useCallback((listener: () => void) => store.subscribe(listener), [store]);
+  const snapshot = useCallback(() => {
+    const ids = key ? key.split(' ') : [];
+    const previous = cache.current;
+    let same = previous !== null && previous.key === key;
+    const next: Record<string, ChatStatus> = {};
+    for (const id of ids) {
+      next[id] = store.get(id).status;
+      if (same && previous!.value[id] !== next[id]) same = false;
+    }
+    if (same) return previous!.value;
+    cache.current = { key, value: next };
+    return next;
+  }, [store, key]);
+  return useSyncExternalStore(subscribe, snapshot, () => NO_STATUSES);
+}

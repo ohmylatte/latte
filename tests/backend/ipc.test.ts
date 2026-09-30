@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
-import { API_ARITY, API_METHODS, channelFor, type IpcEnvelope } from '../../electron/ipc/channels';
+import { API_ARITY, API_METHODS, channelFor, RUNTIME_SETUP_EVENT_CHANNEL, type IpcEnvelope } from '../../electron/ipc/channels';
 import { registerIpc, toFailure } from '../../electron/ipc/register';
 import { NotFoundError, ValidationError } from '../../electron/core/errors';
 import type { BackendApi } from '../../electron/services/latteService';
@@ -15,6 +15,23 @@ function preloadMethods(): string[] {
 }
 
 describe('IPC surface', () => {
+  it('exposes the onboarding-sin-terminal engine (brief 2026-09-27) with fixed arities and its own event channel', () => {
+    const expected: Record<string, number> = {
+      runtimeSetupCatalog: 0, detectRuntime: 1, startRuntimeInstall: 2, cancelRuntimeInstall: 1,
+      startBrowserLogin: 2, reopenLoginUrl: 1, cancelBrowserLogin: 1,
+      getRuntimeSetupJob: 1, getRuntimeSetupTranscript: 1, diagnoseRuntimes: 0,
+    };
+    for (const [method, arity] of Object.entries(expected)) {
+      expect(API_METHODS).toContain(method);
+      expect(API_ARITY[method as keyof typeof API_ARITY]).toBe(arity);
+    }
+    const preload = fs.readFileSync(path.resolve(__dirname, '../../electron/preload.cjs'), 'utf8');
+    expect(preload).toContain(`const RUNTIME_SETUP_EVENT_CHANNEL = '${RUNTIME_SETUP_EVENT_CHANNEL}';`);
+    expect(preload).toContain('api.onRuntimeSetupEvent =');
+    // The event is a subscription, never an invokable method.
+    expect(API_METHODS).not.toContain('onRuntimeSetupEvent');
+  });
+
   it('preload exposes exactly the methods the main process registers', () => {
     expect(preloadMethods()).toEqual([...API_METHODS]);
     expect(Object.keys(API_ARITY).sort()).toEqual([...API_METHODS].sort());

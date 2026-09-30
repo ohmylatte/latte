@@ -2,6 +2,7 @@ import { translate as t } from './i18n';
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { KnowledgeOrigin } from './KnowledgeScope';
+import { PromptDialog } from './PromptDialog';
 import type {
   AgentRole, Decision, DecisionAuthorityMode, HandoffRequest, TeamMember, Work, WorkPermissionMode,
 } from '../shared/contracts';
@@ -97,6 +98,9 @@ function resolveRoleName(roleId: string, roles: readonly AgentRole[], team: read
  * decisiones de marca y quién puede hacer qué.
  */
 export function DecisionsView(props: DecisionsViewProps) {
+  // The "Editar y agregar" text used to come from a blocking `window.prompt`;
+  // now it opens this dialog, keyed by the decision's own id and starting text.
+  const [editingDecision, setEditingDecision] = useState<{ id: string; text: string } | null>(null);
   return <div className="document-scroll">
     <div className="document-kicker">{t('decision.kicker')}</div>
     <h1>{t('decision.headline.first')}<br />{t('decision.headline.second')}</h1>
@@ -130,7 +134,7 @@ export function DecisionsView(props: DecisionsViewProps) {
             <small>{props.formatDate(d.createdAt)}</small>
             {d.status === 'pending' && <div className="chat-card-actions">
               <button className="primary" onClick={() => props.onApprove(d.id)}>{t('decision.add')}</button>
-              <button onClick={() => { const edited = window.prompt(t('decision.editAdd'), d.text); if (edited?.trim()) props.onEditApprove(d.id, edited.trim()); }}>{t('decision.editAdd')}</button>
+              <button onClick={() => setEditingDecision({ id: d.id, text: d.text })}>{t('decision.editAdd')}</button>
               <button onClick={() => props.onReject(d.id)}>{t('decision.discard')}</button>
             </div>}
             {d.status === 'approved' && d.source.chatId && <button onClick={() => props.onArchive(d.id)}>{t('decision.undo')}</button>}
@@ -152,5 +156,6 @@ export function DecisionsView(props: DecisionsViewProps) {
             {props.onAcceptHandoff && h.known && <button className="decision-handoff-accept" onClick={() => props.onAcceptHandoff!(h)}>{t('decision.permissions.handoffs.accept')}</button>}
           </li>)}</ul>}
     </section>}
+    {editingDecision && <PromptDialog titleId="decision-edit-title" title={t('decision.editAdd')} label={t('decision.editAdd.label')} fieldId="decision-edit-field" initialValue={editingDecision.text} multiline submitLabel={t('decision.editAdd')} busy={props.busy} validate={v => v ? null : t('decision.editAdd.required')} onSubmit={text => { const id = editingDecision.id; setEditingDecision(null); props.onEditApprove(id, text); }} onCancel={() => setEditingDecision(null)} />}
   </div>;
 }

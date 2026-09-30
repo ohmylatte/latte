@@ -146,6 +146,23 @@ describe('Agregar conexión: un diálogo, con el alcance adentro', () => {
     expect(within(modal).getByText(t('connections.add'))).toBeTruthy();
   });
 
+  it('trae la a11y compartida (useModalA11y): foco inicial adentro, Tab atrapado, Escape cierra', () => {
+    const onCancel = vi.fn();
+    dialog({ onCancel });
+    const modal = screen.getByRole('dialog');
+    // Focus starts on the first control (the URL field), not stranded on <body>.
+    expect(modal.contains(document.activeElement)).toBe(true);
+    // Shift+Tab from the first control wraps to the last.
+    const controls = Array.from(modal.querySelectorAll<HTMLElement>('input, select, button'))
+      .filter(el => !(el instanceof HTMLButtonElement && el.disabled));
+    controls[0]!.focus();
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(controls[controls.length - 1]);
+    // Escape calls the same onCancel the close button uses.
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it('arranca en todas las marcas y el selector de marca no existe todavía', () => {
     dialog();
     const scope = screen.getByLabelText(t('connections.scopeLabel')) as HTMLSelectElement;

@@ -121,6 +121,20 @@ describe('the Trabajo, in both interface languages', () => {
     expect(html).not.toContain('trabajo-conversar');
   });
 
+  it('renders the encargo brief as Markdown, never as a flattened raw string', () => {
+    const html = renderMarkup('es-AR', { work: work({ brief: '# Campaña nueva\n\n## Objetivo\n\nGanar mercado.' }) });
+    // The heading became a real <h1>/<h2>, not literal "#"/"##" characters
+    // sitting in a run-on paragraph.
+    expect(html).not.toContain('# Campaña nueva ## Objetivo');
+    expect(html).toMatch(/<h1[^>]*>Campaña nueva<\/h1>/);
+    expect(html).toMatch(/<h2[^>]*>Objetivo<\/h2>/);
+    expect(html).toContain('Ganar mercado.');
+    // Reuses `resumen-brief` (the clamped, faded preview `ResumenView` already
+    // has) instead of new CSS.
+    expect(html).toContain('resumen-brief');
+    expect(html).toContain('markdown');
+  });
+
   it('gates the member runtime/modelo/esfuerzo behind advanced mode, keeping permissions in both', () => {
     const simple = renderMarkup('es-AR', populated({ mode: 'simple' }));
     for (const hidden of ['Runtime', 'Modelo', 'Esfuerzo', 'OpenCode', 'Equilibrado']) expect(simple).not.toContain(hidden);

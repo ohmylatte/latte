@@ -4,6 +4,7 @@ import { ChevronDown, File, FilePlus, FilePlus2, Folder, FolderOpen, RefreshCw }
 import type { FolderEntries, FunnelStage } from '../shared/contracts';
 import { api, isDesktop } from './browser-api';
 import { STAGE_LABEL } from './document-organizer';
+import { Loading } from './brand-marks';
 
 interface Untracked { fileName: string; title: string; funnelStages?: FunnelStage[] }
 
@@ -60,10 +61,12 @@ export function FolderContents({ workId, untracked, onTrack, onImported, busy }:
     </header>
     {open && <div className="folder-body">
       {error && <p role="alert" className="explorer-warning">{t('ui.auto.192')} {error}</p>}
+      {/* M2: el panel está abierto y todavía no llegó nada —ahí la taza grande. */}
+      {!error && loading && !entries && <p className="folder-loading"><Loading size={64} label={t('folder.reading')} /></p>}
       {!error && total === 0 && !loading && <p className="stage-empty">{t('ui.auto.193')}</p>}
 
       {untracked.length > 0 && <div className="folder-group">
-        <h4>Markdown que Latte puede seguir <small>{untracked.length}</small></h4>
+        <h4>{t('folder.markdownHeading')} <small>{untracked.length}</small></h4>
         {untracked.map(f => <div key={f.fileName} className="folder-row">
           <FilePlus size={14} />
           <span>{f.fileName}{f.funnelStages?.length ? <em>{f.funnelStages.map(s => t(STAGE_LABEL[s])).join(' + ')}</em> : null}</span>
@@ -72,12 +75,12 @@ export function FolderContents({ workId, untracked, onTrack, onImported, busy }:
       </div>}
 
       {others.length > 0 && <div className="folder-group">
-        <h4>Archivos del cliente <small>{others.length}</small></h4>
+        <h4>{t('folder.clientFilesHeading')} <small>{others.length}</small></h4>
         {others.map(name => <div key={name} className="folder-row"><File size={14} /><span>{name}</span></div>)}
       </div>}
 
       {folders.length > 0 && <div className="folder-group">
-        <h4>Subcarpetas <small>{folders.length}</small></h4>
+        <h4>{t('folder.subfoldersHeading')} <small>{folders.length}</small></h4>
         {folders.map(name => <div key={name} className="folder-row"><Folder size={14} /><span>{name}/</span></div>)}
       </div>}
 

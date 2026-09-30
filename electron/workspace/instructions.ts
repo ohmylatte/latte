@@ -4,16 +4,20 @@ import { WORK_FILES } from '../core/paths';
 import {
   BRAND_MEMORY_DIR,
   BRAND_MEMORY_FILE,
+  DECISION_LINE_MAX,
   INHERITED_ARTIFACTS_INLINE_FLOOR,
   INHERITED_ARTIFACTS_INLINE_MAX,
   INHERITED_DECISIONS_INLINE_FLOOR,
   INHERITED_DECISIONS_INLINE_MAX,
+  clipLine,
   hasBrandMemory,
   renderBrandMemory,
   type BrandMemorySnapshot,
 } from './brandMemory';
 import { DELIVERABLES_DIR } from './deliverables';
 import type { BrandContextNudge, BrandContextNudgeReason } from './brandContextNudge';
+
+export { DECISION_LINE_MAX };
 
 /** E2: donde van los borradores de lo que después se publica. */
 export const DRAFTS_DIR = 'borradores';
@@ -118,7 +122,7 @@ export function renderOutcomeContext(work: Work, resultExists: boolean | undefin
 }
 
 /** The funnel, in the order a person moves through it. Mirrors FunnelStage. */
-const FUNNEL_STAGES: readonly FunnelStage[] = ['discovery', 'consideration', 'conversion', 'retention'];
+export const FUNNEL_STAGES: readonly FunnelStage[] = ['discovery', 'consideration', 'conversion', 'retention'];
 
 /** How much of the working document is echoed into the instructions. */
 const DOCUMENT_EXCERPT_CHARS = 6_000;
@@ -234,6 +238,11 @@ export interface InstructionsInput {
    * Ausente o `null`: no hay identidad aprobada y rige explicit-neutral.
    */
   identity?: { hash: string } | null;
+  /**
+   * 1B: la versión APROBADA del ADN de marca, ya proyectada en
+   * `./identidad/ADN.md`. Ausente o `null`: todavía no hay ADN aprobado.
+   */
+  dna?: { version: number } | null;
 }
 
 /** Compact receipt pointer that rides CLAUDE.md / AGENTS.md. */
@@ -287,7 +296,13 @@ const SIDE_FILES = {
   skill: (id: string) => `${WORK_FILES.metaDir}/${WORK_FILES.skillsDir}/${id}.md`,
 };
 
+/** P3: la línea que va INLINE en CLAUDE.md / AGENTS.md, recortada. */
 function decisionLine(d: Decision): string {
+  return clipLine(fullDecisionLine(d), DECISION_LINE_MAX);
+}
+
+/** La MISMA línea con el texto entero: lo que guarda `.latte/context/decisions.md`. */
+function fullDecisionLine(d: Decision): string {
   return `- ${d.createdAt.slice(0, 10)} — ${d.text.trim().replace(/\s+/g, ' ')}`;
 }
 
@@ -391,14 +406,25 @@ function renderCore(
   const decisionOverflow = Math.max(0, approvedDecisions.length - decisionsInlineMax);
   const decisionsTruncated = decisionOverflow > 0;
   const inlinedDecisions = decisionsTruncated ? approvedDecisions.slice(decisionOverflow) : approvedDecisions;
+  // P3: lo inline es la LÍNEA RECORTADA; el texto entero vive en el side file,
+  // que ahora se escribe también cuando sólo hubo que recortar (sin overflow
+  // de cantidad) — o la decisión larga quedaría perdida.
+  const clippedDecisions = inlinedDecisions.filter((d) => decisionLine(d).length < fullDecisionLine(d).length);
+  const pointer = decisionOverflow > 0
+    ? (clippedDecisions.length > 0
+      ? `- ${decisionOverflow} earlier decisions are recorded in ./${SIDE_FILES.decisions}, where the long ones above also keep their full text.`
+      : `- ${decisionOverflow} earlier decisions are recorded in ./${SIDE_FILES.decisions}.`)
+    : clippedDecisions.length > 0
+      ? `- ${clippedDecisions.length === 1 ? 'A decision above is' : `${clippedDecisions.length} decisions above are`} clipped to keep this file small: the full text is in ./${SIDE_FILES.decisions}.`
+      : '';
   const decisionLines = [
     ...inlinedDecisions.map(decisionLine),
-    ...(decisionsTruncated ? [`- ${decisionOverflow} earlier decisions are recorded in ./${SIDE_FILES.decisions}.`] : []),
+    ...(pointer ? [pointer] : []),
   ].join('\n');
-  if (decisionsTruncated) {
+  if (decisionsTruncated || clippedDecisions.length > 0) {
     files.push({
       path: SIDE_FILES.decisions,
-      content: `# Decisions already taken in this work — ${brand.name} · ${work.title}\n\n${approvedDecisions.map(decisionLine).join('\n')}\n`,
+      content: `# Decisions already taken in this work — ${brand.name} · ${work.title}\n\n${approvedDecisions.map(fullDecisionLine).join('\n')}\n`,
     });
   }
 
@@ -496,6 +522,7 @@ function renderCore(
     `- When a PDF or DOCX is asked for, the file is the answer, not a description of it, and it is not done until the file exists (in ./${DRAFTS_DIR}/ or published in ./${DELIVERABLES_DIR}/). Do not conclude that from what you intended or planned: after writing it, check that it is there and not empty (list the folder or read its size), then give its relative path (in a team run, in \`files\` when you report). If the check fails, say so; never report a file you did not verify.`,
     '- A deliverable file holds only the finished piece for the client: no internal reasoning, thinking notes, plans or instructions to yourself.',
     identityLine(input.identity ?? null),
+    dnaLine(input.dna ?? null),
     '- Handoff: give the relative path, checks actually performed and remaining limitations, then direct the human to Entregables / Deliverables for review. If no agent tool is available for linking, ask the human to use Encargo > Resultado esperado / Expected output > Editar / Edit in the desktop app, select the file and choose Guardar / Save; never edit SQLite or managed metadata to link it, and do not claim it is linked until confirmed. File creation, QA, human approval and result linking are separate steps.',
     '',
     `- Each tracked file listed above is a deliverable of its own. Write in the one your task belongs to; \`./${WORK_FILES.brief}\` holds the ask, not every result.`,
@@ -670,6 +697,21 @@ function identityLine(identity: { hash: string } | null): string {
   return identity
     ? `- Identity: ./${IDENTITY_DIR_NAME}/IDENTIDAD.md and the files next to it (the approved brand kit, sha256 \`${identity.hash.slice(0, 12)}\`). Client deliverables apply it: logo, palette, type. Latte keeps ./${IDENTITY_DIR_NAME}/ in sync; do not edit it.`
     : '- No approved brand identity: explicit-neutral. Do not invent official colours, type or a logo; a client deliverable\'s cover says there is no approved identity.';
+}
+
+/**
+ * 1B: el ADN de marca, en una línea. Con versión aprobada apunta a lo que
+ * Latte proyectó en `./identidad/ADN.md`; enseña el bloque `latte-dna` con el
+ * que se propone una corrección — el sí es de la persona, nunca se cambia un
+ * hecho de marca en silencio (eso lo dice el pack). Corta a propósito: este
+ * bloque de Working rules no se recorta jamás, así que cada carácter que suma
+ * es presupuesto de por vida contra el techo de 20.000.
+ */
+function dnaLine(dna: { version: number } | null): string {
+  const propose = 'When the human corrects the brand, propose it with one fenced `latte-dna` JSON block: `field`, `next`, `reason`, `source` (`correction`/`document`) and a stable `clientRequestId`.';
+  return dna
+    ? `- Brand DNA: ./${IDENTITY_DIR_NAME}/ADN.md is the approved structured identity of this brand (version ${dna.version}): tone, audience, words, claims, colours. Apply it; \`assumption: yes\` values are unconfirmed. Latte keeps it in sync; do not edit it. ${propose}`
+    : `- No approved Brand DNA yet: do not treat any tone, word or claim as settled brand identity, and never invent one. ${propose}`;
 }
 
 /** Text-only form of renderInstructionBundle, for callers that never write the side files. */

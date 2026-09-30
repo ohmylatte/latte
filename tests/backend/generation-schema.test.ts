@@ -125,6 +125,7 @@ describe.each(ENGINES)('generation schema on %s', (engine) => {
       chatId: null,
       projectedAt: '2026-09-14T00:01:00.000Z',
       filesWritten: ['.latte/generations/gen_aaaaaaaaaaaaaaaaaaaa/context.json'],
+      dnaVersion: null,
     });
     const check = repo.insertArtifactCheck({
       id: 'gck_aaaaaaaaaaaaaaaaaaaa',

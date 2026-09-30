@@ -23,6 +23,13 @@ export interface RuntimeDetectorDeps {
   ttlMs?: number;
   lookupTimeoutMs?: number;
   versionTimeoutMs?: number;
+  /** The absolute executable Latte installed and verified (onboarding sin terminal). Tried first; a file that is gone or no longer runs is dropped. */
+  pinned?: (provider: Provider) => string | null;
+  /** Forgets a pin that points at a dead executable, so the next lookup starts from PATH and the official locations. */
+  clearPinned?: (provider: Provider) => void;
+  /** The official installers' own locations that exist, for a PATH this process has not seen yet. Tried after PATH. */
+  knownPaths?: (provider: Provider) => string[];
+  exists?: (target: string) => boolean;
 }
 
 const WINDOWS_PREFERENCE = ['.exe', '.cmd', '.bat', ''];
@@ -64,13 +71,14 @@ export class RuntimeDetector {
       const found = resolved[i];
       const label = PROVIDER_LABEL[provider];
       if (!found) {
-        return { provider, available: false, detail: `${label} not found on PATH` };
+        return { provider, available: false, code: 'not_installed', detail: `${label} not installed` };
       }
       const version = found.version ? ` ${found.version}` : '';
       if (!terminal.available) {
         return {
           provider,
           available: false,
+          code: 'terminal_unavailable',
           detail: `${label}${version} found, but the terminal backend is unavailable: ${terminal.reason ?? 'unknown reason'}`,
         };
       }
@@ -97,11 +105,36 @@ export class RuntimeDetector {
     return pending;
   }
 
+  /**
+   * Pin, then PATH, then the official installers' own folders. Every candidate
+   * is run with `--version` on every lookup: a stored path is a hint, never
+   * proof. A pin whose file is gone or that no longer runs is dropped (and
+   * forgotten); a PATH or known candidate that cannot even start is skipped.
+   * A version check that only timed out still counts: a first run under a
+   * virus scan can be slow, and the file is there.
+   */
   private async detect(provider: Provider): Promise<ResolvedRuntime | null> {
-    const executable = await this.locate(provider);
-    if (!executable) return null;
-    const version = await this.readVersion(executable);
-    return { provider, executable, version };
+    const pinned = this.deps.pinned?.(provider) ?? null;
+    if (pinned) {
+      const probe = this.pinnedIsAbsolute(pinned) && (this.deps.exists?.(pinned) ?? false) ? await this.probe(pinned) : null;
+      if (probe && probe.alive && probe.exitedCleanly) return { provider, executable: pinned, version: probe.version };
+      this.deps.clearPinned?.(provider);
+    }
+    const onPath = await this.locate(provider);
+    if (onPath) {
+      const probe = await this.probe(onPath);
+      if (probe.alive) return { provider, executable: onPath, version: probe.version };
+    }
+    for (const known of this.deps.knownPaths?.(provider) ?? []) {
+      if (known === onPath) continue;
+      const probe = await this.probe(known);
+      if (probe.alive) return { provider, executable: known, version: probe.version };
+    }
+    return null;
+  }
+
+  private pinnedIsAbsolute(pinned: string): boolean {
+    return (this.platform === 'win32' ? path.win32.isAbsolute : path.posix.isAbsolute)(pinned);
   }
 
   private async locate(command: string): Promise<string | null> {
@@ -121,16 +154,18 @@ export class RuntimeDetector {
     return [...candidates].sort((a, b) => rankWindowsCandidate(a) - rankWindowsCandidate(b))[0];
   }
 
-  private async readVersion(executable: string): Promise<string | null> {
+  /** `--version` once. `alive` = the file started; `exitedCleanly` = it answered with exit 0. */
+  private async probe(executable: string): Promise<{ alive: boolean; exitedCleanly: boolean; version: string | null }> {
     const result = await this.deps.runner(executable, ['--version'], {
       timeoutMs: this.deps.versionTimeoutMs ?? 8_000,
       env: this.env,
     });
-    if (result.error || result.timedOut) return null;
+    if (result.timedOut) return { alive: true, exitedCleanly: true, version: null };
+    if (result.error) return { alive: false, exitedCleanly: false, version: null };
     const line = `${result.stdout}\n${result.stderr}`
       .split(/\r?\n/)
       .map((l) => l.trim())
       .find((l) => l.length > 0);
-    return line ? line.slice(0, 120) : null;
+    return { alive: true, exitedCleanly: result.code === 0, version: line ? line.slice(0, 120) : null };
   }
 }

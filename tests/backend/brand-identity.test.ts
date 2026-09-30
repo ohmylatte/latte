@@ -72,6 +72,12 @@ describe('E4: Marca → Identidad, por IPC', () => {
     brandId = brand.id;
     const work = await b.service.createWork(brand.id, 'Propuesta mayorista');
     workId = work.id;
+    // El equipo extrae la identidad en el ESPACIO INTERNO de la marca. En la
+    // app lo crea el primer pedido; acá se siembra sobre `workId` para poder
+    // prepararle el equipo. Crearlo y filtrarlo de las listas tienen SU archivo
+    // (`brand-workspace-work.test.ts`).
+    b.repo.setMeta(`brand_workspace_work:${brandId}`, workId);
+    b.repo.setMeta(`work_internal:${workId}`, '1');
     b.repo.setMeta(FEATURE_KEYS.coordination, FEATURE_ON);
     members = [];
     ({ send } = fakeCoordinationHub(b, members));
@@ -119,16 +125,18 @@ describe('E4: Marca → Identidad, por IPC', () => {
     chosen = fs.readdirSync(sources).map((name) => path.join(sources, name));
     await ok('addBrandIdentityFiles', brandId);
     const result = await ok<BrandIdentityExtractionResult>('requestBrandIdentityExtraction', brandId);
-    // Sin equipo corriendo: nace una propuesta de una tarea, que la persona aprueba en el chat.
-    expect(result.outcome).toBe('proposed');
+    // K1: el clic en la pantalla ES la aprobación — no hay propuesta esperando
+    // en el chat del coordinador: la tarea sale despachada en el mismo gesto.
+    expect(result.outcome).toBe('dispatched');
     expect(result.workId).toBe(workId);
     // Las fuentes quedan adentro del trabajo, donde el agente puede leerlas.
     expect(fs.readdirSync(path.join(workDir(), 'borradores', 'identidad', 'fuentes')).sort())
       .toEqual(['Ayulem mayoristas (1).pdf', 'Manual_Logo_AYULEM-V1.pdf', 'logo ayulem.png']);
     const runId = b.repo.findActiveCoordinationRun(workId)!.id;
-    await b.service.resolveCoordinationGate(`proposal:${runId}`, 'approve');
+    expect(await b.service.listCoordinationGates(runId), 'ninguna aprobación oculta').toEqual([]);
     await settle();
     const [task] = b.repo.listCoordinationTasks(runId);
+    expect(task!.status, 'la tarea salió despachada').toBe('dispatched');
     expect(task!.audience).toBe('internal');
     expect(task!.spec).toContain('borradores/identidad/IDENTIDAD.md');
     expect(task!.spec).toMatch(/hex/);

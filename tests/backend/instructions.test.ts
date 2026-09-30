@@ -7,6 +7,7 @@ import { loadInstructionPack } from '../../electron/workspace/packs';
 import {
   BRAND_CONTEXT_CHARS,
   DECISIONS_INLINE_MAX,
+  DECISION_LINE_MAX,
   INSTRUCTIONS_MAX_CHARS,
   renderInstructionBundle,
   renderInstructions,
@@ -95,6 +96,55 @@ describe('renderInstructionBundle: decisions ceiling', () => {
   });
 });
 
+// P3: LA DECISIÓN LARGA NO VIVE INLINE. Lo que viaja en CLAUDE.md/AGENTS.md
+// (que el runtime re-envía en CADA turno) es una línea recortada; el texto
+// completo queda en el side file y la sección apunta a él.
+describe('renderInstructionBundle: inline decisions are clipped', () => {
+  const wordy = (count: number) => Array.from({ length: count }, (_, i) => `word${i}`).join(' ');
+
+  it('clips a long decision to DECISION_LINE_MAX without splitting a word, and keeps the full text in the side file', () => {
+    const long = wordy(600);
+    expect(long.length).toBeGreaterThan(DECISION_LINE_MAX * 4);
+    const decisions = [decision(0, 0), { ...decision(1, 1), text: long }];
+    const bundle = renderInstructionBundle({ brand, work, decisions });
+
+    const start = bundle.text.indexOf('## Decisions already taken');
+    const section = bundle.text.slice(start, bundle.text.indexOf('\n## ', start + 1));
+    const lines = section.split('\n').filter((l) => l.startsWith('- '));
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(DECISION_LINE_MAX);
+
+    // La cortada cae en un espacio: la última palabra está COMPLETA.
+    const clipped = lines.find((l) => l.endsWith('…'));
+    expect(clipped).toBeTruthy();
+    const lastWord = clipped!.slice(2, -1).trimEnd().split(' ').at(-1);
+    expect(lastWord).toMatch(/^word\d+$/);
+    expect(long.split(' ')).toContain(lastWord!);
+
+    // La decisión corta no se toca.
+    expect(lines.some((l) => l.includes('Decision number 0') && !l.endsWith('…'))).toBe(true);
+
+    // El puntero al log completo está en el texto, y el log tiene el texto
+    // completo — inclusive cuando NO hay overflow de cantidad (2 <= 15).
+    expect(section).toContain('./.latte/context/decisions.md');
+    const side = bundle.files.find((f) => f.path === '.latte/context/decisions.md');
+    expect(side).toBeTruthy();
+    expect(side!.content).toContain(long);
+  });
+
+  it('measures the saving: the whole decisions section shrinks to lines of at most DECISION_LINE_MAX', () => {
+    const decisions = Array.from({ length: 15 }, (_, i) => ({ ...decision(i, i), text: wordy(500) }));
+    const bundle = renderInstructionBundle({ brand, work, decisions });
+    const start = bundle.text.indexOf('## Decisions already taken');
+    const section = bundle.text.slice(start, bundle.text.indexOf('\n## ', start + 1));
+    const before = decisions.reduce((n, d) => n + d.text.length + 17, 0);
+    expect(section.length).toBeLessThanOrEqual((DECISION_LINE_MAX + 1) * (decisions.length + 1) + 200);
+    expect(section.length).toBeLessThan(before / 10);
+    const side = bundle.files.find((f) => f.path === '.latte/context/decisions.md');
+    expect(side!.content.length).toBeGreaterThanOrEqual(before);
+  });
+});
+
 describe('renderInstructionBundle: skills by reference', () => {
   it('points to a side file instead of inlining the skill body', () => {
     expect(writingSkill).toBeTruthy();
@@ -160,8 +210,9 @@ describe('renderInstructionBundle: hard cap', () => {
     // this fixture would have produced (brand + every decision + the skill body inlined).
     // The protocol stays available under compaction; inherited brand memory adds a bounded summary on 0.5+.
     // E2/E4: the working rules grew by the deliverables boundary (drafts vs ./entregables/) and
-    // the identity line; rules are never trimmed, so the margin grows with them, not the brand.
-    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60 + 1000);
+    // the identity line; 1B suma la línea del ADN de marca con su bloque `latte-dna`.
+    // Rules are never trimmed, so the margin grows with them, not the brand.
+    expect(bundle.text.length).toBeLessThan(heavy.context.length + decisions.length * 60 + 2_000);
     // The cap is a target, not an absolute: a short footer may push it slightly over,
     // but never by much once decisions and brand context are both at their floor.
     expect(bundle.text.length).toBeLessThan(INSTRUCTIONS_MAX_CHARS + 500);
