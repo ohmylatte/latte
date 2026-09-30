@@ -86,6 +86,8 @@ export interface InboxEvent {
    * cortado a 120 caracteres del backend, y eso no se disimula.
    */
   detail?: string;
+  /** E2: los archivos que el reporte trajo como lista, cuando la trajo. */
+  files?: string[];
 }
 
 /**
@@ -162,6 +164,7 @@ export function inboxEvents(input: InboxInput, memberId: string): InboxEvent[] {
         text: firstLine(entry.summaryPreview),
         detail: entry.summaryPreview ?? '',
         taskId: entry.taskId,
+        ...(entry.files ? { files: entry.files } : {}),
       });
     }
   }

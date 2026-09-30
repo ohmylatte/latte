@@ -185,11 +185,12 @@ describe('al aprobar un plan, el coordinador se entera y arranca solo', () => {
     expect(truncated.length).toBeLessThanOrEqual(210);
     expect(truncated.length).toBeGreaterThan(190);
 
-    // Un worker no coordina: ni ve la lista.
+    // Un worker no coordina: no ve la lista del run, sólo lo suyo (E6). Sin
+    // nada despachado, eso es una lista vacía, no un FORBIDDEN.
     members.push({ id: 'mem_worker', workId, roleId: 'copywriter', status: 'idle' });
     const worker = envelope(await call('latte_task_list', {}, b.coordinationTokens.mint(workId, 'mem_worker')));
-    expect(worker.ok).toBe(false);
-    expect(worker.error?.code).toBe('FORBIDDEN');
+    expect(worker.ok).toBe(true);
+    expect(worker.data).toEqual([]);
   });
 
   it('A2: sin run activo la tool responde NO_ACTIVE_RUN, no una lista vacía', async () => {

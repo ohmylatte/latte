@@ -22,7 +22,9 @@ import {
   rulesLookUntrusted,
   type BrandManifest,
 } from './payload';
-import { publishImmutableDir, stageAssets, type StagedAsset } from './publish';
+import { MAX_ASSET_BYTES, publishImmutableDir, stageAssets, validateAssetBytes, type StagedAsset } from './publish';
+import { assetIdFor, assetKindOf, assetPathFor, IDENTITY_DOC, IDENTITY_DOC_ASSET_ID, isIdentityDocName, type ApprovedIdentity } from './identity';
+import type { BrandIdentityFileView, BrandIdentityView } from '../../shared/contracts';
 import { composeBrandContext, kitsForAuthorizedWork, resolveBrandContext } from './resolver';
 import {
   implicitWorkBrandPolicy,
@@ -247,7 +249,10 @@ export class BrandingService {
     if (head && head.kit_id !== kitId) {
       throw new ValidationError('Esta marca ya tiene un kit publicado distinto');
     }
-    const newVersion = current + 1;
+    // E4: la SIGUIENTE a la más alta que existe, no a la del head: revocar
+    // suelta el head pero la versión revocada sigue en la tabla y en disco, y
+    // volver a aprobar chocaba contra ella.
+    const newVersion = Math.max(current, this.branding().latestVersion(kitId)) + 1;
     const usable = staged.filter((a) => a.usable);
     const kitHash = sha256Utf8(canonicalJson({
       schemaVersion: 1,
@@ -422,6 +427,189 @@ export class BrandingService {
 
   implicitPolicy(workId: string, brandId: string): WorkBrandPolicy {
     return implicitWorkBrandPolicy(workId, brandId);
+  }
+
+  // -- E4: Marca → Identidad ------------------------------------------------
+  //
+  // Sin la bandera `brandKits` a propósito: esa bandera cuida la composición
+  // identidad/firma de agencia por trabajo (generations), que sigue apagada.
+  // Esto es el kit de la marca como recurso: traer archivos, aprobar, revocar.
+  // Usa las mismas tablas, el mismo borrador y el mismo `publishDraft`.
+
+  private identityDraftDir(brandId: string): string {
+    this.deps.repo.getBrand(brandId);
+    return this.paths.brandDraftDir(brandId);
+  }
+
+  private readDraftManifest(draftDir: string): BrandManifest {
+    const file = path.join(draftDir, 'manifest.json');
+    if (!fs.existsSync(file)) return { schemaVersion: 1, permitsAgencySignature: false, assets: [] };
+    return parseManifest(fs.readFileSync(file, 'utf8'));
+  }
+
+  private writeDraftManifest(draftDir: string, manifest: BrandManifest): void {
+    fs.mkdirSync(draftDir, { recursive: true });
+    fs.writeFileSync(path.join(draftDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    const rules = path.join(draftDir, 'brand.md');
+    if (!fs.existsSync(rules)) fs.writeFileSync(rules, '');
+  }
+
+  /** Lo que la persona ve en Marca → Identidad. Nunca una ruta ni un hash. */
+  readIdentity(brandId: string): BrandIdentityView {
+    const draftDir = this.identityDraftDir(brandId);
+    const manifest = this.readDraftManifest(draftDir);
+    const files: BrandIdentityFileView[] = [];
+    const draftHashes = new Map<string, string>();
+    for (const asset of manifest.assets) {
+      const file = path.resolve(draftDir, ...asset.relativePath.split('/'));
+      let bytes: Buffer;
+      try { bytes = fs.readFileSync(file); } catch { continue; }
+      draftHashes.set(asset.id, sha256Bytes(bytes));
+      files.push({
+        id: asset.id,
+        name: asset.label ?? path.basename(asset.relativePath),
+        kind: asset.kind,
+        usable: validateAssetBytes(bytes, asset.relativePath),
+        bytes: bytes.length,
+        identityDoc: asset.id === IDENTITY_DOC_ASSET_ID,
+      });
+    }
+    const head = this.branding().headForBrand(brandId);
+    const record = head ? this.branding().loadPublishedKit(head.kit_id, Number(head.current_version)) : null;
+    const approved = record && record.approved && !this.branding().isRevoked(record.kitId, record.version) ? record : null;
+    const revocation = approved ? null : this.branding().latestRevocationForBrand(brandId);
+    const approvedAssets = approved ? approved.assets.filter((a) => a.usable) : [];
+    const changedSinceApproval = approved !== null && (
+      approvedAssets.length !== files.filter((f) => f.usable).length
+      || approvedAssets.some((a) => draftHashes.get(a.assetId) !== a.hash)
+    );
+    const state: BrandIdentityView['state'] = approved ? 'approved' : revocation ? 'revoked' : files.length > 0 ? 'draft' : 'empty';
+    return {
+      brandId,
+      state,
+      files: files.sort((a, b) => Number(b.identityDoc) - Number(a.identityDoc) || a.name.localeCompare(b.name)),
+      hasIdentityDoc: files.some((f) => f.identityDoc),
+      approved: approved ? { version: approved.version, approvedAt: approved.createdAt, fileCount: approvedAssets.length } : null,
+      changedSinceApproval,
+      revokedAt: revocation?.createdAt ?? null,
+    };
+  }
+
+  /**
+   * Trae archivos al borrador del kit: logo, manuales, paleta. Arma el
+   * manifest solo —la persona no escribe JSON—, con un nombre seguro para el
+   * disco y el nombre original para mostrar. Un `IDENTIDAD.md` es el documento
+   * de identidad del kit. Volver a traer un archivo con el mismo nombre lo
+   * reemplaza. Un archivo que no se puede usar se rechaza con su nombre.
+   */
+  addIdentityFiles(brandId: string, sources: readonly string[]): BrandIdentityView {
+    const draftDir = this.identityDraftDir(brandId);
+    const manifest = this.readDraftManifest(draftDir);
+    for (const source of sources) {
+      const label = path.basename(source);
+      let stat: fs.Stats;
+      try { stat = fs.lstatSync(source); } catch { throw new ValidationError(`No se encontró ${label}`); }
+      if (stat.isSymbolicLink() || !stat.isFile()) throw new ValidationError(`${label} no es un archivo`);
+      if (stat.size > MAX_ASSET_BYTES) throw new ValidationError(`${label} pesa más de ${Math.round(MAX_ASSET_BYTES / (1024 * 1024))} MB`);
+      const bytes = fs.readFileSync(source);
+      if (isIdentityDocName(label)) {
+        this.writeIdentityDoc(draftDir, manifest, bytes);
+        continue;
+      }
+      const existing = manifest.assets.find((a) => a.label === label);
+      const relativePath = existing?.relativePath ?? assetPathFor(label, new Set(manifest.assets.map((a) => a.relativePath.toLowerCase())));
+      if (!validateAssetBytes(bytes, relativePath)) throw new ValidationError(`${label} no se puede usar en el kit (vacío, dañado o con contenido activo)`);
+      const target = path.resolve(draftDir, ...relativePath.split('/'));
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, bytes);
+      if (!existing) {
+        manifest.assets.push({
+          id: assetIdFor(label, new Set(manifest.assets.map((a) => a.id))),
+          kind: assetKindOf(label),
+          relativePath,
+          required: false,
+          label,
+        });
+      }
+    }
+    this.writeDraftManifest(draftDir, manifest);
+    return this.readIdentity(brandId);
+  }
+
+  /** E4: el `IDENTIDAD.md` que el equipo extrajo, al borrador del kit. */
+  setIdentityDoc(brandId: string, bytes: Buffer): BrandIdentityView {
+    const draftDir = this.identityDraftDir(brandId);
+    const manifest = this.readDraftManifest(draftDir);
+    this.writeIdentityDoc(draftDir, manifest, bytes);
+    this.writeDraftManifest(draftDir, manifest);
+    return this.readIdentity(brandId);
+  }
+
+  private writeIdentityDoc(draftDir: string, manifest: BrandManifest, bytes: Buffer): void {
+    if (!validateAssetBytes(bytes, IDENTITY_DOC)) throw new ValidationError(`${IDENTITY_DOC} está vacío o no es texto`);
+    fs.mkdirSync(draftDir, { recursive: true });
+    fs.writeFileSync(path.join(draftDir, IDENTITY_DOC), bytes);
+    if (!manifest.assets.some((a) => a.id === IDENTITY_DOC_ASSET_ID)) {
+      manifest.assets.unshift({ id: IDENTITY_DOC_ASSET_ID, kind: 'reference', relativePath: IDENTITY_DOC, required: false, label: IDENTITY_DOC });
+    }
+  }
+
+  removeIdentityFile(brandId: string, fileId: string): BrandIdentityView {
+    const draftDir = this.identityDraftDir(brandId);
+    const manifest = this.readDraftManifest(draftDir);
+    const asset = manifest.assets.find((a) => a.id === fileId);
+    if (!asset) throw new ValidationError('Ese archivo ya no está en el kit');
+    manifest.assets = manifest.assets.filter((a) => a.id !== fileId);
+    try { fs.rmSync(path.resolve(draftDir, ...asset.relativePath.split('/')), { force: true }); } catch { /* ya no estaba */ }
+    this.writeDraftManifest(draftDir, manifest);
+    return this.readIdentity(brandId);
+  }
+
+  /** Aprobar: la persona publica el borrador como la versión vigente del kit. */
+  approveIdentity(brandId: string): BrandIdentityView {
+    const draftDir = this.identityDraftDir(brandId);
+    const manifest = this.readDraftManifest(draftDir);
+    if (manifest.assets.length === 0) throw new ValidationError('Agregá al menos un archivo de identidad antes de aprobar');
+    this.writeDraftManifest(draftDir, manifest);
+    const head = this.branding().headForBrand(brandId);
+    this.publishDraft({ ownerKind: 'brand', ownerBrandId: brandId, draftDir, expectedVersion: head ? Number(head.current_version) : 0 });
+    return this.readIdentity(brandId);
+  }
+
+  revokeIdentity(brandId: string): BrandIdentityView {
+    this.identityDraftDir(brandId);
+    const head = this.branding().headForBrand(brandId);
+    if (!head) throw new ValidationError('No hay una identidad aprobada para revocar');
+    const version = Number(head.current_version);
+    this.deps.repo.transaction(() => {
+      this.branding().insertRevocation(head.kit_id, version, 'Revocada desde Marca → Identidad', this.deps.clock());
+      this.branding().dropHeadIfCurrent(head.kit_id, version);
+    });
+    return this.readIdentity(brandId);
+  }
+
+  /** El kit aprobado y vigente de la marca, para proyectarlo y para la evidencia. */
+  approvedIdentity(brandId: string): ApprovedIdentity | null {
+    const kit = this.branding().approvedKitForBrand(brandId);
+    if (!kit || kit.revoked) return null;
+    const record = this.branding().loadPublishedKit(kit.ref.kitId, kit.ref.version);
+    if (!record) return null;
+    return {
+      kitId: kit.ref.kitId,
+      version: kit.ref.version,
+      hash: kit.ref.hash,
+      dir: this.paths.brandKitVersionDir(kit.ref.kitId, kit.ref.version),
+      files: record.assets.filter((a) => a.usable).map((a) => a.relativePath),
+    };
+  }
+
+  /** Los archivos del borrador que el equipo lee para extraer la identidad (todo menos el propio `IDENTIDAD.md`). */
+  identitySources(brandId: string): Array<{ name: string; file: string }> {
+    const draftDir = this.identityDraftDir(brandId);
+    return this.readDraftManifest(draftDir).assets
+      .filter((a) => a.id !== IDENTITY_DOC_ASSET_ID)
+      .map((a) => ({ name: a.label ?? path.basename(a.relativePath), file: path.resolve(draftDir, ...a.relativePath.split('/')) }))
+      .filter((a) => fs.existsSync(a.file));
   }
 
 }

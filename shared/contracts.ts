@@ -155,6 +155,44 @@ export interface WorkBrandContextView {
   };
   snapshot: BrandContextSnapshot;
 }
+/**
+ * E4: MARCA → IDENTIDAD. El kit de la marca visto por la persona: qué
+ * archivos trajo (con su nombre, nunca una ruta), si hay `IDENTIDAD.md`, y en
+ * qué estado está. Latte no renderiza nada con esto: lo guarda, lo proyecta a
+ * cada trabajo y el revisor verifica que se aplique.
+ */
+export type BrandIdentityState = 'empty' | 'draft' | 'approved' | 'revoked';
+export interface BrandIdentityFileView {
+  id: string;
+  /** El nombre con el que la persona trajo el archivo. Nunca una ruta. */
+  name: string;
+  kind: 'logo' | 'font' | 'reference' | 'other';
+  usable: boolean;
+  bytes: number;
+  /** Es el `IDENTIDAD.md` que el equipo extrajo. */
+  identityDoc: boolean;
+}
+export interface BrandIdentityView {
+  brandId: string;
+  state: BrandIdentityState;
+  /** El borrador: lo que se aprueba al tocar "Aprobar". */
+  files: BrandIdentityFileView[];
+  hasIdentityDoc: boolean;
+  /** La versión vigente, si hay una aprobada. */
+  approved: { version: number; approvedAt: string; fileCount: number } | null;
+  /** El borrador cambió desde la última aprobación: hay algo para volver a aprobar. */
+  changedSinceApproval: boolean;
+  revokedAt: string | null;
+}
+export interface BrandIdentityExtractionResult {
+  /** `proposed`: una propuesta de una tarea que la persona aprueba en el chat del coordinador. */
+  outcome: 'proposed' | 'dispatched' | 'pending_approval' | 'not_dispatched' | 'blocked';
+  workId: string;
+  workTitle: string;
+  /** El código del motor cuando no salió como se pidió. */
+  reason: string | null;
+}
+
 /** Where a stored version came from. `external` = the file changed outside Latte; we never guess who wrote it. */
 export type RevisionSource = 'human' | 'external' | 'latte';
 export interface Revision { id: string; workId: string; documentId: string; source: RevisionSource; content: string; createdAt: string }
@@ -1007,6 +1045,8 @@ export interface CoordinationProposalTask {
   title?: string;
   spec: string;
   dependsOn?: number[];
+  /** E1: para quién es. Ausente es `internal`. */
+  audience?: CoordinationTaskAudience;
 }
 
 export interface CoordinationProposalHire {
@@ -1087,6 +1127,12 @@ export interface CoordinationDispatchLogEntryView {
    */
   promptPreview: string;
   summaryPreview: string | null;
+  /**
+   * E2: los archivos que el reporte trajo como lista de rutas relativas. La
+   * pantalla muestra sólo el nombre de cada uno. Ausente: el reporte no trajo
+   * lista (y entonces se leen los nombres del resumen, como antes).
+   */
+  files?: string[];
   createdAt: string;
   startedAt: string | null;
   settledAt: string | null;
@@ -1144,6 +1190,17 @@ export type CoordinationLogEntryView = CoordinationDispatchLogEntryView | Coordi
 
 export type CoordinationTaskStatus = 'pending' | 'ready' | 'dispatched' | 'running' | 'done' | 'failed' | 'blocked';
 
+/**
+ * E1: PARA QUIÉN ES LA TAREA, DECLARADO Y NO ADIVINADO.
+ *
+ * `internal` (el default) es trabajo del equipo: análisis, borradores, notas
+ * con sus rótulos. `client` es lo que el cliente lee para decidir, y por eso
+ * pasa por la revisión antes de llegar a `entregables/`. Lo decide el
+ * coordinador al proponer; la persona lo cambia al editar la propuesta.
+ */
+export type CoordinationTaskAudience = 'internal' | 'client';
+export const COORDINATION_TASK_AUDIENCES: readonly CoordinationTaskAudience[] = ['internal', 'client'];
+
 /** A task's own state after `settleCoordinationDispatch` (task 3.19) settles its current dispatch. */
 export interface CoordinationTaskView {
   id: string;
@@ -1180,6 +1237,8 @@ export interface CoordinationRunTaskView {
    */
   title?: string | null;
   status: CoordinationTaskStatus;
+  /** E1: para quién es. Opcional para que una vista vieja se lea como antes: ausente es `internal`. */
+  audience?: CoordinationTaskAudience;
   /** Si la tarea es parte del plan aprobado o nació después, de un despacho. */
   inPlan: boolean;
   /** Los ids de las tareas que tienen que terminar antes que ésta. */
@@ -1426,6 +1485,13 @@ export interface LatteAPI {
   publishAgencyKit(expectedVersion: number): Promise<BrandKitView>;
   setWorkBrandChoice(workId: string, choice: WorkBrandChoiceInput, expectedRevision: number): Promise<WorkBrandPolicyView>;
   readWorkBrandContext(workId: string): Promise<WorkBrandContextView>;
+  /** E4: Marca → Identidad. */
+  readBrandIdentity(brandId: string): Promise<BrandIdentityView>;
+  addBrandIdentityFiles(brandId: string): Promise<BrandIdentityView>;
+  removeBrandIdentityFile(brandId: string, fileId: string): Promise<BrandIdentityView>;
+  approveBrandIdentity(brandId: string): Promise<BrandIdentityView>;
+  revokeBrandIdentity(brandId: string): Promise<BrandIdentityView>;
+  requestBrandIdentityExtraction(brandId: string): Promise<BrandIdentityExtractionResult>;
   /** Installation feature switches. Default off; no secrets. */
   featureFlags(): Promise<FeatureFlags>;
   listWorks(brandId: string): Promise<Work[]>;
@@ -1702,6 +1768,9 @@ export interface LatteAPI {
   // run/task/dispatch surface arrives in a later phase.
   getCoordinationAuthority(workId: string): Promise<CoordinationAuthorityMode>;
   setCoordinationAuthority(workId: string, mode: CoordinationAuthorityMode): Promise<CoordinationAuthorityMode>;
+  /** E2: "revisión antes de publicar" de este Trabajo. Prendida por defecto. */
+  getCoordinationReview(workId: string): Promise<boolean>;
+  setCoordinationReview(workId: string, on: boolean): Promise<boolean>;
   /**
    * `unset` means no budget was ever configured (`BUDGET_UNSET`) — never an
    * implicit unlimited default; `invalid` means the stored bytes cannot be

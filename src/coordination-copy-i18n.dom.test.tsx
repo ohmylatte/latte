@@ -52,6 +52,8 @@ const FILES = [
   'coordination/activity.ts', 'coordination/MemberDetail.tsx',
   // O1: la línea "Ahora" y el encabezado que la dibuja.
   'coordination/RunHeader.tsx', 'coordination/now-line.ts',
+  // E5: las pantallas de entregables e identidad.
+  'IdentityView.tsx', 'coordination/TeamOutcome.tsx',
 ];
 
 /** Las líneas de código, sin comentarios: un comentario en castellano es documentación, no copy. */
