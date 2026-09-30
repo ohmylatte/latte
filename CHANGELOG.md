@@ -1,5 +1,73 @@
 # Changelog
 
+## 2.0.0 — 2026-09-30
+
+Latte conoce tu marca desde el primer minuto. Traés la web, tus canales y tus archivos. Latte arma el ADN de la marca y cada trabajo arranca sabiendo cómo habla, a quién le habla y qué dice que no. Pensado para quien hace marketing con IA todos los días, sin terminal.
+
+### Entrar sin terminal
+
+- **Tres pasos:** Conectá tu IA → Traé tu marca → Inicio. Conectar es un botón, "Usar", con el login de cada IA en el navegador.
+- **El demo se muestra como demo** y no se confunde con una marca tuya.
+
+### El ADN de la marca
+
+- **Traé tu marca.** Latte lee la web, los canales que le pases (Instagram, LinkedIn o el que sea) y el logo y los manuales. Con eso arma una ficha con el tono, la audiencia, la propuesta, las palabras que la marca usa y las que evita, y los claims. Cada dato dice de dónde salió.
+- **Se ve que trabaja.** Cada paso muestra qué está haciendo, "Leyendo tu web" o "Armando la ficha", con un reloj en marcha. Si tarda de más, lo dice y ofrece reintentar o cancelar.
+- **La ficha es tuya.** La aprobás, la editás campo por campo y la reconstruís cuando quieras, sin volver al onboarding. Latte recuerda la web y los canales que le diste.
+- **Los trabajos la respetan.** El chequeo de marca compara cada pieza contra el ADN aprobado. Lo que el equipo aprende en el camino llega como propuesta, y vos decidís.
+
+### Inicio
+
+- **"¿Qué querés hacer hoy con tu marca?"** Lo que escribís abre un trabajo real, con su brief y el rol que corresponde.
+- **Ideas de la marca.** El que armó el ADN propone los próximos trabajos, cada uno con su motivo. Sin fechas genéricas: una idea que no sale de la marca no se muestra.
+- **Primeros pasos:** traé tu marca, primer trabajo, aprobá una pieza, mirá tu embudo. Se marcan solos y desaparecen al completarlos.
+- **Catálogo de trabajos en bloques**, con íconos. No pregunta lo que el ADN ya sabe.
+
+### Equipo
+
+- **Community Manager**, rol nuevo: contenido por canal, calendario editorial, comunidad y medición.
+
+### Entregables que el cliente puede leer
+
+- **Cada tarea dice para quién es: el equipo o el cliente.** Se ve y se edita en la propuesta, y el agente lo sabe desde el principio.
+- **Revisión antes de publicar.** Lo que va al cliente pasa por el Reviewer antes de llegar a `entregables/`:
+  - si aprueba, queda una sola versión vigente;
+  - si no, se reintenta con los motivos;
+  - si vuelve a fallar, te pregunta a vos.
+
+  Se apaga en Ajustes avanzados.
+- **Reglas por audiencia, no plantillas.** Para el cliente: qué hacemos, cuánto y qué esperar, sin notas internas, con PDF al final.
+- **Identidad de la marca.**
+  - Subís logo y manuales, y el equipo extrae un `IDENTIDAD.md` con colores, tipografías, usos y tono.
+  - Lo aprobás, y cada trabajo de la marca lo recibe.
+  - Cada entrega aprobada guarda con qué identidad se hizo.
+
+### Se ve y se usa mejor
+
+- **Diálogos propios** en lugar de las ventanas del sistema.
+- **Pestañas que se manejan con el teclado.**
+- **Diseño que aguanta 1024 px.**
+- **Colores de estado coherentes y microinteracciones.**
+- **Nueva marca y Marcas archivadas** pasan al menú ⋯ de la marca.
+
+### Por debajo
+
+- **Un clic tuyo es la aprobación.** Armar el ADN, escribir ideas o extraer la identidad se despachan al instante: no quedan esperando en un chat que no abrís.
+- **Un espacio interno por marca** para ese trabajo, que no aparece en tus listas y no se traba si un intento anterior falló.
+- **Menos tokens:**
+  - decisiones recortadas en línea;
+  - avisos compactos;
+  - un solo aviso al cerrar un equipo;
+  - buzón de hasta 8 mensajes por consulta;
+  - fuentes del ADN en extractos.
+- **El buzón del equipo respeta el orden de llegada**, aunque dos mensajes caigan en el mismo milisegundo.
+
+### Conocido
+
+- **Colores y tipografía del ADN** quedan vacíos cuando la IA no los puede leer de la web; se completan a mano. En la próxima actualización los extrae Latte del CSS y de los logos.
+- **Los canales se leen solo en su parte pública:** una red con login no se lee.
+- **El instalador de Windows sigue sin firmar:** SmartScreen muestra la advertencia.
+
 ## 1.6.0 — 2026-09-25
 
 Dos runtimes nuevos y uno que se pone a la par. Grok y Hermes se suman a Claude Code y Codex, y OpenCode deja de ser un runtime de segunda: con eso, DeepSeek y cualquier proveedor que OpenCode o Hermes soporten entran a Latte con equipo, coordinación y conexiones.
