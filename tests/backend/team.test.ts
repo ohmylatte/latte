@@ -27,11 +27,11 @@ async function waitFor(check: () => boolean, timeoutMs = 6_000): Promise<void> {
 }
 
 describe('Roles: pack loading and catalog', () => {
-  it('ships the five marketing roles with the neutral assistant first', () => {
+  it('ships the marketing roles with the neutral assistant first', () => {
     const pack = loadInstructionPack(PACKS_DIR, 'marketing-core');
-    expect(pack?.roles.map((r) => r.id)).toEqual(['strategist', 'researcher', 'analyst', 'paid-media', 'sales-copywriter', 'reviewer']);
+    expect(pack?.roles.map((r) => r.id)).toEqual(['strategist', 'researcher', 'analyst', 'paid-media', 'sales-copywriter', 'reviewer', 'community-manager']);
     const catalog = new RoleCatalog(pack);
-    expect(catalog.list().map((r) => r.id)).toEqual(['assistant', 'strategist', 'researcher', 'analyst', 'paid-media', 'sales-copywriter', 'reviewer']);
+    expect(catalog.list().map((r) => r.id)).toEqual(['assistant', 'strategist', 'researcher', 'analyst', 'paid-media', 'sales-copywriter', 'reviewer', 'community-manager']);
     expect(catalog.list()[0]).toMatchObject({ builtin: true, name: 'Asistente' });
     expect(catalog.list()[1]).toMatchObject({ builtin: false, name: 'Strategist', initial: 'S' });
     // Every conversation carries the marketing behaviour, the neutral assistant included.
@@ -42,6 +42,11 @@ describe('Roles: pack loading and catalog', () => {
     expect(catalog.promptFor('strategist')).toContain('You are working on marketing, not on software.');
     expect(catalog.promptFor('strategist')).toContain('# Role: Strategist');
     expect(catalog.get('nope')).toBeNull();
+    // El Community Manager entra al paquete con SU texto, no con un placeholder.
+    const cm = catalog.get('community-manager');
+    expect(cm).toMatchObject({ name: 'Community Manager', initial: 'C', tier: 'balanced' });
+    expect(cm!.summary).toContain('Nada se publica sin aprobación');
+    expect(catalog.promptFor('community-manager')).toContain('# Role: Community Manager');
   });
 
   it('parses role files defensively', () => {
@@ -256,7 +261,7 @@ describe('Team through the service', () => {
 
   it('lists roles, adds members with the primary agent, sends the role as system prompt and tracks status', async () => {
     const roles = await b.service.listRoles();
-    expect(roles.map((r) => r.id)).toEqual(['assistant', 'strategist', 'researcher', 'analyst', 'paid-media', 'sales-copywriter', 'reviewer']);
+    expect(roles.map((r) => r.id)).toEqual(['assistant', 'strategist', 'researcher', 'analyst', 'paid-media', 'sales-copywriter', 'reviewer', 'community-manager']);
     const brand = await b.service.createBrand('Casa');
     const work = await b.service.createWork(brand.id, 'Trabajo');
     expect(await b.service.listTeam(work.id)).toEqual([]);

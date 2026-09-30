@@ -15,7 +15,13 @@ interface PackManifest {
 }
 
 const PACK_BODY_LIMIT = 40_000;
-const ROLE_BODY_LIMIT = 8_000;
+/**
+ * El tope de un rol del paquete. Era 8.000; el Community Manager (reglas por
+ * canal, comunidad, cadencia y medición, casi sin relleno) pesa ~10.800 y
+ * recortarlo le sacaba justo lo concreto. El rol viaja en cada conversación
+ * de ESE agente, así que el costo lo paga sólo quien lo usa.
+ */
+const ROLE_BODY_LIMIT = 12_000;
 const ROLE_ID = /^[a-z][a-z0-9-]{0,40}$/;
 const MARKDOWN_FILE = /^[a-zA-Z0-9._-]+\.md$/;
 

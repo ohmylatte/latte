@@ -68,6 +68,7 @@ const shippedRoles:AgentRole[] = [
  {id:'paid-media',name:'Paid Media',initial:'P',summary:'Analizá campañas, inversión y resultados con evidencia; priorizá acciones sin modificar cuentas por tu cuenta.',builtin:false,tier:'balanced',avatar:'beanie.3.1.none'},
  {id:'sales-copywriter',name:'Sales Copywriter',initial:'C',summary:'Convertí briefs en copy de venta listo para usar, con una promesa defendible, prueba real y un CTA claro.',builtin:false,tier:'balanced',avatar:'curly.4.1.beret'},
  {id:'reviewer',name:'Reviewer',initial:'V',summary:'Revisa entregables contra el brief.',builtin:false,tier:'light',avatar:'long.2.2.earring'},
+ {id:'community-manager',name:'Community Manager',initial:'C',summary:'Produce el contenido de la marca en todos sus canales, mantiene el calendario editorial, participa de la comunidad y mide resultados. Nada se publica sin aprobación del usuario.',builtin:false,tier:'balanced',avatar:'bob.3.2.headband'},
 ];
 /** La cara elegida a mano para un rol incluido. En el escritorio esto vive en `meta`. */
 const roleAvatars=new Map<string,string>();

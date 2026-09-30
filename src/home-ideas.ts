@@ -1,26 +1,17 @@
-import type { BrandDnaFields, BrandDnaIdea, ContentLocale, UiLocale } from '../shared/contracts';
-import {
-  commercialDateName,
-  countryLabel,
-  countryOf,
-  daysUntil,
-  fullDateLabel,
-  seasonLabel,
-  seasonOn,
-  upcomingCommercialDates,
-} from '../shared/commercial-dates';
+import type { BrandDnaFields, BrandDnaIdea } from '../shared/contracts';
 import type { MessageKey } from './i18n';
 
 /**
  * 3 · LAS IDEAS DE INICIO.
  *
  * Si el agente escribió ideas (máx. 4 vigentes), esas: son concretas, con
- * motivo y con base. Si no —todavía no hubo un build, o no hay IA—, las de
- * respaldo, que sí son mejores que las cuatro fijas del catálogo porque salen
- * de datos reales de la marca y del calendario: la fecha comercial más
- * cercana con su fecha exacta, la estación del país, y una leída del ADN.
+ * motivo y con base. Si no —todavía no hubo un build, o no hay IA—, sólo las
+ * que salen del ADN de ESTA marca.
  *
- * Pura y con el `now` como parámetro: la fecha se pasa, nunca se adivina.
+ * 2.0: se fueron la fecha comercial más cercana y la estación. Eran iguales
+ * para todas las marcas —el Día de la Madre para un software B2B—: una idea
+ * que no sale de la marca no es una idea. El calendario comercial va a ser
+ * una herramienta del rol que arma calendarios, no un dato de cada marca.
  */
 export interface HomeIdeaItem {
   id: string;
@@ -37,22 +28,10 @@ export interface HomeIdeasInput {
   /** Las ideas del agente, tal como vienen en la ficha del ADN. */
   ideas: readonly BrandDnaIdea[];
   dna: BrandDnaFields | null;
-  now: Date;
-  /** El idioma de CONTENIDO: de él sale el país y la estación (es-AR → Argentina). */
-  locale: ContentLocale;
-  /** El idioma de la INTERFAZ: en él se escriben los nombres y las fechas que se muestran. */
-  uiLocale: UiLocale;
 }
 
 /** Vigentes: las mismas 4 que guarda el backend, nunca una grilla infinita. */
 export const MAX_HOME_IDEAS = 4;
-
-/** El "hoy" de la persona, en calendario local: el mismo día que ella ve. */
-function isoOf(date: Date): string {
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${date.getFullYear()}-${month}-${day}`;
-}
 
 export function homeIdeas(input: HomeIdeasInput, t: HomeIdeaText): HomeIdeaItem[] {
   const fromAgent = input.ideas.slice(0, MAX_HOME_IDEAS).map((idea) => ({
@@ -64,40 +43,7 @@ export function homeIdeas(input: HomeIdeasInput, t: HomeIdeaText): HomeIdeaItem[
   }));
   if (fromAgent.length > 0) return fromAgent;
 
-  const today = isoOf(input.now);
-  const country = countryOf(input.locale);
   const out: HomeIdeaItem[] = [];
-
-  // La fecha comercial más cercana dentro de las próximas 6 semanas.
-  const date = upcomingCommercialDates(country, today)[0];
-  if (date) {
-    const days = daysUntil(today, date.date);
-    const name = commercialDateName(date.id, input.uiLocale);
-    // Cuenta regresiva honesta: hasta 13 días se cuentan EN DÍAS (redondear
-    // 20 días a "2 semanas" mentía); desde 14, semanas redondeando al entero
-    // más cercano. Hoy y mañana tienen su propia frase.
-    const when = days <= 13 ? t('home.ideas.days', { count: days }) : t('home.ideas.weeks', { count: Math.round(days / 7) });
-    const title = days === 0
-      ? t('home.ideas.today', { date: name })
-      : days === 1
-        ? t('home.ideas.tomorrow', { date: name })
-        : t('home.ideas.soon', { date: name, when });
-    out.push({
-      id: `fecha-${date.id}`,
-      workTypeId: 'content-calendar',
-      title,
-      why: t(date.approximate ? 'home.ideas.dateWhyApprox' : 'home.ideas.dateWhy', { date: fullDateLabel(date.date, input.uiLocale) }),
-    });
-  }
-
-  // La estación del país: el contenido de temporada no es lo mismo en los dos hemisferios.
-  const season = seasonOn(country, today);
-  out.push({
-    id: 'temporada',
-    workTypeId: 'campaign-new',
-    title: t('home.ideas.season', { season: seasonLabel(season, input.uiLocale) }),
-    why: t('home.ideas.seasonWhy', { date: fullDateLabel(today, input.uiLocale), country: countryLabel(country, input.uiLocale) }),
-  });
 
   // El ADN, cuando hay: primero lo que la marca NO dice, después la propuesta o la audiencia.
   const forbidden = input.dna?.wordsNo?.value ?? [];
