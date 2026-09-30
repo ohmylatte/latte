@@ -27,6 +27,7 @@ const ROLE_SUMMARY_KEYS: Record<string, MessageKey> = {
   reviewer: 'role.summary.reviewer',
   'paid-media': 'role.summary.paid-media',
   'sales-copywriter': 'role.summary.sales-copywriter',
+  'community-manager': 'role.summary.community-manager',
 };
 
 const SKILL_SUMMARY_KEYS: Record<string, MessageKey> = {

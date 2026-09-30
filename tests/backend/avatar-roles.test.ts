@@ -32,6 +32,7 @@ describe('el pack elige la cara de sus roles', () => {
       reviewer: 'long.2.2.earring',
       'paid-media': 'beanie.3.1.none',
       'sales-copywriter': 'curly.4.1.beret',
+      'community-manager': 'bob.3.2.headband',
     };
     expect(pack).not.toBeNull();
     for (const [id, avatar] of Object.entries(expected)) {
@@ -51,15 +52,21 @@ describe('el pack elige la cara de sus roles', () => {
    * El frontmatter NO entra en el prompt: `parseRole` se queda con el cuerpo
    * que sigue al segundo `---`. Pero el archivo entero se corta en
    * ROLE_BODY_LIMIT ANTES de parsearse, así que cada línea de frontmatter le
-   * come lugar al cuerpo. `sales-copywriter.md` es el más largo y queda a
-   * menos de treinta caracteres del tope: este candado avisa antes de que una
-   * línea de más le corte el final de las instrucciones a alguien.
+   * come lugar al cuerpo. `community-manager.md` es el más largo (~10.800):
+   * este candado avisa antes de que una línea de más le corte el final de las
+   * instrucciones a alguien.
    */
-  it('ninguna línea de frontmatter empuja un rol contra el tope de 8.000', () => {
+  it('ninguna línea de frontmatter empuja un rol contra el tope de 12.000', () => {
     for (const entry of fs.readdirSync(ROLES)) {
       const size = fs.readFileSync(path.join(ROLES, entry), 'utf8').length;
-      expect(size, entry).toBeLessThan(8_000);
+      expect(size, entry).toBeLessThan(12_000);
     }
+  });
+
+  it('el Community Manager llega entero al prompt, hasta su última sección', () => {
+    const prompt = new RoleCatalog(pack).promptFor('community-manager');
+    expect(prompt).toContain('# Role: Community Manager');
+    expect(prompt).toContain('Escribir para quedar bien con la marca en vez de para servirle al lector.');
   });
 
   it('el avatar no viaja en el prompt de ningún rol', () => {

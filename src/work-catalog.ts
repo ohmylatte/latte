@@ -46,7 +46,7 @@ export interface WorkType {
 }
 
 /** The roles this build actually ships (assistant + the marketing-core pack). */
-export const SHIPPED_ROLE_IDS = ['assistant', 'strategist', 'researcher', 'analyst', 'paid-media', 'sales-copywriter', 'reviewer'] as const;
+export const SHIPPED_ROLE_IDS = ['assistant', 'strategist', 'researcher', 'analyst', 'paid-media', 'sales-copywriter', 'reviewer', 'community-manager'] as const;
 export type ShippedRoleId = (typeof SHIPPED_ROLE_IDS)[number];
 
 export function isShippedRoleId(value: string): value is ShippedRoleId {
