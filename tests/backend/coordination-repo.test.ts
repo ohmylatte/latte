@@ -149,6 +149,25 @@ describe.each(ENGINES)('coordination repository CRUD on %s', (engine) => {
     expect(repo.listUndeliveredCoordinationMessages('crn_1', 'mem_1').map((m) => m.body)).toEqual(['B']);
   });
 
+  // CI rojo en el PR del 2.0: doce mensajes escritos en el mismo milisegundo
+  // salían ordenados por su id, que es aleatorio. El empate lo rompe el orden
+  // de llegada (`rowid`), nunca el azar del id.
+  it('mailbox: two messages in the same millisecond keep their arrival order, whatever their ids', () => {
+    repo.insertCoordinationRun({
+      id: 'crn_1', workId: 'wrk_1', status: 'running', coordinatorMemberId: null,
+      budgetJson: '{}', planJson: null, planApprovedAt: null, suspendReason: null,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    for (const [id, body] of [['cms_z', 'primero'], ['cms_a', 'segundo'], ['cms_m', 'tercero']]) {
+      repo.insertCoordinationMessage({
+        id, runId: 'crn_1', toMemberId: 'mem_1', fromMemberId: null, kind: 'note', body,
+        deliveredAt: null, createdAt: '2026-01-01T00:00:00.000Z',
+      });
+    }
+    expect(repo.listUndeliveredCoordinationMessages('crn_1', 'mem_1').map((m) => m.body)).toEqual(['primero', 'segundo', 'tercero']);
+    expect(repo.listCoordinationMessages('crn_1').map((m) => m.body)).toEqual(['primero', 'segundo', 'tercero']);
+  });
+
   it('asks: listed while open, answered removes them from the open list', () => {
     repo.insertCoordinationRun({
       id: 'crn_1', workId: 'wrk_1', status: 'running', coordinatorMemberId: null,

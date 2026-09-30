@@ -1898,7 +1898,7 @@ export class LatteRepository {
   listUndeliveredCoordinationMessages(runId: string, toMemberId: string): CoordinationMessageRecord[] {
     return this.db
       .all<CoordinationMessageRow>(
-        'SELECT * FROM coordination_message WHERE run_id = ? AND to_member_id = ? AND delivered_at IS NULL ORDER BY created_at ASC, id ASC',
+        'SELECT * FROM coordination_message WHERE run_id = ? AND to_member_id = ? AND delivered_at IS NULL ORDER BY created_at ASC, rowid ASC',
         [runId, toMemberId],
       )
       .map(toCoordinationMessage);
@@ -1912,7 +1912,7 @@ export class LatteRepository {
    */
   listCoordinationMessages(runId: string): CoordinationMessageRecord[] {
     return this.db
-      .all<CoordinationMessageRow>('SELECT * FROM coordination_message WHERE run_id = ? ORDER BY created_at ASC, id ASC', [runId])
+      .all<CoordinationMessageRow>('SELECT * FROM coordination_message WHERE run_id = ? ORDER BY created_at ASC, rowid ASC', [runId])
       .map(toCoordinationMessage);
   }
 
