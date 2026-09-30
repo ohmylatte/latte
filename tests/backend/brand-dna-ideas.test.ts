@@ -3,7 +3,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEATURE_KEYS, FEATURE_OFF, FEATURE_ON } from '../../electron/core/features';
 import { ValidationError } from '../../electron/core/errors';
-import { requireBrandDnaIdeas } from '../../electron/branding/dna';
+import { dnaIdeasSpec, requireBrandDnaIdeas } from '../../electron/branding/dna';
 import type { BrandDnaBuildJob, BrandDnaView } from '../../shared/contracts';
 import {
   fakeCoordinationHub,
@@ -102,6 +102,24 @@ describe('IDEAS.json · forma estricta', () => {
     expect(requireBrandDnaIdeas(clone({ ideas: [undated] }), '2026-09-29')[0]!.createdAt).toBe('2026-09-29');
     expect(() => requireBrandDnaIdeas(clone({ ideas: [undated] }))).toThrow(ValidationError);
     expect(() => requireBrandDnaIdeas(clone({ ideas: [{ ...IDEAS.ideas[0], createdAt: 'ayer' }] }), '2026-09-29'), 'una fecha que viene mal sigue mal').toThrow(ValidationError);
+  });
+
+  /**
+   * Prueba de escritorio con Latte (un software B2B): "Calendario para el Día
+   * de la Madre", con el calendario como única base. No era una idea de la
+   * marca; se descarta ésa sola y las demás quedan.
+   */
+  it('una idea apoyada sólo en el calendario se descarta; con una base de la marca queda', () => {
+    const onlyCalendar = { ...IDEAS.ideas[0], id: 'dia-madre', basedOn: [{ kind: 'calendar', label: 'Día de la Madre 18/10' }] };
+    const ideas = requireBrandDnaIdeas(clone({ ideas: [onlyCalendar, IDEAS.ideas[1]] }));
+    expect(ideas.map((idea) => idea.id), 'la mixta (ADN + calendario) queda').toEqual(['tono-posts']);
+  });
+
+  it('el pedido dice que una fecha comercial sólo va si le sirve a la marca', () => {
+    const spec = dnaIdeasSpec({ jobId: 'bdj_1', brandName: 'Latte', prepared: ['borradores/adn/fuentes/fechas-comerciales.md'], language: 'es-AR', today: '2026-09-29' });
+    expect(spec).toContain('Commercial dates are context, not a quota');
+    expect(spec).toContain('the calendar alone is never a base');
+    expect(spec).not.toContain('a calendar for the closest commercial date');
   });
 
   it('cero ideas es válido: si no hay base, no hay idea', () => {
