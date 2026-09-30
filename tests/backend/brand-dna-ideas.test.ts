@@ -3,7 +3,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEATURE_KEYS, FEATURE_OFF, FEATURE_ON } from '../../electron/core/features';
 import { ValidationError } from '../../electron/core/errors';
-import { dnaIdeasSpec, requireBrandDnaIdeas } from '../../electron/branding/dna';
+import { dnaBuildSpec, dnaIdeasSpec, requireBrandDnaIdeas } from '../../electron/branding/dna';
 import type { BrandDnaBuildJob, BrandDnaView } from '../../shared/contracts';
 import {
   fakeCoordinationHub,
@@ -115,10 +115,18 @@ describe('IDEAS.json · forma estricta', () => {
     expect(ideas.map((idea) => idea.id), 'la mixta (ADN + calendario) queda').toEqual(['tono-posts']);
   });
 
-  it('el pedido dice que una fecha comercial sólo va si le sirve a la marca', () => {
-    const spec = dnaIdeasSpec({ jobId: 'bdj_1', brandName: 'Latte', prepared: ['borradores/adn/fuentes/fechas-comerciales.md'], language: 'es-AR', today: '2026-09-29' });
-    expect(spec).toContain('Commercial dates are context, not a quota');
-    expect(spec).toContain('the calendar alone is never a base');
+  it('el pedido de ideas es corto: pide por qué le importa a ESTA marca y no nombra calendario ni embudo', () => {
+    const spec = dnaIdeasSpec({ jobId: 'bdj_1', brandName: 'Latte', prepared: ['borradores/adn/fuentes/adn.md'], language: 'es-AR', today: '2026-09-29' });
+    expect(spec).toContain('Now that you know this brand, propose up to four next works you would do for it right now, each with why it matters for THIS brand.');
+    expect(spec).not.toMatch(/commercial date|season|funnel|embudo|estación/i);
+    expect(spec).not.toContain('a calendar for the closest commercial date');
+  });
+
+  it('el pedido del armado del ADN tampoco nombra fechas comerciales, estación ni embudo', () => {
+    const spec = dnaBuildSpec({ jobId: 'bdj_1', brandName: 'Latte', mode: 'sources', url: 'https://latte.app', channels: [], prepared: [], language: 'es-AR', today: '2026-09-29' });
+    expect(spec).toContain('why it matters for THIS brand');
+    expect(spec).toContain('IDEAS.json');
+    expect(spec).not.toMatch(/commercial date|season|funnel|embudo|estación/i);
     expect(spec).not.toContain('a calendar for the closest commercial date');
   });
 
@@ -240,15 +248,16 @@ describe('ADN · el build de ideas', () => {
     const job = await b.service.buildBrandDna(brandId, 'ideas', null);
     expect(job).toMatchObject({ done: true, outcome: 'failed', reason: 'FEATURE_DISABLED' });
     expect(stepOf(job, 'compose').state).toBe('failed');
-    // Los insumos sí se juntaron con las manos de Latte.
-    expect(fs.readFileSync(path.join(fuentes(), 'fecha.md'), 'utf8')).toContain('Argentina');
+    // Los insumos sí se juntaron con las manos de Latte: la fecha de hoy y los trabajos.
+    expect(fs.readFileSync(path.join(fuentes(), 'fecha.md'), 'utf8')).toContain('Hoy:');
     expect(fs.existsSync(path.join(fuentes(), 'trabajos.md'))).toBe(true);
-    expect(fs.existsSync(path.join(fuentes(), 'embudo.md'))).toBe(true);
-    expect(fs.existsSync(path.join(fuentes(), 'fechas-comerciales.md'))).toBe(true);
     expect(fs.existsSync(path.join(fuentes(), 'adn.md'))).toBe(false);
+    // 2.0: ni país, ni estación, ni calendario comercial, ni embudo.
+    expect(fs.existsSync(path.join(fuentes(), 'fechas-comerciales.md'))).toBe(false);
+    expect(fs.existsSync(path.join(fuentes(), 'embudo.md'))).toBe(false);
   });
 
-  it('junta los insumos (ADN, fecha, trabajos, embudo, fechas comerciales) y el agente guarda las ideas', async () => {
+  it('junta los insumos (ADN, fecha, trabajos) y el agente guarda las ideas', async () => {
     await restartWithAi();
     // Los "trabajos recientes" que junta Latte son los de la PERSONA: el
     // espacio interno donde corre el build no es uno de ellos.
@@ -261,9 +270,12 @@ describe('ADN · el build de ideas', () => {
     expect(job.steps.map((step) => step.key)).toEqual(['compose']);
 
     const files = fs.readdirSync(fuentes()).sort();
-    expect(files).toEqual(['adn.md', 'embudo.md', 'fecha.md', 'fechas-comerciales.md', 'trabajos.md']);
+    expect(files).toEqual(['adn.md', 'fecha.md', 'trabajos.md']);
     expect(fs.readFileSync(path.join(fuentes(), 'adn.md'), 'utf8')).toContain('Mayoristas');
-    expect(fs.readFileSync(path.join(fuentes(), 'fecha.md'), 'utf8')).toContain('Estación');
+    // 2.0: la fecha es sólo la fecha de hoy — sin país, sin estación.
+    const fecha = fs.readFileSync(path.join(fuentes(), 'fecha.md'), 'utf8');
+    expect(fecha).toContain('Hoy:');
+    expect(fecha).not.toContain('Estación');
     const trabajos = fs.readFileSync(path.join(fuentes(), 'trabajos.md'), 'utf8');
     expect(trabajos).toContain(campaign.title);
     expect(trabajos, 'el espacio interno no es un trabajo de la marca').not.toContain('Propuesta mayorista');

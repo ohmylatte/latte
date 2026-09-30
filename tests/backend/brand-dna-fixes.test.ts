@@ -566,9 +566,11 @@ describe('ADN de marca · correcciones de la revisión', () => {
       expect(job.done).toBe(false);
       expect(specs[0]).toContain('Spanish (Argentina)');
       expect(specs[0]).not.toContain('English (United States)');
-      // Los insumos de ideas siguen el mismo criterio.
-      expect(fs.readFileSync(path.join(fuentes(), 'fecha.md'), 'utf8')).toContain('Hoy:');
-      expect(fs.readFileSync(path.join(fuentes(), 'fecha.md'), 'utf8')).toContain('Argentina');
+      // Los insumos de ideas siguen el mismo criterio: la fecha de hoy, en ese idioma.
+      const fecha = fs.readFileSync(path.join(fuentes(), 'fecha.md'), 'utf8');
+      expect(fecha).toContain('Hoy:');
+      expect(fecha).not.toContain('Estación');
+      expect(fecha).not.toContain('Argentina');
     });
 
     it('un meta por marca manda en el spec del build, en los insumos y en la etiqueta de edición manual', async () => {

@@ -13,11 +13,13 @@ import type { BrandDnaFields, BrandDnaIdea, BrandDnaEntry, ContentLocale } from 
 import { homeIdeas, type HomeIdeaText } from './home-ideas';
 
 /**
- * 3 · LAS IDEAS DE INICIO, CON FECHAS FIJAS.
+ * 3 · LAS IDEAS DE INICIO.
  *
- * Todo lo que depende del calendario se pasa como dato: domingos calculados,
- * hemisferio, ventana exacta de 6 semanas, y las ideas de respaldo en los dos
- * idiomas — con el formateador real de i18n, no con un doble.
+ * El primer bloque mide el calendario de `shared/commercial-dates`, que se
+ * queda porque lo usan otros lados; ya no es una idea de Inicio. El resto
+ * mide la grilla: las del agente mandan, y el respaldo sale SÓLO del ADN de
+ * esta marca —sin fecha comercial ni estación: eran iguales para todas las
+ * marcas (el Día de la Madre para un software B2B).
  */
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -82,13 +84,11 @@ const agentIdea = (patch: Partial<BrandDnaIdea> = {}): BrandDnaIdea => ({
   createdAt: '2026-09-27',
   ...patch,
 });
-/** Domingo 27 de septiembre de 2026, mediodía: la Día de la Madre queda a 3 semanas. */
-const NOW = new Date(2026, 8, 27, 12, 0, 0);
 
 describe('las ideas del agente mandan sobre las de respaldo', () => {
   it('con ideas del agente se muestran ESAS, con su motivo, y nada más', async () => {
     const t = await loadT('es-AR');
-    const items = homeIdeas({ ideas: [agentIdea()], dna: fields(), now: NOW, locale: 'es-AR', uiLocale: 'es-AR' }, t);
+    const items = homeIdeas({ ideas: [agentIdea()], dna: fields() }, t);
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
       id: 'idea-1',
@@ -102,119 +102,53 @@ describe('las ideas del agente mandan sobre las de respaldo', () => {
   it('se cortan en cuatro: sólo las vigentes entran a la grilla', async () => {
     const t = await loadT('es-AR');
     const ideas = Array.from({ length: 6 }, (_, i) => agentIdea({ id: `idea-${i}` }));
-    expect(homeIdeas({ ideas, dna: null, now: NOW, locale: 'es-AR', uiLocale: 'es-AR' }, t)).toHaveLength(4);
+    expect(homeIdeas({ ideas, dna: null }, t)).toHaveLength(4);
   });
 });
 
-describe('respaldo: fecha, estación y ADN en los dos idiomas', () => {
-  it('sin ADN y con la fecha cerca, en castellano', async () => {
+describe('respaldo: sólo lo que sale del ADN, en los dos idiomas', () => {
+  it('sin ideas del agente y sin ADN no hay nada que proponer', async () => {
     const t = await loadT('es-AR');
-    const items = homeIdeas({ ideas: [], dna: null, now: NOW, locale: 'es-AR', uiLocale: 'es-AR' }, t);
-    expect(items.map((item) => item.id)).toEqual(['fecha-mothers-day', 'temporada']);
-    expect(items[0]).toMatchObject({
-      workTypeId: 'content-calendar',
-      title: 'Día de la Madre: faltan 3 semanas',
-      why: 'Fecha comercial: domingo 18 de octubre de 2026.',
-    });
-    expect(items[1]).toMatchObject({
-      id: 'temporada',
-      title: 'Contenido de temporada: primavera',
-      why: 'Hoy domingo 27 de septiembre de 2026, en Argentina.',
-    });
-    for (const item of items) expect(item.fromAgent).toBeUndefined();
+    const items = homeIdeas({ ideas: [], dna: null }, t);
+    expect(items).toEqual([]);
   });
 
-  it('en inglés y con Black Friday en la ventana', async () => {
+  it('lo mismo con la interfaz en inglés', async () => {
     const t = await loadT('en-US');
-    const items = homeIdeas({ ideas: [], dna: null, now: new Date(2026, 10, 20, 12, 0, 0), locale: 'en-US', uiLocale: 'en-US' }, t);
-    expect(items.map((item) => item.id)).toEqual(['fecha-black-friday', 'temporada']);
-    expect(items[0]).toMatchObject({
-      // 7 días: hasta 13 se cuentan en días, no en semanas.
-      title: 'Black Friday: 7 days to go',
-      why: 'Commercial date: Friday, November 27, 2026.',
-    });
-    expect(items[1]).toMatchObject({
-      title: 'Seasonal content: autumn',
-      why: 'Today Friday, November 20, 2026, in United States.',
-    });
-  });
-
-  it('con Hot Sale en la ventana se dice que la fecha es aproximada', async () => {
-    const t = await loadT('es-AR');
-    const items = homeIdeas({ ideas: [], dna: null, now: new Date(2026, 4, 1, 12, 0, 0), locale: 'es-AR', uiLocale: 'es-AR' }, t);
-    expect(items[0]).toMatchObject({ id: 'fecha-hot-sale', title: 'Hot Sale: faltan 2 semanas' });
-    expect(items[0]!.why).toMatch(/^Fecha aproximada:/);
+    const items = homeIdeas({ ideas: [], dna: null }, t);
+    expect(items).toEqual([]);
   });
 
   it('la idea del ADN usa la palabra que la marca no usa', async () => {
     const t = await loadT('es-AR');
-    const items = homeIdeas({ ideas: [], dna: fields({ wordsNo: entry(['oferta']) }), now: NOW, locale: 'es-AR', uiLocale: 'es-AR' }, t);
+    const items = homeIdeas({ ideas: [], dna: fields({ wordsNo: entry(['oferta']) }) }, t);
     const dnaItem = items.find((item) => item.id === 'adn-palabras');
     expect(dnaItem).toMatchObject({
       workTypeId: 'copy-pieces',
       title: 'Revisá las piezas: la marca no usa «oferta»',
       why: 'Lo dice el ADN de la marca.',
     });
-  });
-
-  it('el país sale del idioma de contenido y los nombres se escriben en el de la interfaz', async () => {
-    const t = await loadT('en-US');
-    const items = homeIdeas({ ideas: [], dna: null, now: NOW, locale: 'es-AR', uiLocale: 'en-US' }, t);
-    // Contenido es-AR → Argentina → primavera en septiembre; la grilla, en inglés.
-    expect(items[0]!.title).toBe("Mother's Day: 3 weeks to go");
-    expect(items[1]!.title).toBe('Seasonal content: spring');
-    expect(items[1]!.why).toBe('Today Sunday, September 27, 2026, in Argentina.');
+    // 2.0: nada del calendario ni de la estación: esas eran iguales para todas.
+    for (const item of items) {
+      expect(item.id).not.toMatch(/^fecha-/);
+      expect(item.id).not.toBe('temporada');
+      expect(item.title).not.toMatch(/Día de la Madre|Black Friday|Hot Sale|temporada|Seasonal/i);
+    }
   });
 
   it('sin palabras prohibidas, la segunda línea es la propuesta o la audiencia', async () => {
     const t = await loadT('es-AR');
-    const conPropuesta = homeIdeas({ ideas: [], dna: fields({ valueProp: entry('Objetos de diseño para la vida cotidiana.') }), now: NOW, locale: 'es-AR', uiLocale: 'es-AR' }, t);
+    const conPropuesta = homeIdeas({ ideas: [], dna: fields({ valueProp: entry('Objetos de diseño para la vida cotidiana.') }) }, t);
     expect(conPropuesta.find((item) => item.id === 'adn-propuesta')).toMatchObject({
       title: 'Llevá tu propuesta a cada pieza',
       why: 'Objetos de diseño para la vida cotidiana.',
     });
 
-    const conAudiencia = homeIdeas({ ideas: [], dna: fields({ audience: entry('Personas que eligen menos.') }), now: NOW, locale: 'es-AR', uiLocale: 'es-AR' }, t);
+    const conAudiencia = homeIdeas({ ideas: [], dna: fields({ audience: entry('Personas que eligen menos.') }) }, t);
     expect(conAudiencia.find((item) => item.id === 'adn-propuesta')!.why).toBe('Personas que eligen menos.');
 
-    const sinDna = homeIdeas({ ideas: [], dna: fields(), now: NOW, locale: 'es-AR', uiLocale: 'es-AR' }, t);
+    const sinDna = homeIdeas({ ideas: [], dna: fields() }, t);
     expect(sinDna.some((item) => item.id.startsWith('adn-'))).toBe(false);
-  });
-});
-
-describe('la cuenta regresiva de la fecha comercial', () => {
-  /** El Día de la Madre de la Argentina cae el 18 de octubre de 2026. */
-  const mother = new Date(2026, 9, 18, 12, 0, 0);
-  const blackFriday = new Date(2026, 10, 27, 12, 0, 0);
-  const titleAt = async (now: Date, locale: ContentLocale = 'es-AR'): Promise<string> => {
-    const t = await loadT(locale);
-    return homeIdeas({ ideas: [], dna: null, now, locale, uiLocale: locale }, t)[0]!.title;
-  };
-  const daysBefore = (day: Date, count: number): Date => new Date(day.getTime() - count * 86_400_000);
-
-  it('hoy es hoy, mañana es mañana, y hasta 13 días se cuentan en días', async () => {
-    expect(await titleAt(mother)).toBe('Día de la Madre: es hoy');
-    expect(await titleAt(daysBefore(mother, 1))).toBe('Día de la Madre: es mañana');
-    expect(await titleAt(daysBefore(mother, 2))).toBe('Día de la Madre: faltan 2 días');
-    expect(await titleAt(daysBefore(mother, 13))).toBe('Día de la Madre: faltan 13 días');
-  });
-
-  it('desde 14 días, semanas redondeando al entero más cercano', async () => {
-    // El corte: 14 días son 2 semanas, 13 siguen siendo días.
-    expect(await titleAt(daysBefore(mother, 14))).toBe('Día de la Madre: faltan 2 semanas');
-    // 17 días → 2,43 → 2; 18 → 2,57 → 3 (antes redondeaba para abajo: 18 → 2).
-    expect(await titleAt(daysBefore(mother, 17))).toBe('Día de la Madre: faltan 2 semanas');
-    expect(await titleAt(daysBefore(mother, 18))).toBe('Día de la Madre: faltan 3 semanas');
-    expect(await titleAt(daysBefore(mother, 21))).toBe('Día de la Madre: faltan 3 semanas');
-  });
-
-  it('la misma regla en inglés', async () => {
-    expect(await titleAt(blackFriday, 'en-US')).toBe('Black Friday: today');
-    expect(await titleAt(daysBefore(blackFriday, 1), 'en-US')).toBe('Black Friday: tomorrow');
-    expect(await titleAt(daysBefore(blackFriday, 7), 'en-US')).toBe('Black Friday: 7 days to go');
-    expect(await titleAt(daysBefore(blackFriday, 13), 'en-US')).toBe('Black Friday: 13 days to go');
-    expect(await titleAt(daysBefore(blackFriday, 14), 'en-US')).toBe('Black Friday: 2 weeks to go');
-    expect(await titleAt(daysBefore(blackFriday, 18), 'en-US')).toBe('Black Friday: 3 weeks to go');
   });
 });
 

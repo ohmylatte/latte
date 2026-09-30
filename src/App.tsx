@@ -499,9 +499,7 @@ export function App() {
    * 3 · el build de ideas: se lanza con "Actualizar ideas" y se sondea como el
    * build del ADN. Mientras corre, Inicio muestra el estado del JOB (honesto);
    * cuando termina, la ficha se recarga con `dnaEpoch` y las ideas nuevas
-   * aparecen. Un fallo queda a la vista hasta el próximo intento. El país y la
-   * estación de las ideas de respaldo salen del idioma de contenido que el
-   * provider de i18n ya tiene (`contentLocale`), no de una lectura propia.
+   * aparecen. Un fallo queda a la vista hasta el próximo intento.
    */
   const [ideasJob, setIdeasJob] = useState<BrandDnaBuildJob | null>(null);
   const ideasJobId = ideasJob?.jobId ?? null;

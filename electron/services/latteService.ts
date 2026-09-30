@@ -154,7 +154,7 @@ import type { LearningRepository } from '../storage/learningRepository';
 import { briefDocumentId, type BrandDnaProposalRecord, type CoordinationRunRecord, type DocumentRecord, type LatteRepository } from '../storage/repository';
 import { BRAND_MEMORY_FILE, collectBrandMemory, hasBrandMemory, hasInheritedContent, renderBrandMemory, type BrandMemorySnapshot } from '../workspace/brandMemory';
 import { brandContextNudge, electBrandContextOwner } from '../workspace/brandContextNudge';
-import { DRAFTS_DIR, FUNNEL_STAGES, INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
+import { DRAFTS_DIR, INSTRUCTIONS_MAX_CHARS, isManagedFile, renderInstructionBundle, renderOutcomeContext, showsCurrentOutcome, type InstructionPack, type PackSkill } from '../workspace/instructions';
 import { checkFolder, contains, importFileName, kindFromFileName, readFunnelProposal, readHandoff, scanFolder, titleFromFileName } from '../workspace/linkFolder';
 import { renderDocumentTemplate } from '../workspace/templates';
 import { openItems, renderContinuation } from '../workspace/continuation';
@@ -191,15 +191,7 @@ import {
   type BrandDnaProjection,
   type DnaStepReport,
 } from '../branding/dna';
-import {
-  commercialDateName,
-  countryLabel,
-  countryOf,
-  fullDateLabel,
-  seasonLabel,
-  seasonOn,
-  upcomingCommercialDates,
-} from '../../shared/commercial-dates';
+import { fullDateLabel } from '../../shared/commercial-dates';
 import { brandDnaProtocolBlocks, requireBrandDnaProposalInput, type BrandDnaProposalInput } from '../workspace/dnaProtocol';
 import { reportedFiles } from '../../shared/reportFiles';
 import { canonicalJson } from '../core/canonical';
@@ -1486,10 +1478,13 @@ export class LatteService implements BackendApi {
 
   /**
    * 3: LOS INSUMOS DE LAS IDEAS, juntados con las manos de Latte en la misma
-   * carpeta de fuentes: el ADN (aprobado o borrador), la fecha con país y
-   * estación, los trabajos recientes, las etapas del embudo sin piezas y las
-   * fechas comerciales de las próximas 6 semanas con su fecha exacta. En el
-   * idioma de la marca (`locale`, el mismo que el spec del build — B4).
+   * carpeta de fuentes: el ADN (aprobado o borrador), la fecha de hoy y los
+   * trabajos recientes. En el idioma de la marca (`locale`, el mismo que el
+   * spec del build — B4).
+   *
+   * 2.0: sin estación, sin fechas comerciales y sin embudo. Eran el mismo
+   * archivo para todas las marcas y empujaban la misma idea a todas (el Día
+   * de la Madre a un software B2B). Las ideas salen de la marca.
    */
   private gatherIdeasInputs(brand: Brand, work: Work, locale: 'es-AR' | 'en-US'): void {
     const workDir = this.deps.files.workDir(brand.id, work.id);
@@ -1501,9 +1496,6 @@ export class LatteService implements BackendApi {
     };
     const en = locale === 'en-US';
     const today = this.clock().slice(0, 10);
-    const country = countryOf(locale);
-    const season = seasonOn(country, today);
-
     const approved = this.deps.repo.dnaHead(brand.id);
     const draft = this.deps.repo.getDnaDraft(brand.id);
     if (approved) {
@@ -1512,28 +1504,13 @@ export class LatteService implements BackendApi {
       write('adn.md', renderBrandDnaMarkdown({ brandName: brand.name, version: null, approvedAt: null, fields: draft }));
     }
 
-    write('fecha.md', en
-      ? `Today: ${fullDateLabel(today, locale)}.\nCountry: ${countryLabel(country, locale)} (${country === 'AR' ? 'southern' : 'northern'} hemisphere).\nSeason: ${seasonLabel(season, locale)}.`
-      : `Hoy: ${fullDateLabel(today, locale)}.\nPaís: ${countryLabel(country, locale)} (hemisferio ${country === 'AR' ? 'sur' : 'norte'}).\nEstación: ${seasonLabel(season, locale)}.`);
+    write('fecha.md', en ? `Today: ${fullDateLabel(today, locale)}.` : `Hoy: ${fullDateLabel(today, locale)}.`);
 
     const works = [...this.userWorks(brand.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10);
     const workLines = works.length > 0
       ? works.map((other) => `- ${other.updatedAt.slice(0, 10)} · ${other.title}`)
       : [en ? '- None yet.' : '- Ninguno todavía.'];
     write('trabajos.md', `${en ? `# Recent works of ${brand.name}` : `# Trabajos recientes de ${brand.name}`}\n\n${workLines.join('\n')}\n`);
-
-    const tracked = works.flatMap((other) => this.deps.repo.listDocuments(other.id));
-    const emptyStages = FUNNEL_STAGES.filter((stage) => !tracked.some((doc) => doc.funnelStages.includes(stage)));
-    const stageLines = emptyStages.length > 0
-      ? emptyStages.map((stage) => `- ${stage}`)
-      : [en ? '- none: every stage has a piece.' : '- ninguna: todas las etapas tienen piezas.'];
-    write('embudo.md', `${en ? '# Funnel stages with no pieces yet' : '# Etapas del embudo sin piezas'}\n\n${stageLines.join('\n')}\n`);
-
-    const dates = upcomingCommercialDates(country, today);
-    const dateLines = dates.length > 0
-      ? dates.map((date) => `- ${date.date} · ${commercialDateName(date.id, locale)}${date.approximate ? (en ? ' (approximate date)' : ' (fecha aproximada)') : ''}`)
-      : [en ? '- None in the next 6 weeks.' : '- Ninguna en las próximas 6 semanas.'];
-    write('fechas-comerciales.md', `${en ? '# Commercial dates in the next 6 weeks' : '# Fechas comerciales de las próximas 6 semanas'}\n\n${dateLines.join('\n')}\n`);
   }
 
   /**

@@ -509,15 +509,22 @@ export interface DnaBuildSpecInput {
   today?: string;
 }
 
-/** El bloque de las ideas, igual para un build normal y para el modo `ideas`. */
+/**
+ * El bloque de las ideas, igual para un build normal y para el modo `ideas`.
+ *
+ * Corto a propósito: el agente YA leyó la marca, así que sólo se le pide qué
+ * haría después y en qué forma lo escribe. Sin ejemplos y sin calendario:
+ * los ejemplos de fecha le daban a todas las marcas la MISMA idea (el Día de
+ * la Madre a un software B2B), y esa idea no salía de la marca.
+ */
 function ideasInstructions(language: 'es-AR' | 'en-US', today?: string): string[] {
   const lang = language === 'en-US' ? 'English (United States)' : 'Spanish (Argentina)';
   return [
     '',
-    `Also write ./${DNA_IDEAS_RELATIVE}: up to FOUR concrete ideas for this brand RIGHT NOW — {"ideas": [{"id": "...", "title": "...", "why": "...", "workTypeId": "...", "basedOn": [{"kind": "...", "label": "..."}], "createdAt": "YYYY-MM-DD"}]}.`,
-    "- An idea is something to DO next that THIS brand's own sources support: a campaign for the collection that just arrived, pieces that explain an offer the site describes, a review of pieces that break the DNA. Short actionable title, one-line why, and NEVER an idea without a base: `basedOn` names where it came from (kind: web, instagram, channel, file, context, document, decision, memory, identity, correction, human, calendar; label is what a person sees).",
-    '- The `why` says what about THIS brand makes the idea worth doing now. Every idea needs at least one base about the brand itself; the calendar alone is never a base, and Latte discards an idea based only on it.',
-    "- Commercial dates are context, not a quota. Propose a date idea ONLY when the brand's sources show its audience buys, gifts or acts around that date (a bookshop and Mother's Day, a garden store and spring). A software, B2B or service brand with no such link gets no date idea: fewer, real ideas beat four generic ones.",
+    'Now that you know this brand, propose up to four next works you would do for it right now, each with why it matters for THIS brand.',
+    `Write them into ./${DNA_IDEAS_RELATIVE} as {"ideas": [{"id": "...", "title": "...", "why": "...", "workTypeId": "...", "basedOn": [{"kind": "...", "label": "..."}], "createdAt": "YYYY-MM-DD"}]}.`,
+    '- `title` is a short actionable next work; `why` says what about THIS brand makes it worth doing now.',
+    '- Every idea needs at least one `basedOn` naming something of this brand itself: `kind` is one of: web, instagram, channel, file, context, document, decision, memory, identity, correction, human, calendar; `label` is what a person sees.',
     '- `workTypeId` is one of: campaign-new, strategy, content-calendar, copy-pieces, adapt-pieces, presentation, campaign-ops, campaign-optimize, budget-review, paid-media-audit, period-compare, report-build, free-form.',
     `- Write the ideas in ${lang}: the language this brand's content is written in. ${today ? `\`createdAt\` is ${today}.` : '`createdAt` is today\'s date.'}`,
   ];
@@ -594,7 +601,7 @@ export function dnaIdeasSpec(input: DnaIdeasSpecInput): string {
     `Task: propose up to FOUR concrete ideas for ${input.brandName} right now, into ./${DNA_IDEAS_RELATIVE}.`,
     '',
     input.prepared.length > 0
-      ? `Latte prepared your inputs in this work: ${input.prepared.map((file) => `./${file}`).join(', ')}. Read every one: adn.md is the brand DNA (approved or draft), fecha.md is today with the country and season, trabajos.md lists recent works, embudo.md says which funnel stages still have no pieces, and fechas-comerciales.md has the exact dates of the next 6 weeks — use a date only if it fits this brand.`
+      ? `Latte prepared your inputs in this work: ${input.prepared.map((file) => `./${file}`).join(', ')}. Read every one: adn.md is the brand DNA (approved or draft), fecha.md is today and trabajos.md lists what this brand already did.`
       : 'Latte prepared no input files: ground the ideas only in what you can verify from the brand context of this work.',
     ...ideasInstructions(input.language, input.today),
     stampInstruction(input.jobId, [DNA_IDEAS_JSON]),

@@ -16,7 +16,7 @@ import { type FirstStep, type FirstStepId, firstStepsProgress } from './first-st
  * Una caja tipo chat que convierte lo que la persona quiere en un trabajo real
  * (`onStartWork` crea el trabajo con ese texto como brief y activa el rol que
  * el catálogo recomienda), las IDEAS —del agente cuando las escribió, o de
- * respaldo con fecha, estación y ADN—, y —al costado— la tarjeta Primeros
+ * respaldo, que salen sólo del ADN de la marca—, y —al costado— la tarjeta Primeros
  * pasos, que se marca sola con datos reales y desaparece cuando los cuatro
  * están.
  *
@@ -47,7 +47,7 @@ export interface HomeStartProps {
 }
 
 export function HomeStart(props: HomeStartProps) {
-  const { t, locale, contentLocale } = useI18n();
+  const { t } = useI18n();
   const [text, setText] = useState('');
   /** El tipo de la idea tocada: manda sobre el de las palabras, hasta que se reescribe. */
   const [forced, setForced] = useState<WorkType | null>(null);
@@ -56,9 +56,6 @@ export function HomeStart(props: HomeStartProps) {
   const ideas: HomeIdeaItem[] = homeIdeas({
     ideas: props.dna?.ideas ?? [],
     dna: props.dna?.draft ?? null,
-    now: new Date(),
-    locale: contentLocale,
-    uiLocale: locale,
   }, ideaText);
   const workType = forced ?? classifyWorkType(text);
   const roleId = forced ? recommendRole(workType) : classifyRole(text);

@@ -125,15 +125,16 @@ describe('Inicio · la caja', () => {
     expect((screen.getByRole('button', { name: 'Enviar' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('sin ideas del agente, las de respaldo cubren la grilla con fecha, temporada y ADN', () => {
+  it('sin ideas del agente, las de respaldo salen del ADN y nada más', () => {
     const { container } = mount(props({ dna: dna() }));
     const items = [...container.querySelectorAll<HTMLButtonElement>('.home-suggest')];
-    // La fecha comercial depende del día real: entre 2 y 4 ideas estables.
-    expect(items.length).toBeGreaterThanOrEqual(2);
+    // Sin fecha comercial ni estación: sólo lo que el ADN de ESTA marca dice.
+    expect(items.length).toBeGreaterThanOrEqual(1);
     expect(items.length).toBeLessThanOrEqual(4);
     const titles = items.map((item) => item.querySelector('strong')!.textContent ?? '');
-    expect(titles.some((label) => label.startsWith('Contenido de temporada:'))).toBe(true);
     expect(titles).toContain('Llevá tu propuesta a cada pieza');
+    expect(titles.some((label) => label.startsWith('Contenido de temporada:'))).toBe(false);
+    expect(titles.some((label) => /Día de la Madre|Black Friday|Hot Sale/.test(label))).toBe(false);
     // Las de respaldo no llevan la marca de las del agente.
     expect(container.querySelector('.home-ideas-tag')).toBeNull();
     expect(container.querySelector('.home-ideas-head')).toBeNull();
